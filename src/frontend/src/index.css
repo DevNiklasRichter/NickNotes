@@ -1,21 +1,62 @@
-﻿:root {
-  --text: #142216;
-  --muted: #445b4a;
-  --bg: #f3f8f4;
-  --surface: #f8fbf8;
-  --surface-strong: #e9f2e9;
-  --line: #bfd3c2;
-  --accent: #147a56;
+:root {
+  color-scheme: light;
+  --text: #2a2f38;
+  --muted: #606775;
+  --surface: rgba(250, 251, 252, 0.94);
+  --surface-strong: #e3e6eb;
+  --surface-contrast: #ffffff;
+  --line: #c8ced7;
+  --line-strong: #aeb5c1;
+  --accent: #d90429;
+  --accent-strong: #b00020;
+  --accent-soft: rgba(217, 4, 41, 0.14);
+  --code-bg: #eef2f6;
+  --table-row: #f4f6f9;
+  --bg-layer-1: #f6f7f9;
+  --bg-layer-2: #d4d7dd;
+  --bg-layer-3: #2f3440;
+  --ok-bg: #e8edf4;
+  --ok-border: #c6cfdb;
+  --ok-text: #253246;
+  --error-bg: #ffe5e9;
+  --error-border: #f2a9b5;
+  --error-text: #922235;
+  --shadow: 0 14px 30px rgba(20, 28, 40, 0.14);
 
-  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-family: 'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif;
   line-height: 1.4;
   font-weight: 400;
   color: var(--text);
-  background-color: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --text: #f3f5f8;
+  --muted: #c3cad5;
+  --surface: rgba(38, 45, 57, 0.94);
+  --surface-strong: #343c4b;
+  --surface-contrast: #2a303d;
+  --line: #4c5566;
+  --line-strong: #6a7488;
+  --accent: #ff304f;
+  --accent-strong: #ff5f76;
+  --accent-soft: rgba(255, 48, 79, 0.24);
+  --code-bg: #1f2530;
+  --table-row: #303744;
+  --bg-layer-1: #2b313d;
+  --bg-layer-2: #252b37;
+  --bg-layer-3: #1b212a;
+  --ok-bg: #273342;
+  --ok-border: #41536a;
+  --ok-text: #dce7f4;
+  --error-bg: #4a2a34;
+  --error-border: #7d4551;
+  --error-text: #ffd9e0;
+  --shadow: 0 16px 34px rgba(0, 0, 0, 0.4);
 }
 
 * {
@@ -24,17 +65,36 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background: linear-gradient(
+    115deg,
+    var(--bg-layer-1) 0%,
+    var(--bg-layer-1) 27%,
+    var(--bg-layer-2) 27%,
+    var(--bg-layer-2) 66%,
+    var(--bg-layer-3) 66%,
+    var(--bg-layer-3) 100%
+  );
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
   background:
-    radial-gradient(circle at 20% 0%, rgba(120, 180, 132, 0.12), transparent 45%),
-    radial-gradient(circle at 80% 100%, rgba(20, 122, 86, 0.12), transparent 50%),
-    var(--bg);
+    radial-gradient(circle at 13% 8%, var(--accent-soft), transparent 30%),
+    radial-gradient(circle at 79% 82%, rgba(255, 255, 255, 0.1), transparent 34%);
 }
 
 #root {
+  position: relative;
   min-height: 100vh;
+  z-index: 1;
 }
 
 h1,
 h2 {
-  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+  font-family: 'Barlow Condensed', 'Space Grotesk', 'Segoe UI', sans-serif;
 }

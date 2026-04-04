@@ -67,6 +67,22 @@ type BackendState = {
 }
 
 type TabId = 'capture' | 'tasks' | 'search' | 'review'
+type ThemeMode = 'light' | 'dark'
+
+const THEME_STORAGE_KEY = 'nicknotes-theme'
+
+function getPreferredTheme(): ThemeMode {
+  if (typeof window === 'undefined') {
+    return 'light'
+  }
+
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+  if (storedTheme === 'light' || storedTheme === 'dark') {
+    return storedTheme
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 async function apiRequest<T>(baseUrl: string, endpoint: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${endpoint}`, {
@@ -103,6 +119,7 @@ function toGermanTimestamp(value: string): string {
 function App() {
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [activeTab, setActiveTab] = useState<TabId>('capture')
+  const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
   const [vaultPath, setVaultPath] = useState('')
   const [vaultLoaded, setVaultLoaded] = useState(false)
@@ -147,6 +164,11 @@ function App() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  }, [theme])
 
   const loadState = async () => {
     try {
@@ -399,12 +421,22 @@ function App() {
     setWeekly(response.weekly)
   }
 
+  const toggleTheme = () => {
+    setTheme((current) => (current === 'light' ? 'dark' : 'light'))
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand">
           <h1>NickNotes</h1>
           <p>React + TypeScript + Electron mit Python-Backend</p>
+        </div>
+
+        <div className="topbar-meta">
+          <button type="button" className="theme-toggle" onClick={toggleTheme}>
+            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+          </button>
         </div>
 
         <div className="vault-controls">
