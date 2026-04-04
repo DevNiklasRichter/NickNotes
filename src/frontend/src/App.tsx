@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import './App.css'
 
 type VaultCounts = {
@@ -66,8 +67,15 @@ type BackendState = {
   counts?: VaultCounts
 }
 
-type TabId = 'capture' | 'tasks' | 'search' | 'review'
 type ThemeMode = 'light' | 'dark'
+type SidebarView = 'vault' | 'notes' | 'tasks' | 'review'
+
+type NoteTab = {
+  path: string
+  title: string
+  content: string
+  loading: boolean
+}
 
 const THEME_STORAGE_KEY = 'nicknotes-theme'
 
@@ -116,9 +124,14 @@ function toGermanTimestamp(value: string): string {
   })
 }
 
+function getFileName(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] || path
+}
+
 function App() {
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
-  const [activeTab, setActiveTab] = useState<TabId>('capture')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
   const [vaultPath, setVaultPath] = useState('')
@@ -133,11 +146,18 @@ function App() {
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
-  const [selectedNotePath, setSelectedNotePath] = useState('')
-  const [selectedNoteContent, setSelectedNoteContent] = useState('')
 
   const [daily, setDaily] = useState<ReviewDaily | null>(null)
   const [weekly, setWeekly] = useState<ReviewWeekly | null>(null)
+
+  const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
+  const [activeNotePath, setActiveNotePath] = useState('')
+  const [splitView, setSplitView] = useState(false)
+  const [compareNotePath, setCompareNotePath] = useState('')
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -169,6 +189,37 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     window.localStorage.setItem(THEME_STORAGE_KEY, theme)
   }, [theme])
+
+  const refreshTasks = async () => {
+    if (!vaultLoaded) {
+      return
+    }
+
+    const response = await apiRequest<{ items: TaskRow[] }>(backendUrl, '/tasks?include_done=false')
+    setTasks(response.items)
+  }
+
+  const runSearch = async (query: string) => {
+    if (!vaultLoaded) {
+      return
+    }
+
+    const response = await apiRequest<{ items: SearchRow[] }>(
+      backendUrl,
+      `/search?query=${encodeURIComponent(query)}`
+    )
+    setSearchResults(response.items)
+  }
+
+  const refreshReview = async () => {
+    if (!vaultLoaded) {
+      return
+    }
+
+    const response = await apiRequest<{ daily: ReviewDaily; weekly: ReviewWeekly }>(backendUrl, '/review')
+    setDaily(response.daily)
+    setWeekly(response.weekly)
+  }
 
   const loadState = async () => {
     try {
@@ -203,9 +254,16 @@ function App() {
       return
     }
 
+    if (!captureText.trim()) {
+      setSuggestions([])
+      setSelectedTagKeys([])
+      setParsedTasks([])
+      return
+    }
+
     const timeout = window.setTimeout(() => {
       void previewCapture(captureText)
-    }, 320)
+    }, 260)
 
     return () => {
       window.clearTimeout(timeout)
@@ -213,7 +271,61 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captureText, vaultLoaded])
 
+  useEffect(() => {
+    if (openTabs.length === 0) {
+      setActiveNotePath('')
+      setCompareNotePath('')
+      setSplitView(false)
+      return
+    }
+
+    if (!openTabs.some((tab) => tab.path === activeNotePath)) {
+      setActiveNotePath(openTabs[openTabs.length - 1].path)
+    }
+
+    if (compareNotePath && !openTabs.some((tab) => tab.path === compareNotePath)) {
+      setCompareNotePath('')
+    }
+
+    if (openTabs.length < 2 && splitView) {
+      setSplitView(false)
+    }
+  }, [activeNotePath, compareNotePath, openTabs, splitView])
+
   const chosenTags = useMemo(() => new Set(selectedTagKeys), [selectedTagKeys])
+
+  const sortedNotes = useMemo(() => {
+    return [...searchResults].sort((left, right) => {
+      const leftTime = new Date(left.updated_at).getTime()
+      const rightTime = new Date(right.updated_at).getTime()
+      return rightTime - leftTime
+    })
+  }, [searchResults])
+
+  const dailyNotes = useMemo(() => {
+    return sortedNotes.filter((row) => {
+      const type = row.note_type.toLowerCase()
+      return type.includes('daily') || /daily/i.test(row.path) || /\d{4}-\d{2}-\d{2}/.test(row.title)
+    })
+  }, [sortedNotes])
+
+  const tagNotes = useMemo(() => {
+    return sortedNotes.filter((row) => {
+      const type = row.note_type.toLowerCase()
+      return type.includes('tag') || /tag/i.test(row.path) || row.title.includes(':')
+    })
+  }, [sortedNotes])
+
+  const otherNotes = useMemo(() => {
+    const knownPaths = new Set([...dailyNotes, ...tagNotes].map((item) => item.path))
+    return sortedNotes.filter((row) => !knownPaths.has(row.path))
+  }, [dailyNotes, sortedNotes, tagNotes])
+
+  const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
+  const compareCandidates = openTabs.filter((tab) => tab.path !== activeTab?.path)
+  const compareTab = splitView
+    ? openTabs.find((tab) => tab.path === compareNotePath) ?? compareCandidates[0] ?? null
+    : null
 
   const pickDirectory = async (): Promise<string | null> => {
     if (!window.nicknotes?.selectDirectory) {
@@ -227,7 +339,7 @@ function App() {
       setError('')
       const path = vaultPath.trim()
       if (!path) {
-        throw new Error('Bitte zuerst einen Vault-Pfad angeben.')
+        throw new Error('Bitte zuerst einen Board-Pfad angeben.')
       }
 
       const response = await apiRequest<{ counts: VaultCounts }>(backendUrl, '/vault/open', {
@@ -236,8 +348,9 @@ function App() {
       })
       setVaultLoaded(true)
       setCounts(response.counts)
-      setMessage('Vault erfolgreich geladen und indexiert.')
-      await Promise.all([refreshTasks(), runSearch(''), refreshReview(), previewCapture(captureText)])
+      setMessage('Board erfolgreich geladen und indexiert.')
+
+      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -251,7 +364,7 @@ function App() {
         return
       }
 
-      const name = window.prompt('Name des neuen Vaults:', 'NickNotesVault')?.trim()
+      const name = window.prompt('Name des neuen Boards:', 'NickNotesBoard')?.trim()
       if (!name) {
         return
       }
@@ -268,8 +381,8 @@ function App() {
       setVaultPath(response.vaultPath)
       setVaultLoaded(true)
       setCounts(response.counts)
-      setMessage(`Neuer Vault erstellt: ${response.vaultPath}`)
-      await Promise.all([refreshTasks(), runSearch(''), refreshReview()])
+      setMessage(`Neues Board erstellt: ${response.vaultPath}`)
+      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -322,8 +435,9 @@ function App() {
 
   const saveCapture = async () => {
     try {
-      if (!captureText.trim()) {
-        throw new Error('Capture-Text ist leer.')
+      const text = captureText.trim()
+      if (!text) {
+        return
       }
 
       const response = await apiRequest<{ counts: VaultCounts; noteId: string }>(
@@ -332,7 +446,7 @@ function App() {
         {
           method: 'POST',
           body: JSON.stringify({
-            text: captureText,
+            text,
             selectedTagKeys,
           }),
         }
@@ -343,20 +457,11 @@ function App() {
       setSuggestions([])
       setSelectedTagKeys([])
       setParsedTasks([])
-      setMessage(`Notiz gespeichert (${response.noteId}).`)
+      setMessage(`Capture gespeichert (${response.noteId}).`)
       await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
-  }
-
-  const refreshTasks = async () => {
-    if (!vaultLoaded) {
-      return
-    }
-
-    const response = await apiRequest<{ items: TaskRow[] }>(backendUrl, '/tasks?include_done=false')
-    setTasks(response.items)
   }
 
   const markTaskDone = async (taskId: string) => {
@@ -371,297 +476,464 @@ function App() {
     }
   }
 
-  const runSearch = async (query: string) => {
-    if (!vaultLoaded) {
-      return
-    }
-
-    const response = await apiRequest<{ items: SearchRow[] }>(
+  const fetchNoteContent = async (path: string): Promise<string> => {
+    const response = await apiRequest<{ content: string }>(
       backendUrl,
-      `/search?query=${encodeURIComponent(query)}`
+      `/notes/content?path=${encodeURIComponent(path)}`
     )
-    setSearchResults(response.items)
+    return response.content
   }
 
-  const loadNoteContent = async (path: string) => {
+  const openNoteInTab = async (path: string, suggestedTitle?: string) => {
+    const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
+    const existing = openTabs.find((tab) => tab.path === path)
+    if (existing) {
+      setActiveNotePath(path)
+      return
+    }
+
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        path,
+        title: fallbackTitle,
+        content: '',
+        loading: true,
+      },
+    ])
+    setActiveNotePath(path)
+
     try {
-      const response = await apiRequest<{ content: string }>(
-        backendUrl,
-        `/notes/content?path=${encodeURIComponent(path)}`
+      const content = await fetchNoteContent(path)
+      setOpenTabs((prev) =>
+        prev.map((tab) =>
+          tab.path === path
+            ? {
+                ...tab,
+                title: fallbackTitle,
+                content,
+                loading: false,
+              }
+            : tab
+        )
       )
-      setSelectedNotePath(path)
-      setSelectedNoteContent(response.content)
     } catch (caught) {
+      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
       setError(String(caught))
     }
   }
 
-  const openNoteFile = async () => {
-    if (!selectedNotePath) {
+  const closeTab = (path: string) => {
+    setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
+  }
+
+  const toggleSplitView = () => {
+    if (openTabs.length < 2) {
       return
     }
 
-    try {
-      await apiRequest(backendUrl, '/notes/open', {
-        method: 'POST',
-        body: JSON.stringify({ path: selectedNotePath }),
-      })
-    } catch (caught) {
-      setError(String(caught))
-    }
+    setSplitView((previous) => {
+      if (!previous && !compareNotePath) {
+        const candidate = openTabs.find((tab) => tab.path !== activeNotePath)
+        if (candidate) {
+          setCompareNotePath(candidate.path)
+        }
+      }
+      return !previous
+    })
   }
 
-  const refreshReview = async () => {
-    if (!vaultLoaded) {
+  const setThemeMode = (nextMode: ThemeMode) => {
+    setTheme(nextMode)
+  }
+
+  const openSidebarView = (view: SidebarView) => {
+    if (sidebarView === view) {
+      setSidebarOpen((prev) => !prev)
       return
     }
 
-    const response = await apiRequest<{ daily: ReviewDaily; weekly: ReviewWeekly }>(backendUrl, '/review')
-    setDaily(response.daily)
-    setWeekly(response.weekly)
+    setSidebarView(view)
+    setSidebarOpen(true)
   }
 
-  const toggleTheme = () => {
-    setTheme((current) => (current === 'light' ? 'dark' : 'light'))
+  const runSearchFromInput = () => {
+    void runSearch(searchQuery)
+  }
+
+  const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void saveCapture()
+    }
+  }
+
+  const renderSidebarContent = () => {
+    if (sidebarView === 'vault') {
+      return (
+        <div className="sidebar-content">
+          <h3>Boards</h3>
+          <p className="muted-label">Aktives Board</p>
+          <p className="mono-block">{vaultPath || 'Kein Board geladen'}</p>
+
+          <label className="field-label" htmlFor="vault-path-input">
+            Board-Pfad
+          </label>
+          <input
+            id="vault-path-input"
+            value={vaultPath}
+            onChange={(event) => setVaultPath(event.target.value)}
+            placeholder="C:\\Pfad\\zum\\Board"
+          />
+
+          <div className="stacked-actions">
+            <button onClick={() => void pickDirectory().then((dir) => dir && setVaultPath(dir))}>Ordner waehlen</button>
+            <button onClick={() => void openVault()}>Board laden</button>
+            <button onClick={() => void createVault()}>Neues Board</button>
+            <button onClick={() => void reindexVault()} disabled={!vaultLoaded}>
+              Reindex
+            </button>
+            <button onClick={() => void loadState()}>Status aktualisieren</button>
+          </div>
+        </div>
+      )
+    }
+
+    if (sidebarView === 'tasks') {
+      return (
+        <div className="sidebar-content">
+          <div className="sidebar-header-row">
+            <h3>Tasks</h3>
+            <button onClick={() => void refreshTasks()} disabled={!vaultLoaded}>
+              Aktualisieren
+            </button>
+          </div>
+
+          <div className="task-list">
+            {tasks.length === 0 ? <p className="empty-copy">Keine offenen Tasks.</p> : null}
+            {tasks.map((task) => (
+              <article key={task.id} className="task-item">
+                <header>
+                  <strong>{task.title}</strong>
+                  <span>{task.priority}</span>
+                </header>
+                <p>
+                  {task.status}
+                  {task.due_date ? ` | due ${task.due_date}` : ''}
+                </p>
+                <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
+                <button onClick={() => void markTaskDone(task.id)} disabled={task.status === 'done'}>
+                  Done
+                </button>
+              </article>
+            ))}
+          </div>
+        </div>
+      )
+    }
+
+    if (sidebarView === 'review') {
+      return (
+        <div className="sidebar-content">
+          <div className="sidebar-header-row">
+            <h3>Review</h3>
+            <button onClick={() => void refreshReview()} disabled={!vaultLoaded}>
+              Aktualisieren
+            </button>
+          </div>
+
+          <section className="review-card">
+            <h4>Daily</h4>
+            {daily ? (
+              <>
+                <p>Datum: {daily.date}</p>
+                <p>Neue Notizen: {daily.new_notes}</p>
+                <p>Offene Tasks: {daily.open_tasks}</p>
+                <p>Heute erledigt: {daily.done_today}</p>
+              </>
+            ) : (
+              <p className="empty-copy">Keine Daily-Daten.</p>
+            )}
+          </section>
+
+          <section className="review-card">
+            <h4>Weekly</h4>
+            {weekly ? (
+              <>
+                <p>
+                  Zeitraum: {weekly.from} bis {weekly.to}
+                </p>
+                <p>Notizen gesamt: {weekly.notes_total}</p>
+                <p>Tasks offen: {weekly.tasks_open}</p>
+                <p>Tasks erledigt: {weekly.tasks_done}</p>
+              </>
+            ) : (
+              <p className="empty-copy">Keine Weekly-Daten.</p>
+            )}
+          </section>
+        </div>
+      )
+    }
+
+    return (
+      <div className="sidebar-content">
+        <div className="sidebar-header-row">
+          <h3>Notizen</h3>
+          <button onClick={runSearchFromInput} disabled={!vaultLoaded}>
+            Suchen
+          </button>
+        </div>
+
+        <div className="search-row">
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                runSearchFromInput()
+              }
+            }}
+            placeholder="Datei, Tag, Text"
+          />
+        </div>
+
+        <section className="tree-group">
+          <h4>Daily Notes</h4>
+          {dailyNotes.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
+          {dailyNotes.map((row) => (
+            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
+              <strong>{row.title || getFileName(row.path)}</strong>
+              <span>{toGermanTimestamp(row.updated_at)}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="tree-group">
+          <h4>Tag Notes</h4>
+          {tagNotes.length === 0 ? <p className="empty-copy">Keine Tag-Notizen gefunden.</p> : null}
+          {tagNotes.map((row) => (
+            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
+              <strong>{row.title || getFileName(row.path)}</strong>
+              <span>{row.note_type}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className="tree-group">
+          <h4>Weitere Notizen</h4>
+          {otherNotes.length === 0 ? <p className="empty-copy">Keine weiteren Notizen gefunden.</p> : null}
+          {otherNotes.map((row) => (
+            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
+              <strong>{row.title || getFileName(row.path)}</strong>
+              <span>{row.note_type}</span>
+            </button>
+          ))}
+        </section>
+      </div>
+    )
+  }
+
+  if (!vaultLoaded) {
+    return (
+      <div className="launch-shell">
+        <div className="launch-card">
+          <h1>NickNotes Workbench</h1>
+          <p>Board einmal oeffnen und danach in der Workbench arbeiten.</p>
+
+          <label htmlFor="launch-vault-path" className="field-label">
+            Board-Pfad
+          </label>
+          <input
+            id="launch-vault-path"
+            value={vaultPath}
+            onChange={(event) => setVaultPath(event.target.value)}
+            placeholder="C:\\Pfad\\zum\\Board"
+          />
+
+          <div className="launch-actions">
+            <button onClick={() => void pickDirectory().then((dir) => dir && setVaultPath(dir))}>Ordner waehlen</button>
+            <button onClick={() => void openVault()}>Board laden</button>
+            <button onClick={() => void createVault()}>Neues Board</button>
+            <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
+              {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+            </button>
+          </div>
+
+          {message ? <p className="launch-message">{message}</p> : null}
+          {error ? <p className="launch-error">{error}</p> : null}
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <h1>NickNotes</h1>
-          <p>React + TypeScript + Electron mit Python-Backend</p>
-        </div>
-
-        <div className="topbar-meta">
-          <button type="button" className="theme-toggle" onClick={toggleTheme}>
-            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
-          </button>
-        </div>
-
-        <div className="vault-controls">
-          <input
-            value={vaultPath}
-            onChange={(event) => setVaultPath(event.target.value)}
-            placeholder="C:\\Pfad\\zum\\Vault"
-          />
-          <button onClick={() => void pickDirectory().then((dir) => dir && setVaultPath(dir))}>Ordner waehlen</button>
-          <button onClick={() => void openVault()}>Vault laden</button>
-          <button onClick={() => void createVault()}>Neuen Vault</button>
-          <button onClick={() => void reindexVault()} disabled={!vaultLoaded}>
-            Reindex
-          </button>
-        </div>
-      </header>
-
-      <section className="status-bar">
-        <div>
-          <strong>Vault:</strong> {vaultLoaded ? vaultPath : 'nicht geladen'}
-        </div>
-        <div>
-          <strong>Notizen:</strong> {counts.notes} | <strong>Tasks offen:</strong> {counts.openTasks} |{' '}
-          <strong>Tasks done:</strong> {counts.doneTasks}
-        </div>
-      </section>
-
-      {message ? <section className="message ok">{message}</section> : null}
-      {error ? <section className="message error">{error}</section> : null}
-
-      <nav className="tabs">
-        <button className={activeTab === 'capture' ? 'active' : ''} onClick={() => setActiveTab('capture')}>
-          Capture
+    <div className="workbench-shell">
+      <aside className="activity-rail">
+        <button
+          className={sidebarView === 'vault' ? 'active' : ''}
+          onClick={() => openSidebarView('vault')}
+          title="Boards"
+        >
+          B
         </button>
-        <button className={activeTab === 'tasks' ? 'active' : ''} onClick={() => setActiveTab('tasks')}>
-          Tasks
+        <button
+          className={sidebarView === 'notes' ? 'active' : ''}
+          onClick={() => openSidebarView('notes')}
+          title="Notizen"
+        >
+          N
         </button>
-        <button className={activeTab === 'search' ? 'active' : ''} onClick={() => setActiveTab('search')}>
-          Suche
+        <button
+          className={sidebarView === 'tasks' ? 'active' : ''}
+          onClick={() => openSidebarView('tasks')}
+          title="Tasks"
+        >
+          T
         </button>
-        <button className={activeTab === 'review' ? 'active' : ''} onClick={() => setActiveTab('review')}>
-          Review
+        <button
+          className={sidebarView === 'review' ? 'active' : ''}
+          onClick={() => openSidebarView('review')}
+          title="Review"
+        >
+          R
         </button>
-      </nav>
 
-      <main className="tab-body">
-        {activeTab === 'capture' ? (
-          <section className="panel two-col">
-            <div>
-              <h2>Quick Capture</h2>
-              <textarea
-                value={captureText}
-                onChange={(event) => setCaptureText(event.target.value)}
-                placeholder="Schreibe hier deine Gedanken. Tasks mit 'todo:' erfassen."
-              />
-              <div className="row-actions">
-                <button onClick={() => void previewCapture(captureText)} disabled={!vaultLoaded}>
-                  Vorschlaege aktualisieren
-                </button>
-                <button onClick={() => void saveCapture()} disabled={!vaultLoaded}>
-                  Notiz speichern
-                </button>
-              </div>
-            </div>
+        <div className="rail-spacer" />
 
-            <div>
-              <h2>Tag-Vorschlaege</h2>
-              <div className="list-card">
-                {suggestions.length === 0 ? (
-                  <p>Keine Vorschlaege.</p>
-                ) : (
-                  suggestions.map((item) => (
-                    <label key={item.key} className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={chosenTags.has(item.key)}
-                        onChange={() => {
-                          setSelectedTagKeys((prev) =>
-                            prev.includes(item.key)
-                              ? prev.filter((entry) => entry !== item.key)
-                              : [...prev, item.key]
-                          )
-                        }}
-                      />
-                      <span>
-                        {item.key} ({item.source}, conf={item.confidence.toFixed(2)})
-                      </span>
-                    </label>
-                  ))
-                )}
-              </div>
+        <button className={settingsOpen ? 'active' : ''} onClick={() => setSettingsOpen((prev) => !prev)} title="Einstellungen">
+          G
+        </button>
+      </aside>
 
-              <h2>Erkannte Tasks</h2>
-              <div className="list-card">
-                {parsedTasks.length === 0 ? (
-                  <p>Keine Tasks erkannt.</p>
-                ) : (
-                  parsedTasks.map((task, index) => (
-                    <p key={`${task.title}-${index}`}>
-                      {index + 1}. {task.title} | status={task.status} | prio={task.priority}
-                      {task.dueDate ? ` | due=${task.dueDate}` : ''}
-                    </p>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-        ) : null}
+      {sidebarOpen ? <aside className="left-sidebar">{renderSidebarContent()}</aside> : null}
 
-        {activeTab === 'tasks' ? (
-          <section className="panel">
-            <div className="row-actions">
-              <button onClick={() => void refreshTasks()} disabled={!vaultLoaded}>
-                Aktualisieren
+      <section className="main-region">
+        <header className="main-header">
+          <div>
+            <h2>{activeTab?.title || 'Keine Notiz geoeffnet'}</h2>
+            <p>
+              {vaultPath} | Notizen {counts.notes} | Tasks offen {counts.openTasks} | Tasks done {counts.doneTasks}
+            </p>
+          </div>
+
+          <div className="header-actions">
+            <button onClick={() => void runSearch(searchQuery)} disabled={!vaultLoaded}>
+              Explorer refresh
+            </button>
+            <button onClick={toggleSplitView} disabled={openTabs.length < 2}>
+              {splitView ? 'Split aus' : 'Split an'}
+            </button>
+          </div>
+        </header>
+
+        <div className="editor-tabs">
+          {openTabs.length === 0 ? <p className="empty-copy">Links eine Notiz auswaehlen, um sie zu oeffnen.</p> : null}
+          {openTabs.map((tab) => (
+            <div key={tab.path} className={`editor-tab ${tab.path === activeTab?.path ? 'active' : ''}`}>
+              <button className="tab-open" onClick={() => setActiveNotePath(tab.path)}>
+                {tab.title}
+              </button>
+              <button className="tab-close" onClick={() => closeTab(tab.path)}>
+                x
               </button>
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Titel</th>
-                  <th>Status</th>
-                  <th>Prio</th>
-                  <th>Due</th>
-                  <th>Projekt</th>
-                  <th>Update</th>
-                  <th>Aktion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((task) => (
-                  <tr key={task.id}>
-                    <td>{task.id}</td>
-                    <td>{task.title}</td>
-                    <td>{task.status}</td>
-                    <td>{task.priority}</td>
-                    <td>{task.due_date ?? ''}</td>
-                    <td>{task.project_tag ?? ''}</td>
-                    <td>{toGermanTimestamp(task.updated_at)}</td>
-                    <td>
-                      <button onClick={() => void markTaskDone(task.id)} disabled={task.status === 'done'}>
-                        Done
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+          ))}
+        </div>
+
+        {splitView && compareCandidates.length > 0 ? (
+          <div className="compare-selector">
+            <label htmlFor="compare-note-select">Vergleichs-Tab</label>
+            <select
+              id="compare-note-select"
+              value={compareTab?.path || ''}
+              onChange={(event) => setCompareNotePath(event.target.value)}
+            >
+              {compareCandidates.map((candidate) => (
+                <option key={candidate.path} value={candidate.path}>
+                  {candidate.title}
+                </option>
+              ))}
+            </select>
+          </div>
         ) : null}
 
-        {activeTab === 'search' ? (
-          <section className="panel two-col">
-            <div>
-              <div className="row-actions">
-                <input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Suchbegriff"
-                />
-                <button onClick={() => void runSearch(searchQuery)} disabled={!vaultLoaded}>
-                  Suchen
-                </button>
-                <button onClick={() => void openNoteFile()} disabled={!selectedNotePath}>
-                  Datei oeffnen
-                </button>
-              </div>
-
-              <div className="search-list">
-                {searchResults.map((item) => (
-                  <button
-                    key={`${item.id}-${item.path}`}
-                    className="search-item"
-                    onClick={() => void loadNoteContent(item.path)}
-                  >
-                    <strong>{item.title}</strong>
-                    <span>{item.note_type}</span>
-                    <span>{toGermanTimestamp(item.updated_at)}</span>
-                    <code>{item.path}</code>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h2>Vorschau</h2>
-              <pre className="preview-box">{selectedNoteContent || 'Keine Datei ausgewaehlt.'}</pre>
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === 'review' ? (
-          <section className="panel two-col review-grid">
-            <div className="list-card">
-              <h2>Daily</h2>
-              {daily ? (
-                <>
-                  <p>Datum: {daily.date}</p>
-                  <p>Neue Notizen: {daily.new_notes}</p>
-                  <p>Offene Tasks: {daily.open_tasks}</p>
-                  <p>Heute erledigt: {daily.done_today}</p>
-                </>
+        <div className={`editor-grid ${splitView && compareTab ? 'split' : ''}`}>
+          <article className="editor-pane">
+            {activeTab ? (
+              activeTab.loading ? (
+                <p className="empty-copy">Lade Notiz ...</p>
               ) : (
-                <p>Keine Daten.</p>
-              )}
-            </div>
+                <pre>{activeTab.content || 'Leere Notiz.'}</pre>
+              )
+            ) : (
+              <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
+            )}
+          </article>
 
-            <div className="list-card">
-              <h2>Weekly</h2>
-              {weekly ? (
-                <>
-                  <p>
-                    Zeitraum: {weekly.from} bis {weekly.to}
-                  </p>
-                  <p>Notizen gesamt: {weekly.notes_total}</p>
-                  <p>Tasks offen: {weekly.tasks_open}</p>
-                  <p>Tasks erledigt: {weekly.tasks_done}</p>
-                </>
+          {splitView && compareTab ? (
+            <article className="editor-pane">
+              {compareTab.loading ? (
+                <p className="empty-copy">Lade Vergleich ...</p>
               ) : (
-                <p>Keine Daten.</p>
+                <pre>{compareTab.content || 'Leere Notiz.'}</pre>
               )}
+            </article>
+          ) : null}
+        </div>
+
+        <footer className="capture-bar">
+          <div className="capture-left">
+            <span className="capture-label">Quick Capture</span>
+            <span className="capture-meta">
+              Vorschlaege {suggestions.length} | Tags {chosenTags.size} | Tasks erkannt {parsedTasks.length}
+            </span>
+          </div>
+
+          <div className="capture-input-wrap">
+            <span className="capture-prompt">&gt;</span>
+            <input
+              value={captureText}
+              onChange={(event) => setCaptureText(event.target.value)}
+              onKeyDown={onQuickCaptureKeyDown}
+              placeholder="Gedanke eingeben und Enter druecken"
+            />
+            <button onClick={() => void saveCapture()} disabled={!captureText.trim()}>
+              Senden
+            </button>
+          </div>
+
+          <div className="capture-right">
+            {error ? <span className="state-error">{error}</span> : <span>{message}</span>}
+          </div>
+        </footer>
+      </section>
+
+      {settingsOpen ? (
+        <aside className="settings-drawer">
+          <header>
+            <h3>Einstellungen</h3>
+            <button onClick={() => setSettingsOpen(false)}>Schliessen</button>
+          </header>
+
+          <section>
+            <h4>Theme</h4>
+            <div className="theme-actions">
+              <button className={theme === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}>
+                Light
+              </button>
+              <button className={theme === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}>
+                Dark
+              </button>
             </div>
           </section>
-        ) : null}
-      </main>
+
+          <section>
+            <h4>Layout</h4>
+            <button onClick={() => setSidebarOpen((prev) => !prev)}>{sidebarOpen ? 'Sidebar ausblenden' : 'Sidebar einblenden'}</button>
+          </section>
+        </aside>
+      ) : null}
     </div>
   )
 }
