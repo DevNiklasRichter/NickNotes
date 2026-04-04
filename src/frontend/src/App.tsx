@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { DragEvent, KeyboardEvent } from 'react'
 import './App.css'
 
 type VaultCounts = {
@@ -68,7 +68,7 @@ type BackendState = {
 }
 
 type ThemeMode = 'light' | 'dark'
-type SidebarView = 'vault' | 'notes' | 'tasks' | 'review'
+type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
 
 type NoteTab = {
   path: string
@@ -78,6 +78,9 @@ type NoteTab = {
 }
 
 const THEME_STORAGE_KEY = 'nicknotes-theme'
+const TAG_GROUPS_STORAGE_KEY = 'nicknotes-custom-tag-groups'
+
+type TagGroupsMap = Record<string, string[]>
 
 function getPreferredTheme(): ThemeMode {
   if (typeof window === 'undefined') {
@@ -130,6 +133,82 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+function normalizeLabel(value: string): string {
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+function toStorageTagGroups(value: unknown): TagGroupsMap {
+  if (!value || typeof value !== 'object') {
+    return {}
+  }
+
+  const result: TagGroupsMap = {}
+  const candidate = value as Record<string, unknown>
+  for (const [groupName, maybeTags] of Object.entries(candidate)) {
+    if (typeof groupName !== 'string' || !Array.isArray(maybeTags)) {
+      continue
+    }
+
+    const cleanGroup = normalizeLabel(groupName)
+    if (!cleanGroup) {
+      continue
+    }
+
+    const cleanTags = maybeTags
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => normalizeLabel(entry))
+      .filter(Boolean)
+
+    if (cleanTags.length > 0) {
+      result[cleanGroup] = Array.from(new Set(cleanTags)).sort((left, right) =>
+        left.localeCompare(right, 'de')
+      )
+    }
+  }
+
+  return result
+}
+
+function getStoredTagGroups(): TagGroupsMap {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TAG_GROUPS_STORAGE_KEY)
+    if (!raw) {
+      return {}
+    }
+    return toStorageTagGroups(JSON.parse(raw))
+  } catch {
+    return {}
+  }
+}
+
+function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null {
+  const title = normalizeLabel(row.title)
+  if (title.includes(':')) {
+    const separatorIndex = title.indexOf(':')
+    const group = normalizeLabel(title.slice(0, separatorIndex))
+    const tag = normalizeLabel(title.slice(separatorIndex + 1))
+    if (group && tag) {
+      return { group, tag }
+    }
+  }
+
+  const normalizedPath = row.path.replace(/\\/g, '/')
+  const entityMatch = normalizedPath.match(/\/02_entities\/([^/]+)\/([^/]+)\.md$/i)
+  if (entityMatch) {
+    const group = normalizeLabel(entityMatch[1].replace(/_/g, ' '))
+    const tag = normalizeLabel(entityMatch[2].replace(/_/g, ' '))
+    if (group && tag) {
+      return { group, tag }
+    }
+  }
+
+  return null
+}
+
 function App() {
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
@@ -153,6 +232,17 @@ function App() {
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
+    daily: true,
+    tags: true,
+    other: true,
+  })
+  const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>(getStoredTagGroups)
+  const [newTagGroupName, setNewTagGroupName] = useState('')
+  const [selectedTagGroup, setSelectedTagGroup] = useState('')
+  const [newTagName, setNewTagName] = useState('')
+  const [viewerDropActive, setViewerDropActive] = useState(false)
+  const [splitDropActive, setSplitDropActive] = useState(false)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
   const [activeNotePath, setActiveNotePath] = useState('')
@@ -189,6 +279,10 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     window.localStorage.setItem(THEME_STORAGE_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    window.localStorage.setItem(TAG_GROUPS_STORAGE_KEY, JSON.stringify(customTagGroups))
+  }, [customTagGroups])
 
   const refreshTasks = async () => {
     if (!vaultLoaded) {
@@ -309,17 +403,96 @@ function App() {
     })
   }, [sortedNotes])
 
-  const tagNotes = useMemo(() => {
-    return sortedNotes.filter((row) => {
+  const groupedTagNotes = useMemo(() => {
+    const groups: Record<string, SearchRow[]> = {}
+    const ungrouped: SearchRow[] = []
+
+    for (const row of sortedNotes) {
+      const parsed = parseTagFromNote(row)
+      if (!parsed) {
+        continue
+      }
+
+      if (!groups[parsed.group]) {
+        groups[parsed.group] = []
+      }
+      groups[parsed.group].push(row)
+    }
+
+    for (const row of sortedNotes) {
       const type = row.note_type.toLowerCase()
-      return type.includes('tag') || /tag/i.test(row.path) || row.title.includes(':')
-    })
+      const parsed = parseTagFromNote(row)
+      if (!parsed && (type.includes('tag') || /tag/i.test(row.path) || row.title.includes(':'))) {
+        ungrouped.push(row)
+      }
+    }
+
+    for (const rows of Object.values(groups)) {
+      rows.sort((left, right) => left.title.localeCompare(right.title, 'de'))
+    }
+
+    ungrouped.sort((left, right) => left.title.localeCompare(right.title, 'de'))
+
+    return { groups, ungrouped }
   }, [sortedNotes])
 
+  const tagNotes = useMemo(() => {
+    return Object.values(groupedTagNotes.groups).flat()
+  }, [groupedTagNotes.groups])
+
   const otherNotes = useMemo(() => {
-    const knownPaths = new Set([...dailyNotes, ...tagNotes].map((item) => item.path))
+    const knownPaths = new Set([...dailyNotes, ...tagNotes, ...groupedTagNotes.ungrouped].map((item) => item.path))
     return sortedNotes.filter((row) => !knownPaths.has(row.path))
-  }, [dailyNotes, sortedNotes, tagNotes])
+  }, [dailyNotes, groupedTagNotes.ungrouped, sortedNotes, tagNotes])
+
+  const discoveredTagGroups = useMemo(() => {
+    const result: TagGroupsMap = {}
+    for (const row of sortedNotes) {
+      const parsed = parseTagFromNote(row)
+      if (!parsed) {
+        continue
+      }
+
+      if (!result[parsed.group]) {
+        result[parsed.group] = []
+      }
+      result[parsed.group].push(parsed.tag)
+    }
+
+    for (const [group, tags] of Object.entries(result)) {
+      result[group] = Array.from(new Set(tags)).sort((left, right) => left.localeCompare(right, 'de'))
+    }
+
+    return result
+  }, [sortedNotes])
+
+  const mergedTagGroups = useMemo(() => {
+    const merged: TagGroupsMap = {}
+    const allGroups = new Set([...Object.keys(discoveredTagGroups), ...Object.keys(customTagGroups)])
+
+    for (const group of allGroups) {
+      const combined = [...(discoveredTagGroups[group] ?? []), ...(customTagGroups[group] ?? [])]
+      merged[group] = Array.from(new Set(combined)).sort((left, right) => left.localeCompare(right, 'de'))
+    }
+
+    return merged
+  }, [customTagGroups, discoveredTagGroups])
+
+  const sortedTagGroupNames = useMemo(
+    () => Object.keys(mergedTagGroups).sort((left, right) => left.localeCompare(right, 'de')),
+    [mergedTagGroups]
+  )
+
+  useEffect(() => {
+    if (!selectedTagGroup && sortedTagGroupNames.length > 0) {
+      setSelectedTagGroup(sortedTagGroupNames[0])
+      return
+    }
+
+    if (selectedTagGroup && !sortedTagGroupNames.includes(selectedTagGroup)) {
+      setSelectedTagGroup(sortedTagGroupNames[0] ?? '')
+    }
+  }, [selectedTagGroup, sortedTagGroupNames])
 
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const compareCandidates = openTabs.filter((tab) => tab.path !== activeTab?.path)
@@ -527,6 +700,128 @@ function App() {
     setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
   }
 
+  const toggleFolder = (folderKey: string) => {
+    setExpandedFolders((prev) => ({ ...prev, [folderKey]: !prev[folderKey] }))
+  }
+
+  const setFolderOpen = (folderKey: string) => {
+    setExpandedFolders((prev) => ({ ...prev, [folderKey]: true }))
+  }
+
+  const getDraggedNoteData = (event: DragEvent<HTMLElement>) => {
+    const notePath =
+      event.dataTransfer.getData('application/x-note-path') ||
+      event.dataTransfer.getData('application/x-open-tab-path') ||
+      event.dataTransfer.getData('text/plain')
+    const noteTitle =
+      event.dataTransfer.getData('application/x-note-title') ||
+      event.dataTransfer.getData('application/x-open-tab-title')
+
+    const cleanPath = normalizeLabel(notePath)
+    if (!cleanPath) {
+      return null
+    }
+
+    return {
+      path: cleanPath,
+      title: normalizeLabel(noteTitle) || undefined,
+    }
+  }
+
+  const onNoteDragStart = (event: DragEvent<HTMLElement>, path: string, title: string) => {
+    event.dataTransfer.effectAllowed = 'copyMove'
+    event.dataTransfer.setData('application/x-note-path', path)
+    event.dataTransfer.setData('application/x-note-title', title)
+    event.dataTransfer.setData('text/plain', path)
+  }
+
+  const onTabDragStart = (event: DragEvent<HTMLElement>, tab: NoteTab) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-open-tab-path', tab.path)
+    event.dataTransfer.setData('application/x-open-tab-title', tab.title)
+    event.dataTransfer.setData('text/plain', tab.path)
+  }
+
+  const addTagGroup = () => {
+    const nextGroupName = normalizeLabel(newTagGroupName)
+    if (!nextGroupName) {
+      return
+    }
+
+    setCustomTagGroups((prev) => {
+      if (prev[nextGroupName]) {
+        return prev
+      }
+      return { ...prev, [nextGroupName]: [] }
+    })
+    setFolderOpen(`tag-group-${nextGroupName}`)
+    setSelectedTagGroup(nextGroupName)
+    setNewTagGroupName('')
+    setMessage(`Tag-Gruppe angelegt: ${nextGroupName}`)
+  }
+
+  const addTagToGroup = () => {
+    const groupName = normalizeLabel(selectedTagGroup)
+    const tagName = normalizeLabel(newTagName)
+    if (!groupName || !tagName) {
+      return
+    }
+
+    setCustomTagGroups((prev) => {
+      const existing = prev[groupName] ?? []
+      if (existing.includes(tagName)) {
+        return prev
+      }
+
+      return {
+        ...prev,
+        [groupName]: [...existing, tagName].sort((left, right) => left.localeCompare(right, 'de')),
+      }
+    })
+    setFolderOpen(`tag-group-${groupName}`)
+    setNewTagName('')
+    setMessage(`Tag hinzugefuegt: ${groupName}:${tagName}`)
+  }
+
+  const handleViewerDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setViewerDropActive(false)
+    const payload = getDraggedNoteData(event)
+    if (!payload) {
+      return
+    }
+    void openNoteInTab(payload.path, payload.title)
+  }
+
+  const handleSplitDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setSplitDropActive(false)
+    const payload = getDraggedNoteData(event)
+    if (!payload) {
+      return
+    }
+
+    const applySplitWithPath = (path: string) => {
+      const fallback = openTabs.find((tab) => tab.path !== activeTab?.path && tab.path !== path)?.path
+      setSplitView(true)
+      if (activeTab && path !== activeTab.path) {
+        setCompareNotePath(path)
+      } else {
+        setCompareNotePath(fallback ?? '')
+      }
+    }
+
+    const alreadyOpen = openTabs.some((tab) => tab.path === payload.path)
+    if (alreadyOpen) {
+      applySplitWithPath(payload.path)
+      return
+    }
+
+    void openNoteInTab(payload.path, payload.title).then(() => {
+      applySplitWithPath(payload.path)
+    })
+  }
+
   const toggleSplitView = () => {
     if (openTabs.length < 2) {
       return
@@ -566,6 +861,55 @@ function App() {
       event.preventDefault()
       void saveCapture()
     }
+  }
+
+  const renderNoteItem = (row: SearchRow, depth = 1) => {
+    const noteTitle = row.title || getFileName(row.path)
+
+    return (
+      <button
+        key={row.path}
+        className="tree-item note-item"
+        style={{ paddingLeft: `${0.45 + depth * 0.55}rem` }}
+        draggable
+        onDragStart={(event) => onNoteDragStart(event, row.path, noteTitle)}
+        onClick={() => void openNoteInTab(row.path, row.title)}
+      >
+        <strong>{noteTitle}</strong>
+        <span>{row.note_type}</span>
+      </button>
+    )
+  }
+
+  const renderFolder = (
+    folderKey: string,
+    label: string,
+    items: SearchRow[],
+    depth = 0,
+    emptyText = 'Keine Eintraege.'
+  ) => {
+    const isOpen = expandedFolders[folderKey] ?? true
+
+    return (
+      <div className="folder-node" key={folderKey}>
+        <button
+          className="folder-toggle"
+          style={{ paddingLeft: `${0.35 + depth * 0.55}rem` }}
+          onClick={() => toggleFolder(folderKey)}
+        >
+          <span>{isOpen ? 'v' : '>'}</span>
+          <strong>{label}</strong>
+          <em>{items.length}</em>
+        </button>
+
+        {isOpen ? (
+          <div className="folder-children">
+            {items.length === 0 ? <p className="empty-copy folder-empty">{emptyText}</p> : null}
+            {items.map((row) => renderNoteItem(row, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   const renderSidebarContent = () => {
@@ -675,6 +1019,93 @@ function App() {
       )
     }
 
+    if (sidebarView === 'tags') {
+      return (
+        <div className="sidebar-content">
+          <div className="sidebar-header-row">
+            <h3>Tagging</h3>
+          </div>
+
+          <section className="tag-actions">
+            <label className="field-label" htmlFor="new-tag-group-input">
+              Neue Tag-Gruppe
+            </label>
+            <div className="tag-action-row">
+              <input
+                id="new-tag-group-input"
+                value={newTagGroupName}
+                onChange={(event) => setNewTagGroupName(event.target.value)}
+                placeholder="z. B. Personen"
+              />
+              <button onClick={addTagGroup} disabled={!newTagGroupName.trim()}>
+                Gruppe anlegen
+              </button>
+            </div>
+          </section>
+
+          <section className="tag-actions">
+            <label className="field-label" htmlFor="existing-tag-group-select">
+              Tag in Gruppe anlegen
+            </label>
+            <div className="tag-action-row">
+              <select
+                id="existing-tag-group-select"
+                value={selectedTagGroup}
+                onChange={(event) => setSelectedTagGroup(event.target.value)}
+              >
+                <option value="" disabled>
+                  Gruppe waehlen
+                </option>
+                {sortedTagGroupNames.map((groupName) => (
+                  <option key={groupName} value={groupName}>
+                    {groupName}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={newTagName}
+                onChange={(event) => setNewTagName(event.target.value)}
+                placeholder="z. B. Max"
+              />
+              <button onClick={addTagToGroup} disabled={!selectedTagGroup || !newTagName.trim()}>
+                Tag anlegen
+              </button>
+            </div>
+          </section>
+
+          <section className="tree-scroll">
+            {sortedTagGroupNames.length === 0 ? <p className="empty-copy">Keine Tag-Gruppen vorhanden.</p> : null}
+            {sortedTagGroupNames.map((groupName) => {
+              const folderKey = `tag-group-${groupName}`
+              const tags = mergedTagGroups[groupName] ?? []
+              const isOpen = expandedFolders[folderKey] ?? true
+
+              return (
+                <div className="folder-node" key={folderKey}>
+                  <button className="folder-toggle" onClick={() => toggleFolder(folderKey)}>
+                    <span>{isOpen ? 'v' : '>'}</span>
+                    <strong>{groupName}</strong>
+                    <em>{tags.length}</em>
+                  </button>
+
+                  {isOpen ? (
+                    <div className="folder-children">
+                      {tags.length === 0 ? <p className="empty-copy folder-empty">Noch keine Tags.</p> : null}
+                      {tags.map((tag) => (
+                        <div key={`${groupName}:${tag}`} className="tag-pill">
+                          {groupName}:{tag}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </section>
+        </div>
+      )
+    }
+
     return (
       <div className="sidebar-content">
         <div className="sidebar-header-row">
@@ -698,37 +1129,41 @@ function App() {
           />
         </div>
 
-        <section className="tree-group">
-          <h4>Daily Notes</h4>
-          {dailyNotes.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
-          {dailyNotes.map((row) => (
-            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
-              <strong>{row.title || getFileName(row.path)}</strong>
-              <span>{toGermanTimestamp(row.updated_at)}</span>
-            </button>
-          ))}
-        </section>
+        <section className="tree-scroll">
+          {renderFolder('daily', 'Daily Notes', dailyNotes, 0, 'Keine Daily Notes gefunden.')}
 
-        <section className="tree-group">
-          <h4>Tag Notes</h4>
-          {tagNotes.length === 0 ? <p className="empty-copy">Keine Tag-Notizen gefunden.</p> : null}
-          {tagNotes.map((row) => (
-            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
-              <strong>{row.title || getFileName(row.path)}</strong>
-              <span>{row.note_type}</span>
+          <div className="folder-node">
+            <button className="folder-toggle" onClick={() => toggleFolder('tags')}>
+              <span>{(expandedFolders.tags ?? true) ? 'v' : '>'}</span>
+              <strong>Tag Notes</strong>
+              <em>{tagNotes.length + groupedTagNotes.ungrouped.length}</em>
             </button>
-          ))}
-        </section>
 
-        <section className="tree-group">
-          <h4>Weitere Notizen</h4>
-          {otherNotes.length === 0 ? <p className="empty-copy">Keine weiteren Notizen gefunden.</p> : null}
-          {otherNotes.map((row) => (
-            <button key={row.path} className="tree-item" onClick={() => void openNoteInTab(row.path, row.title)}>
-              <strong>{row.title || getFileName(row.path)}</strong>
-              <span>{row.note_type}</span>
-            </button>
-          ))}
+            {(expandedFolders.tags ?? true) ? (
+              <div className="folder-children">
+                {Object.keys(groupedTagNotes.groups)
+                  .sort((left, right) => left.localeCompare(right, 'de'))
+                  .map((groupName) =>
+                    renderFolder(
+                      `notes-tag-group-${groupName}`,
+                      groupName,
+                      groupedTagNotes.groups[groupName],
+                      1,
+                      'Keine Notizen in dieser Gruppe.'
+                    )
+                  )}
+                {renderFolder(
+                  'notes-tag-ungrouped',
+                  'Ohne Gruppe',
+                  groupedTagNotes.ungrouped,
+                  1,
+                  'Keine ungruppierten Tag-Notizen.'
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          {renderFolder('other', 'Weitere Notizen', otherNotes, 0, 'Keine weiteren Notizen gefunden.')}
         </section>
       </div>
     )
@@ -792,6 +1227,13 @@ function App() {
           T
         </button>
         <button
+          className={sidebarView === 'tags' ? 'active' : ''}
+          onClick={() => openSidebarView('tags')}
+          title="Tagging"
+        >
+          #
+        </button>
+        <button
           className={sidebarView === 'review' ? 'active' : ''}
           onClick={() => openSidebarView('review')}
           title="Review"
@@ -801,8 +1243,12 @@ function App() {
 
         <div className="rail-spacer" />
 
-        <button className={settingsOpen ? 'active' : ''} onClick={() => setSettingsOpen((prev) => !prev)} title="Einstellungen">
-          G
+        <button
+          className={settingsOpen ? 'active' : ''}
+          onClick={() => setSettingsOpen((prev) => !prev)}
+          title="Einstellungen"
+        >
+          E
         </button>
       </aside>
 
@@ -831,7 +1277,12 @@ function App() {
           {openTabs.length === 0 ? <p className="empty-copy">Links eine Notiz auswaehlen, um sie zu oeffnen.</p> : null}
           {openTabs.map((tab) => (
             <div key={tab.path} className={`editor-tab ${tab.path === activeTab?.path ? 'active' : ''}`}>
-              <button className="tab-open" onClick={() => setActiveNotePath(tab.path)}>
+              <button
+                className="tab-open"
+                onClick={() => setActiveNotePath(tab.path)}
+                draggable
+                onDragStart={(event) => onTabDragStart(event, tab)}
+              >
                 {tab.title}
               </button>
               <button className="tab-close" onClick={() => closeTab(tab.path)}>
@@ -839,6 +1290,18 @@ function App() {
               </button>
             </div>
           ))}
+
+          <div
+            className={`split-drop-target ${splitDropActive ? 'active' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setSplitDropActive(true)
+            }}
+            onDragLeave={() => setSplitDropActive(false)}
+            onDrop={handleSplitDrop}
+          >
+            Fuer Split hier ablegen
+          </div>
         </div>
 
         {splitView && compareCandidates.length > 0 ? (
@@ -858,7 +1321,17 @@ function App() {
           </div>
         ) : null}
 
-        <div className={`editor-grid ${splitView && compareTab ? 'split' : ''}`}>
+        <div
+          className={`editor-grid ${splitView && compareTab ? 'split' : ''} ${
+            viewerDropActive ? 'drop-active' : ''
+          }`}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setViewerDropActive(true)
+          }}
+          onDragLeave={() => setViewerDropActive(false)}
+          onDrop={handleViewerDrop}
+        >
           <article className="editor-pane">
             {activeTab ? (
               activeTab.loading ? (
