@@ -1,0 +1,1 @@
+"""NickNotes backend package."""

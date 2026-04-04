@@ -1,95 +1,112 @@
-# NickNotes MVP (Sprint 1)
+﻿# NickNotes v2
 
-Windows-first MVP for a local-first second-brain app with fast capture, automatic tagging suggestions, task extraction, and markdown-based storage.
+NickNotes ist jetzt auf einen modernen Desktop-Stack migriert:
 
-## Goals of this sprint
+- Frontend: React + TypeScript + Vite
+- Backend: Python (FastAPI)
+- Desktop Wrapper: Electron
 
-- Quick capture for unstructured thoughts
-- Markdown files as source of truth (portable vault)
-- Local SQLite index for fast search, task views, and tag relations
-- Tag groups for:
-  - `person`
-  - `project`
-  - `customer`
-  - `machine_no`
-  - `machine_type`
-- Explicit task creation via `todo:`
-- Daily and weekly review board
-- Multi-vault support (local folders including OneDrive)
-
-## Architecture
-
-- UI: Python `tkinter` desktop app (runs on Windows now)
-- Storage:
-  - Vault markdown files for notes/entities/tasks
-  - Vault-local SQLite index (`99_system/index.db`)
-- Modes:
-  - Core mode: local parser and deterministic rules only
-  - Smart mode: optional OpenAI-based enrichment (API key required)
-
-The vault format is client-agnostic, so a future Flutter client can read/write the same data model.
-
-## Vault structure
+## Projektstruktur
 
 ```text
-<Vault>/
-  00_inbox/
-  01_daily/
-  02_entities/
-    person/
-    project/
-    customer/
-    machine_no/
-    machine_type/
-  03_tasks/
-    open/
-    done/
-  99_system/
-    index.db
-    config.json
+NickNotes/
+  src/
+    backend/
+      api.py
+      server.py
+      nicknotes_backend/
+        ai_client.py
+        indexer.py
+        markdown_io.py
+        models.py
+        parser.py
+        vault.py
+    desktop/
+      main.mjs
+      preload.cjs
+    frontend/
+      index.html
+      public/
+      src/
+        App.tsx
+        App.css
+        index.css
+        main.tsx
+  package.json
+  vite.config.ts
+  requirements.txt
+  Start-NickNotes.ps1
 ```
 
-## Quick capture syntax
+## Voraussetzungen
 
-- Explicit tags in text:
-  - `person:max_mustermann`
-  - `project:retrofit_line3`
-  - `customer:acme`
-  - `machine_no:anl_4711`
-  - `machine_type:laser_cutter`
-- Explicit tasks:
+- Node.js + npm
+- Python 3.11+ (empfohlen)
 
-```text
-todo: Angebot pruefen | due:2026-04-03 | prio:H | project:retrofit_line3
-```
+## Installation
 
-Supported metadata keys: `due`, `prio`/`priority`, `status`, plus tag categories.
-
-## Run
-
-No external dependencies are required for core mode.
+### 1) Python Backend
 
 ```powershell
-python main.py
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Optional smart mode:
+### 2) Frontend + Electron
 
-1. Set environment variable `OPENAI_API_KEY`
-2. Enable smart mode in `<Vault>/99_system/config.json`:
-
-```json
-{
-  "mode": "smart",
-  "openai": {
-    "enabled": true,
-    "model": "gpt-4.1-mini",
-    "api_key_env": "OPENAI_API_KEY"
-  }
-}
+```powershell
+npm install
 ```
 
-## Notes
+## Entwicklung starten
 
-- This MVP intentionally keeps parsing deterministic and lightweight.
-- Reindex is available from the UI when opening copied vaults or after manual edits.
+```powershell
+npm run dev
+```
+
+Das startet:
+
+- Vite Dev Server (Frontend)
+- Electron App
+- Python Backend automatisch aus Electron (`python -m src.backend.server`)
+
+Alternativ per Skript:
+
+```powershell
+.\Start-NickNotes.ps1
+```
+
+## Build
+
+```powershell
+npm run build
+```
+
+Das Frontend-Bundle wird nach `dist/frontend` erzeugt.
+
+## Backend API (lokal)
+
+Standardmäßig unter:
+
+- `http://127.0.0.1:8765`
+
+Wichtige Endpunkte:
+
+- `POST /vault/open`
+- `POST /vault/create`
+- `POST /vault/reindex`
+- `POST /capture/preview`
+- `POST /capture/save`
+- `GET /tasks`
+- `POST /tasks/{task_id}/done`
+- `GET /search`
+- `GET /notes/content`
+- `POST /notes/open`
+- `GET /review`
+
+## Hinweise
+
+- Das alte Tkinter-UI wurde durch React/Electron ersetzt.
+- Die bestehende Python-Kernlogik wurde in `src/backend/nicknotes_backend` uebernommen.
