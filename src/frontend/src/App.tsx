@@ -64,6 +64,7 @@ type ReviewWeekly = {
 type BackendState = {
   vaultLoaded: boolean
   vaultPath?: string
+  noteBasePath?: string
   counts?: VaultCounts
 }
 
@@ -78,9 +79,10 @@ type NoteTab = {
 }
 
 const THEME_STORAGE_KEY = 'nicknotes-theme'
-const TAG_GROUPS_STORAGE_KEY = 'nicknotes-custom-tag-groups'
+const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
 
 type TagGroupsMap = Record<string, string[]>
+type TagMenuTarget = { groupName: string; tagName: string } | null
 
 function getPreferredTheme(): ThemeMode {
   if (typeof window === 'undefined') {
@@ -133,6 +135,12 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+function getPathTail(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] || path
+}
+
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
 }
@@ -159,29 +167,28 @@ function toStorageTagGroups(value: unknown): TagGroupsMap {
       .map((entry) => normalizeLabel(entry))
       .filter(Boolean)
 
-    if (cleanTags.length > 0) {
-      result[cleanGroup] = Array.from(new Set(cleanTags)).sort((left, right) =>
-        left.localeCompare(right, 'de')
-      )
-    }
+    result[cleanGroup] = Array.from(new Set(cleanTags)).sort((left, right) =>
+      left.localeCompare(right, 'de')
+    )
   }
 
   return result
 }
 
-function getStoredTagGroups(): TagGroupsMap {
+function getStoredDisplayName(): string {
   if (typeof window === 'undefined') {
-    return {}
+    return 'Max'
   }
 
   try {
-    const raw = window.localStorage.getItem(TAG_GROUPS_STORAGE_KEY)
+    const raw = window.localStorage.getItem(DISPLAY_NAME_STORAGE_KEY)
     if (!raw) {
-      return {}
+      return 'Max'
     }
-    return toStorageTagGroups(JSON.parse(raw))
+    const parsed = normalizeLabel(raw)
+    return parsed || 'Max'
   } catch {
-    return {}
+    return 'Max'
   }
 }
 
@@ -197,6 +204,15 @@ function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null
   }
 
   const normalizedPath = row.path.replace(/\\/g, '/')
+  const tagOverviewMatch = normalizedPath.match(/\/02_tags\/([^/]+)\/([^/]+)\/(?:overview|index)\.md$/i)
+  if (tagOverviewMatch) {
+    const group = normalizeLabel(tagOverviewMatch[1].replace(/_/g, ' '))
+    const tag = normalizeLabel(tagOverviewMatch[2].replace(/_/g, ' '))
+    if (group && tag) {
+      return { group, tag }
+    }
+  }
+
   const entityMatch = normalizedPath.match(/\/02_entities\/([^/]+)\/([^/]+)\.md$/i)
   if (entityMatch) {
     const group = normalizeLabel(entityMatch[1].replace(/_/g, ' '))
@@ -232,15 +248,18 @@ function App() {
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [displayName, setDisplayName] = useState(getStoredDisplayName)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     daily: true,
     tags: true,
     other: true,
   })
-  const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>(getStoredTagGroups)
+  const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
   const [newTagGroupName, setNewTagGroupName] = useState('')
   const [selectedTagGroup, setSelectedTagGroup] = useState('')
   const [newTagName, setNewTagName] = useState('')
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
+  const [tagMenuTarget, setTagMenuTarget] = useState<TagMenuTarget>(null)
   const [viewerDropActive, setViewerDropActive] = useState(false)
   const [splitDropActive, setSplitDropActive] = useState(false)
 
@@ -281,11 +300,11 @@ function App() {
   }, [theme])
 
   useEffect(() => {
-    window.localStorage.setItem(TAG_GROUPS_STORAGE_KEY, JSON.stringify(customTagGroups))
-  }, [customTagGroups])
+    window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName)
+  }, [displayName])
 
-  const refreshTasks = async () => {
-    if (!vaultLoaded) {
+  const refreshTasks = async (force = false) => {
+    if (!vaultLoaded && !force) {
       return
     }
 
@@ -293,8 +312,8 @@ function App() {
     setTasks(response.items)
   }
 
-  const runSearch = async (query: string) => {
-    if (!vaultLoaded) {
+  const runSearch = async (query: string, force = false) => {
+    if (!vaultLoaded && !force) {
       return
     }
 
@@ -305,8 +324,8 @@ function App() {
     setSearchResults(response.items)
   }
 
-  const refreshReview = async () => {
-    if (!vaultLoaded) {
+  const refreshReview = async (force = false) => {
+    if (!vaultLoaded && !force) {
       return
     }
 
@@ -315,24 +334,38 @@ function App() {
     setWeekly(response.weekly)
   }
 
+  const refreshTagGroups = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups')
+    setCustomTagGroups(toStorageTagGroups(response.groups))
+  }
+
   const loadState = async () => {
     try {
       const state = await apiRequest<BackendState>(backendUrl, '/state')
       if (!state.vaultLoaded) {
         setVaultLoaded(false)
-        setMessage('Kein Vault geladen.')
+        setMessage('Keine NoteBase geladen.')
         return
       }
 
       setVaultLoaded(true)
-      setVaultPath(state.vaultPath ?? '')
+      setVaultPath(state.noteBasePath ?? state.vaultPath ?? '')
       if (state.counts) {
         setCounts(state.counts)
       }
-      setMessage('Vault geladen.')
+      setMessage('NoteBase geladen.')
       setError('')
 
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
+      await Promise.all([
+        refreshTasks(true),
+        runSearch(searchQuery, true),
+        refreshReview(true),
+        refreshTagGroups(true),
+      ])
     } catch (caught) {
       setError(`Backend nicht erreichbar: ${String(caught)}`)
     }
@@ -499,6 +532,7 @@ function App() {
   const compareTab = splitView
     ? openTabs.find((tab) => tab.path === compareNotePath) ?? compareCandidates[0] ?? null
     : null
+  const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
 
   const pickDirectory = async (): Promise<string | null> => {
     if (!window.nicknotes?.selectDirectory) {
@@ -512,18 +546,31 @@ function App() {
       setError('')
       const path = vaultPath.trim()
       if (!path) {
-        throw new Error('Bitte zuerst einen Board-Pfad angeben.')
+        throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
       }
 
-      const response = await apiRequest<{ counts: VaultCounts }>(backendUrl, '/vault/open', {
+      const response = await apiRequest<{
+        counts: VaultCounts
+        noteBasePath?: string
+        tagGroups?: TagGroupsMap
+      }>(backendUrl, '/notebase/open', {
         method: 'POST',
         body: JSON.stringify({ path }),
       })
+      setVaultPath(response.noteBasePath ?? path)
       setVaultLoaded(true)
       setCounts(response.counts)
-      setMessage('Board erfolgreich geladen und indexiert.')
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setMessage('NoteBase erfolgreich geladen und indexiert.')
 
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
+      await Promise.all([
+        refreshTasks(true),
+        runSearch(searchQuery, true),
+        refreshReview(true),
+        refreshTagGroups(true),
+      ])
     } catch (caught) {
       setError(String(caught))
     }
@@ -537,38 +584,78 @@ function App() {
         return
       }
 
-      const name = window.prompt('Name des neuen Boards:', 'NickNotesBoard')?.trim()
+      const preferredName = window.prompt('Wie sollen wir dich nennen?', displayName)?.trim()
+      const effectiveName = normalizeLabel(preferredName || '') || displayName
+      if (preferredName) {
+        setDisplayName(effectiveName)
+      }
+
+      const name = window.prompt('Name der neuen NoteBase:', `${effectiveName}NoteBase`)?.trim()
       if (!name) {
         return
       }
 
-      const response = await apiRequest<{ vaultPath: string; counts: VaultCounts }>(
+      const response = await apiRequest<{
+        vaultPath: string
+        noteBasePath?: string
+        counts: VaultCounts
+        tagGroups?: TagGroupsMap
+      }>(
         backendUrl,
-        '/vault/create',
+        '/notebase/create',
         {
           method: 'POST',
           body: JSON.stringify({ parentPath, name }),
         }
       )
 
-      setVaultPath(response.vaultPath)
+      setVaultPath(response.noteBasePath ?? response.vaultPath)
       setVaultLoaded(true)
       setCounts(response.counts)
-      setMessage(`Neues Board erstellt: ${response.vaultPath}`)
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setMessage(`Neue NoteBase erstellt: ${response.noteBasePath ?? response.vaultPath}`)
+      await Promise.all([
+        refreshTasks(true),
+        runSearch(searchQuery, true),
+        refreshReview(true),
+        refreshTagGroups(true),
+      ])
     } catch (caught) {
       setError(String(caught))
     }
   }
 
-  const reindexVault = async () => {
+  const pickAndOpenVault = async () => {
     try {
-      const response = await apiRequest<{ counts: VaultCounts }>(backendUrl, '/vault/reindex', {
+      setError('')
+      const path = await pickDirectory()
+      if (!path) {
+        return
+      }
+      setVaultPath(path)
+      const response = await apiRequest<{
+        counts: VaultCounts
+        noteBasePath?: string
+        tagGroups?: TagGroupsMap
+      }>(backendUrl, '/notebase/open', {
         method: 'POST',
+        body: JSON.stringify({ path }),
       })
+      setVaultLoaded(true)
+      setVaultPath(response.noteBasePath ?? path)
       setCounts(response.counts)
-      setMessage('Reindex abgeschlossen.')
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setMessage('NoteBase automatisch geladen.')
+      await Promise.all([
+        refreshTasks(true),
+        runSearch(searchQuery, true),
+        refreshReview(true),
+        refreshTagGroups(true),
+      ])
     } catch (caught) {
       setError(String(caught))
     }
@@ -742,45 +829,158 @@ function App() {
     event.dataTransfer.setData('text/plain', tab.path)
   }
 
-  const addTagGroup = () => {
+  const addTagGroup = async () => {
     const nextGroupName = normalizeLabel(newTagGroupName)
     if (!nextGroupName) {
       return
     }
 
-    setCustomTagGroups((prev) => {
-      if (prev[nextGroupName]) {
-        return prev
-      }
-      return { ...prev, [nextGroupName]: [] }
-    })
-    setFolderOpen(`tag-group-${nextGroupName}`)
-    setSelectedTagGroup(nextGroupName)
-    setNewTagGroupName('')
-    setMessage(`Tag-Gruppe angelegt: ${nextGroupName}`)
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups/add-group', {
+        method: 'POST',
+        body: JSON.stringify({ groupName: nextGroupName }),
+      })
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setFolderOpen(`tag-group-${nextGroupName}`)
+      setSelectedTagGroup(nextGroupName)
+      setNewTagGroupName('')
+      setMessage(`Tag-Gruppe angelegt: ${nextGroupName}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
   }
 
-  const addTagToGroup = () => {
+  const addTagToGroup = async () => {
     const groupName = normalizeLabel(selectedTagGroup)
     const tagName = normalizeLabel(newTagName)
     if (!groupName || !tagName) {
       return
     }
 
-    setCustomTagGroups((prev) => {
-      const existing = prev[groupName] ?? []
-      if (existing.includes(tagName)) {
-        return prev
-      }
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups/add-tag', {
+        method: 'POST',
+        body: JSON.stringify({ groupName, tagName }),
+      })
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setFolderOpen(`tag-group-${groupName}`)
+      setNewTagName('')
+      setMessage(`Tag hinzugefuegt: ${groupName}:${tagName}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
 
-      return {
-        ...prev,
-        [groupName]: [...existing, tagName].sort((left, right) => left.localeCompare(right, 'de')),
-      }
-    })
-    setFolderOpen(`tag-group-${groupName}`)
-    setNewTagName('')
-    setMessage(`Tag hinzugefuegt: ${groupName}:${tagName}`)
+  const renameTag = async (groupName: string, tagName: string) => {
+    const newTagName = window.prompt(`Tag umbenennen (${groupName}:${tagName})`, tagName)?.trim()
+    if (!newTagName || newTagName === tagName) {
+      return
+    }
+    const applyToNotes = window.confirm(
+      `Soll "${groupName}:${tagName}" in allen Notizen automatisch in "${groupName}:${newTagName}" umbenannt werden?`
+    )
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/rename-tag',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupName, tagName, newTagName, applyToNotes }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setTagMenuTarget(null)
+      setMessage(
+        applyToNotes
+          ? `Tag umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
+          : 'Tag umbenannt. Historische Notiz-Tags wurden beibehalten.'
+      )
+      await Promise.all([runSearch(searchQuery), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const moveTagToOtherGroup = async (groupName: string, tagName: string) => {
+    const targetGroup = window.prompt(
+      `Tag "${tagName}" nach welcher Gruppe verschieben?`,
+      sortedTagGroupNames.find((name) => name !== groupName) ?? ''
+    )
+    const cleanTarget = normalizeLabel(targetGroup ?? '')
+    if (!cleanTarget || cleanTarget === groupName) {
+      return
+    }
+
+    const applyToNotes = window.confirm(
+      `Soll der Tag in bestehenden Notizen automatisch von "${groupName}:${tagName}" nach "${cleanTarget}:${tagName}" verschoben werden?`
+    )
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/move-tag',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            fromGroup: groupName,
+            tagName,
+            toGroup: cleanTarget,
+            applyToNotes,
+          }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setTagMenuTarget(null)
+      setMessage(
+        applyToNotes
+          ? `Tag verschoben und ${response.notesUpdated} Notizen aktualisiert.`
+          : 'Tag in andere Gruppe verschoben. Historische Notiz-Tags wurden beibehalten.'
+      )
+      await Promise.all([runSearch(searchQuery), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const deleteTag = async (groupName: string, tagName: string) => {
+    const option = window.prompt(
+      `Tag "${groupName}:${tagName}" loeschen:\n1 = auch aus bestehenden Notizen entfernen\n2 = nur aus der Tag-Verwaltung loeschen`,
+      '2'
+    )
+    if (!option || !['1', '2'].includes(option.trim())) {
+      return
+    }
+    const removeFromNotes = option.trim() === '1'
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/delete-tag',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupName, tagName, removeFromNotes }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setTagMenuTarget(null)
+      setMessage(
+        removeFromNotes
+          ? `Tag geloescht und aus ${response.notesUpdated} Notizen entfernt.`
+          : 'Tag aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.'
+      )
+      await Promise.all([runSearch(searchQuery), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
   }
 
   const handleViewerDrop = (event: DragEvent<HTMLElement>) => {
@@ -916,28 +1116,24 @@ function App() {
     if (sidebarView === 'vault') {
       return (
         <div className="sidebar-content">
-          <h3>Boards</h3>
-          <p className="muted-label">Aktives Board</p>
-          <p className="mono-block">{vaultPath || 'Kein Board geladen'}</p>
+          <h3>NoteBase</h3>
+          <p className="muted-label">Aktive NoteBase</p>
+          <p className="mono-block">{vaultPath || 'Keine NoteBase geladen'}</p>
 
           <label className="field-label" htmlFor="vault-path-input">
-            Board-Pfad
+            NoteBase-Pfad
           </label>
           <input
             id="vault-path-input"
             value={vaultPath}
             onChange={(event) => setVaultPath(event.target.value)}
-            placeholder="C:\\Pfad\\zum\\Board"
+            placeholder="C:\\Pfad\\zur\\NoteBase"
           />
 
           <div className="stacked-actions">
-            <button onClick={() => void pickDirectory().then((dir) => dir && setVaultPath(dir))}>Ordner waehlen</button>
-            <button onClick={() => void openVault()}>Board laden</button>
-            <button onClick={() => void createVault()}>Neues Board</button>
-            <button onClick={() => void reindexVault()} disabled={!vaultLoaded}>
-              Reindex
-            </button>
-            <button onClick={() => void loadState()}>Status aktualisieren</button>
+            <button onClick={() => void pickAndOpenVault()}>Ordner waehlen + laden</button>
+            <button onClick={() => void openVault()}>Pfad laden</button>
+            <button onClick={() => void createVault()}>Neue NoteBase</button>
           </div>
         </div>
       )
@@ -1024,54 +1220,12 @@ function App() {
         <div className="sidebar-content">
           <div className="sidebar-header-row">
             <h3>Tagging</h3>
+            <button className="icon-button" onClick={() => setTagManagerOpen(true)} title="Tag-Manager oeffnen">
+              +
+            </button>
           </div>
 
-          <section className="tag-actions">
-            <label className="field-label" htmlFor="new-tag-group-input">
-              Neue Tag-Gruppe
-            </label>
-            <div className="tag-action-row">
-              <input
-                id="new-tag-group-input"
-                value={newTagGroupName}
-                onChange={(event) => setNewTagGroupName(event.target.value)}
-                placeholder="z. B. Personen"
-              />
-              <button onClick={addTagGroup} disabled={!newTagGroupName.trim()}>
-                Gruppe anlegen
-              </button>
-            </div>
-          </section>
-
-          <section className="tag-actions">
-            <label className="field-label" htmlFor="existing-tag-group-select">
-              Tag in Gruppe anlegen
-            </label>
-            <div className="tag-action-row">
-              <select
-                id="existing-tag-group-select"
-                value={selectedTagGroup}
-                onChange={(event) => setSelectedTagGroup(event.target.value)}
-              >
-                <option value="" disabled>
-                  Gruppe waehlen
-                </option>
-                {sortedTagGroupNames.map((groupName) => (
-                  <option key={groupName} value={groupName}>
-                    {groupName}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={newTagName}
-                onChange={(event) => setNewTagName(event.target.value)}
-                placeholder="z. B. Max"
-              />
-              <button onClick={addTagToGroup} disabled={!selectedTagGroup || !newTagName.trim()}>
-                Tag anlegen
-              </button>
-            </div>
-          </section>
+          <p className="muted-copy">Mit dem Plus oben rechts oeffnest du den Tag-Manager.</p>
 
           <section className="tree-scroll">
             {sortedTagGroupNames.length === 0 ? <p className="empty-copy">Keine Tag-Gruppen vorhanden.</p> : null}
@@ -1092,8 +1246,34 @@ function App() {
                     <div className="folder-children">
                       {tags.length === 0 ? <p className="empty-copy folder-empty">Noch keine Tags.</p> : null}
                       {tags.map((tag) => (
-                        <div key={`${groupName}:${tag}`} className="tag-pill">
-                          {groupName}:{tag}
+                        <div key={`${groupName}:${tag}`} className="tag-pill-row">
+                          <div className="tag-pill">
+                            {groupName}:{tag}
+                          </div>
+                          <div className="tag-row-actions">
+                            <button
+                              className="icon-button muted"
+                              onClick={() =>
+                                setTagMenuTarget((prev) =>
+                                  prev?.groupName === groupName && prev?.tagName === tag ? null : { groupName, tagName: tag }
+                                )
+                              }
+                              title="Tag verwalten"
+                            >
+                              ...
+                            </button>
+                            {tagMenuTarget?.groupName === groupName && tagMenuTarget?.tagName === tag ? (
+                              <div className="tag-context-menu">
+                                <button onClick={() => void renameTag(groupName, tag)}>Tag umbenennen</button>
+                                <button onClick={() => void moveTagToOtherGroup(groupName, tag)}>
+                                  In andere Gruppe verschieben
+                                </button>
+                                <button className="danger" onClick={() => void deleteTag(groupName, tag)}>
+                                  Tag loeschen
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1173,23 +1353,33 @@ function App() {
     return (
       <div className="launch-shell">
         <div className="launch-card">
-          <h1>NickNotes Workbench</h1>
-          <p>Board einmal oeffnen und danach in der Workbench arbeiten.</p>
+          <h1>Hallo {displayName}</h1>
+          <p>Waehle eine NoteBase aus und wir laden sie direkt automatisch.</p>
+
+          <label htmlFor="launch-display-name" className="field-label">
+            Anrede
+          </label>
+          <input
+            id="launch-display-name"
+            value={displayName}
+            onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
+            placeholder="Dein Name"
+          />
 
           <label htmlFor="launch-vault-path" className="field-label">
-            Board-Pfad
+            NoteBase-Pfad
           </label>
           <input
             id="launch-vault-path"
             value={vaultPath}
             onChange={(event) => setVaultPath(event.target.value)}
-            placeholder="C:\\Pfad\\zum\\Board"
+            placeholder="C:\\Pfad\\zur\\NoteBase"
           />
 
           <div className="launch-actions">
-            <button onClick={() => void pickDirectory().then((dir) => dir && setVaultPath(dir))}>Ordner waehlen</button>
-            <button onClick={() => void openVault()}>Board laden</button>
-            <button onClick={() => void createVault()}>Neues Board</button>
+            <button onClick={() => void pickAndOpenVault()}>Ordner waehlen + laden</button>
+            <button onClick={() => void openVault()}>Pfad laden</button>
+            <button onClick={() => void createVault()}>Neue NoteBase</button>
             <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
               {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
             </button>
@@ -1208,7 +1398,7 @@ function App() {
         <button
           className={sidebarView === 'vault' ? 'active' : ''}
           onClick={() => openSidebarView('vault')}
-          title="Boards"
+          title="NoteBase"
         >
           B
         </button>
@@ -1259,13 +1449,13 @@ function App() {
           <div>
             <h2>{activeTab?.title || 'Keine Notiz geoeffnet'}</h2>
             <p>
-              {vaultPath} | Notizen {counts.notes} | Tasks offen {counts.openTasks} | Tasks done {counts.doneTasks}
+              Notizen {counts.notes} | Tasks offen {counts.openTasks} | Tasks done {counts.doneTasks}
             </p>
           </div>
 
           <div className="header-actions">
             <button onClick={() => void runSearch(searchQuery)} disabled={!vaultLoaded}>
-              Explorer refresh
+              Ansicht aktualisieren
             </button>
             <button onClick={toggleSplitView} disabled={openTabs.length < 2}>
               {splitView ? 'Split aus' : 'Split an'}
@@ -1377,7 +1567,8 @@ function App() {
           </div>
 
           <div className="capture-right">
-            {error ? <span className="state-error">{error}</span> : <span>{message}</span>}
+            <div>{error ? <span className="state-error">{error}</span> : <span>{message}</span>}</div>
+            <div className="status-note-base">NoteBase: {noteBaseName}</div>
           </div>
         </footer>
       </section>
@@ -1406,6 +1597,127 @@ function App() {
             <button onClick={() => setSidebarOpen((prev) => !prev)}>{sidebarOpen ? 'Sidebar ausblenden' : 'Sidebar einblenden'}</button>
           </section>
         </aside>
+      ) : null}
+
+      {tagManagerOpen ? (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setTagManagerOpen(false)
+            setTagMenuTarget(null)
+          }}
+        >
+          <aside
+            className="tag-manager-modal"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <header className="sidebar-header-row">
+              <h3>Tag-Manager</h3>
+              <button
+                onClick={() => {
+                  setTagManagerOpen(false)
+                  setTagMenuTarget(null)
+                }}
+              >
+                Schliessen
+              </button>
+            </header>
+
+            <section className="tag-manager-grid">
+              <div className="tag-manager-column">
+                <label className="field-label" htmlFor="manager-new-tag-group-input">
+                  Neue Tag-Gruppe
+                </label>
+                <div className="tag-action-row">
+                  <input
+                    id="manager-new-tag-group-input"
+                    value={newTagGroupName}
+                    onChange={(event) => setNewTagGroupName(event.target.value)}
+                    placeholder="z. B. Customer"
+                  />
+                  <button onClick={() => void addTagGroup()} disabled={!newTagGroupName.trim()}>
+                    Gruppe anlegen
+                  </button>
+                </div>
+              </div>
+
+              <div className="tag-manager-column">
+                <label className="field-label" htmlFor="manager-existing-tag-group-select">
+                  Tag in bestehender Gruppe
+                </label>
+                <div className="tag-action-row">
+                  <select
+                    id="manager-existing-tag-group-select"
+                    value={selectedTagGroup}
+                    onChange={(event) => setSelectedTagGroup(event.target.value)}
+                  >
+                    <option value="" disabled>
+                      Gruppe waehlen
+                    </option>
+                    {sortedTagGroupNames.map((groupName) => (
+                      <option key={groupName} value={groupName}>
+                        {groupName}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={newTagName}
+                    onChange={(event) => setNewTagName(event.target.value)}
+                    placeholder="z. B. Acme GmbH"
+                  />
+                  <button onClick={() => void addTagToGroup()} disabled={!selectedTagGroup || !newTagName.trim()}>
+                    Tag anlegen
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="tree-scroll">
+              {sortedTagGroupNames.map((groupName) => {
+                const tags = mergedTagGroups[groupName] ?? []
+                return (
+                  <div key={`manager-${groupName}`} className="tag-manager-group">
+                    <h4>{groupName}</h4>
+                    {tags.length === 0 ? <p className="empty-copy">Noch keine Tags.</p> : null}
+                    {tags.map((tag) => (
+                      <div key={`manager-${groupName}-${tag}`} className="tag-pill-row">
+                        <div className="tag-pill">
+                          {groupName}:{tag}
+                        </div>
+                        <div className="tag-row-actions">
+                          <button
+                            className="icon-button muted"
+                            onClick={() =>
+                              setTagMenuTarget((prev) =>
+                                prev?.groupName === groupName && prev?.tagName === tag ? null : { groupName, tagName: tag }
+                              )
+                            }
+                            title="Tag verwalten"
+                          >
+                            ...
+                          </button>
+                          {tagMenuTarget?.groupName === groupName && tagMenuTarget?.tagName === tag ? (
+                            <div className="tag-context-menu">
+                              <button onClick={() => void renameTag(groupName, tag)}>Tag umbenennen</button>
+                              <button onClick={() => void moveTagToOtherGroup(groupName, tag)}>
+                                In andere Gruppe verschieben
+                              </button>
+                              <button className="danger" onClick={() => void deleteTag(groupName, tag)}>
+                                Tag loeschen
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </section>
+          </aside>
+        </div>
       ) : null}
     </div>
   )

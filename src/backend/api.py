@@ -68,6 +68,35 @@ class NoteOpenRequest(BaseModel):
     path: str
 
 
+class TagGroupRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+
+
+class TagCreateRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+    tag_name: str = Field(alias="tagName")
+
+
+class TagRenameRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+    tag_name: str = Field(alias="tagName")
+    new_tag_name: str = Field(alias="newTagName")
+    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
+
+
+class TagMoveRequest(BaseModel):
+    from_group: str = Field(alias="fromGroup")
+    tag_name: str = Field(alias="tagName")
+    to_group: str = Field(alias="toGroup")
+    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
+
+
+class TagDeleteRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+    tag_name: str = Field(alias="tagName")
+    remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "vaultLoaded": state.vault is not None}
@@ -80,6 +109,7 @@ def get_state() -> dict[str, Any]:
     return {
         "vaultLoaded": True,
         "vaultPath": str(state.vault.vault_path),
+        "noteBasePath": str(state.vault.vault_path),
         "counts": _counts(state.indexer),
     }
 
@@ -88,7 +118,7 @@ def get_state() -> dict[str, Any]:
 def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
     vault_path = Path(req.path).expanduser().resolve()
     if not vault_path.exists():
-        raise HTTPException(status_code=400, detail=f"Vault path not found: {vault_path}")
+        raise HTTPException(status_code=400, detail=f"NoteBase path not found: {vault_path}")
 
     state.close()
     vault = VaultManager(vault_path)
@@ -107,14 +137,17 @@ def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
     )
 
     indexed = indexer.reindex_vault(vault_path)
+    tag_groups = vault.sync_tag_groups_with_index(indexer)
     state.vault = vault
     state.indexer = indexer
     state.openai = openai
 
     return {
         "vaultPath": str(vault_path),
+        "noteBasePath": str(vault_path),
         "indexed": indexed,
         "mode": "smart" if smart_enabled else "core",
+        "tagGroups": tag_groups,
         "counts": _counts(indexer),
     }
 
@@ -127,7 +160,7 @@ def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
 
     name = req.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Vault name cannot be empty")
+        raise HTTPException(status_code=400, detail="NoteBase name cannot be empty")
 
     vault_path = parent / name
     vault_path.mkdir(parents=True, exist_ok=True)
@@ -138,7 +171,23 @@ def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
 def reindex_vault() -> dict[str, Any]:
     vault, indexer = _require_loaded()
     indexed = indexer.reindex_vault(vault.vault_path)
-    return {"indexed": indexed, "counts": _counts(indexer)}
+    tag_groups = vault.sync_tag_groups_with_index(indexer)
+    return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups}
+
+
+@app.post("/notebase/open")
+def open_notebase(req: VaultOpenRequest) -> dict[str, Any]:
+    return open_vault(req)
+
+
+@app.post("/notebase/create")
+def create_notebase(req: VaultCreateRequest) -> dict[str, Any]:
+    return create_vault(req)
+
+
+@app.post("/notebase/reindex")
+def reindex_notebase() -> dict[str, Any]:
+    return reindex_vault()
 
 
 @app.post("/capture/preview")
@@ -279,6 +328,76 @@ def get_review() -> dict[str, Any]:
     }
 
 
+@app.get("/tag-groups")
+def get_tag_groups() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"groups": vault.read_tag_groups()}
+
+
+@app.post("/tag-groups/add-group")
+def add_tag_group(req: TagGroupRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    groups = vault.add_tag_group(req.group_name, indexer)
+    return {"groups": groups}
+
+
+@app.post("/tag-groups/add-tag")
+def add_tag(req: TagCreateRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    groups = vault.add_tag_to_group(req.group_name, req.tag_name, indexer)
+    return {"groups": groups}
+
+
+@app.post("/tag-groups/rename-tag")
+def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        groups, touched = vault.rename_tag(
+            group_name=req.group_name,
+            tag_name=req.tag_name,
+            new_tag_name=req.new_tag_name,
+            apply_to_notes=req.apply_to_notes,
+            indexer=indexer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+
+
+@app.post("/tag-groups/move-tag")
+def move_tag(req: TagMoveRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        groups, touched = vault.move_tag(
+            from_group=req.from_group,
+            tag_name=req.tag_name,
+            to_group=req.to_group,
+            apply_to_notes=req.apply_to_notes,
+            indexer=indexer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+
+
+@app.post("/tag-groups/delete-tag")
+def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        groups, touched = vault.delete_tag(
+            group_name=req.group_name,
+            tag_name=req.tag_name,
+            remove_from_notes=req.remove_from_notes,
+            indexer=indexer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+
+
 @app.on_event("shutdown")
 def on_shutdown() -> None:
     state.close()
@@ -286,7 +405,7 @@ def on_shutdown() -> None:
 
 def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
     if not state.vault or not state.indexer:
-        raise HTTPException(status_code=400, detail="No vault loaded")
+        raise HTTPException(status_code=400, detail="No NoteBase loaded")
     return state.vault, state.indexer
 
 

@@ -94,9 +94,9 @@ Standardmäßig unter:
 
 Wichtige Endpunkte:
 
-- `POST /vault/open`
-- `POST /vault/create`
-- `POST /vault/reindex`
+- `POST /notebase/open`
+- `POST /notebase/create`
+- `POST /notebase/reindex`
 - `POST /capture/preview`
 - `POST /capture/save`
 - `GET /tasks`
@@ -105,6 +105,12 @@ Wichtige Endpunkte:
 - `GET /notes/content`
 - `POST /notes/open`
 - `GET /review`
+- `GET /tag-groups`
+- `POST /tag-groups/add-group`
+- `POST /tag-groups/add-tag`
+- `POST /tag-groups/rename-tag`
+- `POST /tag-groups/move-tag`
+- `POST /tag-groups/delete-tag`
 
 ## Hinweise
 

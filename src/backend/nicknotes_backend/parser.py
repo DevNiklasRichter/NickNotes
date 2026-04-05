@@ -10,7 +10,7 @@ from .models import ParsedTask, TAG_CATEGORIES, TagSuggestion
 
 
 TAG_PATTERN = re.compile(
-    r"\b(person|project|customer|machine_no|machine_type):([a-zA-Z0-9][a-zA-Z0-9_-]{1,80})\b",
+    r"\b([a-zA-Z][a-zA-Z0-9_-]{1,60}):([a-zA-Z0-9][a-zA-Z0-9_-]{1,80})\b",
     flags=re.IGNORECASE,
 )
 TODO_PATTERN = re.compile(r"^\s*todo:\s*(.+)$", flags=re.IGNORECASE)
@@ -51,9 +51,9 @@ class CaptureParser:
     def parse_explicit_tags(self, text: str) -> list[TagSuggestion]:
         found: dict[str, TagSuggestion] = {}
         for match in TAG_PATTERN.finditer(text):
-            category = match.group(1).lower()
+            category = slugify(match.group(1))
             slug = slugify(match.group(2))
-            if category not in TAG_CATEGORIES or not slug:
+            if not category or not slug:
                 continue
             key = f"{category}:{slug}"
             found[key] = TagSuggestion(
@@ -168,4 +168,3 @@ def make_note_id(now: datetime | None = None) -> str:
 def make_task_id(now: datetime | None = None) -> str:
     now = now or datetime.now()
     return f"tk_{now:%Y%m%d_%H%M%S}_{secrets.token_hex(2)}"
-

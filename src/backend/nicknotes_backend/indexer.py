@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .markdown_io import parse_markdown
-from .models import ParsedTask, TAG_CATEGORIES, TagRef
+from .models import ParsedTask, TagRef
 from .parser import slugify
 
 
@@ -468,8 +468,8 @@ def _split_tag(raw: str) -> tuple[str, str] | None:
     if ":" not in raw:
         return None
     category, value = raw.split(":", 1)
-    category = category.strip().lower()
+    category = slugify(category)
     slug = slugify(value)
-    if category not in TAG_CATEGORIES or not slug:
+    if not category or not slug:
         return None
     return category, slug

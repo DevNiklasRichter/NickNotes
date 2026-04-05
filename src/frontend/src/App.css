@@ -292,6 +292,56 @@
   width: fit-content;
 }
 
+.tag-pill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  position: relative;
+}
+
+.tag-row-actions {
+  position: relative;
+}
+
+.tag-context-menu {
+  position: absolute;
+  top: calc(100% + 0.2rem);
+  right: 0;
+  min-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.3rem;
+  display: grid;
+  gap: 0.3rem;
+  z-index: 6;
+}
+
+.tag-context-menu button {
+  text-align: left;
+}
+
+.tag-context-menu button.danger {
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  font-weight: 700;
+}
+
+.icon-button.muted {
+  color: var(--muted);
+}
+
 .main-region {
   grid-column: 3;
   display: grid;
@@ -503,6 +553,13 @@
   font-size: 0.8rem;
   color: var(--muted);
   text-align: right;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.status-note-base {
+  font-size: 0.72rem;
+  opacity: 0.86;
 }
 
 .state-error {
@@ -524,6 +581,51 @@
   align-content: start;
   gap: 0.9rem;
   z-index: 5;
+}
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 12, 16, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 7;
+}
+
+.tag-manager-modal {
+  width: min(980px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.85rem;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.8rem;
+}
+
+.tag-manager-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.tag-manager-column {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem;
+  background: var(--surface-contrast);
+}
+
+.tag-manager-group {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.8rem;
+}
+
+.tag-manager-group h4 {
+  margin: 0;
 }
 
 .settings-drawer header {
@@ -628,6 +730,10 @@ button:disabled {
   .settings-drawer {
     left: 0.7rem;
     width: auto;
+  }
+
+  .tag-manager-grid {
+    grid-template-columns: 1fr;
   }
 }
 
