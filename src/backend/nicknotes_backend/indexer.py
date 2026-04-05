@@ -307,6 +307,7 @@ class VaultIndexer:
             JOIN note_tags nt ON nt.tag_id = t.id
             JOIN notes n ON n.id = nt.note_id
             WHERE t.category = ? AND t.slug = ?
+              AND n.note_type <> 'tag_index'
             ORDER BY n.created_at DESC;
             """,
             (category, slug),
@@ -389,10 +390,12 @@ class VaultIndexer:
         notes_indexed = 0
         tasks_indexed = 0
 
-        for md in (vault_path / "00_inbox").rglob("*.md"):
-            notes_indexed += self._index_note_markdown(md)
-        for md in (vault_path / "01_daily").rglob("*.md"):
-            notes_indexed += self._index_note_markdown(md)
+        excluded_note_roots = {"00_inbox", "03_tasks", "99_system"}
+        for child in vault_path.iterdir():
+            if not child.is_dir() or child.name in excluded_note_roots:
+                continue
+            for md in child.rglob("*.md"):
+                notes_indexed += self._index_note_markdown(md)
 
         for md in (vault_path / "03_tasks").rglob("*.md"):
             tasks_indexed += self._index_task_markdown(md)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent } from 'react'
 import './App.css'
 
@@ -80,9 +80,17 @@ type NoteTab = {
 
 const THEME_STORAGE_KEY = 'nicknotes-theme'
 const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
+const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
 
 type TagGroupsMap = Record<string, string[]>
 type TagMenuTarget = { groupName: string; tagName: string } | null
+type NoteGroup = {
+  key: string
+  label: string
+  path: string
+  favorite: boolean
+  canCreateNotes: boolean
+}
 
 function getPreferredTheme(): ThemeMode {
   if (typeof window === 'undefined') {
@@ -192,6 +200,46 @@ function getStoredDisplayName(): string {
   }
 }
 
+function getStoredLastNoteBasePath(): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  try {
+    return normalizeLabel(window.localStorage.getItem(LAST_NOTEBASE_STORAGE_KEY) || '')
+  } catch {
+    return ''
+  }
+}
+
+function storeLastNoteBasePath(path: string): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  const cleanPath = normalizeLabel(path)
+  if (!cleanPath) {
+    return
+  }
+  try {
+    window.localStorage.setItem(LAST_NOTEBASE_STORAGE_KEY, cleanPath)
+  } catch {
+    // Best effort.
+  }
+}
+
+function getTopLevelGroupKey(path: string, noteBasePath: string): string {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedBase = noteBasePath.replace(/\\/g, '/').replace(/\/+$/, '')
+
+  if (normalizedBase && normalizedPath.toLowerCase().startsWith(`${normalizedBase.toLowerCase()}/`)) {
+    const relative = normalizedPath.slice(normalizedBase.length + 1)
+    return relative.split('/')[0] || ''
+  }
+
+  const parts = normalizedPath.split('/').filter(Boolean)
+  return parts.length > 1 ? parts[parts.length - 2] : ''
+}
+
 function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null {
   const title = normalizeLabel(row.title)
   if (title.includes(':')) {
@@ -204,7 +252,7 @@ function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null
   }
 
   const normalizedPath = row.path.replace(/\\/g, '/')
-  const tagOverviewMatch = normalizedPath.match(/\/02_tags\/([^/]+)\/([^/]+)\/(?:overview|index)\.md$/i)
+  const tagOverviewMatch = normalizedPath.match(/\/02_tags\/([^/]+)\/([^/]+)\/overview\.md$/i)
   if (tagOverviewMatch) {
     const group = normalizeLabel(tagOverviewMatch[1].replace(/_/g, ' '))
     const tag = normalizeLabel(tagOverviewMatch[2].replace(/_/g, ' '))
@@ -226,10 +274,11 @@ function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null
 }
 
 function App() {
+  const autoOpenTriedRef = useRef(false)
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
-  const [vaultPath, setVaultPath] = useState('')
+  const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath)
   const [vaultLoaded, setVaultLoaded] = useState(false)
   const [counts, setCounts] = useState<VaultCounts>({ notes: 0, openTasks: 0, doneTasks: 0 })
 
@@ -255,6 +304,10 @@ function App() {
     other: true,
   })
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
+  const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
+  const [newNoteGroupName, setNewNoteGroupName] = useState('')
+  const [selectedNoteGroupKey, setSelectedNoteGroupKey] = useState('')
+  const [newGroupedNoteTitle, setNewGroupedNoteTitle] = useState('')
   const [newTagGroupName, setNewTagGroupName] = useState('')
   const [selectedTagGroup, setSelectedTagGroup] = useState('')
   const [newTagName, setNewTagName] = useState('')
@@ -343,17 +396,74 @@ function App() {
     setCustomTagGroups(toStorageTagGroups(response.groups))
   }
 
+  const refreshNoteGroups = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups')
+    setNoteGroups(response.groups)
+  }
+
+  const openVaultAtPath = async (rawPath: string, successMessage: string): Promise<boolean> => {
+    const path = normalizeLabel(rawPath)
+    if (!path) {
+      throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
+    }
+
+    const response = await apiRequest<{
+      counts: VaultCounts
+      noteBasePath?: string
+      tagGroups?: TagGroupsMap
+    }>(backendUrl, '/notebase/open', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    })
+    const loadedPath = response.noteBasePath ?? path
+    setVaultPath(loadedPath)
+    setVaultLoaded(true)
+    setCounts(response.counts)
+    if (response.tagGroups) {
+      setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+    }
+    storeLastNoteBasePath(loadedPath)
+    setMessage(successMessage)
+    setError('')
+
+    await Promise.all([
+      refreshTasks(true),
+      runSearch(searchQuery, true),
+      refreshReview(true),
+      refreshTagGroups(true),
+      refreshNoteGroups(true),
+    ])
+    return true
+  }
+
   const loadState = async () => {
     try {
       const state = await apiRequest<BackendState>(backendUrl, '/state')
       if (!state.vaultLoaded) {
         setVaultLoaded(false)
+        const rememberedPath = getStoredLastNoteBasePath()
+        if (rememberedPath && !autoOpenTriedRef.current) {
+          autoOpenTriedRef.current = true
+          setVaultPath(rememberedPath)
+          try {
+            await openVaultAtPath(rememberedPath, 'Letzte NoteBase automatisch geladen.')
+            return
+          } catch (autoOpenError) {
+            setError(String(autoOpenError))
+          }
+        }
         setMessage('Keine NoteBase geladen.')
         return
       }
 
       setVaultLoaded(true)
-      setVaultPath(state.noteBasePath ?? state.vaultPath ?? '')
+      const loadedPath = state.noteBasePath ?? state.vaultPath ?? ''
+      setVaultPath(loadedPath)
+      storeLastNoteBasePath(loadedPath)
       if (state.counts) {
         setCounts(state.counts)
       }
@@ -365,6 +475,7 @@ function App() {
         runSearch(searchQuery, true),
         refreshReview(true),
         refreshTagGroups(true),
+        refreshNoteGroups(true),
       ])
     } catch (caught) {
       setError(`Backend nicht erreichbar: ${String(caught)}`)
@@ -473,10 +584,34 @@ function App() {
     return Object.values(groupedTagNotes.groups).flat()
   }, [groupedTagNotes.groups])
 
-  const otherNotes = useMemo(() => {
-    const knownPaths = new Set([...dailyNotes, ...tagNotes, ...groupedTagNotes.ungrouped].map((item) => item.path))
-    return sortedNotes.filter((row) => !knownPaths.has(row.path))
-  }, [dailyNotes, groupedTagNotes.ungrouped, sortedNotes, tagNotes])
+  const notesByTopGroup = useMemo(() => {
+    const grouped: Record<string, SearchRow[]> = {}
+    for (const row of sortedNotes) {
+      const topGroup = getTopLevelGroupKey(row.path, vaultPath)
+      if (!topGroup) {
+        continue
+      }
+      if (!grouped[topGroup]) {
+        grouped[topGroup] = []
+      }
+      grouped[topGroup].push(row)
+    }
+
+    for (const rows of Object.values(grouped)) {
+      rows.sort((left, right) => left.title.localeCompare(right.title, 'de'))
+    }
+
+    return grouped
+  }, [sortedNotes, vaultPath])
+
+  const customNoteGroups = useMemo(
+    () => noteGroups.filter((group) => !group.favorite),
+    [noteGroups]
+  )
+  const creatableNoteGroups = useMemo(
+    () => noteGroups.filter((group) => group.canCreateNotes),
+    [noteGroups]
+  )
 
   const discoveredTagGroups = useMemo(() => {
     const result: TagGroupsMap = {}
@@ -527,6 +662,17 @@ function App() {
     }
   }, [selectedTagGroup, sortedTagGroupNames])
 
+  useEffect(() => {
+    if (!selectedNoteGroupKey && creatableNoteGroups.length > 0) {
+      setSelectedNoteGroupKey(creatableNoteGroups[0].key)
+      return
+    }
+
+    if (selectedNoteGroupKey && !creatableNoteGroups.some((group) => group.key === selectedNoteGroupKey)) {
+      setSelectedNoteGroupKey(creatableNoteGroups[0]?.key ?? '')
+    }
+  }, [creatableNoteGroups, selectedNoteGroupKey])
+
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const compareCandidates = openTabs.filter((tab) => tab.path !== activeTab?.path)
   const compareTab = splitView
@@ -544,33 +690,7 @@ function App() {
   const openVault = async () => {
     try {
       setError('')
-      const path = vaultPath.trim()
-      if (!path) {
-        throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
-      }
-
-      const response = await apiRequest<{
-        counts: VaultCounts
-        noteBasePath?: string
-        tagGroups?: TagGroupsMap
-      }>(backendUrl, '/notebase/open', {
-        method: 'POST',
-        body: JSON.stringify({ path }),
-      })
-      setVaultPath(response.noteBasePath ?? path)
-      setVaultLoaded(true)
-      setCounts(response.counts)
-      if (response.tagGroups) {
-        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      setMessage('NoteBase erfolgreich geladen und indexiert.')
-
-      await Promise.all([
-        refreshTasks(true),
-        runSearch(searchQuery, true),
-        refreshReview(true),
-        refreshTagGroups(true),
-      ])
+      await openVaultAtPath(vaultPath, 'NoteBase erfolgreich geladen und indexiert.')
     } catch (caught) {
       setError(String(caught))
     }
@@ -612,6 +732,7 @@ function App() {
       setVaultPath(response.noteBasePath ?? response.vaultPath)
       setVaultLoaded(true)
       setCounts(response.counts)
+      storeLastNoteBasePath(response.noteBasePath ?? response.vaultPath)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
@@ -621,6 +742,7 @@ function App() {
         runSearch(searchQuery, true),
         refreshReview(true),
         refreshTagGroups(true),
+        refreshNoteGroups(true),
       ])
     } catch (caught) {
       setError(String(caught))
@@ -635,27 +757,7 @@ function App() {
         return
       }
       setVaultPath(path)
-      const response = await apiRequest<{
-        counts: VaultCounts
-        noteBasePath?: string
-        tagGroups?: TagGroupsMap
-      }>(backendUrl, '/notebase/open', {
-        method: 'POST',
-        body: JSON.stringify({ path }),
-      })
-      setVaultLoaded(true)
-      setVaultPath(response.noteBasePath ?? path)
-      setCounts(response.counts)
-      if (response.tagGroups) {
-        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      setMessage('NoteBase automatisch geladen.')
-      await Promise.all([
-        refreshTasks(true),
-        runSearch(searchQuery, true),
-        refreshReview(true),
-        refreshTagGroups(true),
-      ])
+      await openVaultAtPath(path, 'NoteBase automatisch geladen.')
     } catch (caught) {
       setError(String(caught))
     }
@@ -718,7 +820,7 @@ function App() {
       setSelectedTagKeys([])
       setParsedTasks([])
       setMessage(`Capture gespeichert (${response.noteId}).`)
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview()])
+      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -827,6 +929,58 @@ function App() {
     event.dataTransfer.setData('application/x-open-tab-path', tab.path)
     event.dataTransfer.setData('application/x-open-tab-title', tab.title)
     event.dataTransfer.setData('text/plain', tab.path)
+  }
+
+  const addNoteGroup = async () => {
+    const groupName = normalizeLabel(newNoteGroupName)
+    if (!groupName) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups/add-group', {
+        method: 'POST',
+        body: JSON.stringify({ groupName }),
+      })
+      setNoteGroups(response.groups)
+      setNewNoteGroupName('')
+      setMessage(`Notizgruppe angelegt: ${groupName}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const addNoteToGroup = async () => {
+    const groupKey = normalizeLabel(selectedNoteGroupKey)
+    if (!groupKey) {
+      return
+    }
+
+    const title = normalizeLabel(newGroupedNoteTitle)
+    if (!title) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ noteId: string; notePath: string; groups: NoteGroup[]; counts: VaultCounts }>(
+        backendUrl,
+        '/note-groups/add-note',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupKey, title }),
+        }
+      )
+      setCounts(response.counts)
+      setNoteGroups(response.groups)
+      setNewGroupedNoteTitle('')
+      setMessage(`Notiz erstellt (${response.noteId}).`)
+      await Promise.all([runSearch(searchQuery), refreshReview()])
+      await openNoteInTab(response.notePath, title)
+    } catch (caught) {
+      setError(String(caught))
+    }
   }
 
   const addTagGroup = async () => {
@@ -1290,9 +1444,14 @@ function App() {
       <div className="sidebar-content">
         <div className="sidebar-header-row">
           <h3>Notizen</h3>
-          <button onClick={runSearchFromInput} disabled={!vaultLoaded}>
-            Suchen
-          </button>
+          <div className="header-inline-actions">
+            <button onClick={runSearchFromInput} disabled={!vaultLoaded}>
+              Suchen
+            </button>
+            <button onClick={() => void refreshNoteGroups()} disabled={!vaultLoaded}>
+              Gruppen
+            </button>
+          </div>
         </div>
 
         <div className="search-row">
@@ -1309,7 +1468,56 @@ function App() {
           />
         </div>
 
+        <section className="tag-actions">
+          <label className="field-label" htmlFor="note-group-name">
+            Neue Notizgruppe
+          </label>
+          <div className="tag-action-row">
+            <input
+              id="note-group-name"
+              value={newNoteGroupName}
+              onChange={(event) => setNewNoteGroupName(event.target.value)}
+              placeholder="z. B. Wissensbasis"
+            />
+            <button onClick={() => void addNoteGroup()} disabled={!newNoteGroupName.trim()}>
+              Gruppe anlegen
+            </button>
+          </div>
+
+          <label className="field-label" htmlFor="note-group-select">
+            Neue Notiz in Gruppe
+          </label>
+          <div className="tag-action-row">
+            <select
+              id="note-group-select"
+              value={selectedNoteGroupKey}
+              onChange={(event) => setSelectedNoteGroupKey(event.target.value)}
+            >
+              <option value="" disabled>
+                Gruppe waehlen
+              </option>
+              {creatableNoteGroups.map((group) => (
+                <option key={group.key} value={group.key}>
+                  {group.label}
+                </option>
+              ))}
+            </select>
+            <input
+              value={newGroupedNoteTitle}
+              onChange={(event) => setNewGroupedNoteTitle(event.target.value)}
+              placeholder="Titel der neuen Notiz"
+            />
+            <button
+              onClick={() => void addNoteToGroup()}
+              disabled={!selectedNoteGroupKey || !newGroupedNoteTitle.trim()}
+            >
+              Notiz anlegen
+            </button>
+          </div>
+        </section>
+
         <section className="tree-scroll">
+          <p className="muted-label">Favouriten</p>
           {renderFolder('daily', 'Daily Notes', dailyNotes, 0, 'Keine Daily Notes gefunden.')}
 
           <div className="folder-node">
@@ -1343,7 +1551,19 @@ function App() {
             ) : null}
           </div>
 
-          {renderFolder('other', 'Weitere Notizen', otherNotes, 0, 'Keine weiteren Notizen gefunden.')}
+          <p className="muted-label">Weitere Notizgruppen</p>
+          {customNoteGroups.length === 0 ? (
+            <p className="empty-copy">Noch keine weiteren Notizgruppen vorhanden.</p>
+          ) : null}
+          {customNoteGroups.map((group) =>
+            renderFolder(
+              `notes-group-${group.key}`,
+              group.label,
+              notesByTopGroup[group.key] ?? [],
+              0,
+              'Keine Notizen in dieser Gruppe.'
+            )
+          )}
         </section>
       </div>
     )

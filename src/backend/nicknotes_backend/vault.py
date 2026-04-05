@@ -42,7 +42,6 @@ class VaultManager:
         self.tag_groups_path = self.system_path / "tag_groups.json"
 
     def ensure_structure(self) -> None:
-        (self.vault_path / "00_inbox").mkdir(parents=True, exist_ok=True)
         (self.vault_path / "01_daily").mkdir(parents=True, exist_ok=True)
         self.tag_root_path.mkdir(parents=True, exist_ok=True)
         self.legacy_entities_path.mkdir(parents=True, exist_ok=True)
@@ -77,6 +76,115 @@ class VaultManager:
                 "Machine Type": [],
             }
             self._write_tag_groups(defaults)
+
+        self._migrate_legacy_inbox()
+
+    def list_note_groups(self) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = [
+            {
+                "key": "01_daily",
+                "label": "Daily Notes",
+                "path": str(self.vault_path / "01_daily"),
+                "favorite": True,
+                "canCreateNotes": True,
+            },
+            {
+                "key": "02_tags",
+                "label": "Tag-Notes",
+                "path": str(self.vault_path / "02_tags"),
+                "favorite": True,
+                "canCreateNotes": False,
+            },
+        ]
+
+        reserved = {"00_inbox", "01_daily", "02_tags", "02_entities", "03_tasks", "99_system"}
+        custom_dirs = sorted(
+            [child for child in self.vault_path.iterdir() if child.is_dir() and child.name not in reserved],
+            key=lambda item: item.name.lower(),
+        )
+        for group_dir in custom_dirs:
+            groups.append(
+                {
+                    "key": group_dir.name,
+                    "label": self._label_from_group_dir(group_dir.name),
+                    "path": str(group_dir),
+                    "favorite": False,
+                    "canCreateNotes": True,
+                }
+            )
+
+        return groups
+
+    def create_note_group(self, group_name: str) -> dict[str, Any]:
+        clean_name = _normalize_label(group_name)
+        if not clean_name:
+            raise ValueError("Group name cannot be empty")
+
+        for item in self.list_note_groups():
+            if str(item["label"]).lower() == clean_name.lower():
+                return item
+
+        token = self._safe_group_dir_token(clean_name)
+        if not token:
+            raise ValueError("Group name contains no valid filename characters")
+
+        base_name = f"10_{token}"
+        target_name = base_name
+        counter = 2
+        while (self.vault_path / target_name).exists():
+            target_name = f"{base_name}_{counter}"
+            counter += 1
+
+        target_path = self.vault_path / target_name
+        target_path.mkdir(parents=True, exist_ok=True)
+        return {
+            "key": target_name,
+            "label": clean_name,
+            "path": str(target_path),
+            "favorite": False,
+            "canCreateNotes": True,
+        }
+
+    def create_note_in_group(self, group_key: str, title: str, indexer: VaultIndexer) -> dict[str, Any]:
+        clean_key = _normalize_label(group_key)
+        if not clean_key:
+            raise ValueError("Group key is required")
+
+        groups_by_key = {str(item["key"]): item for item in self.list_note_groups()}
+        target_group = groups_by_key.get(clean_key)
+        if not target_group:
+            raise ValueError(f"Unknown note group: {group_key}")
+        if not bool(target_group.get("canCreateNotes", False)):
+            raise ValueError("Creating notes in this group is not supported")
+
+        now = datetime.now()
+        created_at = now.isoformat(timespec="seconds")
+        note_id = make_note_id(now)
+        clean_title = _normalize_label(title) or f"Neue Notiz {now:%Y-%m-%d %H:%M}"
+        title_slug = slugify(clean_title) or note_id
+
+        root_dir = Path(str(target_group["path"]))
+        note_dir = root_dir / "notes" if clean_key == "01_daily" else root_dir
+        note_dir.mkdir(parents=True, exist_ok=True)
+
+        note_path = note_dir / f"{now:%Y%m%d_%H%M%S}_{title_slug}.md"
+        suffix = 2
+        while note_path.exists():
+            note_path = note_dir / f"{now:%Y%m%d_%H%M%S}_{title_slug}_{suffix}.md"
+            suffix += 1
+
+        frontmatter = {
+            "id": note_id,
+            "type": "daily_note" if clean_key == "01_daily" else "note",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "tags": [],
+        }
+        body = f"# {clean_title}\n\n"
+        note_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+
+        indexer.reindex_vault(self.vault_path)
+        return {"note_id": note_id, "note_path": note_path}
 
     def read_config(self) -> dict[str, Any]:
         if not self.config_path.exists():
@@ -279,7 +387,7 @@ class VaultManager:
         note_id = make_note_id(now)
         created_at = now.isoformat(timespec="seconds")
 
-        note_dir = self.vault_path / "00_inbox" / f"{now:%Y-%m-%d}"
+        note_dir = self.vault_path / "01_daily" / "captures" / f"{now:%Y-%m-%d}"
         note_dir.mkdir(parents=True, exist_ok=True)
         note_path = note_dir / f"{note_id}.md"
 
@@ -321,7 +429,7 @@ class VaultManager:
             task_ids.append(task_id)
             self._create_task_file(task_id, note_id, parsed_task, now, indexer)
 
-        self._append_to_daily(note_path, note_id, title, created_at)
+        self._append_to_daily(note_path, note_id, title, created_at, tag_keys)
 
         groups = self.read_tag_groups()
         for tag in selected_tags:
@@ -380,7 +488,14 @@ class VaultManager:
         )
         return task_path
 
-    def _append_to_daily(self, note_path: Path, note_id: str, title: str, created_at: str) -> None:
+    def _append_to_daily(
+        self,
+        note_path: Path,
+        note_id: str,
+        title: str,
+        created_at: str,
+        tag_keys: list[str],
+    ) -> None:
         day = created_at[:10]
         daily_path = self.vault_path / "01_daily" / f"{day}.md"
         if not daily_path.exists():
@@ -395,7 +510,8 @@ class VaultManager:
             daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
 
         existing = daily_path.read_text(encoding="utf-8")
-        line = f"- {created_at[11:19]} [{title}]({note_path.as_posix()}) (`{note_id}`)"
+        tags_hint = f" | tags: {', '.join(tag_keys)}" if tag_keys else ""
+        line = f"- {created_at[11:19]} [{title}]({note_path.as_posix()}) (`{note_id}`){tags_hint}"
         if line not in existing:
             updated = existing.rstrip() + "\n" + line + "\n"
             daily_path.write_text(updated, encoding="utf-8")
@@ -563,11 +679,67 @@ class VaultManager:
 
     def _iter_markdown_files_for_tag_updates(self) -> list[Path]:
         files: list[Path] = []
-        for root in ("00_inbox", "01_daily", "03_tasks"):
-            root_path = self.vault_path / root
-            if root_path.exists():
-                files.extend(root_path.rglob("*.md"))
+        excluded = {"00_inbox", "02_tags", "99_system"}
+        for child in self.vault_path.iterdir():
+            if not child.is_dir() or child.name in excluded:
+                continue
+            files.extend(child.rglob("*.md"))
         return files
+
+    def _migrate_legacy_inbox(self) -> None:
+        inbox_path = self.vault_path / "00_inbox"
+        if not inbox_path.exists() or not inbox_path.is_dir():
+            return
+
+        moved_paths: list[tuple[str, str]] = []
+        capture_root = self.vault_path / "01_daily" / "captures"
+        capture_root.mkdir(parents=True, exist_ok=True)
+
+        for file_path in sorted(inbox_path.rglob("*.md")):
+            target_day = file_path.parent.name
+            meta, _body = parse_markdown(file_path)
+            raw_created_at = str(meta.get("created_at", "")).strip()
+            if len(raw_created_at) >= 10 and raw_created_at[4] == "-" and raw_created_at[7] == "-":
+                target_day = raw_created_at[:10]
+
+            target_dir = capture_root / target_day
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            target_path = target_dir / file_path.name
+            suffix = 2
+            while target_path.exists():
+                target_path = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
+                suffix += 1
+
+            shutil.move(str(file_path), str(target_path))
+            moved_paths.append((file_path.as_posix(), target_path.as_posix()))
+
+        daily_root = self.vault_path / "01_daily"
+        if moved_paths and daily_root.exists():
+            for daily_file in daily_root.glob("*.md"):
+                content = daily_file.read_text(encoding="utf-8")
+                updated = content
+                for old_path, new_path in moved_paths:
+                    updated = updated.replace(old_path, new_path)
+                if updated != content:
+                    daily_file.write_text(updated, encoding="utf-8")
+
+        try:
+            shutil.rmtree(inbox_path)
+        except OSError:
+            pass
+
+    def _label_from_group_dir(self, directory_name: str) -> str:
+        trimmed = directory_name.strip()
+        if len(trimmed) > 3 and trimmed[:2].isdigit() and trimmed[2] == "_":
+            trimmed = trimmed[3:]
+        return _normalize_label(trimmed.replace("_", " ").replace("-", " ")) or directory_name
+
+    def _safe_group_dir_token(self, label: str) -> str:
+        raw = label.strip().replace(" ", "_")
+        filtered = "".join(char if (char.isalnum() or char in {"_", "-"}) else "_" for char in raw)
+        clean = "_".join(part for part in filtered.split("_") if part)
+        return clean[:60]
 
     def _to_tag_key(self, group_name: str, tag_name: str) -> str:
         return f"{slugify(group_name)}:{slugify(tag_name)}"

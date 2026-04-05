@@ -158,6 +158,11 @@
   gap: 0.5rem;
 }
 
+.header-inline-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
 .search-row {
   display: grid;
 }

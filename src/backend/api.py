@@ -97,6 +97,15 @@ class TagDeleteRequest(BaseModel):
     remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
 
 
+class NoteGroupCreateRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+
+
+class NoteCreateRequest(BaseModel):
+    group_key: str = Field(alias="groupKey")
+    title: str = ""
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "vaultLoaded": state.vault is not None}
@@ -396,6 +405,39 @@ def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+
+
+@app.get("/note-groups")
+def get_note_groups() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"groups": vault.list_note_groups()}
+
+
+@app.post("/note-groups/add-group")
+def add_note_group(req: NoteGroupCreateRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    try:
+        created = vault.create_note_group(req.group_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"group": created, "groups": vault.list_note_groups()}
+
+
+@app.post("/note-groups/add-note")
+def add_note(req: NoteCreateRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        created = vault.create_note_in_group(req.group_key, req.title, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "noteId": created["note_id"],
+        "notePath": str(created["note_path"]),
+        "groups": vault.list_note_groups(),
+        "counts": _counts(indexer),
+    }
 
 
 @app.on_event("shutdown")
