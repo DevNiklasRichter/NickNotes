@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -55,6 +56,14 @@ class VaultCreateRequest(BaseModel):
     name: str
 
 
+class NoteBaseRenameRequest(BaseModel):
+    new_name: str = Field(alias="newName")
+
+
+class NoteBaseDeleteRequest(BaseModel):
+    confirm_delete: bool = Field(default=False, alias="confirmDelete")
+
+
 class CapturePreviewRequest(BaseModel):
     text: str
 
@@ -66,6 +75,11 @@ class CaptureSaveRequest(BaseModel):
 
 class NoteOpenRequest(BaseModel):
     path: str
+
+
+class NoteSaveRequest(BaseModel):
+    path: str
+    content: str
 
 
 class TagGroupRequest(BaseModel):
@@ -99,11 +113,44 @@ class TagDeleteRequest(BaseModel):
 
 class NoteGroupCreateRequest(BaseModel):
     group_name: str = Field(alias="groupName")
+    parent_key: str = Field(default="", alias="parentKey")
 
 
 class NoteCreateRequest(BaseModel):
     group_key: str = Field(alias="groupKey")
     title: str = ""
+
+
+class NoteGroupRenameRequest(BaseModel):
+    group_key: str = Field(alias="groupKey")
+    new_name: str = Field(alias="newName")
+
+
+class NoteGroupDeleteRequest(BaseModel):
+    group_key: str = Field(alias="groupKey")
+
+
+class NoteGroupMoveRequest(BaseModel):
+    group_key: str = Field(alias="groupKey")
+    target_parent_key: str = Field(alias="targetParentKey")
+
+
+class NoteFileRenameRequest(BaseModel):
+    path: str
+    new_name: str = Field(alias="newName")
+
+
+class NoteFileDeleteRequest(BaseModel):
+    path: str
+
+
+class NoteFileMoveRequest(BaseModel):
+    path: str
+    target_group_key: str = Field(alias="targetGroupKey")
+
+
+class FavoriteFolderRequest(BaseModel):
+    group_key: str = Field(alias="groupKey")
 
 
 @app.get("/health")
@@ -197,6 +244,53 @@ def create_notebase(req: VaultCreateRequest) -> dict[str, Any]:
 @app.post("/notebase/reindex")
 def reindex_notebase() -> dict[str, Any]:
     return reindex_vault()
+
+
+@app.post("/notebase/rename")
+def rename_notebase(req: NoteBaseRenameRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    old_path = vault.vault_path.resolve()
+    new_name = req.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New NoteBase name cannot be empty")
+    if any(token in new_name for token in ("/", "\\")):
+        raise HTTPException(status_code=400, detail="New NoteBase name must not contain path separators")
+    if new_name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid NoteBase name")
+
+    new_path = old_path.parent / new_name
+    if new_path == old_path:
+        return {
+            "vaultPath": str(old_path),
+            "noteBasePath": str(old_path),
+            "counts": _counts(state.indexer) if state.indexer else {"notes": 0, "openTasks": 0, "doneTasks": 0},
+        }
+    if new_path.exists():
+        raise HTTPException(status_code=400, detail=f"Target path already exists: {new_path}")
+
+    try:
+        state.close()
+        old_path.rename(new_path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not rename NoteBase: {exc}") from exc
+
+    return open_vault(VaultOpenRequest(path=str(new_path)))
+
+
+@app.post("/notebase/delete")
+def delete_notebase(req: NoteBaseDeleteRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    if not req.confirm_delete:
+        raise HTTPException(status_code=400, detail="confirmDelete must be true to delete a NoteBase")
+
+    target = vault.vault_path.resolve()
+    try:
+        state.close()
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not delete NoteBase: {exc}") from exc
+
+    return {"deleted": True, "deletedPath": str(target), "vaultLoaded": False}
 
 
 @app.post("/capture/preview")
@@ -300,12 +394,87 @@ def search_notes(query: str = "") -> dict[str, Any]:
     return {"items": indexer.search_notes(query)}
 
 
+@app.get("/explorer/files")
+def explorer_files() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    items: list[dict[str, Any]] = []
+
+    root = vault.vault_path.resolve()
+    hide_legacy_daily = (root / "daily").is_dir()
+    hide_legacy_tags = (root / "tags").is_dir()
+    hide_legacy_tasks = (root / "tasks").is_dir()
+    hide_dot_system = (root / ".system").is_dir()
+    hide_legacy_system = (root / "system").is_dir()
+
+    for file_path in root.rglob("*.md"):
+        try:
+            relative = file_path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        top = relative.split("/", 1)[0]
+
+        if top in {".system", "system", "99_system", "02_entities"}:
+            continue
+        if hide_legacy_daily and top == "01_daily":
+            continue
+        if hide_legacy_tags and top == "02_tags":
+            continue
+        if hide_legacy_tasks and top == "03_tasks":
+            continue
+        if hide_dot_system and top == "system":
+            continue
+        if hide_legacy_system and top == "99_system":
+            continue
+
+        stat = file_path.stat()
+        items.append(
+            {
+                "id": f"explorer:{relative}",
+                "title": file_path.stem,
+                "note_type": "note",
+                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "path": str(file_path),
+            }
+        )
+
+    items.sort(key=lambda row: (row["updated_at"], row["path"]), reverse=True)
+    return {"items": items}
+
+
 @app.get("/notes/content")
 def read_note_content(path: str) -> dict[str, Any]:
     file_path = Path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
     return {"path": str(file_path), "content": file_path.read_text(encoding="utf-8")}
+
+
+@app.post("/notes/save")
+def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    file_path = Path(req.path).expanduser().resolve()
+    vault_root = vault.vault_path.resolve()
+
+    try:
+        file_path.relative_to(vault_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Can only save files inside the loaded NoteBase") from exc
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
+
+    file_path.write_text(req.content, encoding="utf-8")
+    indexed = indexer.reindex_vault(vault_root)
+    tag_groups = vault.sync_tag_groups_with_index(indexer)
+    return {
+        "saved": True,
+        "path": str(file_path),
+        "indexed": indexed,
+        "counts": _counts(indexer),
+        "tagGroups": tag_groups,
+    }
 
 
 @app.post("/notes/open")
@@ -417,11 +586,64 @@ def get_note_groups() -> dict[str, Any]:
 def add_note_group(req: NoteGroupCreateRequest) -> dict[str, Any]:
     vault, _indexer = _require_loaded()
     try:
-        created = vault.create_note_group(req.group_name)
+        created = vault.create_note_group(req.group_name, req.parent_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"group": created, "groups": vault.list_note_groups()}
+
+
+@app.post("/note-groups/rename")
+def rename_note_group(req: NoteGroupRenameRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        renamed = vault.rename_note_group(req.group_key, req.new_name, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"group": renamed, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+
+
+@app.post("/note-groups/delete")
+def delete_note_group(req: NoteGroupDeleteRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        vault.delete_note_group(req.group_key, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"deleted": True, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+
+
+@app.post("/note-groups/move")
+def move_note_group(req: NoteGroupMoveRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        moved = vault.move_note_group(req.group_key, req.target_parent_key, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"group": moved, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+
+
+@app.post("/note-groups/favorite")
+def favorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    try:
+        favorites = vault.add_favorite_folder(req.group_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"favorites": favorites, "groups": vault.list_note_groups()}
+
+
+@app.post("/note-groups/unfavorite")
+def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    try:
+        favorites = vault.remove_favorite_folder(req.group_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"favorites": favorites, "groups": vault.list_note_groups()}
 
 
 @app.post("/note-groups/add-note")
@@ -438,6 +660,39 @@ def add_note(req: NoteCreateRequest) -> dict[str, Any]:
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
     }
+
+
+@app.post("/notes/rename")
+def rename_note(req: NoteFileRenameRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        renamed_path = vault.rename_note_file(req.path, req.new_name, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"renamedPath": str(renamed_path), "counts": _counts(indexer)}
+
+
+@app.post("/notes/delete")
+def delete_note(req: NoteFileDeleteRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        vault.delete_note_file(req.path, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"deleted": True, "counts": _counts(indexer)}
+
+
+@app.post("/notes/move")
+def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        moved_path = vault.move_note_file(req.path, req.target_group_key, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"movedPath": str(moved_path), "counts": _counts(indexer)}
 
 
 @app.on_event("shutdown")

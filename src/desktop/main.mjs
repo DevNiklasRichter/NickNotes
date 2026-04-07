@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
+﻿import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme } from 'electron'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -10,6 +10,15 @@ const __dirname = path.dirname(__filename)
 const BACKEND_PORT = 8765
 
 let backendProcess = null
+let mainWindow = null
+
+function applyWindowTheme(win, theme = 'dark') {
+  const isDark = theme === 'dark'
+  const backgroundColor = isDark ? '#1f252f' : '#eef1f5'
+  nativeTheme.themeSource = isDark ? 'dark' : 'light'
+
+  win.setBackgroundColor(backgroundColor)
+}
 
 function resolvePythonBinary() {
   const venvPython =
@@ -65,11 +74,19 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 740,
     autoHideMenuBar: true,
+    backgroundColor: '#1f252f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
   win.setMenuBarVisibility(false)
+  applyWindowTheme(win, 'dark')
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) {
+      mainWindow = null
+    }
+  })
 
   if (!app.isPackaged) {
     win.loadURL('http://localhost:5173')
@@ -100,6 +117,14 @@ app.whenReady().then(() => {
     return `http://127.0.0.1:${BACKEND_PORT}`
   })
 
+  ipcMain.handle('window:set-theme', async (_event, theme) => {
+    if (!mainWindow) {
+      return { ok: false }
+    }
+    applyWindowTheme(mainWindow, theme === 'light' ? 'light' : 'dark')
+    return { ok: true }
+  })
+
   createWindow()
 
   app.on('activate', () => {
@@ -119,6 +144,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   stopBackend()
 })
+
 
 
 

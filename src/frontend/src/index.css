@@ -1,29 +1,29 @@
 :root {
   color-scheme: light;
-  --text: #2a2f38;
-  --muted: #606775;
-  --surface: rgba(250, 251, 252, 0.94);
-  --surface-strong: #e3e6eb;
-  --surface-contrast: #ffffff;
-  --line: #c8ced7;
-  --line-strong: #aeb5c1;
-  --accent: #d90429;
-  --accent-strong: #b00020;
-  --accent-soft: rgba(217, 4, 41, 0.14);
-  --code-bg: #eef2f6;
-  --table-row: #f4f6f9;
-  --bg-layer-1: #f6f7f9;
-  --bg-layer-2: #d4d7dd;
-  --bg-layer-3: #2f3440;
-  --ok-bg: #e8edf4;
-  --ok-border: #c6cfdb;
-  --ok-text: #253246;
-  --error-bg: #ffe5e9;
-  --error-border: #f2a9b5;
-  --error-text: #922235;
-  --shadow: 0 14px 30px rgba(20, 28, 40, 0.14);
+  --text: #1f2328;
+  --muted: #6a727f;
+  --surface: #f3f4f6;
+  --surface-strong: #eceef2;
+  --surface-contrast: #fbfbfc;
+  --line: #d6dae1;
+  --line-strong: #c6cbd4;
+  --accent: #3d7fe0;
+  --accent-strong: #2f68bc;
+  --accent-soft: rgba(61, 127, 224, 0.16);
+  --code-bg: #f2f4f8;
+  --table-row: #f7f8fa;
+  --bg-layer-1: #eceef2;
+  --bg-layer-2: #e6e8ed;
+  --bg-layer-3: #e0e3ea;
+  --ok-bg: #edf4ff;
+  --ok-border: #c8daf8;
+  --ok-text: #1f355b;
+  --error-bg: #fff0f1;
+  --error-border: #efc7cc;
+  --error-text: #8a2d3b;
+  --shadow: 0 10px 26px rgba(22, 29, 39, 0.08);
 
-  font-family: 'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-family: 'Aptos', 'IBM Plex Sans', 'Segoe UI', 'Helvetica Neue', sans-serif;
   line-height: 1.4;
   font-weight: 400;
   color: var(--text);
@@ -35,28 +35,28 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --text: #f3f5f8;
-  --muted: #c3cad5;
-  --surface: rgba(38, 45, 57, 0.94);
-  --surface-strong: #343c4b;
-  --surface-contrast: #2a303d;
-  --line: #4c5566;
-  --line-strong: #6a7488;
-  --accent: #ff304f;
-  --accent-strong: #ff5f76;
-  --accent-soft: rgba(255, 48, 79, 0.24);
-  --code-bg: #1f2530;
-  --table-row: #303744;
-  --bg-layer-1: #2b313d;
-  --bg-layer-2: #252b37;
-  --bg-layer-3: #1b212a;
-  --ok-bg: #273342;
-  --ok-border: #41536a;
-  --ok-text: #dce7f4;
-  --error-bg: #4a2a34;
-  --error-border: #7d4551;
-  --error-text: #ffd9e0;
-  --shadow: 0 16px 34px rgba(0, 0, 0, 0.4);
+  --text: #edf0f5;
+  --muted: #a7afbd;
+  --surface: #1f242d;
+  --surface-strong: #262c36;
+  --surface-contrast: #2b313d;
+  --line: #3b4351;
+  --line-strong: #4a5466;
+  --accent: #6ea7f3;
+  --accent-strong: #4f8fe8;
+  --accent-soft: rgba(110, 167, 243, 0.24);
+  --code-bg: #232a35;
+  --table-row: #313949;
+  --bg-layer-1: #151922;
+  --bg-layer-2: #171c26;
+  --bg-layer-3: #1a202b;
+  --ok-bg: #23344f;
+  --ok-border: #325073;
+  --ok-text: #d9e9ff;
+  --error-bg: #4d2a33;
+  --error-border: #7a3f4c;
+  --error-text: #ffdce2;
+  --shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
 }
 
 * {
@@ -68,15 +68,7 @@ body {
   min-height: 100vh;
   overflow: hidden;
   color: var(--text);
-  background: linear-gradient(
-    115deg,
-    var(--bg-layer-1) 0%,
-    var(--bg-layer-1) 27%,
-    var(--bg-layer-2) 27%,
-    var(--bg-layer-2) 66%,
-    var(--bg-layer-3) 66%,
-    var(--bg-layer-3) 100%
-  );
+  background: linear-gradient(180deg, var(--bg-layer-1) 0%, var(--bg-layer-2) 58%, var(--bg-layer-3) 100%);
 }
 
 body::before {
@@ -85,8 +77,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 13% 8%, var(--accent-soft), transparent 30%),
-    radial-gradient(circle at 79% 82%, rgba(255, 255, 255, 0.1), transparent 34%);
+    radial-gradient(circle at 14% 8%, rgba(255, 255, 255, 0.32), transparent 24%),
+    radial-gradient(circle at 78% 86%, var(--accent-soft), transparent 35%);
 }
 
 #root {
@@ -97,5 +89,5 @@ body::before {
 
 h1,
 h2 {
-  font-family: 'Barlow Condensed', 'Space Grotesk', 'Segoe UI', sans-serif;
+  font-family: 'Aptos Display', 'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif;
 }

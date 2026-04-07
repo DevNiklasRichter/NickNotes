@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -390,15 +391,27 @@ class VaultIndexer:
         notes_indexed = 0
         tasks_indexed = 0
 
-        excluded_note_roots = {"00_inbox", "03_tasks", "99_system"}
+        excluded_note_roots = {"00_inbox", "tasks", "03_tasks", ".system", "system", "99_system", "02_entities"}
+        if (vault_path / "daily").is_dir():
+            excluded_note_roots.add("01_daily")
+        if (vault_path / "tags").is_dir():
+            excluded_note_roots.add("02_tags")
+        if (vault_path / "tasks").is_dir():
+            excluded_note_roots.add("03_tasks")
+        if (vault_path / "system").is_dir():
+            excluded_note_roots.add("99_system")
         for child in vault_path.iterdir():
             if not child.is_dir() or child.name in excluded_note_roots:
                 continue
             for md in child.rglob("*.md"):
                 notes_indexed += self._index_note_markdown(md)
 
-        for md in (vault_path / "03_tasks").rglob("*.md"):
-            tasks_indexed += self._index_task_markdown(md)
+        task_root = vault_path / "tasks"
+        if not task_root.is_dir():
+            task_root = vault_path / "03_tasks"
+        if task_root.is_dir():
+            for md in task_root.rglob("*.md"):
+                tasks_indexed += self._index_task_markdown(md)
 
         return {"notes": notes_indexed, "tasks": tasks_indexed}
 
@@ -406,11 +419,21 @@ class VaultIndexer:
         meta, body = parse_markdown(file_path)
         note_id = str(meta.get("id", "")).strip()
         if not note_id:
-            return 0
-        created_at = str(meta.get("created_at", datetime.now().isoformat()))
-        updated_at = str(meta.get("updated_at", created_at))
-        note_type = str(meta.get("type", "capture"))
-        title = body.splitlines()[0][:120] if body.strip() else note_id
+            digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]
+            note_id = f"note_{digest}"
+
+        stat = file_path.stat()
+        fallback_created = datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds")
+        fallback_updated = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+        created_at = str(meta.get("created_at", fallback_created))
+        updated_at = str(meta.get("updated_at", fallback_updated))
+        note_type = str(meta.get("type", "note")).strip() or "note"
+
+        if body.strip():
+            first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
+            title = first_line.lstrip("# ").strip()[:120] or file_path.stem
+        else:
+            title = file_path.stem or note_id
 
         self.upsert_note(
             note_id=note_id,
@@ -422,8 +445,14 @@ class VaultIndexer:
             updated_at=updated_at,
         )
 
+        raw_tags = meta.get("tags", [])
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        if not isinstance(raw_tags, list):
+            raw_tags = []
+
         tags = []
-        for item in meta.get("tags", []):
+        for item in raw_tags:
             parsed = _split_tag(str(item))
             if parsed:
                 category, slug = parsed
@@ -443,17 +472,24 @@ class VaultIndexer:
         meta, body = parse_markdown(file_path)
         task_id = str(meta.get("id", "")).strip()
         if not task_id:
-            return 0
-        title = body.splitlines()[0].strip() if body.strip() else str(meta.get("title", task_id))
+            digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]
+            task_id = f"task_{digest}"
+
+        stat = file_path.stat()
+        fallback_created = datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds")
+        fallback_updated = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+
+        title = body.splitlines()[0].strip() if body.strip() else str(meta.get("title", file_path.stem or task_id))
+        inferred_status = "done" if "done" in {part.lower() for part in file_path.parts} else "open"
         parsed = ParsedTask(
             title=title,
             due_date=str(meta.get("due_date", "") or "") or None,
             priority=str(meta.get("priority", "M")).upper()[:1] or "M",
-            status=str(meta.get("status", "open")).lower(),
+            status=str(meta.get("status", inferred_status)).lower(),
             project_tag=str(meta.get("project_tag", "") or "") or None,
         )
-        created_at = str(meta.get("created_at", datetime.now().isoformat()))
-        updated_at = str(meta.get("updated_at", created_at))
+        created_at = str(meta.get("created_at", fallback_created))
+        updated_at = str(meta.get("updated_at", fallback_updated))
         note_id = str(meta.get("note_id", "") or "") or None
 
         self.add_or_update_task(

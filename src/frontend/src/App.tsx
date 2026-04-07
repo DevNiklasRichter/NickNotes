@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent, KeyboardEvent, MutableRefObject } from 'react'
+import ToastEditor from '@toast-ui/editor'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import '@toast-ui/editor/dist/toastui-editor.css'
+import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
+import { ExplorerSidebar } from './explorer/ExplorerSidebar'
 import './App.css'
 
 type VaultCounts = {
@@ -70,17 +76,49 @@ type BackendState = {
 
 type ThemeMode = 'light' | 'dark'
 type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
+type NoteTabKind = 'note' | 'settings'
 
 type NoteTab = {
+  kind: NoteTabKind
   path: string
   title: string
   content: string
   loading: boolean
+  dirty: boolean
 }
+
+type EditorTabContextMenuState = {
+  x: number
+  y: number
+  path: string
+} | null
 
 const THEME_STORAGE_KEY = 'nicknotes-theme'
 const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
 const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
+const SIDEBAR_OPEN_STORAGE_KEY = 'nicknotes-sidebar-open'
+const STATUS_BAR_PREFS_STORAGE_KEY = 'nicknotes-statusbar-prefs'
+const EXPLORER_WIDTH_STORAGE_KEY = 'nicknotes-explorer-width'
+const EDITOR_PANEL_OPEN_STORAGE_KEY = 'nicknotes-editor-panel-open'
+const CAPTURE_PANEL_OPEN_STORAGE_KEY = 'nicknotes-capture-panel-open'
+const CAPTURE_PINNED_STORAGE_KEY = 'nicknotes-capture-pinned'
+const SETTINGS_TAB_PATH = '__nicknotes_settings__'
+
+type StatusBarPrefs = {
+  showNoteBaseName: boolean
+  showOpenTasks: boolean
+  showDueToday: boolean
+  showTotalNotes: boolean
+  showStateMessage: boolean
+}
+
+const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefs = {
+  showNoteBaseName: true,
+  showOpenTasks: true,
+  showDueToday: false,
+  showTotalNotes: false,
+  showStateMessage: true,
+}
 
 type TagGroupsMap = Record<string, string[]>
 type TagMenuTarget = { groupName: string; tagName: string } | null
@@ -90,6 +128,344 @@ type NoteGroup = {
   path: string
   favorite: boolean
   canCreateNotes: boolean
+  canCreateGroups?: boolean
+  canDelete?: boolean
+}
+
+type MarkdownPreviewProps = {
+  content: string
+  emptyText?: string
+  className?: string
+  currentPath?: string
+  resolveWikiLink?: (target: string, currentPath?: string) => SearchRow | null
+  onOpenWikiLink?: (row: SearchRow) => void
+}
+
+type WysiwygEditorApi = {
+  insertText: (text: string) => void
+  getSelectedText: () => string
+  focus: () => void
+}
+
+const WIKI_LINK_HREF_PREFIX = 'wikilink://'
+
+function parseWikiLinkInner(rawInner: string): { target: string; alias: string | null } | null {
+  const inner = rawInner.trim()
+  if (!inner) {
+    return null
+  }
+
+  const pipeIndex = inner.indexOf('|')
+  const targetRaw = (pipeIndex >= 0 ? inner.slice(0, pipeIndex) : inner).trim()
+  const aliasRaw = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() : ''
+  const target = targetRaw.replace(/\\/g, '/').replace(/\.md$/i, '')
+  if (!target) {
+    return null
+  }
+
+  return { target, alias: aliasRaw || null }
+}
+
+function extractWikiLinks(content: string): Array<{ raw: string; target: string; alias: string | null }> {
+  const matches: Array<{ raw: string; target: string; alias: string | null }> = []
+  const pattern = /\[\[([^[\]\n]+)\]\]/g
+  let current: RegExpExecArray | null = pattern.exec(content)
+
+  while (current) {
+    const raw = current[0]
+    const parsed = parseWikiLinkInner(current[1] ?? '')
+    if (parsed) {
+      matches.push({ raw, target: parsed.target, alias: parsed.alias })
+    }
+    current = pattern.exec(content)
+  }
+
+  return matches
+}
+
+function toMarkdownWithWikiHref(content: string): string {
+  return content.replace(/\[\[([^[\]\n]+)\]\]/g, (full, innerRaw: string) => {
+    const parsed = parseWikiLinkInner(innerRaw)
+    if (!parsed) {
+      return full
+    }
+
+    const label = (parsed.alias ?? parsed.target).replace(/\[|\]/g, '').trim()
+    if (!label) {
+      return full
+    }
+    return `[${label}](${WIKI_LINK_HREF_PREFIX}${encodeURIComponent(parsed.target)})`
+  })
+}
+
+function normalizeWikiLookup(value: string): string {
+  return value.trim().replace(/\\/g, '/').replace(/\.md$/i, '').replace(/\s+/g, ' ').toLowerCase()
+}
+
+function normalizeWikiPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/')
+  const segments: string[] = []
+  for (const part of normalized.split('/')) {
+    const chunk = part.trim()
+    if (!chunk || chunk === '.') {
+      continue
+    }
+    if (chunk === '..') {
+      segments.pop()
+      continue
+    }
+    segments.push(chunk)
+  }
+  return segments.join('/').replace(/\.md$/i, '').toLowerCase()
+}
+
+function chooseShortestPathRow(rows: SearchRow[], noteBasePath: string): SearchRow | null {
+  if (rows.length === 0) {
+    return null
+  }
+  return [...rows].sort(
+    (left, right) =>
+      getRelativeVaultPath(left.path, noteBasePath).length - getRelativeVaultPath(right.path, noteBasePath).length
+  )[0]
+}
+
+function resolveWikiLinkTarget(
+  target: string,
+  rows: SearchRow[],
+  noteBasePath: string,
+  currentPath?: string
+): SearchRow | null {
+  const cleanTarget = target.split('#')[0]?.trim() ?? ''
+  if (!cleanTarget) {
+    return null
+  }
+
+  const normalizedTarget = normalizeWikiLookup(cleanTarget)
+  if (!normalizedTarget) {
+    return null
+  }
+
+  let relativeTarget = ''
+  if (currentPath) {
+    const currentRelative = getRelativeVaultPath(currentPath, noteBasePath).replace(/\\/g, '/')
+    const currentDir = currentRelative.includes('/') ? currentRelative.slice(0, currentRelative.lastIndexOf('/')) : ''
+    relativeTarget = normalizeWikiPath(currentDir ? `${currentDir}/${cleanTarget}` : cleanTarget)
+  }
+
+  const exact: SearchRow[] = []
+  const relative: SearchRow[] = []
+  const fuzzy: SearchRow[] = []
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    if (seen.has(row.path)) {
+      continue
+    }
+    seen.add(row.path)
+
+    const displayName = toNoteDisplayName(row.path)
+    const normalizedName = normalizeWikiLookup(displayName)
+    const normalizedTitle = normalizeWikiLookup(row.title || displayName)
+    const relativeNoExt = getRelativeVaultPath(row.path, noteBasePath).replace(/\.md$/i, '')
+    const normalizedRelative = normalizeWikiPath(relativeNoExt)
+
+    if (relativeTarget && normalizedRelative === relativeTarget) {
+      relative.push(row)
+      continue
+    }
+
+    if (
+      normalizedName === normalizedTarget ||
+      normalizedTitle === normalizedTarget ||
+      normalizedRelative === normalizedTarget ||
+      normalizedRelative.endsWith(`/${normalizedTarget}`)
+    ) {
+      exact.push(row)
+      continue
+    }
+
+    if (
+      normalizedName.includes(normalizedTarget) ||
+      normalizedTitle.includes(normalizedTarget) ||
+      normalizedRelative.includes(normalizedTarget)
+    ) {
+      fuzzy.push(row)
+    }
+  }
+
+  return (
+    chooseShortestPathRow(relative, noteBasePath) ||
+    chooseShortestPathRow(exact, noteBasePath) ||
+    chooseShortestPathRow(fuzzy, noteBasePath)
+  )
+}
+
+function MarkdownPreview({
+  content,
+  emptyText = 'Leere Notiz.',
+  className,
+  currentPath,
+  resolveWikiLink,
+  onOpenWikiLink,
+}: MarkdownPreviewProps) {
+  const classes = className ? `markdown-preview ${className}` : 'markdown-preview'
+  const renderedContent = useMemo(() => toMarkdownWithWikiHref(content), [content])
+
+  if (!content.trim()) {
+    return (
+      <div className={classes}>
+        <p className="empty-copy">{emptyText}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={classes}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => {
+            if (href?.startsWith(WIKI_LINK_HREF_PREFIX) && resolveWikiLink) {
+              const target = decodeURIComponent(href.slice(WIKI_LINK_HREF_PREFIX.length))
+              const resolved = resolveWikiLink(target, currentPath)
+              if (resolved && onOpenWikiLink) {
+                return (
+                  <button
+                    className="markdown-wikilink"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      onOpenWikiLink(resolved)
+                    }}
+                  >
+                    {children}
+                  </button>
+                )
+              }
+              return <span className="markdown-wikilink unresolved">{children}</span>
+            }
+
+            return (
+              <a href={href} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            )
+          },
+        }}
+      >
+        {renderedContent}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+type WysiwygMarkdownEditorProps = {
+  value: string
+  theme: ThemeMode
+  onChange: (nextValue: string) => void
+  onOpenLink?: (href: string) => void
+  editorApiRef: MutableRefObject<WysiwygEditorApi | null>
+}
+
+function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRef }: WysiwygMarkdownEditorProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const editorRef = useRef<ToastEditor | null>(null)
+  const onChangeRef = useRef(onChange)
+  const onOpenLinkRef = useRef(onOpenLink)
+  const initialValueRef = useRef(value)
+  const syncingRef = useRef(false)
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
+
+  useEffect(() => {
+    onOpenLinkRef.current = onOpenLink
+  }, [onOpenLink])
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) {
+      return
+    }
+
+    const instance = new ToastEditor({
+      el: host,
+      height: '100%',
+      minHeight: '100%',
+      initialValue: initialValueRef.current,
+      initialEditType: 'wysiwyg',
+      hideModeSwitch: true,
+      usageStatistics: false,
+      autofocus: false,
+      theme: theme === 'dark' ? 'dark' : 'light',
+      toolbarItems: [
+        ['heading', 'bold', 'italic', 'strike'],
+        ['hr', 'quote'],
+        ['ul', 'ol', 'task'],
+        ['table', 'link'],
+        ['code', 'codeblock'],
+      ],
+      events: {
+        change: () => {
+          if (!editorRef.current || syncingRef.current) {
+            return
+          }
+          onChangeRef.current(editorRef.current.getMarkdown())
+        },
+      },
+    })
+
+    editorRef.current = instance
+    editorApiRef.current = {
+      insertText: (text: string) => instance.insertText(text),
+      getSelectedText: () => instance.getSelectedText(),
+      focus: () => instance.focus(),
+    }
+
+    const onHostClick = (event: MouseEvent) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) {
+        return
+      }
+      const link = target.closest('a')
+      if (!(link instanceof HTMLAnchorElement)) {
+        return
+      }
+      const href = link.getAttribute('href') || ''
+      if (!href || !onOpenLinkRef.current) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      onOpenLinkRef.current(href)
+    }
+    host.addEventListener('click', onHostClick)
+
+    return () => {
+      editorApiRef.current = null
+      host.removeEventListener('click', onHostClick)
+      instance.destroy()
+      editorRef.current = null
+    }
+  }, [editorApiRef, theme])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    const currentValue = instance.getMarkdown()
+    if (currentValue === value) {
+      return
+    }
+
+    syncingRef.current = true
+    instance.setMarkdown(value, false)
+    syncingRef.current = false
+  }, [value])
+
+  return <div className="wysiwyg-editor-host" ref={hostRef} />
 }
 
 function getPreferredTheme(): ThemeMode {
@@ -147,6 +523,10 @@ function getPathTail(path: string): string {
   const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
   const parts = normalized.split('/')
   return parts[parts.length - 1] || path
+}
+
+function toNoteDisplayName(path: string): string {
+  return getFileName(path).replace(/\.md$/i, '')
 }
 
 function normalizeLabel(value: string): string {
@@ -227,17 +607,122 @@ function storeLastNoteBasePath(path: string): void {
   }
 }
 
-function getTopLevelGroupKey(path: string, noteBasePath: string): string {
-  const normalizedPath = path.replace(/\\/g, '/')
-  const normalizedBase = noteBasePath.replace(/\\/g, '/').replace(/\/+$/, '')
+function clearStoredLastNoteBasePath(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.localStorage.removeItem(LAST_NOTEBASE_STORAGE_KEY)
+  } catch {
+    // Best effort.
+  }
+}
 
-  if (normalizedBase && normalizedPath.toLowerCase().startsWith(`${normalizedBase.toLowerCase()}/`)) {
-    const relative = normalizedPath.slice(normalizedBase.length + 1)
-    return relative.split('/')[0] || ''
+function getStoredSidebarOpen(): boolean {
+  if (typeof window === 'undefined') {
+    return true
   }
 
-  const parts = normalizedPath.split('/').filter(Boolean)
-  return parts.length > 1 ? parts[parts.length - 2] : ''
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY)
+    if (raw === '0') {
+      return false
+    }
+    if (raw === '1') {
+      return true
+    }
+  } catch {
+    // Best effort fallback.
+  }
+  return true
+}
+
+function getStoredExplorerWidth(): number {
+  if (typeof window === 'undefined') {
+    return 300
+  }
+
+  try {
+    const raw = window.localStorage.getItem(EXPLORER_WIDTH_STORAGE_KEY)
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) {
+      return 300
+    }
+    return Math.max(220, Math.min(520, Math.round(parsed)))
+  } catch {
+    return 300
+  }
+}
+
+function getStoredPanelOpen(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === '1') {
+      return true
+    }
+    if (raw === '0') {
+      return false
+    }
+  } catch {
+    // Best effort.
+  }
+  return fallback
+}
+
+function getStoredStatusBarPrefs(): StatusBarPrefs {
+  if (typeof window === 'undefined') {
+    return { ...DEFAULT_STATUS_BAR_PREFS }
+  }
+
+  try {
+    const raw = window.localStorage.getItem(STATUS_BAR_PREFS_STORAGE_KEY)
+    if (!raw) {
+      return { ...DEFAULT_STATUS_BAR_PREFS }
+    }
+    const parsed = JSON.parse(raw) as Partial<StatusBarPrefs>
+    return {
+      showNoteBaseName: parsed.showNoteBaseName ?? DEFAULT_STATUS_BAR_PREFS.showNoteBaseName,
+      showOpenTasks: parsed.showOpenTasks ?? DEFAULT_STATUS_BAR_PREFS.showOpenTasks,
+      showDueToday: parsed.showDueToday ?? DEFAULT_STATUS_BAR_PREFS.showDueToday,
+      showTotalNotes: parsed.showTotalNotes ?? DEFAULT_STATUS_BAR_PREFS.showTotalNotes,
+      showStateMessage: parsed.showStateMessage ?? DEFAULT_STATUS_BAR_PREFS.showStateMessage,
+    }
+  } catch {
+    return { ...DEFAULT_STATUS_BAR_PREFS }
+  }
+}
+
+function areStatusBarPrefsEqual(left: StatusBarPrefs, right: StatusBarPrefs): boolean {
+  return (
+    left.showNoteBaseName === right.showNoteBaseName &&
+    left.showOpenTasks === right.showOpenTasks &&
+    left.showDueToday === right.showDueToday &&
+    left.showTotalNotes === right.showTotalNotes &&
+    left.showStateMessage === right.showStateMessage
+  )
+}
+
+function toLocalIsoDate(): string {
+  const now = new Date()
+  const offsetMinutes = now.getTimezoneOffset()
+  const local = new Date(now.getTime() - offsetMinutes * 60 * 1000)
+  return local.toISOString().slice(0, 10)
+}
+
+function getRelativeVaultPath(path: string, noteBasePath: string): string {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const normalizedBase = noteBasePath.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!normalizedBase) {
+    return normalizedPath
+  }
+
+  if (normalizedPath.toLowerCase().startsWith(`${normalizedBase.toLowerCase()}/`)) {
+    return normalizedPath.slice(normalizedBase.length + 1)
+  }
+  return normalizedPath
 }
 
 function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null {
@@ -252,19 +737,10 @@ function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null
   }
 
   const normalizedPath = row.path.replace(/\\/g, '/')
-  const tagOverviewMatch = normalizedPath.match(/\/02_tags\/([^/]+)\/([^/]+)\/overview\.md$/i)
+  const tagOverviewMatch = normalizedPath.match(/\/(?:tags|02_tags)\/([^/]+)\/([^/]+)\/overview\.md$/i)
   if (tagOverviewMatch) {
     const group = normalizeLabel(tagOverviewMatch[1].replace(/_/g, ' '))
     const tag = normalizeLabel(tagOverviewMatch[2].replace(/_/g, ' '))
-    if (group && tag) {
-      return { group, tag }
-    }
-  }
-
-  const entityMatch = normalizedPath.match(/\/02_entities\/([^/]+)\/([^/]+)\.md$/i)
-  if (entityMatch) {
-    const group = normalizeLabel(entityMatch[1].replace(/_/g, ' '))
-    const tag = normalizeLabel(entityMatch[2].replace(/_/g, ' '))
     if (group && tag) {
       return { group, tag }
     }
@@ -275,6 +751,7 @@ function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null
 
 function App() {
   const autoOpenTriedRef = useRef(false)
+  const explorerRecoveryRef = useRef(false)
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
@@ -288,16 +765,30 @@ function App() {
   const [parsedTasks, setParsedTasks] = useState<ParsedTask[]>([])
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
+  const [allNotes, setAllNotes] = useState<SearchRow[]>([])
+  const [explorerFiles, setExplorerFiles] = useState<SearchRow[]>([])
 
   const [daily, setDaily] = useState<ReviewDaily | null>(null)
   const [weekly, setWeekly] = useState<ReviewWeekly | null>(null)
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(getStoredSidebarOpen)
   const [displayName, setDisplayName] = useState(getStoredDisplayName)
+  const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
+  const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme)
+  const [savedDisplayName, setSavedDisplayName] = useState(getStoredDisplayName)
+  const [savedSidebarOpen, setSavedSidebarOpen] = useState(getStoredSidebarOpen)
+  const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
+  const [explorerWidth, setExplorerWidth] = useState(getStoredExplorerWidth)
+  const [editorPanelOpen, setEditorPanelOpen] = useState(() =>
+    getStoredPanelOpen(EDITOR_PANEL_OPEN_STORAGE_KEY, true)
+  )
+  const [capturePanelOpen, setCapturePanelOpen] = useState(() =>
+    getStoredPanelOpen(CAPTURE_PANEL_OPEN_STORAGE_KEY, true)
+  )
+  const [capturePinned, setCapturePinned] = useState(() => getStoredPanelOpen(CAPTURE_PINNED_STORAGE_KEY, true))
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     daily: true,
     tags: true,
@@ -305,21 +796,21 @@ function App() {
   })
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
-  const [newNoteGroupName, setNewNoteGroupName] = useState('')
-  const [selectedNoteGroupKey, setSelectedNoteGroupKey] = useState('')
-  const [newGroupedNoteTitle, setNewGroupedNoteTitle] = useState('')
   const [newTagGroupName, setNewTagGroupName] = useState('')
   const [selectedTagGroup, setSelectedTagGroup] = useState('')
   const [newTagName, setNewTagName] = useState('')
   const [tagManagerOpen, setTagManagerOpen] = useState(false)
   const [tagMenuTarget, setTagMenuTarget] = useState<TagMenuTarget>(null)
   const [viewerDropActive, setViewerDropActive] = useState(false)
-  const [splitDropActive, setSplitDropActive] = useState(false)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
   const [activeNotePath, setActiveNotePath] = useState('')
   const [splitView, setSplitView] = useState(false)
   const [compareNotePath, setCompareNotePath] = useState('')
+  const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false)
+  const [linkPickerQuery, setLinkPickerQuery] = useState('')
+  const activeEditorRef = useRef<WysiwygEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -349,12 +840,53 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+    if (window.nicknotes?.setWindowTheme) {
+      void window.nicknotes.setWindowTheme(theme).catch(() => {
+        // Best effort bridge for desktop titlebar.
+      })
+    }
   }, [theme])
 
   useEffect(() => {
-    window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName)
-  }, [displayName])
+    try {
+      window.localStorage.setItem(EXPLORER_WIDTH_STORAGE_KEY, String(explorerWidth))
+    } catch {
+      // Best effort.
+    }
+  }, [explorerWidth])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EDITOR_PANEL_OPEN_STORAGE_KEY, editorPanelOpen ? '1' : '0')
+    } catch {
+      // Best effort.
+    }
+  }, [editorPanelOpen])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CAPTURE_PANEL_OPEN_STORAGE_KEY, capturePanelOpen ? '1' : '0')
+    } catch {
+      // Best effort.
+    }
+  }, [capturePanelOpen])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CAPTURE_PINNED_STORAGE_KEY, capturePinned ? '1' : '0')
+    } catch {
+      // Best effort.
+    }
+  }, [capturePinned])
+
+  const settingsDirty = useMemo(
+    () =>
+      theme !== savedTheme ||
+      displayName !== savedDisplayName ||
+      sidebarOpen !== savedSidebarOpen ||
+      !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs),
+    [displayName, savedDisplayName, savedSidebarOpen, savedStatusBarPrefs, savedTheme, sidebarOpen, statusBarPrefs, theme]
+  )
 
   const refreshTasks = async (force = false) => {
     if (!vaultLoaded && !force) {
@@ -365,16 +897,68 @@ function App() {
     setTasks(response.items)
   }
 
+  const refreshExplorerFiles = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    try {
+      const response = await apiRequest<{ items: SearchRow[] }>(backendUrl, '/explorer/files')
+      setExplorerFiles(response.items)
+    } catch {
+      // Fallback: Explorer can still render indexed rows.
+    }
+  }
+
   const runSearch = async (query: string, force = false) => {
     if (!vaultLoaded && !force) {
       return
     }
 
-    const response = await apiRequest<{ items: SearchRow[] }>(
-      backendUrl,
-      `/search?query=${encodeURIComponent(query)}`
-    )
-    setSearchResults(response.items)
+    const cleanQuery = query.trim()
+    try {
+      const response = await apiRequest<{ items: SearchRow[] }>(
+        backendUrl,
+        `/search?query=${encodeURIComponent(query)}`
+      )
+      setSearchResults(response.items)
+      if (!cleanQuery) {
+        setAllNotes(response.items)
+        return
+      }
+
+      void apiRequest<{ items: SearchRow[] }>(backendUrl, '/search?query=')
+        .then((allResponse) => {
+          setAllNotes(allResponse.items)
+        })
+        .catch(() => {
+          // Best effort refresh for wikilinks.
+        })
+    } catch (caught) {
+      setError(String(caught))
+      if (!cleanQuery) {
+        setSearchResults([])
+        setAllNotes([])
+      }
+    } finally {
+      if (!cleanQuery) {
+        await refreshExplorerFiles(force)
+      }
+    }
+  }
+
+  const refreshAllNotes = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    try {
+      const response = await apiRequest<{ items: SearchRow[] }>(backendUrl, '/search?query=')
+      setAllNotes(response.items)
+    } catch (caught) {
+      setError(String(caught))
+      setAllNotes([])
+    }
   }
 
   const refreshReview = async (force = false) => {
@@ -401,8 +985,33 @@ function App() {
       return
     }
 
-    const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups')
-    setNoteGroups(response.groups)
+    try {
+      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups')
+      setNoteGroups(response.groups)
+    } catch (caught) {
+      setError(String(caught))
+      setNoteGroups([])
+    }
+  }
+
+  const refreshExplorerSidebarData = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+    await Promise.allSettled([refreshNoteGroups(force), refreshAllNotes(force), refreshExplorerFiles(force)])
+  }
+
+  const refreshWorkspaceData = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+    await Promise.allSettled([
+      refreshTasks(force),
+      runSearch(searchQuery, force),
+      refreshReview(force),
+      refreshTagGroups(force),
+      refreshExplorerSidebarData(force),
+    ])
   }
 
   const openVaultAtPath = async (rawPath: string, successMessage: string): Promise<boolean> => {
@@ -430,13 +1039,7 @@ function App() {
     setMessage(successMessage)
     setError('')
 
-    await Promise.all([
-      refreshTasks(true),
-      runSearch(searchQuery, true),
-      refreshReview(true),
-      refreshTagGroups(true),
-      refreshNoteGroups(true),
-    ])
+    await refreshWorkspaceData(true)
     return true
   }
 
@@ -470,13 +1073,7 @@ function App() {
       setMessage('NoteBase geladen.')
       setError('')
 
-      await Promise.all([
-        refreshTasks(true),
-        runSearch(searchQuery, true),
-        refreshReview(true),
-        refreshTagGroups(true),
-        refreshNoteGroups(true),
-      ])
+      await refreshWorkspaceData(true)
     } catch (caught) {
       setError(`Backend nicht erreichbar: ${String(caught)}`)
     }
@@ -486,6 +1083,33 @@ function App() {
     void loadState()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendUrl])
+
+  useEffect(() => {
+    if (!vaultLoaded) {
+      setAllNotes([])
+      setExplorerFiles([])
+      setLinkPickerOpen(false)
+      setLinkPickerQuery('')
+      setTabContextMenu(null)
+    }
+  }, [vaultLoaded])
+
+  useEffect(() => {
+    if (!tabContextMenu) {
+      return
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.closest('.editor-tab-context-menu')) {
+        return
+      }
+      setTabContextMenu(null)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [tabContextMenu])
 
   useEffect(() => {
     if (!vaultLoaded) {
@@ -521,14 +1145,25 @@ function App() {
       setActiveNotePath(openTabs[openTabs.length - 1].path)
     }
 
-    if (compareNotePath && !openTabs.some((tab) => tab.path === compareNotePath)) {
+    if (compareNotePath && !openTabs.some((tab) => tab.kind === 'note' && tab.path === compareNotePath)) {
       setCompareNotePath('')
     }
 
-    if (openTabs.length < 2 && splitView) {
+    if (openTabs.filter((tab) => tab.kind === 'note').length < 2 && splitView) {
       setSplitView(false)
     }
   }, [activeNotePath, compareNotePath, openTabs, splitView])
+
+  useEffect(() => {
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.path !== SETTINGS_TAB_PATH || tab.dirty === settingsDirty) {
+          return tab
+        }
+        return { ...tab, dirty: settingsDirty }
+      })
+    )
+  }, [settingsDirty])
 
   const chosenTags = useMemo(() => new Set(selectedTagKeys), [selectedTagKeys])
 
@@ -540,78 +1175,70 @@ function App() {
     })
   }, [searchResults])
 
-  const dailyNotes = useMemo(() => {
-    return sortedNotes.filter((row) => {
-      const type = row.note_type.toLowerCase()
-      return type.includes('daily') || /daily/i.test(row.path) || /\d{4}-\d{2}-\d{2}/.test(row.title)
-    })
-  }, [sortedNotes])
-
-  const groupedTagNotes = useMemo(() => {
-    const groups: Record<string, SearchRow[]> = {}
-    const ungrouped: SearchRow[] = []
-
-    for (const row of sortedNotes) {
-      const parsed = parseTagFromNote(row)
-      if (!parsed) {
-        continue
-      }
-
-      if (!groups[parsed.group]) {
-        groups[parsed.group] = []
-      }
-      groups[parsed.group].push(row)
+  const linkIndexRows = useMemo(() => {
+    const source = allNotes.length > 0 ? allNotes : sortedNotes
+    const deduped = new Map<string, SearchRow>()
+    for (const row of source) {
+      deduped.set(row.path, row)
     }
+    return Array.from(deduped.values())
+  }, [allNotes, sortedNotes])
 
-    for (const row of sortedNotes) {
-      const type = row.note_type.toLowerCase()
-      const parsed = parseTagFromNote(row)
-      if (!parsed && (type.includes('tag') || /tag/i.test(row.path) || row.title.includes(':'))) {
-        ungrouped.push(row)
+  const explorerRows = useMemo(() => {
+    const deduped = new Map<string, SearchRow>()
+    for (const row of linkIndexRows) {
+      deduped.set(row.path, row)
+    }
+    for (const row of explorerFiles) {
+      if (!deduped.has(row.path)) {
+        deduped.set(row.path, row)
       }
     }
+    return Array.from(deduped.values())
+  }, [explorerFiles, linkIndexRows])
 
-    for (const rows of Object.values(groups)) {
-      rows.sort((left, right) => left.title.localeCompare(right.title, 'de'))
+  useEffect(() => {
+    if (!vaultLoaded) {
+      explorerRecoveryRef.current = false
+      return
+    }
+    if (noteGroups.length > 0 || explorerRows.length > 0) {
+      explorerRecoveryRef.current = false
+      return
+    }
+    if (explorerRecoveryRef.current) {
+      return
     }
 
-    ungrouped.sort((left, right) => left.title.localeCompare(right.title, 'de'))
-
-    return { groups, ungrouped }
-  }, [sortedNotes])
-
-  const tagNotes = useMemo(() => {
-    return Object.values(groupedTagNotes.groups).flat()
-  }, [groupedTagNotes.groups])
-
-  const notesByTopGroup = useMemo(() => {
-    const grouped: Record<string, SearchRow[]> = {}
-    for (const row of sortedNotes) {
-      const topGroup = getTopLevelGroupKey(row.path, vaultPath)
-      if (!topGroup) {
-        continue
+    explorerRecoveryRef.current = true
+    void (async () => {
+      try {
+        await apiRequest(backendUrl, '/notebase/reindex', { method: 'POST' })
+      } catch {
+        // Best effort reindex.
       }
-      if (!grouped[topGroup]) {
-        grouped[topGroup] = []
-      }
-      grouped[topGroup].push(row)
+      await refreshExplorerSidebarData(true)
+      explorerRecoveryRef.current = false
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendUrl, vaultLoaded, noteGroups.length, explorerRows.length])
+
+  const wikiTitleCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of linkIndexRows) {
+      const key = normalizeWikiLookup(toNoteDisplayName(row.path))
+      counts.set(key, (counts.get(key) ?? 0) + 1)
     }
+    return counts
+  }, [linkIndexRows])
 
-    for (const rows of Object.values(grouped)) {
-      rows.sort((left, right) => left.title.localeCompare(right.title, 'de'))
+  const noteGroupsByKey = useMemo(() => {
+    const byKey = new Map<string, NoteGroup>()
+    for (const group of noteGroups) {
+      byKey.set(group.key, group)
     }
-
-    return grouped
-  }, [sortedNotes, vaultPath])
-
-  const customNoteGroups = useMemo(
-    () => noteGroups.filter((group) => !group.favorite),
-    [noteGroups]
-  )
-  const creatableNoteGroups = useMemo(
-    () => noteGroups.filter((group) => group.canCreateNotes),
-    [noteGroups]
-  )
+    return byKey
+  }, [noteGroups])
 
   const discoveredTagGroups = useMemo(() => {
     const result: TagGroupsMap = {}
@@ -662,38 +1289,81 @@ function App() {
     }
   }, [selectedTagGroup, sortedTagGroupNames])
 
-  useEffect(() => {
-    if (!selectedNoteGroupKey && creatableNoteGroups.length > 0) {
-      setSelectedNoteGroupKey(creatableNoteGroups[0].key)
-      return
-    }
-
-    if (selectedNoteGroupKey && !creatableNoteGroups.some((group) => group.key === selectedNoteGroupKey)) {
-      setSelectedNoteGroupKey(creatableNoteGroups[0]?.key ?? '')
-    }
-  }, [creatableNoteGroups, selectedNoteGroupKey])
-
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
-  const compareCandidates = openTabs.filter((tab) => tab.path !== activeTab?.path)
-  const compareTab = splitView
-    ? openTabs.find((tab) => tab.path === compareNotePath) ?? compareCandidates[0] ?? null
-    : null
+  const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
+  const compareCandidates = openNoteTabs.filter((tab) => tab.path !== activeTab?.path)
+  const compareTab =
+    splitView && activeTab?.kind === 'note'
+      ? openNoteTabs.find((tab) => tab.path === compareNotePath) ?? compareCandidates[0] ?? null
+      : null
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
+  const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
+  const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.path === tabContextMenu.path) ?? null : null
+  const dueTodayCount = useMemo(() => {
+    const today = toLocalIsoDate()
+    return tasks.filter((task) => task.status !== 'done' && task.due_date === today).length
+  }, [tasks])
+  const resolveWikiLink = (target: string, currentPath?: string): SearchRow | null =>
+    resolveWikiLinkTarget(target, linkIndexRows, vaultPath, currentPath)
+
+  const toWikiTargetForRow = (row: SearchRow): string => {
+    const noteName = toNoteDisplayName(row.path)
+    const duplicateCount = wikiTitleCounts.get(normalizeWikiLookup(noteName)) ?? 0
+    if (duplicateCount <= 1) {
+      return noteName
+    }
+    return getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
+  }
+
+  const activeWikiLinks = useMemo(() => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return [] as Array<{
+        raw: string
+        target: string
+        alias: string | null
+        resolved: SearchRow | null
+      }>
+    }
+
+    const unique = new Map<string, { raw: string; target: string; alias: string | null; resolved: SearchRow | null }>()
+    for (const link of extractWikiLinks(activeTab.content)) {
+      const key = normalizeWikiLookup(link.target)
+      if (unique.has(key)) {
+        continue
+      }
+      unique.set(key, {
+        ...link,
+        resolved: resolveWikiLinkTarget(link.target, linkIndexRows, vaultPath, activeTab.path),
+      })
+    }
+    return Array.from(unique.values())
+  }, [activeTab, linkIndexRows, vaultPath])
+
+  const linkPickerCandidates = useMemo(() => {
+    const query = normalizeWikiLookup(linkPickerQuery)
+    const rows = linkIndexRows.filter((row) => (activeTab?.kind === 'note' ? row.path !== activeTab.path : true))
+    if (!query) {
+      return rows.slice(0, 60)
+    }
+
+    return rows
+      .filter((row) => {
+        const noteName = normalizeWikiLookup(toNoteDisplayName(row.path))
+        const relative = normalizeWikiLookup(getRelativeVaultPath(row.path, vaultPath))
+        return noteName.includes(query) || relative.includes(query)
+      })
+      .slice(0, 60)
+  }, [activeTab, linkIndexRows, linkPickerQuery, vaultPath])
+  const normalizedLinkPickerQuery = normalizeWikiLookup(linkPickerQuery)
+  const linkPickerHasExactMatch = linkPickerCandidates.some(
+    (row) => normalizeWikiLookup(toWikiTargetForRow(row)) === normalizedLinkPickerQuery
+  )
 
   const pickDirectory = async (): Promise<string | null> => {
     if (!window.nicknotes?.selectDirectory) {
       return window.prompt('Bitte absoluten Pfad eingeben:') || null
     }
     return window.nicknotes.selectDirectory()
-  }
-
-  const openVault = async () => {
-    try {
-      setError('')
-      await openVaultAtPath(vaultPath, 'NoteBase erfolgreich geladen und indexiert.')
-    } catch (caught) {
-      setError(String(caught))
-    }
   }
 
   const createVault = async () => {
@@ -737,13 +1407,7 @@ function App() {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
       setMessage(`Neue NoteBase erstellt: ${response.noteBasePath ?? response.vaultPath}`)
-      await Promise.all([
-        refreshTasks(true),
-        runSearch(searchQuery, true),
-        refreshReview(true),
-        refreshTagGroups(true),
-        refreshNoteGroups(true),
-      ])
+      await refreshWorkspaceData(true)
     } catch (caught) {
       setError(String(caught))
     }
@@ -758,6 +1422,180 @@ function App() {
       }
       setVaultPath(path)
       await openVaultAtPath(path, 'NoteBase automatisch geladen.')
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const saveSettings = (): boolean => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+      window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName)
+      window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? '1' : '0')
+      window.localStorage.setItem(STATUS_BAR_PREFS_STORAGE_KEY, JSON.stringify(statusBarPrefs))
+      setSavedTheme(theme)
+      setSavedDisplayName(displayName)
+      setSavedSidebarOpen(sidebarOpen)
+      setSavedStatusBarPrefs({ ...statusBarPrefs })
+      setMessage('Einstellungen gespeichert.')
+      setError('')
+      return true
+    } catch (caught) {
+      setError(String(caught))
+      return false
+    }
+  }
+
+  const discardSettings = () => {
+    setTheme(savedTheme)
+    setDisplayName(savedDisplayName)
+    setSidebarOpen(savedSidebarOpen)
+    setStatusBarPrefs({ ...savedStatusBarPrefs })
+    setMessage('Nicht gespeicherte Einstellungen verworfen.')
+  }
+
+  const openSettingsTab = () => {
+    const existing = openTabs.find((tab) => tab.path === SETTINGS_TAB_PATH)
+    if (existing) {
+      setEditorPanelOpen(true)
+      setActiveNotePath(SETTINGS_TAB_PATH)
+      return
+    }
+
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        kind: 'settings',
+        path: SETTINGS_TAB_PATH,
+        title: 'Einstellungen',
+        content: '',
+        loading: false,
+        dirty: settingsDirty,
+      },
+    ])
+    setEditorPanelOpen(true)
+    setActiveNotePath(SETTINGS_TAB_PATH)
+  }
+
+  const saveNoteTab = async (path: string): Promise<boolean> => {
+    const targetTab = openTabs.find((tab) => tab.path === path)
+    if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
+      return true
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ counts: VaultCounts; tagGroups?: TagGroupsMap }>(
+        backendUrl,
+        '/notes/save',
+        {
+          method: 'POST',
+          body: JSON.stringify({ path: targetTab.path, content: targetTab.content }),
+        }
+      )
+      setCounts(response.counts)
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setOpenTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.path !== path) {
+            return tab
+          }
+          return { ...tab, dirty: false }
+        })
+      )
+      setMessage(`Notiz gespeichert: ${targetTab.title}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview(), refreshNoteGroups()])
+      return true
+    } catch (caught) {
+      setError(String(caught))
+      return false
+    }
+  }
+
+  const saveTab = async (path: string): Promise<boolean> => {
+    const targetTab = openTabs.find((tab) => tab.path === path)
+    if (!targetTab) {
+      return true
+    }
+    if (targetTab.kind === 'settings') {
+      return saveSettings()
+    }
+    return saveNoteTab(path)
+  }
+
+  const renameNoteBase = async () => {
+    const newName = normalizeLabel(window.prompt('Neuer Name fuer die NoteBase', noteBaseName) ?? '')
+    if (!newName || newName === noteBaseName) {
+      return
+    }
+
+    try {
+      setError('')
+      const previousName = noteBaseName
+      const response = await apiRequest<{
+        counts: VaultCounts
+        vaultPath: string
+        noteBasePath?: string
+        tagGroups?: TagGroupsMap
+      }>(backendUrl, '/notebase/rename', {
+        method: 'POST',
+        body: JSON.stringify({ newName }),
+      })
+      const loadedPath = response.noteBasePath ?? response.vaultPath
+      setVaultPath(loadedPath)
+      setVaultLoaded(true)
+      setCounts(response.counts)
+      setOpenTabs([])
+      setActiveNotePath('')
+      setSplitView(false)
+      setCompareNotePath('')
+      storeLastNoteBasePath(loadedPath)
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setMessage(`NoteBase umbenannt: ${previousName} -> ${getPathTail(loadedPath)}`)
+      await Promise.all([refreshTasks(true), runSearch(searchQuery, true), refreshReview(true), refreshNoteGroups(true)])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const deleteNoteBase = async () => {
+    if (!window.confirm(`Soll die NoteBase "${noteBaseName}" wirklich mit allen Dateien geloescht werden?`)) {
+      return
+    }
+    const secondCheck = normalizeLabel(
+      window.prompt('Bitte "LOESCHEN" eingeben, um das vollstaendige Loeschen zu bestaetigen.', '') ?? ''
+    )
+    if (secondCheck.toUpperCase() !== 'LOESCHEN') {
+      setMessage('Loeschen abgebrochen.')
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ deleted: boolean; deletedPath: string }>(backendUrl, '/notebase/delete', {
+        method: 'POST',
+        body: JSON.stringify({ confirmDelete: true }),
+      })
+      setVaultLoaded(false)
+      setVaultPath('')
+      setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
+      setTasks([])
+      setSearchResults([])
+      setSuggestions([])
+      setSelectedTagKeys([])
+      setParsedTasks([])
+      setOpenTabs([])
+      setActiveNotePath('')
+      setSplitView(false)
+      setCompareNotePath('')
+      setCustomTagGroups({})
+      setNoteGroups([])
+      clearStoredLastNoteBasePath()
+      setMessage(`NoteBase geloescht: ${response.deletedPath}`)
     } catch (caught) {
       setError(String(caught))
     }
@@ -850,6 +1688,7 @@ function App() {
     const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
     const existing = openTabs.find((tab) => tab.path === path)
     if (existing) {
+      setEditorPanelOpen(true)
       setActiveNotePath(path)
       return
     }
@@ -857,12 +1696,15 @@ function App() {
     setOpenTabs((prev) => [
       ...prev,
       {
+        kind: 'note',
         path,
         title: fallbackTitle,
         content: '',
         loading: true,
+        dirty: false,
       },
     ])
+    setEditorPanelOpen(true)
     setActiveNotePath(path)
 
     try {
@@ -875,6 +1717,7 @@ function App() {
                 title: fallbackTitle,
                 content,
                 loading: false,
+                dirty: false,
               }
             : tab
         )
@@ -885,8 +1728,165 @@ function App() {
     }
   }
 
-  const closeTab = (path: string) => {
+  const confirmCloseTab = async (path: string): Promise<boolean> => {
+    const tab = openTabs.find((candidate) => candidate.path === path)
+    if (!tab) {
+      return true
+    }
+    if (tab.kind !== 'note' || !tab.dirty) {
+      return true
+    }
+
+    const decision = (window.prompt(
+      `Die Notiz "${tab.title}" hat ungespeicherte Aenderungen.\n1 = Speichern\n2 = Verwerfen\n3 = Abbrechen`,
+      '1'
+    ) || '')
+      .trim()
+      .toLowerCase()
+
+    if (decision === '1' || decision === 's' || decision === 'speichern') {
+      return await saveTab(path)
+    }
+    if (decision === '2' || decision === 'v' || decision === 'verwerfen') {
+      return true
+    }
+    return false
+  }
+
+  const closeEditorTab = async (path: string) => {
+    const canClose = await confirmCloseTab(path)
+    if (!canClose) {
+      return
+    }
     setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
+    if (compareNotePath === path) {
+      setCompareNotePath('')
+    }
+    setTabContextMenu(null)
+  }
+
+  const openNoteInCurrentEditor = async (path: string, suggestedTitle?: string) => {
+    const currentPath = activeTab?.kind === 'note' ? activeTab.path : ''
+    if (currentPath && currentPath !== path) {
+      const canCloseCurrent = await confirmCloseTab(currentPath)
+      if (!canCloseCurrent) {
+        return
+      }
+    }
+    await openNoteInTab(path, suggestedTitle)
+    if (currentPath && currentPath !== path) {
+      setOpenTabs((prev) => prev.filter((tab) => tab.path !== currentPath))
+    }
+    setSplitView(false)
+    setCompareNotePath('')
+  }
+
+  const showNoteInSplitView = (path: string) => {
+    if (openNoteTabs.length < 2) {
+      return
+    }
+    const targetPath = path === activeNotePath ? openNoteTabs.find((tab) => tab.path !== path)?.path ?? '' : path
+    if (!targetPath) {
+      return
+    }
+    setCompareNotePath(targetPath)
+    setSplitView(true)
+    setTabContextMenu(null)
+  }
+
+  const updateActiveNoteContent = (nextContent: string) => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+    const tabPath = activeTab.path
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.path !== tabPath || tab.kind !== 'note') {
+          return tab
+        }
+        return { ...tab, content: nextContent, dirty: true }
+      })
+    )
+  }
+
+  const openWikiLinkPicker = () => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+    setLinkPickerQuery('')
+    setLinkPickerOpen(true)
+  }
+
+  const insertWikiLink = (target: string) => {
+    const editor = activeEditorRef.current
+    const cleanTarget = normalizeLabel(target)
+    if (!editor || !cleanTarget) {
+      return
+    }
+
+    editor.insertText(`[[${cleanTarget}]]`)
+    editor.focus()
+    setMessage(`Wikilink eingefuegt: [[${cleanTarget}]]`)
+    setLinkPickerOpen(false)
+    setLinkPickerQuery('')
+  }
+
+  const insertWikiLinkForRow = (row: SearchRow) => {
+    insertWikiLink(toWikiTargetForRow(row))
+  }
+
+  const followSelectedWikiLink = () => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+
+    const selected = normalizeLabel(activeEditorRef.current?.getSelectedText() || '')
+    if (!selected) {
+      setMessage('Bitte erst einen Wikilink oder Notiznamen markieren.')
+      return
+    }
+
+    const bracketMatch = selected.match(/^\[\[([^[\]]+)\]\]$/)
+    const selectedTarget = bracketMatch ? bracketMatch[1] : selected
+    const parsed = parseWikiLinkInner(selectedTarget)
+    const resolved = resolveWikiLink(parsed?.target ?? selectedTarget, activeTab.path)
+    if (!resolved) {
+      setMessage(`Kein Ziel fuer "${selectedTarget}" gefunden.`)
+      return
+    }
+
+    void openNoteInTab(resolved.path, toNoteDisplayName(resolved.path))
+  }
+
+  const handleEditorLinkOpen = (href: string) => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+
+    const cleanHref = href.trim()
+    if (!cleanHref || cleanHref.startsWith('#')) {
+      return
+    }
+
+    if (/^https?:\/\//i.test(cleanHref)) {
+      window.open(cleanHref, '_blank', 'noopener,noreferrer')
+      return
+    }
+
+    const decoded = decodeURIComponent(cleanHref)
+    const target = decoded.startsWith(WIKI_LINK_HREF_PREFIX)
+      ? decodeURIComponent(decoded.slice(WIKI_LINK_HREF_PREFIX.length))
+      : decoded
+
+    const resolved = resolveWikiLink(target.replace(/\.md$/i, ''), activeTab.path)
+    if (resolved) {
+      void openNoteInTab(resolved.path, toNoteDisplayName(resolved.path))
+      return
+    }
+
+    if (/^file:\/\//i.test(decoded)) {
+      window.open(decoded, '_blank', 'noopener,noreferrer')
+    }
   }
 
   const toggleFolder = (folderKey: string) => {
@@ -917,48 +1917,96 @@ function App() {
     }
   }
 
-  const onNoteDragStart = (event: DragEvent<HTMLElement>, path: string, title: string) => {
-    event.dataTransfer.effectAllowed = 'copyMove'
-    event.dataTransfer.setData('application/x-note-path', path)
-    event.dataTransfer.setData('application/x-note-title', title)
-    event.dataTransfer.setData('text/plain', path)
+  const resolveFallbackGroupKey = (): string => {
+    if (noteGroupsByKey.has('daily')) {
+      return 'daily'
+    }
+    if (noteGroupsByKey.has('01_daily')) {
+      return '01_daily'
+    }
+    return noteGroups[0]?.key ?? ''
   }
 
-  const onTabDragStart = (event: DragEvent<HTMLElement>, tab: NoteTab) => {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('application/x-open-tab-path', tab.path)
-    event.dataTransfer.setData('application/x-open-tab-title', tab.title)
-    event.dataTransfer.setData('text/plain', tab.path)
+  const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
+
+  const remapOpenNotePaths = (fromPrefix: string, toPrefix: string) => {
+    const cleanFrom = normalizePath(fromPrefix)
+    const cleanTo = normalizePath(toPrefix)
+    if (!cleanFrom || !cleanTo || cleanFrom === cleanTo) {
+      return
+    }
+
+    const rewritePath = (path: string): string => {
+      if (!path || path === SETTINGS_TAB_PATH) {
+        return path
+      }
+      const normalized = normalizePath(path)
+      const lower = normalized.toLowerCase()
+      const fromLower = cleanFrom.toLowerCase()
+      if (lower !== fromLower && !lower.startsWith(`${fromLower}/`)) {
+        return path
+      }
+      return `${cleanTo}${normalized.slice(cleanFrom.length)}`
+    }
+
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.kind !== 'note') {
+          return tab
+        }
+        const nextPath = rewritePath(tab.path)
+        if (nextPath === tab.path) {
+          return tab
+        }
+        return {
+          ...tab,
+          path: nextPath,
+          title: toNoteDisplayName(nextPath),
+        }
+      })
+    )
+    setActiveNotePath((prev) => rewritePath(prev))
+    setCompareNotePath((prev) => rewritePath(prev))
   }
 
-  const addNoteGroup = async () => {
-    const groupName = normalizeLabel(newNoteGroupName)
-    if (!groupName) {
+  const createExplorerFolder = async (parentGroupKey: string, groupName: string) => {
+    const cleanGroupName = normalizeLabel(groupName)
+    if (!cleanGroupName) {
+      return
+    }
+
+    const fallbackGroup = resolveFallbackGroupKey()
+    const effectiveParentKey = parentGroupKey && noteGroupsByKey.has(parentGroupKey) ? parentGroupKey : fallbackGroup
+    const targetGroup = noteGroupsByKey.get(effectiveParentKey)
+    if (targetGroup?.canCreateGroups === false) {
+      setMessage('In diesem Ordner koennen keine neuen Unterordner angelegt werden.')
       return
     }
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups/add-group', {
+      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[] }>(backendUrl, '/note-groups/add-group', {
         method: 'POST',
-        body: JSON.stringify({ groupName }),
+        body: JSON.stringify({ groupName: cleanGroupName, parentKey: effectiveParentKey }),
       })
       setNoteGroups(response.groups)
-      setNewNoteGroupName('')
-      setMessage(`Notizgruppe angelegt: ${groupName}`)
+      setMessage(`Ordner angelegt: ${response.group.label}`)
     } catch (caught) {
       setError(String(caught))
     }
   }
 
-  const addNoteToGroup = async () => {
-    const groupKey = normalizeLabel(selectedNoteGroupKey)
-    if (!groupKey) {
+  const createExplorerFile = async (groupKey: string, title: string) => {
+    const cleanTitle = normalizeLabel(title)
+    if (!cleanTitle) {
       return
     }
 
-    const title = normalizeLabel(newGroupedNoteTitle)
-    if (!title) {
+    const fallbackGroup = resolveFallbackGroupKey()
+    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : fallbackGroup
+    const targetGroup = noteGroupsByKey.get(effectiveGroupKey)
+    if (targetGroup?.canCreateNotes === false) {
+      setMessage('In diesem Ordner koennen keine neuen Notizen angelegt werden.')
       return
     }
 
@@ -969,15 +2017,182 @@ function App() {
         '/note-groups/add-note',
         {
           method: 'POST',
-          body: JSON.stringify({ groupKey, title }),
+          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle }),
         }
       )
       setCounts(response.counts)
       setNoteGroups(response.groups)
-      setNewGroupedNoteTitle('')
       setMessage(`Notiz erstellt (${response.noteId}).`)
       await Promise.all([runSearch(searchQuery), refreshReview()])
-      await openNoteInTab(response.notePath, title)
+      await openNoteInTab(response.notePath, cleanTitle)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const renameExplorerFolder = async (groupKey: string, newName: string) => {
+    const cleanName = normalizeLabel(newName)
+    const group = noteGroupsByKey.get(groupKey)
+    if (!group || !cleanName || cleanName === group.label || group.canDelete === false) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts }>(
+        backendUrl,
+        '/note-groups/rename',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupKey, newName: cleanName }),
+        }
+      )
+      setNoteGroups(response.groups)
+      setCounts(response.counts)
+      remapOpenNotePaths(group.path, response.group.path)
+      setMessage(`Ordner umbenannt: ${response.group.label}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const moveExplorerFolder = async (groupKey: string, targetParentKey: string) => {
+    const sourceGroup = noteGroupsByKey.get(groupKey)
+    if (!sourceGroup || sourceGroup.canDelete === false) {
+      return
+    }
+
+    const targetParent = noteGroupsByKey.get(targetParentKey)
+    if (targetParent?.canCreateGroups === false) {
+      setMessage('In diesen Zielordner kann nicht verschoben werden.')
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts }>(
+        backendUrl,
+        '/note-groups/move',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupKey, targetParentKey }),
+        }
+      )
+      setNoteGroups(response.groups)
+      setCounts(response.counts)
+      remapOpenNotePaths(sourceGroup.path, response.group.path)
+      setMessage(`Ordner verschoben: ${response.group.label}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const deleteExplorerFolder = async (groupKey: string) => {
+    const group = noteGroupsByKey.get(groupKey)
+    if (!group || group.canDelete === false) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ deleted: boolean; groups: NoteGroup[]; counts: VaultCounts }>(
+        backendUrl,
+        '/note-groups/delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupKey }),
+        }
+      )
+      setNoteGroups(response.groups)
+      setCounts(response.counts)
+      const groupPath = normalizePath(group.path)
+      const groupPathLower = groupPath.toLowerCase()
+      setOpenTabs((prev) =>
+        prev.filter((tab) => {
+          if (tab.kind !== 'note') {
+            return true
+          }
+          const tabPath = normalizePath(tab.path).toLowerCase()
+          return tabPath !== groupPathLower && !tabPath.startsWith(`${groupPathLower}/`)
+        })
+      )
+      setMessage(`Ordner geloescht: ${group.label}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const toggleFavoriteFolder = async (groupKey: string) => {
+    const group = noteGroupsByKey.get(groupKey)
+    if (!group) {
+      return
+    }
+
+    try {
+      setError('')
+      const endpoint = group.favorite ? '/note-groups/unfavorite' : '/note-groups/favorite'
+      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, endpoint, {
+        method: 'POST',
+        body: JSON.stringify({ groupKey }),
+      })
+      setNoteGroups(response.groups)
+      setMessage(group.favorite ? 'Favorit entfernt.' : 'Zu Favoriten hinzugefuegt.')
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const renameExplorerFile = async (path: string, newName: string) => {
+    const cleanName = normalizeLabel(newName)
+    if (!cleanName) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ renamedPath: string; counts: VaultCounts }>(backendUrl, '/notes/rename', {
+        method: 'POST',
+        body: JSON.stringify({ path, newName: cleanName }),
+      })
+      setCounts(response.counts)
+      remapOpenNotePaths(path, response.renamedPath)
+      setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const moveExplorerFile = async (path: string, targetGroupKey: string) => {
+    try {
+      setError('')
+      const response = await apiRequest<{ movedPath: string; counts: VaultCounts }>(backendUrl, '/notes/move', {
+        method: 'POST',
+        body: JSON.stringify({ path, targetGroupKey }),
+      })
+      setCounts(response.counts)
+      remapOpenNotePaths(path, response.movedPath)
+      setMessage(`Datei verschoben: ${toNoteDisplayName(response.movedPath)}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const deleteExplorerFile = async (path: string) => {
+    try {
+      setError('')
+      const response = await apiRequest<{ deleted: boolean; counts: VaultCounts }>(backendUrl, '/notes/delete', {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      })
+      setCounts(response.counts)
+      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
+      setMessage(`Datei geloescht: ${toNoteDisplayName(path)}`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -1147,49 +2362,44 @@ function App() {
     void openNoteInTab(payload.path, payload.title)
   }
 
-  const handleSplitDrop = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault()
-    setSplitDropActive(false)
-    const payload = getDraggedNoteData(event)
-    if (!payload) {
-      return
-    }
-
-    const applySplitWithPath = (path: string) => {
-      const fallback = openTabs.find((tab) => tab.path !== activeTab?.path && tab.path !== path)?.path
-      setSplitView(true)
-      if (activeTab && path !== activeTab.path) {
-        setCompareNotePath(path)
-      } else {
-        setCompareNotePath(fallback ?? '')
-      }
-    }
-
-    const alreadyOpen = openTabs.some((tab) => tab.path === payload.path)
-    if (alreadyOpen) {
-      applySplitWithPath(payload.path)
-      return
-    }
-
-    void openNoteInTab(payload.path, payload.title).then(() => {
-      applySplitWithPath(payload.path)
-    })
-  }
-
   const toggleSplitView = () => {
-    if (openTabs.length < 2) {
+    if (activeTab?.kind !== 'note' || openNoteTabs.length < 2) {
       return
     }
 
     setSplitView((previous) => {
       if (!previous && !compareNotePath) {
-        const candidate = openTabs.find((tab) => tab.path !== activeNotePath)
+        const candidate = openNoteTabs.find((tab) => tab.path !== activeNotePath)
         if (candidate) {
           setCompareNotePath(candidate.path)
         }
       }
       return !previous
     })
+  }
+
+  const toggleEditorPanel = () => {
+    setEditorPanelOpen((previous) => !previous)
+  }
+
+  const closeCapturePanel = () => {
+    setCapturePanelOpen(false)
+  }
+
+  const toggleCapturePinned = () => {
+    setCapturePinned((previous) => {
+      if (previous) {
+        setCapturePanelOpen(false)
+        return false
+      }
+      setCapturePanelOpen(true)
+      return true
+    })
+  }
+
+  const openCaptureFromDock = () => {
+    setCapturePinned(true)
+    setCapturePanelOpen(true)
   }
 
   const setThemeMode = (nextMode: ThemeMode) => {
@@ -1206,10 +2416,6 @@ function App() {
     setSidebarOpen(true)
   }
 
-  const runSearchFromInput = () => {
-    void runSearch(searchQuery)
-  }
-
   const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -1217,77 +2423,65 @@ function App() {
     }
   }
 
-  const renderNoteItem = (row: SearchRow, depth = 1) => {
-    const noteTitle = row.title || getFileName(row.path)
+  useEffect(() => {
+    const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        if (!activeTab) {
+          return
+        }
+        void saveTab(activeTab.path)
+        return
+      }
 
-    return (
-      <button
-        key={row.path}
-        className="tree-item note-item"
-        style={{ paddingLeft: `${0.45 + depth * 0.55}rem` }}
-        draggable
-        onDragStart={(event) => onNoteDragStart(event, row.path, noteTitle)}
-        onClick={() => void openNoteInTab(row.path, row.title)}
-      >
-        <strong>{noteTitle}</strong>
-        <span>{row.note_type}</span>
-      </button>
-    )
-  }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        if (activeTab?.kind !== 'note') {
+          return
+        }
+        event.preventDefault()
+        openWikiLinkPicker()
+        return
+      }
 
-  const renderFolder = (
-    folderKey: string,
-    label: string,
-    items: SearchRow[],
-    depth = 0,
-    emptyText = 'Keine Eintraege.'
-  ) => {
-    const isOpen = expandedFolders[folderKey] ?? true
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        if (activeTab?.kind !== 'note') {
+          return
+        }
+        event.preventDefault()
+        followSelectedWikiLink()
+      }
+    }
 
-    return (
-      <div className="folder-node" key={folderKey}>
-        <button
-          className="folder-toggle"
-          style={{ paddingLeft: `${0.35 + depth * 0.55}rem` }}
-          onClick={() => toggleFolder(folderKey)}
-        >
-          <span>{isOpen ? 'v' : '>'}</span>
-          <strong>{label}</strong>
-          <em>{items.length}</em>
-        </button>
-
-        {isOpen ? (
-          <div className="folder-children">
-            {items.length === 0 ? <p className="empty-copy folder-empty">{emptyText}</p> : null}
-            {items.map((row) => renderNoteItem(row, depth + 1))}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
+    window.addEventListener('keydown', onGlobalKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onGlobalKeyDown)
+    }
+  }, [activeTab, followSelectedWikiLink, openWikiLinkPicker, saveTab])
 
   const renderSidebarContent = () => {
     if (sidebarView === 'vault') {
       return (
         <div className="sidebar-content">
-          <h3>NoteBase</h3>
+          <h3>Board</h3>
           <p className="muted-label">Aktive NoteBase</p>
-          <p className="mono-block">{vaultPath || 'Keine NoteBase geladen'}</p>
-
-          <label className="field-label" htmlFor="vault-path-input">
-            NoteBase-Pfad
-          </label>
-          <input
-            id="vault-path-input"
-            value={vaultPath}
-            onChange={(event) => setVaultPath(event.target.value)}
-            placeholder="C:\\Pfad\\zur\\NoteBase"
-          />
+          <div className="active-notebase-row">
+            <strong>{noteBaseName || 'Keine NoteBase'}</strong>
+            <div className="hover-menu-anchor">
+              <button className="icon-button compact muted" title="NoteBase-Menue">
+                ...
+              </button>
+              <div className="hover-menu">
+                <button onClick={() => void renameNoteBase()}>NoteBase umbenennen</button>
+                <button className="danger" onClick={() => void deleteNoteBase()}>
+                  NoteBase loeschen
+                </button>
+              </div>
+            </div>
+          </div>
 
           <div className="stacked-actions">
-            <button onClick={() => void pickAndOpenVault()}>Ordner waehlen + laden</button>
-            <button onClick={() => void openVault()}>Pfad laden</button>
-            <button onClick={() => void createVault()}>Neue NoteBase</button>
+            <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
+            <button onClick={() => void createVault()}>NoteBase anlegen</button>
           </div>
         </div>
       )
@@ -1441,133 +2635,34 @@ function App() {
     }
 
     return (
-      <div className="sidebar-content">
-        <div className="sidebar-header-row">
-          <h3>Notizen</h3>
-          <div className="header-inline-actions">
-            <button onClick={runSearchFromInput} disabled={!vaultLoaded}>
-              Suchen
-            </button>
-            <button onClick={() => void refreshNoteGroups()} disabled={!vaultLoaded}>
-              Gruppen
-            </button>
-          </div>
-        </div>
-
-        <div className="search-row">
-          <input
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                runSearchFromInput()
-              }
-            }}
-            placeholder="Datei, Tag, Text"
-          />
-        </div>
-
-        <section className="tag-actions">
-          <label className="field-label" htmlFor="note-group-name">
-            Neue Notizgruppe
-          </label>
-          <div className="tag-action-row">
-            <input
-              id="note-group-name"
-              value={newNoteGroupName}
-              onChange={(event) => setNewNoteGroupName(event.target.value)}
-              placeholder="z. B. Wissensbasis"
-            />
-            <button onClick={() => void addNoteGroup()} disabled={!newNoteGroupName.trim()}>
-              Gruppe anlegen
-            </button>
-          </div>
-
-          <label className="field-label" htmlFor="note-group-select">
-            Neue Notiz in Gruppe
-          </label>
-          <div className="tag-action-row">
-            <select
-              id="note-group-select"
-              value={selectedNoteGroupKey}
-              onChange={(event) => setSelectedNoteGroupKey(event.target.value)}
-            >
-              <option value="" disabled>
-                Gruppe waehlen
-              </option>
-              {creatableNoteGroups.map((group) => (
-                <option key={group.key} value={group.key}>
-                  {group.label}
-                </option>
-              ))}
-            </select>
-            <input
-              value={newGroupedNoteTitle}
-              onChange={(event) => setNewGroupedNoteTitle(event.target.value)}
-              placeholder="Titel der neuen Notiz"
-            />
-            <button
-              onClick={() => void addNoteToGroup()}
-              disabled={!selectedNoteGroupKey || !newGroupedNoteTitle.trim()}
-            >
-              Notiz anlegen
-            </button>
-          </div>
-        </section>
-
-        <section className="tree-scroll">
-          <p className="muted-label">Favouriten</p>
-          {renderFolder('daily', 'Daily Notes', dailyNotes, 0, 'Keine Daily Notes gefunden.')}
-
-          <div className="folder-node">
-            <button className="folder-toggle" onClick={() => toggleFolder('tags')}>
-              <span>{(expandedFolders.tags ?? true) ? 'v' : '>'}</span>
-              <strong>Tag Notes</strong>
-              <em>{tagNotes.length + groupedTagNotes.ungrouped.length}</em>
-            </button>
-
-            {(expandedFolders.tags ?? true) ? (
-              <div className="folder-children">
-                {Object.keys(groupedTagNotes.groups)
-                  .sort((left, right) => left.localeCompare(right, 'de'))
-                  .map((groupName) =>
-                    renderFolder(
-                      `notes-tag-group-${groupName}`,
-                      groupName,
-                      groupedTagNotes.groups[groupName],
-                      1,
-                      'Keine Notizen in dieser Gruppe.'
-                    )
-                  )}
-                {renderFolder(
-                  'notes-tag-ungrouped',
-                  'Ohne Gruppe',
-                  groupedTagNotes.ungrouped,
-                  1,
-                  'Keine ungruppierten Tag-Notizen.'
-                )}
-              </div>
-            ) : null}
-          </div>
-
-          <p className="muted-label">Weitere Notizgruppen</p>
-          {customNoteGroups.length === 0 ? (
-            <p className="empty-copy">Noch keine weiteren Notizgruppen vorhanden.</p>
-          ) : null}
-          {customNoteGroups.map((group) =>
-            renderFolder(
-              `notes-group-${group.key}`,
-              group.label,
-              notesByTopGroup[group.key] ?? [],
-              0,
-              'Keine Notizen in dieser Gruppe.'
-            )
-          )}
-        </section>
-      </div>
+      <ExplorerSidebar
+        vaultLoaded={vaultLoaded}
+        vaultPath={vaultPath}
+        groups={noteGroups}
+        files={explorerRows}
+        activeFilePath={activeTab?.kind === 'note' ? activeTab.path : ''}
+        dirtyFilePaths={new Set(openNoteTabs.filter((tab) => tab.dirty).map((tab) => tab.path))}
+        width={explorerWidth}
+        onWidthChange={setExplorerWidth}
+        onOpenFile={openNoteInTab}
+        onPreviewFile={openNoteInCurrentEditor}
+        onCreateFile={createExplorerFile}
+        onCreateFolder={createExplorerFolder}
+        onRenameFile={renameExplorerFile}
+        onRenameFolder={renameExplorerFolder}
+        onDeleteFile={deleteExplorerFile}
+        onDeleteFolder={deleteExplorerFolder}
+        onMoveFile={moveExplorerFile}
+        onMoveFolder={moveExplorerFolder}
+        onToggleFavoriteFolder={toggleFavoriteFolder}
+        onRefresh={() => {
+          void refreshExplorerSidebarData()
+        }}
+      />
     )
   }
+
+  const showCaptureInline = capturePanelOpen && capturePinned
 
   if (!vaultLoaded) {
     return (
@@ -1586,20 +2681,9 @@ function App() {
             placeholder="Dein Name"
           />
 
-          <label htmlFor="launch-vault-path" className="field-label">
-            NoteBase-Pfad
-          </label>
-          <input
-            id="launch-vault-path"
-            value={vaultPath}
-            onChange={(event) => setVaultPath(event.target.value)}
-            placeholder="C:\\Pfad\\zur\\NoteBase"
-          />
-
           <div className="launch-actions">
-            <button onClick={() => void pickAndOpenVault()}>Ordner waehlen + laden</button>
-            <button onClick={() => void openVault()}>Pfad laden</button>
-            <button onClick={() => void createVault()}>Neue NoteBase</button>
+            <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
+            <button onClick={() => void createVault()}>NoteBase anlegen</button>
             <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
               {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
             </button>
@@ -1615,208 +2699,478 @@ function App() {
   return (
     <div className="workbench-shell">
       <aside className="activity-rail">
-        <button
-          className={sidebarView === 'vault' ? 'active' : ''}
-          onClick={() => openSidebarView('vault')}
-          title="NoteBase"
-        >
-          B
-        </button>
-        <button
-          className={sidebarView === 'notes' ? 'active' : ''}
-          onClick={() => openSidebarView('notes')}
-          title="Notizen"
-        >
-          N
-        </button>
-        <button
-          className={sidebarView === 'tasks' ? 'active' : ''}
-          onClick={() => openSidebarView('tasks')}
-          title="Tasks"
-        >
-          T
-        </button>
-        <button
-          className={sidebarView === 'tags' ? 'active' : ''}
-          onClick={() => openSidebarView('tags')}
-          title="Tagging"
-        >
-          #
-        </button>
-        <button
-          className={sidebarView === 'review' ? 'active' : ''}
-          onClick={() => openSidebarView('review')}
-          title="Review"
-        >
-          R
-        </button>
+        <div className="rail-brand">
+          <span className="rail-logo">NN</span>
+          <div className="rail-brand-copy">
+            <strong>NickNotes</strong>
+            <span>Workspace</span>
+          </div>
+        </div>
+
+        <div className="rail-menu">
+          <button
+            className={sidebarView === 'vault' ? 'active' : ''}
+            onClick={() => openSidebarView('vault')}
+            title="Board"
+          >
+            <span className="rail-glyph">▦</span>
+            <span className="rail-label">Board</span>
+          </button>
+          <button
+            className={sidebarView === 'notes' ? 'active' : ''}
+            onClick={() => openSidebarView('notes')}
+            title="Notizen"
+          >
+            <span className="rail-glyph">◉</span>
+            <span className="rail-label">Notizen</span>
+          </button>
+          <button
+            className={sidebarView === 'tasks' ? 'active' : ''}
+            onClick={() => openSidebarView('tasks')}
+            title="Tasks"
+          >
+            <span className="rail-glyph">✓</span>
+            <span className="rail-label">Tasks</span>
+          </button>
+          <button
+            className={sidebarView === 'tags' ? 'active' : ''}
+            onClick={() => openSidebarView('tags')}
+            title="Tagging"
+          >
+            <span className="rail-glyph">#</span>
+            <span className="rail-label">Tags</span>
+          </button>
+          <button
+            className={sidebarView === 'review' ? 'active' : ''}
+            onClick={() => openSidebarView('review')}
+            title="Review"
+          >
+            <span className="rail-glyph">◌</span>
+            <span className="rail-label">Review</span>
+          </button>
+        </div>
 
         <div className="rail-spacer" />
 
         <button
-          className={settingsOpen ? 'active' : ''}
-          onClick={() => setSettingsOpen((prev) => !prev)}
+          className={settingsTabOpen ? 'active' : ''}
+          onClick={openSettingsTab}
           title="Einstellungen"
         >
-          E
+          <span className="rail-glyph">⚙</span>
+          <span className="rail-label">Einstellungen</span>
         </button>
       </aside>
 
-      {sidebarOpen ? <aside className="left-sidebar">{renderSidebarContent()}</aside> : null}
+      {sidebarOpen ? (
+        <aside className="left-sidebar" style={{ width: `${explorerWidth}px` }}>
+          {renderSidebarContent()}
+        </aside>
+      ) : null}
 
       <section className="main-region">
-        <header className="main-header">
-          <div>
-            <h2>{activeTab?.title || 'Keine Notiz geoeffnet'}</h2>
-            <p>
-              Notizen {counts.notes} | Tasks offen {counts.openTasks} | Tasks done {counts.doneTasks}
-            </p>
-          </div>
-
-          <div className="header-actions">
-            <button onClick={() => void runSearch(searchQuery)} disabled={!vaultLoaded}>
-              Ansicht aktualisieren
-            </button>
-            <button onClick={toggleSplitView} disabled={openTabs.length < 2}>
-              {splitView ? 'Split aus' : 'Split an'}
-            </button>
-          </div>
-        </header>
-
-        <div className="editor-tabs">
-          {openTabs.length === 0 ? <p className="empty-copy">Links eine Notiz auswaehlen, um sie zu oeffnen.</p> : null}
-          {openTabs.map((tab) => (
-            <div key={tab.path} className={`editor-tab ${tab.path === activeTab?.path ? 'active' : ''}`}>
-              <button
-                className="tab-open"
-                onClick={() => setActiveNotePath(tab.path)}
-                draggable
-                onDragStart={(event) => onTabDragStart(event, tab)}
-              >
-                {tab.title}
-              </button>
-              <button className="tab-close" onClick={() => closeTab(tab.path)}>
-                x
-              </button>
-            </div>
-          ))}
-
-          <div
-            className={`split-drop-target ${splitDropActive ? 'active' : ''}`}
-            onDragOver={(event) => {
-              event.preventDefault()
-              setSplitDropActive(true)
-            }}
-            onDragLeave={() => setSplitDropActive(false)}
-            onDrop={handleSplitDrop}
-          >
-            Fuer Split hier ablegen
-          </div>
-        </div>
-
-        {splitView && compareCandidates.length > 0 ? (
-          <div className="compare-selector">
-            <label htmlFor="compare-note-select">Vergleichs-Tab</label>
-            <select
-              id="compare-note-select"
-              value={compareTab?.path || ''}
-              onChange={(event) => setCompareNotePath(event.target.value)}
-            >
-              {compareCandidates.map((candidate) => (
-                <option key={candidate.path} value={candidate.path}>
-                  {candidate.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-
         <div
-          className={`editor-grid ${splitView && compareTab ? 'split' : ''} ${
-            viewerDropActive ? 'drop-active' : ''
-          }`}
-          onDragOver={(event) => {
-            event.preventDefault()
-            setViewerDropActive(true)
-          }}
-          onDragLeave={() => setViewerDropActive(false)}
-          onDrop={handleViewerDrop}
+          className={`workspace-grid ${showCaptureInline ? 'with-capture-row' : ''}`}
         >
-          <article className="editor-pane">
-            {activeTab ? (
-              activeTab.loading ? (
-                <p className="empty-copy">Lade Notiz ...</p>
-              ) : (
-                <pre>{activeTab.content || 'Leere Notiz.'}</pre>
-              )
-            ) : (
-              <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
-            )}
-          </article>
+          {editorPanelOpen ? (
+            <article className="workspace-panel editor-workspace-panel">
+              <div className="panel-header-row">
+                <h3>{activeTab?.title || 'Editor'}</h3>
+                <div className="panel-inline-actions">
+                  <button
+                    className="icon-button compact muted"
+                    onClick={() => (activeTab ? void saveTab(activeTab.path) : undefined)}
+                    disabled={!activeTab || !activeTab.dirty}
+                    title="Speichern"
+                  >
+                    S
+                  </button>
+                  <button
+                    className="icon-button compact muted"
+                    onClick={toggleSplitView}
+                    disabled={activeTab?.kind !== 'note' || openNoteTabs.length < 2}
+                    title={splitView ? 'Split aus' : 'Split an'}
+                  >
+                    |
+                  </button>
+                  <button className="icon-button compact muted" onClick={toggleEditorPanel} title="Editor schliessen">
+                    x
+                  </button>
+                </div>
+              </div>
 
-          {splitView && compareTab ? (
-            <article className="editor-pane">
-              {compareTab.loading ? (
-                <p className="empty-copy">Lade Vergleich ...</p>
-              ) : (
-                <pre>{compareTab.content || 'Leere Notiz.'}</pre>
-              )}
+              <div className="editor-tabs">
+                {openTabs.map((tab) => (
+                  <div
+                    key={`editor-tab-${tab.path}`}
+                    className={`editor-tab ${activeTab?.path === tab.path ? 'active' : ''}`}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      setTabContextMenu({ x: event.clientX, y: event.clientY, path: tab.path })
+                    }}
+                  >
+                    <button
+                      className="tab-open"
+                      onClick={() => {
+                        setActiveNotePath(tab.path)
+                        setEditorPanelOpen(true)
+                      }}
+                      title={tab.title}
+                    >
+                      <span>{tab.title}</span>
+                      {tab.dirty ? <span className="tab-dirty-dot">●</span> : null}
+                    </button>
+                    <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {splitView && activeTab?.kind === 'note' && compareCandidates.length > 0 ? (
+                <div className="compare-selector">
+                  <label htmlFor="compare-note-select">Vergleichs-Tab</label>
+                  <select
+                    id="compare-note-select"
+                    value={compareTab?.path || ''}
+                    onChange={(event) => setCompareNotePath(event.target.value)}
+                  >
+                    {compareCandidates.map((candidate) => (
+                      <option key={candidate.path} value={candidate.path}>
+                        {candidate.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div
+                className={`editor-grid ${splitView && compareTab ? 'split' : ''} ${
+                  viewerDropActive ? 'drop-active' : ''
+                }`}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setViewerDropActive(true)
+                }}
+                onDragLeave={() => setViewerDropActive(false)}
+                onDrop={handleViewerDrop}
+              >
+                <article className="editor-pane">
+                  {activeTab ? (
+                    activeTab.loading ? (
+                      <p className="empty-copy">Lade Notiz ...</p>
+                    ) : activeTab.kind === 'settings' ? (
+                      <div className="settings-editor">
+                        <h3>Einstellungen</h3>
+
+                        <section className="settings-block">
+                          <h4>Profil</h4>
+                          <label htmlFor="settings-display-name">Anrede</label>
+                          <input
+                            id="settings-display-name"
+                            value={displayName}
+                            onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
+                            placeholder="Dein Name"
+                          />
+                        </section>
+
+                        <section className="settings-block">
+                          <h4>Theme</h4>
+                          <div className="theme-actions">
+                            <button className={theme === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}>
+                              Light
+                            </button>
+                            <button className={theme === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}>
+                              Dark
+                            </button>
+                          </div>
+                        </section>
+
+                        <section className="settings-block">
+                          <h4>Layout</h4>
+                          <label className="checkbox-row" htmlFor="settings-sidebar-open">
+                            <input
+                              id="settings-sidebar-open"
+                              type="checkbox"
+                              checked={sidebarOpen}
+                              onChange={(event) => setSidebarOpen(event.target.checked)}
+                            />
+                            Sidebar anzeigen
+                          </label>
+                        </section>
+
+                        <section className="settings-block">
+                          <h4>Statusleiste</h4>
+                          <label className="checkbox-row" htmlFor="settings-status-notebase">
+                            <input
+                              id="settings-status-notebase"
+                              type="checkbox"
+                              checked={statusBarPrefs.showNoteBaseName}
+                              onChange={(event) =>
+                                setStatusBarPrefs((prev) => ({ ...prev, showNoteBaseName: event.target.checked }))
+                              }
+                            />
+                            NoteBase-Name anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-status-open-tasks">
+                            <input
+                              id="settings-status-open-tasks"
+                              type="checkbox"
+                              checked={statusBarPrefs.showOpenTasks}
+                              onChange={(event) =>
+                                setStatusBarPrefs((prev) => ({ ...prev, showOpenTasks: event.target.checked }))
+                              }
+                            />
+                            Offene Tasks anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-status-due-today">
+                            <input
+                              id="settings-status-due-today"
+                              type="checkbox"
+                              checked={statusBarPrefs.showDueToday}
+                              onChange={(event) =>
+                                setStatusBarPrefs((prev) => ({ ...prev, showDueToday: event.target.checked }))
+                              }
+                            />
+                            Heute faellige Tasks anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-status-total-notes">
+                            <input
+                              id="settings-status-total-notes"
+                              type="checkbox"
+                              checked={statusBarPrefs.showTotalNotes}
+                              onChange={(event) =>
+                                setStatusBarPrefs((prev) => ({ ...prev, showTotalNotes: event.target.checked }))
+                              }
+                            />
+                            Anzahl Notizen anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-status-message">
+                            <input
+                              id="settings-status-message"
+                              type="checkbox"
+                              checked={statusBarPrefs.showStateMessage}
+                              onChange={(event) =>
+                                setStatusBarPrefs((prev) => ({ ...prev, showStateMessage: event.target.checked }))
+                              }
+                            />
+                            Statusmeldung anzeigen
+                          </label>
+                        </section>
+
+                        <div className="settings-editor-actions">
+                          <button onClick={saveSettings} disabled={!settingsDirty}>
+                            Speichern
+                          </button>
+                          <button onClick={discardSettings} disabled={!settingsDirty}>
+                            Verwerfen
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="note-editor-shell">
+                          <WysiwygMarkdownEditor
+                            key={`${activeTab.path}-${theme}`}
+                            value={activeTab.content}
+                            theme={theme}
+                            onChange={updateActiveNoteContent}
+                            onOpenLink={handleEditorLinkOpen}
+                            editorApiRef={activeEditorRef}
+                          />
+                        </div>
+                        <div className="wiki-links-strip">
+                          <span className="muted-label">Wikilinks</span>
+                          {activeWikiLinks.length === 0 ? <span className="empty-copy">Keine Links in dieser Notiz.</span> : null}
+                          {activeWikiLinks.map((link) => {
+                            if (link.resolved) {
+                              const resolvedPath = link.resolved.path
+                              return (
+                                <button
+                                  key={`wiki-link-${link.target}`}
+                                  className="wiki-link-pill"
+                                  onClick={() => void openNoteInTab(resolvedPath, toNoteDisplayName(resolvedPath))}
+                                >
+                                  {link.alias || toNoteDisplayName(resolvedPath)}
+                                </button>
+                              )
+                            }
+
+                            return (
+                              <span key={`wiki-link-${link.target}`} className="wiki-link-pill unresolved">
+                                {link.alias || link.target}
+                              </span>
+                            )
+                          })}
+                          <button className="wiki-link-pill" onClick={openWikiLinkPicker}>
+                            + Link
+                          </button>
+                        </div>
+                      </>
+                    )
+                  ) : (
+                    <div className="main-empty-state">
+                      <p className="main-empty-glyph">◌</p>
+                      <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
+                    </div>
+                  )}
+                </article>
+
+                {splitView && compareTab ? (
+                  <article className="editor-pane">
+                    {compareTab.loading ? (
+                      <p className="empty-copy">Lade Vergleich ...</p>
+                    ) : (
+                      <MarkdownPreview
+                        content={compareTab.content}
+                        currentPath={compareTab.path}
+                        resolveWikiLink={resolveWikiLink}
+                        onOpenWikiLink={(row) => {
+                          void openNoteInTab(row.path, toNoteDisplayName(row.path))
+                        }}
+                      />
+                    )}
+                  </article>
+                ) : null}
+              </div>
             </article>
           ) : null}
+
+          {showCaptureInline ? (
+            <section className="workspace-panel capture-workspace-panel">
+              <div className="panel-header-row">
+                <h3>Quick Capture</h3>
+                <div className="panel-inline-actions">
+                  <button className="icon-button compact muted" onClick={toggleCapturePinned} title="In Dock verschieben">
+                    P
+                  </button>
+                  <button className="icon-button compact muted" onClick={closeCapturePanel} title="Quick Capture schliessen">
+                    x
+                  </button>
+                </div>
+              </div>
+              <div className="capture-panel-body">
+                <p className="capture-meta">Vorschlaege {suggestions.length} | Tags {chosenTags.size} | Tasks erkannt {parsedTasks.length}</p>
+                <div className="capture-input-wrap">
+                  <span className="capture-prompt">&gt;</span>
+                  <input
+                    value={captureText}
+                    onChange={(event) => setCaptureText(event.target.value)}
+                    onKeyDown={onQuickCaptureKeyDown}
+                    placeholder="Gedanke eingeben und Enter druecken"
+                  />
+                  <button onClick={() => void saveCapture()} disabled={!captureText.trim()}>
+                    Senden
+                  </button>
+                </div>
+                <div className="capture-result">{error ? <span className="state-error">{error}</span> : <span>{message}</span>}</div>
+              </div>
+            </section>
+          ) : null}
         </div>
-
-        <footer className="capture-bar">
-          <div className="capture-left">
-            <span className="capture-label">Quick Capture</span>
-            <span className="capture-meta">
-              Vorschlaege {suggestions.length} | Tags {chosenTags.size} | Tasks erkannt {parsedTasks.length}
-            </span>
-          </div>
-
-          <div className="capture-input-wrap">
-            <span className="capture-prompt">&gt;</span>
-            <input
-              value={captureText}
-              onChange={(event) => setCaptureText(event.target.value)}
-              onKeyDown={onQuickCaptureKeyDown}
-              placeholder="Gedanke eingeben und Enter druecken"
-            />
-            <button onClick={() => void saveCapture()} disabled={!captureText.trim()}>
-              Senden
+        <div className="bottom-dock">
+          {!showCaptureInline ? (
+            <button className="dock-tab" onClick={openCaptureFromDock}>
+              Quick Capture
             </button>
-          </div>
-
-          <div className="capture-right">
-            <div>{error ? <span className="state-error">{error}</span> : <span>{message}</span>}</div>
-            <div className="status-note-base">NoteBase: {noteBaseName}</div>
-          </div>
-        </footer>
+          ) : (
+            <span className="dock-placeholder">Dock bereit</span>
+          )}
+        </div>
       </section>
 
-      {settingsOpen ? (
-        <aside className="settings-drawer">
-          <header>
-            <h3>Einstellungen</h3>
-            <button onClick={() => setSettingsOpen(false)}>Schliessen</button>
-          </header>
+      {tabContextMenu && tabContextTarget?.kind === 'note' ? (
+        <div
+          className="editor-tab-context-menu"
+          style={{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              showNoteInSplitView(tabContextTarget.path)
+            }}
+            disabled={openNoteTabs.length < 2}
+          >
+            In separater Registerkarte anzeigen
+          </button>
+          <button
+            className="muted"
+            onClick={() => {
+              void closeEditorTab(tabContextTarget.path)
+            }}
+          >
+            Registerkarte schliessen
+          </button>
+        </div>
+      ) : null}
 
-          <section>
-            <h4>Theme</h4>
-            <div className="theme-actions">
-              <button className={theme === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}>
-                Light
-              </button>
-              <button className={theme === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}>
-                Dark
-              </button>
-            </div>
-          </section>
+      <footer className="status-bar">
+        <div className="status-bar-left">
+          {statusBarPrefs.showStateMessage ? (
+            <span className={`status-item ${error ? 'error' : ''}`}>{error || message}</span>
+          ) : (
+            <span className="status-item">&nbsp;</span>
+          )}
+        </div>
+        <div className="status-bar-right">
+          {statusBarPrefs.showTotalNotes ? <span className="status-item">Notizen: {counts.notes}</span> : null}
+          {statusBarPrefs.showOpenTasks ? <span className="status-item">Tasks offen: {counts.openTasks}</span> : null}
+          {statusBarPrefs.showDueToday ? <span className="status-item">Heute faellig: {dueTodayCount}</span> : null}
+          {statusBarPrefs.showNoteBaseName ? <span className="status-item">NoteBase: {noteBaseName}</span> : null}
+        </div>
+      </footer>
 
-          <section>
-            <h4>Layout</h4>
-            <button onClick={() => setSidebarOpen((prev) => !prev)}>{sidebarOpen ? 'Sidebar ausblenden' : 'Sidebar einblenden'}</button>
-          </section>
-        </aside>
+      {linkPickerOpen ? (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setLinkPickerOpen(false)
+          }}
+        >
+          <aside
+            className="link-picker-modal"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <header className="sidebar-header-row">
+              <h3>Wikilink einfuegen</h3>
+              <button onClick={() => setLinkPickerOpen(false)}>Schliessen</button>
+            </header>
+
+            <label className="field-label" htmlFor="wikilink-search">
+              Notiz suchen
+            </label>
+            <input
+              id="wikilink-search"
+              value={linkPickerQuery}
+              onChange={(event) => setLinkPickerQuery(event.target.value)}
+              placeholder="Titel oder Pfad, z. B. Daily/Projekt X"
+              autoFocus
+            />
+
+            <section className="tree-scroll">
+              {linkPickerCandidates.length === 0 ? <p className="empty-copy">Keine passenden Notizen gefunden.</p> : null}
+              {linkPickerCandidates.map((row) => {
+                const target = toWikiTargetForRow(row)
+                return (
+                  <button
+                    key={`link-candidate-${row.path}`}
+                    className="tree-item wikilink-candidate"
+                    onClick={() => insertWikiLinkForRow(row)}
+                  >
+                    <strong>{target}</strong>
+                    <span>{getRelativeVaultPath(row.path, vaultPath)}</span>
+                  </button>
+                )
+              })}
+            </section>
+
+            {normalizedLinkPickerQuery && !linkPickerHasExactMatch ? (
+              <button onClick={() => insertWikiLink(linkPickerQuery)}>Neuen Wikilink [[{linkPickerQuery.trim()}]] einfuegen</button>
+            ) : null}
+          </aside>
+        </div>
       ) : null}
 
       {tagManagerOpen ? (
@@ -1944,3 +3298,4 @@ function App() {
 }
 
 export default App
+

@@ -8,7 +8,7 @@ from typing import Any
 
 from .indexer import VaultIndexer
 from .markdown_io import dump_markdown, parse_markdown
-from .models import ParsedTask, TAG_CATEGORIES, TagSuggestion
+from .models import ParsedTask, TagSuggestion
 from .parser import make_note_id, make_task_id, slugify
 
 
@@ -34,21 +34,17 @@ def _normalize_tag_key(raw: str) -> str:
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
-        self.system_path = vault_path / "99_system"
-        self.tag_root_path = vault_path / "02_tags"
-        self.legacy_entities_path = vault_path / "02_entities"
-        self.db_path = self.system_path / "index.db"
-        self.config_path = self.system_path / "config.json"
-        self.tag_groups_path = self.system_path / "tag_groups.json"
+        self._configure_root_paths()
 
     def ensure_structure(self) -> None:
-        (self.vault_path / "01_daily").mkdir(parents=True, exist_ok=True)
-        self.tag_root_path.mkdir(parents=True, exist_ok=True)
-        self.legacy_entities_path.mkdir(parents=True, exist_ok=True)
-        for category in TAG_CATEGORIES:
-            (self.legacy_entities_path / category).mkdir(parents=True, exist_ok=True)
-        (self.vault_path / "03_tasks" / "open").mkdir(parents=True, exist_ok=True)
-        (self.vault_path / "03_tasks" / "done").mkdir(parents=True, exist_ok=True)
+        self.daily_root_path = self._ensure_root_directory("daily", "01_daily")
+        self.tag_root_path = self._ensure_root_directory("tags", "02_tags")
+        self.tasks_root_path = self._ensure_root_directory("tasks", "03_tasks")
+        self.system_path = self._ensure_system_directory()
+        self._configure_root_paths()
+
+        (self.tasks_root_path / "open").mkdir(parents=True, exist_ok=True)
+        (self.tasks_root_path / "done").mkdir(parents=True, exist_ok=True)
         self.system_path.mkdir(parents=True, exist_ok=True)
 
         if not self.config_path.exists():
@@ -77,85 +73,123 @@ class VaultManager:
             }
             self._write_tag_groups(defaults)
 
+        if not self.favorite_folders_path.exists():
+            self._write_favorite_folders([self.daily_root_name, self.tag_root_name, self.tasks_root_name])
+
         self._migrate_legacy_inbox()
 
+    def _configure_root_paths(self) -> None:
+        self.daily_root_name = self._pick_root_name("daily", "01_daily")
+        self.tag_root_name = self._pick_root_name("tags", "02_tags")
+        self.tasks_root_name = self._pick_root_name("tasks", "03_tasks")
+        self.system_root_name = self._pick_system_root_name()
+
+        self.daily_root_path = self.vault_path / self.daily_root_name
+        self.tag_root_path = self.vault_path / self.tag_root_name
+        self.tasks_root_path = self.vault_path / self.tasks_root_name
+        self.system_path = self.vault_path / self.system_root_name
+
+        self.db_path = self.system_path / "index.db"
+        self.config_path = self.system_path / "config.json"
+        self.tag_groups_path = self.system_path / "tag_groups.json"
+        self.favorite_folders_path = self.system_path / "favorite_folders.json"
+
+    def _pick_root_name(self, preferred: str, legacy: str) -> str:
+        if (self.vault_path / preferred).is_dir():
+            return preferred
+        if (self.vault_path / legacy).is_dir():
+            return legacy
+        return preferred
+
+    def _ensure_root_directory(self, preferred: str, legacy: str) -> Path:
+        preferred_path = self.vault_path / preferred
+        legacy_path = self.vault_path / legacy
+
+        if preferred_path.exists():
+            preferred_path.mkdir(parents=True, exist_ok=True)
+            return preferred_path
+
+        if legacy_path.exists():
+            try:
+                legacy_path.rename(preferred_path)
+                return preferred_path
+            except OSError:
+                legacy_path.mkdir(parents=True, exist_ok=True)
+                return legacy_path
+
+        preferred_path.mkdir(parents=True, exist_ok=True)
+        return preferred_path
+
+    def _pick_system_root_name(self) -> str:
+        for candidate in (".system", "system", "99_system"):
+            if (self.vault_path / candidate).is_dir():
+                return candidate
+        return ".system"
+
+    def _ensure_system_directory(self) -> Path:
+        preferred_path = self.vault_path / ".system"
+        modern_path = self.vault_path / "system"
+        legacy_path = self.vault_path / "99_system"
+
+        if preferred_path.exists():
+            preferred_path.mkdir(parents=True, exist_ok=True)
+            return preferred_path
+
+        for source_path in (modern_path, legacy_path):
+            if not source_path.exists():
+                continue
+            try:
+                shutil.move(str(source_path), str(preferred_path))
+                return preferred_path
+            except OSError:
+                source_path.mkdir(parents=True, exist_ok=True)
+                return source_path
+
+        preferred_path.mkdir(parents=True, exist_ok=True)
+        return preferred_path
+
     def list_note_groups(self) -> list[dict[str, Any]]:
-        groups: list[dict[str, Any]] = [
-            {
-                "key": "01_daily",
-                "label": "Daily Notes",
-                "path": str(self.vault_path / "01_daily"),
-                "favorite": True,
-                "canCreateNotes": True,
-            },
-            {
-                "key": "02_tags",
-                "label": "Tag-Notes",
-                "path": str(self.vault_path / "02_tags"),
-                "favorite": True,
-                "canCreateNotes": False,
-            },
-        ]
-
-        reserved = {"00_inbox", "01_daily", "02_tags", "02_entities", "03_tasks", "99_system"}
-        custom_dirs = sorted(
-            [child for child in self.vault_path.iterdir() if child.is_dir() and child.name not in reserved],
-            key=lambda item: item.name.lower(),
-        )
-        for group_dir in custom_dirs:
-            groups.append(
-                {
-                    "key": group_dir.name,
-                    "label": self._label_from_group_dir(group_dir.name),
-                    "path": str(group_dir),
-                    "favorite": False,
-                    "canCreateNotes": True,
-                }
-            )
-
+        groups: list[dict[str, Any]] = []
+        favorites = set(self._read_favorite_folders())
+        for child in self._sorted_dirs(self.vault_path):
+            if self._is_system_name(child.name) or child.name == "02_entities" or self._is_hidden_legacy_root(child.name):
+                continue
+            groups.extend(self._collect_custom_group_payloads(child, favorites))
         return groups
 
-    def create_note_group(self, group_name: str) -> dict[str, Any]:
+    def create_note_group(self, group_name: str, parent_key: str = "") -> dict[str, Any]:
         clean_name = _normalize_label(group_name)
         if not clean_name:
             raise ValueError("Group name cannot be empty")
-
-        for item in self.list_note_groups():
-            if str(item["label"]).lower() == clean_name.lower():
-                return item
 
         token = self._safe_group_dir_token(clean_name)
         if not token:
             raise ValueError("Group name contains no valid filename characters")
 
-        base_name = f"10_{token}"
-        target_name = base_name
+        parent_path = self._resolve_group_path(parent_key)
+        if self._is_tag_path(parent_path):
+            raise ValueError("In Tag-Notes koennen keine neuen Gruppen angelegt werden.")
+
+        siblings = [child for child in parent_path.iterdir() if child.is_dir()]
+        for sibling in siblings:
+            if self._label_from_group_dir(sibling.name).lower() == clean_name.lower():
+                return self._group_payload(sibling, set(self._read_favorite_folders()))
+
+        target_name = token
         counter = 2
-        while (self.vault_path / target_name).exists():
-            target_name = f"{base_name}_{counter}"
+        while (parent_path / target_name).exists():
+            target_name = f"{token}_{counter}"
             counter += 1
 
-        target_path = self.vault_path / target_name
+        target_path = parent_path / target_name
         target_path.mkdir(parents=True, exist_ok=True)
-        return {
-            "key": target_name,
-            "label": clean_name,
-            "path": str(target_path),
-            "favorite": False,
-            "canCreateNotes": True,
-        }
+        return self._group_payload(target_path, set(self._read_favorite_folders()))
 
     def create_note_in_group(self, group_key: str, title: str, indexer: VaultIndexer) -> dict[str, Any]:
-        clean_key = _normalize_label(group_key)
-        if not clean_key:
-            raise ValueError("Group key is required")
-
-        groups_by_key = {str(item["key"]): item for item in self.list_note_groups()}
-        target_group = groups_by_key.get(clean_key)
-        if not target_group:
-            raise ValueError(f"Unknown note group: {group_key}")
-        if not bool(target_group.get("canCreateNotes", False)):
-            raise ValueError("Creating notes in this group is not supported")
+        clean_key = group_key.replace("\\", "/").strip().strip("/")
+        root_dir = self._resolve_group_path(clean_key)
+        if self._is_tag_path(root_dir):
+            raise ValueError("In Tag-Notes koennen keine neuen Notizen angelegt werden.")
 
         now = datetime.now()
         created_at = now.isoformat(timespec="seconds")
@@ -163,8 +197,7 @@ class VaultManager:
         clean_title = _normalize_label(title) or f"Neue Notiz {now:%Y-%m-%d %H:%M}"
         title_slug = slugify(clean_title) or note_id
 
-        root_dir = Path(str(target_group["path"]))
-        note_dir = root_dir / "notes" if clean_key == "01_daily" else root_dir
+        note_dir = root_dir / "notes" if self._is_daily_group_key(clean_key) else root_dir
         note_dir.mkdir(parents=True, exist_ok=True)
 
         note_path = note_dir / f"{now:%Y%m%d_%H%M%S}_{title_slug}.md"
@@ -175,7 +208,7 @@ class VaultManager:
 
         frontmatter = {
             "id": note_id,
-            "type": "daily_note" if clean_key == "01_daily" else "note",
+            "type": "daily_note" if self._is_daily_path(note_dir) else "note",
             "created_at": created_at,
             "updated_at": created_at,
             "tags": [],
@@ -185,6 +218,145 @@ class VaultManager:
 
         indexer.reindex_vault(self.vault_path)
         return {"note_id": note_id, "note_path": note_path}
+
+    def rename_note_group(self, group_key: str, new_name: str, indexer: VaultIndexer) -> dict[str, Any]:
+        target = self._resolve_group_path(group_key)
+        relative = self._to_group_key(target)
+        if self._is_protected_root(relative):
+            raise ValueError("Dieser Basisordner kann nicht umbenannt werden.")
+
+        clean_name = _normalize_label(new_name)
+        if not clean_name:
+            raise ValueError("Folder name cannot be empty")
+        safe_name = self._safe_entry_name(clean_name)
+        if not safe_name:
+            raise ValueError("Folder name contains no valid filename characters")
+
+        destination = target.parent / safe_name
+        suffix = 2
+        while destination.exists() and destination != target:
+            destination = target.parent / f"{safe_name}_{suffix}"
+            suffix += 1
+
+        if destination == target:
+            return self._group_payload(target, set(self._read_favorite_folders()))
+
+        target.rename(destination)
+        self._remap_favorites(relative, self._to_group_key(destination))
+        indexer.reindex_vault(self.vault_path)
+        return self._group_payload(destination, set(self._read_favorite_folders()))
+
+    def move_note_group(self, group_key: str, target_parent_key: str, indexer: VaultIndexer) -> dict[str, Any]:
+        source = self._resolve_group_path(group_key)
+        source_key = self._to_group_key(source)
+        if self._is_protected_root(source_key):
+            raise ValueError("Die Basisordner daily, tags und tasks koennen nicht verschoben werden.")
+        if self._is_system_path(source):
+            raise ValueError("Systemordner kann nicht verschoben werden.")
+
+        target_parent = self._resolve_group_path(target_parent_key)
+        if self._is_tag_path(target_parent):
+            raise ValueError("Ordner koennen nicht in den Tag-Bereich verschoben werden.")
+        if self._is_system_path(target_parent):
+            raise ValueError("Ordner koennen nicht in den Systembereich verschoben werden.")
+        if self._is_same_or_descendant(source, target_parent):
+            raise ValueError("Ein Ordner kann nicht in sich selbst oder einen Unterordner verschoben werden.")
+
+        destination = target_parent / source.name
+        if destination == source:
+            return self._group_payload(source, set(self._read_favorite_folders()))
+
+        suffix = 2
+        while destination.exists() and destination != source:
+            destination = target_parent / f"{source.name}_{suffix}"
+            suffix += 1
+
+        source.rename(destination)
+        self._remap_favorites(source_key, self._to_group_key(destination))
+        indexer.reindex_vault(self.vault_path)
+        return self._group_payload(destination, set(self._read_favorite_folders()))
+
+    def delete_note_group(self, group_key: str, indexer: VaultIndexer) -> None:
+        target = self._resolve_group_path(group_key)
+        relative = self._to_group_key(target)
+        if self._is_protected_root(relative):
+            raise ValueError("Die Basisordner daily, tags und tasks koennen nicht geloescht werden.")
+        if self._is_system_path(target):
+            raise ValueError("Systemordner kann nicht geloescht werden.")
+
+        shutil.rmtree(target)
+        self._remove_favorite_path(relative)
+        indexer.reindex_vault(self.vault_path)
+
+    def rename_note_file(self, note_path: str, new_name: str, indexer: VaultIndexer) -> Path:
+        file_path = self._resolve_note_file(note_path)
+        clean_name = _normalize_label(new_name)
+        if not clean_name:
+            raise ValueError("File name cannot be empty")
+
+        safe_stem = self._safe_entry_name(Path(clean_name).stem)
+        if not safe_stem:
+            raise ValueError("File name contains no valid filename characters")
+
+        destination = file_path.with_name(f"{safe_stem}{file_path.suffix or '.md'}")
+        suffix = 2
+        while destination.exists() and destination != file_path:
+            destination = file_path.with_name(f"{safe_stem}_{suffix}{file_path.suffix or '.md'}")
+            suffix += 1
+
+        if destination != file_path:
+            file_path.rename(destination)
+            indexer.reindex_vault(self.vault_path)
+        return destination
+
+    def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
+        file_path = self._resolve_note_file(note_path)
+        target_group = self._resolve_group_path(target_group_key)
+        if self._is_tag_path(target_group):
+            raise ValueError("Notizen koennen nicht in den Tag-Bereich verschoben werden.")
+        if self._is_system_path(target_group):
+            raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
+
+        clean_target_key = target_group_key.replace("\\", "/").strip().strip("/")
+        target_dir = target_group / "notes" if self._is_daily_group_key(clean_target_key) else target_group
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        destination = target_dir / file_path.name
+        if destination == file_path:
+            return file_path
+
+        suffix = 2
+        while destination.exists() and destination != file_path:
+            destination = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
+            suffix += 1
+
+        file_path.rename(destination)
+        indexer.reindex_vault(self.vault_path)
+        return destination
+
+    def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
+        file_path = self._resolve_note_file(note_path)
+        file_path.unlink(missing_ok=False)
+        indexer.reindex_vault(self.vault_path)
+
+    def add_favorite_folder(self, group_key: str) -> list[str]:
+        folder = self._resolve_group_path(group_key)
+        relative = self._to_group_key(folder)
+        if not relative or self._is_system_name(relative.split("/")[0]):
+            raise ValueError("Folder cannot be added to favorites")
+
+        favorites = set(self._read_favorite_folders())
+        favorites.add(relative)
+        self._write_favorite_folders(sorted(favorites, key=lambda item: item.lower()))
+        return self._read_favorite_folders()
+
+    def remove_favorite_folder(self, group_key: str) -> list[str]:
+        relative = group_key.replace("\\", "/").strip().strip("/")
+        if not relative:
+            return self._read_favorite_folders()
+        favorites = [item for item in self._read_favorite_folders() if item != relative]
+        self._write_favorite_folders(favorites)
+        return self._read_favorite_folders()
 
     def read_config(self) -> dict[str, Any]:
         if not self.config_path.exists():
@@ -387,7 +559,7 @@ class VaultManager:
         note_id = make_note_id(now)
         created_at = now.isoformat(timespec="seconds")
 
-        note_dir = self.vault_path / "01_daily" / "captures" / f"{now:%Y-%m-%d}"
+        note_dir = self.daily_root_path / "captures" / f"{now:%Y-%m-%d}"
         note_dir.mkdir(parents=True, exist_ok=True)
         note_path = note_dir / f"{note_id}.md"
 
@@ -460,7 +632,7 @@ class VaultManager:
     ) -> Path:
         status = task.status.lower() if task.status else "open"
         folder = "done" if status == "done" else "open"
-        task_path = self.vault_path / "03_tasks" / folder / f"{task_id}.md"
+        task_path = self.tasks_root_path / folder / f"{task_id}.md"
         ts = now.isoformat(timespec="seconds")
 
         frontmatter = {
@@ -497,7 +669,7 @@ class VaultManager:
         tag_keys: list[str],
     ) -> None:
         day = created_at[:10]
-        daily_path = self.vault_path / "01_daily" / f"{day}.md"
+        daily_path = self.daily_root_path / f"{day}.md"
         if not daily_path.exists():
             fm = {
                 "id": f"daily_{day}",
@@ -619,7 +791,7 @@ class VaultManager:
     def _open_tasks_for_tag(self, group_slug: str, tag_slug: str) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
         tag_key = f"{group_slug}:{tag_slug}"
-        for task_file in (self.vault_path / "03_tasks" / "open").rglob("*.md"):
+        for task_file in (self.tasks_root_path / "open").rglob("*.md"):
             meta, body = parse_markdown(task_file)
             raw_tags = meta.get("tags", [])
             if isinstance(raw_tags, str):
@@ -679,9 +851,9 @@ class VaultManager:
 
     def _iter_markdown_files_for_tag_updates(self) -> list[Path]:
         files: list[Path] = []
-        excluded = {"00_inbox", "02_tags", "99_system"}
+        excluded = {"00_inbox", "02_entities", self.tag_root_name, "02_tags", self.system_root_name, "99_system"}
         for child in self.vault_path.iterdir():
-            if not child.is_dir() or child.name in excluded:
+            if not child.is_dir() or child.name in excluded or self._is_hidden_legacy_root(child.name):
                 continue
             files.extend(child.rglob("*.md"))
         return files
@@ -692,7 +864,7 @@ class VaultManager:
             return
 
         moved_paths: list[tuple[str, str]] = []
-        capture_root = self.vault_path / "01_daily" / "captures"
+        capture_root = self.daily_root_path / "captures"
         capture_root.mkdir(parents=True, exist_ok=True)
 
         for file_path in sorted(inbox_path.rglob("*.md")):
@@ -714,7 +886,7 @@ class VaultManager:
             shutil.move(str(file_path), str(target_path))
             moved_paths.append((file_path.as_posix(), target_path.as_posix()))
 
-        daily_root = self.vault_path / "01_daily"
+        daily_root = self.daily_root_path
         if moved_paths and daily_root.exists():
             for daily_file in daily_root.glob("*.md"):
                 content = daily_file.read_text(encoding="utf-8")
@@ -729,6 +901,68 @@ class VaultManager:
         except OSError:
             pass
 
+    def _collect_custom_group_payloads(self, root: Path, favorites: set[str]) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        payloads.append(self._group_payload(root, favorites))
+        child_dirs = self._sorted_dirs(root)
+        for child in child_dirs:
+            if self._is_system_name(child.name):
+                continue
+            payloads.extend(self._collect_custom_group_payloads(child, favorites))
+        return payloads
+
+    def _group_payload(self, directory: Path, favorites: set[str]) -> dict[str, Any]:
+        key = self._to_group_key(directory)
+        return {
+            "key": key,
+            "label": self._label_from_group_dir(directory.name),
+            "path": str(directory),
+            "favorite": key in favorites,
+            "canCreateNotes": not self._is_tag_path(directory),
+            "canCreateGroups": not self._is_tag_path(directory),
+            "canDelete": not self._is_protected_root(key),
+        }
+
+    def _resolve_group_path(self, group_key: str) -> Path:
+        clean_key = group_key.replace("\\", "/").strip().strip("/")
+        if not clean_key:
+            return self.vault_path
+
+        path = (self.vault_path / clean_key).resolve()
+        vault_root = self.vault_path.resolve()
+        try:
+            path.relative_to(vault_root)
+        except ValueError as exc:
+            raise ValueError(f"Invalid group key: {group_key}") from exc
+
+        if not path.exists() or not path.is_dir():
+            raise ValueError(f"Unknown note group: {group_key}")
+        return path
+
+    def _to_group_key(self, directory: Path) -> str:
+        return directory.relative_to(self.vault_path).as_posix()
+
+    def _is_same_or_descendant(self, parent: Path, child: Path) -> bool:
+        try:
+            child.resolve().relative_to(parent.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _is_tag_path(self, directory: Path) -> bool:
+        try:
+            directory.resolve().relative_to(self.tag_root_path.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _is_daily_path(self, directory: Path) -> bool:
+        try:
+            directory.resolve().relative_to(self.daily_root_path.resolve())
+            return True
+        except ValueError:
+            return False
+
     def _label_from_group_dir(self, directory_name: str) -> str:
         trimmed = directory_name.strip()
         if len(trimmed) > 3 and trimmed[:2].isdigit() and trimmed[2] == "_":
@@ -740,6 +974,159 @@ class VaultManager:
         filtered = "".join(char if (char.isalnum() or char in {"_", "-"}) else "_" for char in raw)
         clean = "_".join(part for part in filtered.split("_") if part)
         return clean[:60]
+
+    def _safe_entry_name(self, value: str) -> str:
+        return self._safe_group_dir_token(value)
+
+    def _sorted_dirs(self, directory: Path) -> list[Path]:
+        return sorted([child for child in directory.iterdir() if child.is_dir()], key=lambda item: item.name.lower())
+
+    def _is_system_name(self, name: str) -> bool:
+        return name in {"99_system", "system", ".system"}
+
+    def _is_hidden_legacy_root(self, name: str) -> bool:
+        normalized = name.strip().lower()
+        if normalized == "system" and (self.vault_path / ".system").is_dir():
+            return True
+        if normalized == "01_daily" and (self.vault_path / "daily").is_dir():
+            return True
+        if normalized == "02_tags" and (self.vault_path / "tags").is_dir():
+            return True
+        if normalized == "03_tasks" and (self.vault_path / "tasks").is_dir():
+            return True
+        if normalized == "99_system" and ((self.vault_path / "system").is_dir() or (self.vault_path / ".system").is_dir()):
+            return True
+        return False
+
+    def _is_system_path(self, directory: Path) -> bool:
+        try:
+            directory.resolve().relative_to(self.system_path.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _is_protected_root(self, key: str) -> bool:
+        clean_key = key.replace("\\", "/").strip().strip("/")
+        return clean_key in {
+            self.daily_root_name,
+            self.tag_root_name,
+            self.tasks_root_name,
+            "01_daily",
+            "02_tags",
+            "03_tasks",
+            "daily",
+            "tags",
+            "tasks",
+        }
+
+    def _is_daily_group_key(self, key: str) -> bool:
+        clean_key = key.replace("\\", "/").strip().strip("/")
+        if not clean_key:
+            return False
+        root = clean_key.split("/", 1)[0]
+        return root in {self.daily_root_name, "01_daily", "daily"}
+
+    def _resolve_note_file(self, note_path: str) -> Path:
+        candidate = Path(note_path).expanduser()
+        if candidate.is_absolute():
+            path = candidate.resolve()
+        else:
+            clean_path = note_path.replace("\\", "/").strip().strip("/")
+            path = (self.vault_path / clean_path).resolve()
+        vault_root = self.vault_path.resolve()
+        try:
+            path.relative_to(vault_root)
+        except ValueError as exc:
+            raise ValueError("Invalid note path") from exc
+
+        if not path.exists() or not path.is_file():
+            raise ValueError(f"Unknown note file: {note_path}")
+        if path.suffix.lower() != ".md":
+            raise ValueError("Only markdown files are supported")
+        if self._is_system_path(path.parent):
+            raise ValueError("System files cannot be modified")
+        return path
+
+    def _read_favorite_folders(self) -> list[str]:
+        if not self.favorite_folders_path.exists():
+            return [self.daily_root_name, self.tag_root_name, self.tasks_root_name]
+
+        try:
+            payload = json.loads(self.favorite_folders_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+
+        source = payload.get("folders", []) if isinstance(payload, dict) else payload
+        if not isinstance(source, list):
+            source = []
+
+        favorites: list[str] = []
+        for raw in source:
+            if not isinstance(raw, str):
+                continue
+            clean = raw.replace("\\", "/").strip().strip("/")
+            if not clean:
+                continue
+            if clean == "01_daily" and (self.vault_path / "daily").is_dir():
+                clean = "daily"
+            if clean == "02_tags" and (self.vault_path / "tags").is_dir():
+                clean = "tags"
+            if clean == "03_tasks" and (self.vault_path / "tasks").is_dir():
+                clean = "tasks"
+            target = self.vault_path / clean
+            if not target.exists() or not target.is_dir():
+                continue
+            if self._is_system_name(clean.split("/")[0]):
+                continue
+            favorites.append(clean)
+
+        for base in (self.daily_root_name, self.tag_root_name, self.tasks_root_name):
+            if (self.vault_path / base).exists() and base not in favorites:
+                favorites.append(base)
+
+        unique = sorted(set(favorites), key=lambda item: item.lower())
+        if unique != favorites:
+            self._write_favorite_folders(unique)
+        return unique
+
+    def _write_favorite_folders(self, folders: list[str]) -> None:
+        clean = sorted(
+            {
+                item.replace("\\", "/").strip().strip("/")
+                for item in folders
+                if isinstance(item, str) and item.strip()
+            },
+            key=lambda item: item.lower(),
+        )
+        payload = {
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "folders": clean,
+        }
+        self.favorite_folders_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _remove_favorite_path(self, path_key: str) -> None:
+        clean = path_key.replace("\\", "/").strip().strip("/")
+        favorites = [
+            item
+            for item in self._read_favorite_folders()
+            if item != clean and not item.startswith(f"{clean}/")
+        ]
+        self._write_favorite_folders(favorites)
+
+    def _remap_favorites(self, old_key: str, new_key: str) -> None:
+        clean_old = old_key.replace("\\", "/").strip().strip("/")
+        clean_new = new_key.replace("\\", "/").strip().strip("/")
+        remapped: list[str] = []
+        for item in self._read_favorite_folders():
+            if item == clean_old:
+                remapped.append(clean_new)
+                continue
+            if item.startswith(f"{clean_old}/"):
+                suffix = item[len(clean_old) :]
+                remapped.append(f"{clean_new}{suffix}")
+                continue
+            remapped.append(item)
+        self._write_favorite_folders(remapped)
 
     def _to_tag_key(self, group_name: str, tag_name: str) -> str:
         return f"{slugify(group_name)}:{slugify(tag_name)}"
