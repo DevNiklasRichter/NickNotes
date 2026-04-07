@@ -103,6 +103,10 @@ function toFileExtension(name: string): string {
   return name.slice(dotIndex + 1).toLowerCase()
 }
 
+function isMarkdownFile(name: string): boolean {
+  return toFileExtension(name) === 'md'
+}
+
 function isDefaultExpanded(folderPath: string): boolean {
   const clean = normalizeGroupKey(folderPath)
   if (!clean) {
@@ -311,7 +315,7 @@ export function buildExplorerTree({
       children: [],
       expanded: false,
       selected: false,
-      hidden: isHiddenEntry(fileName),
+      hidden: isHiddenEntry(fileName) || !isMarkdownFile(fileName),
       updatedAt: file.updated_at,
       updatedAtMs: toTimestampMs(file.updated_at),
       modified: dirtyFilePaths?.has(file.path) ?? false,

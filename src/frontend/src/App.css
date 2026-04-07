@@ -1337,17 +1337,17 @@ button:disabled {
 
 /* Codex-inspired refresh */
 .workbench-shell {
-  grid-template-columns: 188px auto 1fr;
-  gap: 0.5rem;
-  padding: 0.55rem;
+  grid-template-columns: 178px auto 1fr;
+  gap: 0.24rem;
+  padding: 0.34rem;
 }
 
 .activity-rail {
-  border-radius: 14px;
+  border-radius: 11px;
   border-color: color-mix(in srgb, var(--line) 88%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, white 8%), var(--surface));
-  padding: 0.55rem 0.45rem;
-  gap: 0.45rem;
+  padding: 0.44rem 0.4rem;
+  gap: 0.38rem;
   align-items: stretch;
 }
 
@@ -1399,7 +1399,7 @@ button:disabled {
 .activity-rail button {
   width: 100%;
   height: 34px;
-  border-radius: 9px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1439,7 +1439,7 @@ button:disabled {
 
 .left-sidebar,
 .main-region {
-  border-radius: 14px;
+  border-radius: 11px;
 }
 
 .left-sidebar {
@@ -1558,7 +1558,7 @@ textarea:focus-visible {
 
 @media (max-width: 1320px) {
   .workbench-shell {
-    grid-template-columns: 156px auto 1fr;
+    grid-template-columns: 148px auto 1fr;
   }
 }
 

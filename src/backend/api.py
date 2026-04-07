@@ -406,7 +406,33 @@ def explorer_files() -> dict[str, Any]:
     hide_dot_system = (root / ".system").is_dir()
     hide_legacy_system = (root / "system").is_dir()
 
-    for file_path in root.rglob("*.md"):
+    text_extensions = {
+        ".md",
+        ".txt",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".csv",
+        ".log",
+        ".xml",
+        ".html",
+        ".css",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".py",
+        ".sh",
+        ".ps1",
+        ".bat",
+    }
+
+    for file_path in root.rglob("*"):
+        if not file_path.is_file():
+            continue
         try:
             relative = file_path.resolve().relative_to(root).as_posix()
         except ValueError:
@@ -426,12 +452,17 @@ def explorer_files() -> dict[str, Any]:
         if hide_legacy_system and top == "99_system":
             continue
 
+        extension = file_path.suffix.lower()
+        if extension and extension not in text_extensions:
+            continue
+
         stat = file_path.stat()
+        note_type = "markdown" if extension == ".md" else "text"
         items.append(
             {
                 "id": f"explorer:{relative}",
                 "title": file_path.stem,
-                "note_type": "note",
+                "note_type": note_type,
                 "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
                 "path": str(file_path),
             }

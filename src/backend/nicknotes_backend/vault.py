@@ -1041,8 +1041,6 @@ class VaultManager:
 
         if not path.exists() or not path.is_file():
             raise ValueError(f"Unknown note file: {note_path}")
-        if path.suffix.lower() != ".md":
-            raise ValueError("Only markdown files are supported")
         if self._is_system_path(path.parent):
             raise ValueError("System files cannot be modified")
         return path

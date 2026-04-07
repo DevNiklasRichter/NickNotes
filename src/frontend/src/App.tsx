@@ -147,7 +147,93 @@ type WysiwygEditorApi = {
   focus: () => void
 }
 
+type MarkdownShortcutAction =
+  | { command: 'heading'; payload: { level: number; headingType: 'atx' } }
+  | { command: 'bulletList' | 'orderedList' | 'blockQuote' | 'codeBlock' | 'taskList' }
+
+type InlineMarkdownMark = 'strong' | 'emph' | 'strike' | 'code'
+
+type InlineMarkdownShortcutMatch = {
+  mark: InlineMarkdownMark
+  text: string
+  fromOffset: number
+  toOffset: number
+}
+
 const WIKI_LINK_HREF_PREFIX = 'wikilink://'
+
+function detectMarkdownShortcutFromParagraph(text: string): MarkdownShortcutAction | null {
+  if (/^#{1,6}$/.test(text)) {
+    return {
+      command: 'heading',
+      payload: {
+        level: text.length,
+        headingType: 'atx',
+      },
+    }
+  }
+
+  if (/^[-*+]$/.test(text)) {
+    return { command: 'bulletList' }
+  }
+
+  if (/^\d+[.)]$/.test(text)) {
+    return { command: 'orderedList' }
+  }
+
+  if (text === '>') {
+    return { command: 'blockQuote' }
+  }
+
+  if (text === '```') {
+    return { command: 'codeBlock' }
+  }
+
+  return null
+}
+
+function detectInlineMarkdownAtCursor(text: string, cursorOffset: number): InlineMarkdownShortcutMatch | null {
+  if (cursorOffset <= 0) {
+    return null
+  }
+
+  const source = text.slice(0, cursorOffset)
+  const patterns: Array<{ mark: InlineMarkdownMark; regex: RegExp }> = [
+    { mark: 'strong', regex: /(^|\s)\*\*([^*\n][^*\n]*?)\*\*$/ },
+    { mark: 'strike', regex: /(^|\s)~~([^~\n][^~\n]*?)~~$/ },
+    { mark: 'code', regex: /(^|\s)`([^`\n]+)`$/ },
+    { mark: 'emph', regex: /(^|\s)_([^_\n][^_\n]*?)_$/ },
+    { mark: 'emph', regex: /(^|\s)\*([^*\n][^*\n]*?)\*$/ },
+  ]
+
+  for (const pattern of patterns) {
+    const match = source.match(pattern.regex)
+    if (!match) {
+      continue
+    }
+
+    const leading = match[1] ?? ''
+    const inner = match[2] ?? ''
+    if (!inner) {
+      continue
+    }
+
+    const fromOffset = source.length - match[0].length + leading.length
+    const toOffset = source.length
+    if (fromOffset < 0 || toOffset <= fromOffset) {
+      continue
+    }
+
+    return {
+      mark: pattern.mark,
+      text: inner,
+      fromOffset,
+      toOffset,
+    }
+  }
+
+  return null
+}
 
 function parseWikiLinkInner(rawInner: string): { target: string; alias: string | null } | null {
   const inner = rawInner.trim()
@@ -373,6 +459,9 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
   const onOpenLinkRef = useRef(onOpenLink)
   const initialValueRef = useRef(value)
   const syncingRef = useRef(false)
+  const pendingChangeTimeoutRef = useRef<number | null>(null)
+  const latestEditorMarkdownRef = useRef(value)
+  const lastDispatchedMarkdownRef = useRef(value)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -386,6 +475,34 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
     const host = hostRef.current
     if (!host) {
       return
+    }
+
+    const flushPendingChange = () => {
+      if (pendingChangeTimeoutRef.current !== null) {
+        window.clearTimeout(pendingChangeTimeoutRef.current)
+        pendingChangeTimeoutRef.current = null
+      }
+
+      if (!editorRef.current || syncingRef.current) {
+        return
+      }
+
+      const nextValue = latestEditorMarkdownRef.current || editorRef.current.getMarkdown()
+      if (nextValue === lastDispatchedMarkdownRef.current) {
+        return
+      }
+
+      lastDispatchedMarkdownRef.current = nextValue
+      onChangeRef.current(nextValue)
+    }
+
+    const schedulePendingChange = () => {
+      if (pendingChangeTimeoutRef.current !== null) {
+        window.clearTimeout(pendingChangeTimeoutRef.current)
+      }
+      pendingChangeTimeoutRef.current = window.setTimeout(() => {
+        flushPendingChange()
+      }, 90)
     }
 
     const instance = new ToastEditor({
@@ -410,12 +527,115 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
           if (!editorRef.current || syncingRef.current) {
             return
           }
-          onChangeRef.current(editorRef.current.getMarkdown())
+          latestEditorMarkdownRef.current = editorRef.current.getMarkdown()
+          schedulePendingChange()
+        },
+        blur: () => {
+          flushPendingChange()
+        },
+        keydown: (editorType: 'markdown' | 'wysiwyg', event: globalThis.KeyboardEvent) => {
+          if (
+            editorType !== 'wysiwyg' ||
+            event.defaultPrevented ||
+            event.ctrlKey ||
+            event.altKey ||
+            event.metaKey
+          ) {
+            return
+          }
+
+          const inlineTriggerKey = [' ', '.', ',', '!', '?', ';', ':', ')'].includes(event.key) ? event.key : null
+          if (event.key !== 'Enter' && !inlineTriggerKey) {
+            return
+          }
+
+          const internal = editorRef.current as
+            | (ToastEditor & { wwEditor?: { view?: { state: any; dispatch: (transaction: any) => void } } })
+            | null
+          const view = internal?.wwEditor?.view
+          if (!view) {
+            return
+          }
+
+          const state = view.state
+          const selection = state?.selection
+          if (!selection?.empty) {
+            return
+          }
+
+          const from = selection.from
+          const resolved = selection.$from
+          const paragraph = resolved?.parent
+          if (!paragraph || paragraph.type?.name !== 'paragraph') {
+            return
+          }
+
+          if (resolved.parentOffset !== paragraph.textContent.length) {
+            return
+          }
+
+          let shortcut: MarkdownShortcutAction | null = null
+          if (event.key === ' ') {
+            if (/^[-*+]\s\[(?: |x|X)\]$/.test(paragraph.textContent)) {
+              shortcut = { command: 'taskList' }
+            } else {
+              shortcut = detectMarkdownShortcutFromParagraph(paragraph.textContent)
+            }
+          }
+          if (event.key === 'Enter' && paragraph.textContent === '```') {
+            shortcut = { command: 'codeBlock' }
+          }
+
+          if (shortcut) {
+            event.preventDefault()
+            const paragraphStart = from - resolved.parentOffset
+            view.dispatch(state.tr.delete(paragraphStart, from))
+
+            if (shortcut.command === 'heading') {
+              instance.exec('heading', shortcut.payload)
+            } else {
+              instance.exec(shortcut.command)
+            }
+
+            latestEditorMarkdownRef.current = instance.getMarkdown()
+            schedulePendingChange()
+            return
+          }
+
+          if (!inlineTriggerKey) {
+            return
+          }
+
+          const inlineShortcut = detectInlineMarkdownAtCursor(paragraph.textContent, resolved.parentOffset)
+          if (!inlineShortcut) {
+            return
+          }
+
+          const markType = state.schema?.marks?.[inlineShortcut.mark]
+          if (!markType) {
+            return
+          }
+
+          event.preventDefault()
+          const paragraphStart = from - resolved.parentOffset
+          const replaceFrom = paragraphStart + inlineShortcut.fromOffset
+          const replaceTo = paragraphStart + inlineShortcut.toOffset
+
+          let nextTr = state.tr.insertText(inlineShortcut.text, replaceFrom, replaceTo)
+          const markEnd = replaceFrom + inlineShortcut.text.length
+          nextTr = nextTr.addMark(replaceFrom, markEnd, markType.create())
+          nextTr = nextTr.insertText(inlineTriggerKey, markEnd)
+          view.dispatch(nextTr)
+
+          latestEditorMarkdownRef.current = instance.getMarkdown()
+          schedulePendingChange()
         },
       },
     })
 
     editorRef.current = instance
+    latestEditorMarkdownRef.current = initialValueRef.current
+    lastDispatchedMarkdownRef.current = initialValueRef.current
     editorApiRef.current = {
       insertText: (text: string) => instance.insertText(text),
       getSelectedText: () => instance.getSelectedText(),
@@ -442,7 +662,12 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
     host.addEventListener('click', onHostClick)
 
     return () => {
+      flushPendingChange()
       editorApiRef.current = null
+      if (pendingChangeTimeoutRef.current !== null) {
+        window.clearTimeout(pendingChangeTimeoutRef.current)
+        pendingChangeTimeoutRef.current = null
+      }
       host.removeEventListener('click', onHostClick)
       instance.destroy()
       editorRef.current = null
@@ -457,12 +682,20 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
 
     const currentValue = instance.getMarkdown()
     if (currentValue === value) {
+      latestEditorMarkdownRef.current = value
+      lastDispatchedMarkdownRef.current = value
+      return
+    }
+
+    if (currentValue === latestEditorMarkdownRef.current && value !== latestEditorMarkdownRef.current) {
       return
     }
 
     syncingRef.current = true
     instance.setMarkdown(value, false)
     syncingRef.current = false
+    latestEditorMarkdownRef.current = value
+    lastDispatchedMarkdownRef.current = value
   }, [value])
 
   return <div className="wysiwyg-editor-host" ref={hostRef} />
@@ -1291,6 +1524,10 @@ function App() {
 
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
+  const dirtyFilePaths = useMemo(
+    () => new Set(openNoteTabs.filter((tab) => tab.dirty).map((tab) => tab.path)),
+    [openNoteTabs]
+  )
   const compareCandidates = openNoteTabs.filter((tab) => tab.path !== activeTab?.path)
   const compareTab =
     splitView && activeTab?.kind === 'note'
@@ -1917,16 +2154,6 @@ function App() {
     }
   }
 
-  const resolveFallbackGroupKey = (): string => {
-    if (noteGroupsByKey.has('daily')) {
-      return 'daily'
-    }
-    if (noteGroupsByKey.has('01_daily')) {
-      return '01_daily'
-    }
-    return noteGroups[0]?.key ?? ''
-  }
-
   const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
 
   const remapOpenNotePaths = (fromPrefix: string, toPrefix: string) => {
@@ -1975,8 +2202,7 @@ function App() {
       return
     }
 
-    const fallbackGroup = resolveFallbackGroupKey()
-    const effectiveParentKey = parentGroupKey && noteGroupsByKey.has(parentGroupKey) ? parentGroupKey : fallbackGroup
+    const effectiveParentKey = parentGroupKey && noteGroupsByKey.has(parentGroupKey) ? parentGroupKey : ''
     const targetGroup = noteGroupsByKey.get(effectiveParentKey)
     if (targetGroup?.canCreateGroups === false) {
       setMessage('In diesem Ordner koennen keine neuen Unterordner angelegt werden.')
@@ -2002,8 +2228,7 @@ function App() {
       return
     }
 
-    const fallbackGroup = resolveFallbackGroupKey()
-    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : fallbackGroup
+    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : ''
     const targetGroup = noteGroupsByKey.get(effectiveGroupKey)
     if (targetGroup?.canCreateNotes === false) {
       setMessage('In diesem Ordner koennen keine neuen Notizen angelegt werden.')
@@ -2641,7 +2866,7 @@ function App() {
         groups={noteGroups}
         files={explorerRows}
         activeFilePath={activeTab?.kind === 'note' ? activeTab.path : ''}
-        dirtyFilePaths={new Set(openNoteTabs.filter((tab) => tab.dirty).map((tab) => tab.path))}
+        dirtyFilePaths={dirtyFilePaths}
         width={explorerWidth}
         onWidthChange={setExplorerWidth}
         onOpenFile={openNoteInTab}

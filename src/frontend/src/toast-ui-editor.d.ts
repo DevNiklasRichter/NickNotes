@@ -3,6 +3,8 @@ declare module '@toast-ui/editor' {
 
   export interface EventMap {
     change?: (editorType: EditorType) => void
+    blur?: (editorType: EditorType) => void
+    keydown?: (editorType: EditorType, ev: KeyboardEvent) => void
   }
 
   export interface EditorOptions {
@@ -27,5 +29,6 @@ declare module '@toast-ui/editor' {
     insertText(text: string): void
     getSelectedText(): string
     focus(): void
+    exec(name: string, payload?: Record<string, unknown>): void
   }
 }
