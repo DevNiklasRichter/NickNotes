@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import '@toast-ui/editor/dist/toastui-editor.css'
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
-import { ExplorerSidebar } from './explorer/ExplorerSidebarFlat'
+import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV2'
 import './App.css'
 
 type VaultCounts = {
