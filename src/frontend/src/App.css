@@ -1181,12 +1181,13 @@ button.wiki-link-pill:hover {
 }
 
 .modal-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(10, 12, 16, 0.4);
   display: grid;
   place-items: center;
-  z-index: 7;
+  z-index: 1200;
+  isolation: isolate;
 }
 
 .tag-manager-modal {
@@ -1223,6 +1224,38 @@ button.wiki-link-pill:hover {
 
 .tag-manager-group h4 {
   margin: 0;
+}
+
+.tag-action-modal {
+  width: min(520px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.7rem;
+  position: relative;
+  z-index: 1201;
+}
+
+.tag-action-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.tag-action-button.primary {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.tag-action-button.danger {
+  border-color: var(--error-border);
+  color: var(--error-text);
 }
 
 .theme-actions {

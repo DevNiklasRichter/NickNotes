@@ -95,6 +95,22 @@ type EditorTabContextMenuState = {
   path: string
 } | null
 
+type TagActionDialogTone = 'default' | 'primary' | 'danger'
+type TagActionDialogAction = {
+  id: string
+  label: string
+  tone?: TagActionDialogTone
+}
+type TagActionDialogState = {
+  kind: 'input' | 'choice'
+  title: string
+  message?: string
+  placeholder?: string
+  value: string
+  actions: TagActionDialogAction[]
+  resolve: (result: { actionId: string; value: string }) => void
+} | null
+
 const THEME_STORAGE_KEY = 'nicknotes-theme'
 const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
 const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
@@ -155,6 +171,7 @@ type MarkdownPreviewProps = {
 type WysiwygEditorApi = {
   insertText: (text: string) => void
   getSelectedText: () => string
+  getMarkdown: () => string
   focus: () => void
 }
 
@@ -650,6 +667,7 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
     editorApiRef.current = {
       insertText: (text: string) => instance.insertText(text),
       getSelectedText: () => instance.getSelectedText(),
+      getMarkdown: () => instance.getMarkdown(),
       focus: () => instance.focus(),
     }
 
@@ -1074,10 +1092,16 @@ function App() {
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
   const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const [linkPickerQuery, setLinkPickerQuery] = useState('')
+  const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
+  const tagActionDialogRef = useRef<TagActionDialogState>(null)
   const activeEditorRef = useRef<WysiwygEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    tagActionDialogRef.current = tagActionDialog
+  }, [tagActionDialog])
 
   useEffect(() => {
     let active = true
@@ -1729,6 +1753,10 @@ function App() {
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
+    const liveContent =
+      activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current
+        ? activeEditorRef.current.getMarkdown()
+        : targetTab.content
 
     try {
       setError('')
@@ -1737,7 +1765,7 @@ function App() {
         '/notes/save',
         {
           method: 'POST',
-          body: JSON.stringify({ path: targetTab.path, content: targetTab.content }),
+          body: JSON.stringify({ path: targetTab.path, content: liveContent }),
         }
       )
       setCounts(response.counts)
@@ -1749,7 +1777,7 @@ function App() {
           if (tab.path !== path) {
             return tab
           }
-          return { ...tab, dirty: false }
+          return { ...tab, content: liveContent, dirty: false }
         })
       )
       setMessage(`Notiz gespeichert: ${targetTab.title}`)
@@ -1984,17 +2012,22 @@ function App() {
       return true
     }
 
-    const decision = (window.prompt(
-      `Die Notiz "${tab.title}" hat ungespeicherte Aenderungen.\n1 = Speichern\n2 = Verwerfen\n3 = Abbrechen`,
-      '1'
-    ) || '')
-      .trim()
-      .toLowerCase()
+    const decision = await askTagChoice(
+      `Ungespeicherte Aenderungen in "${tab.title}"`,
+      'Was soll passieren?',
+      [
+        { id: 'save', label: 'Speichern', tone: 'primary' },
+        { id: 'discard', label: 'Verwerfen', tone: 'danger' },
+      ]
+    )
+    if (!decision) {
+      return false
+    }
 
-    if (decision === '1' || decision === 's' || decision === 'speichern') {
+    if (decision === 'save') {
       return await saveTab(path)
     }
-    if (decision === '2' || decision === 'v' || decision === 'verwerfen') {
+    if (decision === 'discard') {
       return true
     }
     return false
@@ -2005,11 +2038,13 @@ function App() {
     if (!canClose) {
       return
     }
-    setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
-    if (compareNotePath === path) {
-      setCompareNotePath('')
-    }
-    setTabContextMenu(null)
+    window.setTimeout(() => {
+      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
+      if (compareNotePath === path) {
+        setCompareNotePath('')
+      }
+      setTabContextMenu(null)
+    }, 0)
   }
 
   const openNoteInCurrentEditor = async (path: string, suggestedTitle?: string) => {
@@ -2022,7 +2057,9 @@ function App() {
     }
     await openNoteInTab(path, suggestedTitle)
     if (currentPath && currentPath !== path) {
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== currentPath))
+      window.setTimeout(() => {
+        setOpenTabs((prev) => prev.filter((tab) => tab.path !== currentPath))
+      }, 0)
     }
     setSplitView(false)
     setCompareNotePath('')
@@ -2437,8 +2474,74 @@ function App() {
     }
   }
 
+  const openTagActionDialog = (config: {
+    kind: 'input' | 'choice'
+    title: string
+    message?: string
+    placeholder?: string
+    initialValue?: string
+    actions: TagActionDialogAction[]
+  }): Promise<{ actionId: string; value: string }> =>
+    new Promise((resolve) => {
+      setTagActionDialog({
+        kind: config.kind,
+        title: config.title,
+        message: config.message,
+        placeholder: config.placeholder,
+        value: config.initialValue ?? '',
+        actions: config.actions,
+        resolve,
+      })
+    })
+
+  const closeTagActionDialog = (actionId: string) => {
+    const current = tagActionDialogRef.current
+    if (!current) {
+      return
+    }
+    const payload = { actionId, value: current.value }
+    setTagActionDialog(null)
+    window.setTimeout(() => {
+      current.resolve(payload)
+    }, 0)
+  }
+
+  const askTagText = async (title: string, initialValue: string, placeholder: string, confirmLabel: string): Promise<string | null> => {
+    const result = await openTagActionDialog({
+      kind: 'input',
+      title,
+      placeholder,
+      initialValue,
+      actions: [
+        { id: 'confirm', label: confirmLabel, tone: 'primary' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (result.actionId !== 'confirm') {
+      return null
+    }
+    return normalizeLabel(result.value)
+  }
+
+  const askTagChoice = async (
+    title: string,
+    message: string,
+    actions: TagActionDialogAction[]
+  ): Promise<string | null> => {
+    const result = await openTagActionDialog({
+      kind: 'choice',
+      title,
+      message,
+      actions: [...actions, { id: 'cancel', label: 'Abbrechen' }],
+    })
+    if (result.actionId === 'cancel') {
+      return null
+    }
+    return result.actionId
+  }
+
   const createTagGroup = async () => {
-    const nextGroupName = normalizeLabel(window.prompt('Name der neuen Tag-Gruppe', 'Neue Gruppe') ?? '')
+    const nextGroupName = await askTagText('Neue Tag-Gruppe', 'Neue Gruppe', 'Name der Gruppe', 'Anlegen')
     if (!nextGroupName) {
       return
     }
@@ -2469,19 +2572,14 @@ function App() {
       return
     }
 
-    const requestedGroup = normalizeLabel(
-      window.prompt('Tag in welcher bestehenden Gruppe anlegen?', preferredGroup ?? sortedTagGroupNames[0] ?? '') ?? ''
-    )
-    if (!requestedGroup) {
-      return
-    }
-    const groupName = sortedTagGroupNames.find((name) => name.toLowerCase() === requestedGroup.toLowerCase())
+    const requestedGroup = normalizeLabel(preferredGroup ?? sortedTagGroupNames[0] ?? '')
+    const groupName = sortedTagGroupNames.find((name) => name.toLowerCase() === requestedGroup.toLowerCase()) ?? sortedTagGroupNames[0]
     if (!groupName) {
-      setMessage(`Tag-Gruppe "${requestedGroup}" wurde nicht gefunden.`)
+      setMessage('Keine gueltige Tag-Gruppe gefunden.')
       return
     }
 
-    const tagName = normalizeLabel(window.prompt(`Neuer Tag in "${groupName}"`, 'Neuer Tag') ?? '')
+    const tagName = await askTagText(`Neuer Tag in "${groupName}"`, 'Neuer Tag', 'Tag-Name', 'Anlegen')
     if (!tagName) {
       return
     }
@@ -2506,7 +2604,7 @@ function App() {
   }
 
   const renameTagGroup = async (groupName: string) => {
-    const newGroupName = normalizeLabel(window.prompt(`Tag-Gruppe umbenennen (${groupName})`, groupName) ?? '')
+    const newGroupName = await askTagText(`Tag-Gruppe umbenennen (${groupName})`, groupName, 'Neuer Gruppenname', 'Umbenennen')
     if (!newGroupName || newGroupName.toLowerCase() === groupName.toLowerCase()) {
       return
     }
@@ -2518,9 +2616,18 @@ function App() {
       return
     }
 
-    const applyToNotes = window.confirm(
-      `Sollen bestehende Notiz-Tags von "${groupName}:*" automatisch auf "${newGroupName}:*" umgestellt werden?`
+    const applyChoice = await askTagChoice(
+      'Notiz-Tags mit umbenennen?',
+      `Sollen bestehende Notiz-Tags von "${groupName}:*" automatisch auf "${newGroupName}:*" umgestellt werden?`,
+      [
+        { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
+        { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+      ]
     )
+    if (!applyChoice) {
+      return
+    }
+    const applyToNotes = applyChoice === 'apply'
 
     try {
       setError('')
@@ -2547,14 +2654,18 @@ function App() {
   }
 
   const deleteTagGroup = async (groupName: string) => {
-    const option = window.prompt(
-      `Tag-Gruppe "${groupName}" loeschen:\n1 = Tags auch aus bestehenden Notizen entfernen\n2 = nur aus der Tag-Verwaltung loeschen`,
-      '2'
+    const option = await askTagChoice(
+      `Tag-Gruppe "${groupName}" loeschen`,
+      'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
+      [
+        { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
+        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
+      ]
     )
-    if (!option || !['1', '2'].includes(option.trim())) {
+    if (!option) {
       return
     }
-    const removeFromNotes = option.trim() === '1'
+    const removeFromNotes = option === 'remove'
 
     try {
       setError('')
@@ -2580,13 +2691,22 @@ function App() {
   }
 
   const renameTag = async (groupName: string, tagName: string) => {
-    const newTagName = window.prompt(`Tag umbenennen (${groupName}:${tagName})`, tagName)?.trim()
+    const newTagName = await askTagText(`Tag umbenennen (${groupName}:${tagName})`, tagName, 'Neuer Tag-Name', 'Umbenennen')
     if (!newTagName || newTagName === tagName) {
       return
     }
-    const applyToNotes = window.confirm(
-      `Soll "${groupName}:${tagName}" in allen Notizen automatisch in "${groupName}:${newTagName}" umbenannt werden?`
+    const applyChoice = await askTagChoice(
+      'Notiz-Tags mit umbenennen?',
+      `Soll "${groupName}:${tagName}" in allen Notizen automatisch in "${groupName}:${newTagName}" umbenannt werden?`,
+      [
+        { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
+        { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+      ]
     )
+    if (!applyChoice) {
+      return
+    }
+    const applyToNotes = applyChoice === 'apply'
 
     try {
       setError('')
@@ -2612,14 +2732,18 @@ function App() {
   }
 
   const deleteTag = async (groupName: string, tagName: string) => {
-    const option = window.prompt(
-      `Tag "${groupName}:${tagName}" loeschen:\n1 = auch aus bestehenden Notizen entfernen\n2 = nur aus der Tag-Verwaltung loeschen`,
-      '2'
+    const option = await askTagChoice(
+      `Tag "${groupName}:${tagName}" loeschen`,
+      'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
+      [
+        { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
+        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
+      ]
     )
-    if (!option || !['1', '2'].includes(option.trim())) {
+    if (!option) {
       return
     }
-    const removeFromNotes = option.trim() === '1'
+    const removeFromNotes = option === 'remove'
 
     try {
       setError('')
@@ -3471,6 +3595,66 @@ function App() {
             {normalizedLinkPickerQuery && !linkPickerHasExactMatch ? (
               <button onClick={() => insertWikiLink(linkPickerQuery)}>Neuen Wikilink [[{linkPickerQuery.trim()}]] einfuegen</button>
             ) : null}
+          </aside>
+        </div>
+      ) : null}
+
+      {tagActionDialog ? (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            closeTagActionDialog('cancel')
+          }}
+        >
+          <aside
+            className="tag-action-modal"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <header className="sidebar-header-row">
+              <h3>{tagActionDialog.title}</h3>
+            </header>
+
+            {tagActionDialog.message ? <p className="muted-copy">{tagActionDialog.message}</p> : null}
+
+            {tagActionDialog.kind === 'input' ? (
+              <input
+                value={tagActionDialog.value}
+                placeholder={tagActionDialog.placeholder}
+                autoFocus
+                onChange={(event) => {
+                  const nextValue = event.target.value
+                  setTagActionDialog((current) => (current ? { ...current, value: nextValue } : current))
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    closeTagActionDialog('confirm')
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    closeTagActionDialog('cancel')
+                  }
+                }}
+              />
+            ) : null}
+
+            <div className="tag-action-modal-actions">
+              {tagActionDialog.actions.map((action) => (
+                <button
+                  key={`tag-action-${action.id}`}
+                  className={`tag-action-button ${action.tone === 'danger' ? 'danger' : ''} ${
+                    action.tone === 'primary' ? 'primary' : ''
+                  }`}
+                  onClick={() => {
+                    closeTagActionDialog(action.id)
+                  }}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
           </aside>
         </div>
       ) : null}
