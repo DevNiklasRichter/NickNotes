@@ -98,6 +98,17 @@ class TagRenameRequest(BaseModel):
     apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 
+class TagGroupRenameRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+    new_group_name: str = Field(alias="newGroupName")
+    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
+
+
+class TagGroupDeleteRequest(BaseModel):
+    group_name: str = Field(alias="groupName")
+    remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
+
+
 class TagMoveRequest(BaseModel):
     from_group: str = Field(alias="fromGroup")
     tag_name: str = Field(alias="tagName")
@@ -555,6 +566,37 @@ def add_tag(req: TagCreateRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     groups = vault.add_tag_to_group(req.group_name, req.tag_name, indexer)
     return {"groups": groups}
+
+
+@app.post("/tag-groups/rename-group")
+def rename_tag_group(req: TagGroupRenameRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        groups, touched = vault.rename_tag_group(
+            group_name=req.group_name,
+            new_group_name=req.new_group_name,
+            apply_to_notes=req.apply_to_notes,
+            indexer=indexer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+
+
+@app.post("/tag-groups/delete-group")
+def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        groups, touched = vault.delete_tag_group(
+            group_name=req.group_name,
+            remove_from_notes=req.remove_from_notes,
+            indexer=indexer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
 
 
 @app.post("/tag-groups/rename-tag")

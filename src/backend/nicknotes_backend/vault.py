@@ -439,6 +439,77 @@ class VaultManager:
         self.rebuild_all_tag_pages(groups, indexer)
         return groups
 
+    def rename_tag_group(
+        self,
+        group_name: str,
+        new_group_name: str,
+        apply_to_notes: bool,
+        indexer: VaultIndexer,
+    ) -> tuple[dict[str, list[str]], int]:
+        groups = self.read_tag_groups()
+        source_group = self._resolve_group_name(groups, group_name)
+        if not source_group:
+            raise ValueError(f"Tag group not found: {group_name}")
+
+        next_group = _normalize_label(new_group_name)
+        if not next_group:
+            raise ValueError("New group name cannot be empty")
+
+        duplicate_group = self._resolve_group_name(groups, next_group)
+        if duplicate_group and duplicate_group != source_group:
+            raise ValueError(f"Tag group already exists: {next_group}")
+
+        if next_group == source_group:
+            return groups, 0
+
+        source_tags = list(groups.get(source_group, []))
+        groups.pop(source_group, None)
+        groups[next_group] = _dedupe_sorted(source_tags)
+
+        touched = 0
+        if apply_to_notes:
+            for tag_name in source_tags:
+                touched += self._rewrite_tag_references(
+                    old_key=self._to_tag_key(source_group, tag_name),
+                    new_key=self._to_tag_key(next_group, tag_name),
+                    remove=False,
+                )
+            if touched > 0:
+                indexer.reindex_vault(self.vault_path)
+
+        self._write_tag_groups(groups)
+        self.rebuild_all_tag_pages(groups, indexer)
+        return groups, touched
+
+    def delete_tag_group(
+        self,
+        group_name: str,
+        remove_from_notes: bool,
+        indexer: VaultIndexer,
+    ) -> tuple[dict[str, list[str]], int]:
+        groups = self.read_tag_groups()
+        target_group = self._resolve_group_name(groups, group_name)
+        if not target_group:
+            raise ValueError(f"Tag group not found: {group_name}")
+
+        target_tags = list(groups.get(target_group, []))
+        groups.pop(target_group, None)
+
+        touched = 0
+        if remove_from_notes:
+            for tag_name in target_tags:
+                touched += self._rewrite_tag_references(
+                    old_key=self._to_tag_key(target_group, tag_name),
+                    new_key="",
+                    remove=True,
+                )
+            if touched > 0:
+                indexer.reindex_vault(self.vault_path)
+
+        self._write_tag_groups(groups)
+        self.rebuild_all_tag_pages(groups, indexer)
+        return groups, touched
+
     def rename_tag(
         self,
         group_name: str,

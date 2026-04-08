@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import '@toast-ui/editor/dist/toastui-editor.css'
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
+import { TagSidebar } from './explorer/TagSidebarV2'
 import type { ExplorerOptions } from './explorer/types'
 import './App.css'
 
@@ -132,7 +133,6 @@ const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
 }
 
 type TagGroupsMap = Record<string, string[]>
-type TagMenuTarget = { groupName: string; tagName: string } | null
 type NoteGroup = {
   key: string
   label: string
@@ -1089,11 +1089,6 @@ function App() {
   })
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
-  const [newTagGroupName, setNewTagGroupName] = useState('')
-  const [selectedTagGroup, setSelectedTagGroup] = useState('')
-  const [newTagName, setNewTagName] = useState('')
-  const [tagManagerOpen, setTagManagerOpen] = useState(false)
-  const [tagMenuTarget, setTagMenuTarget] = useState<TagMenuTarget>(null)
   const [viewerDropActive, setViewerDropActive] = useState(false)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
@@ -1582,17 +1577,6 @@ function App() {
     () => Object.keys(mergedTagGroups).sort((left, right) => left.localeCompare(right, 'de')),
     [mergedTagGroups]
   )
-
-  useEffect(() => {
-    if (!selectedTagGroup && sortedTagGroupNames.length > 0) {
-      setSelectedTagGroup(sortedTagGroupNames[0])
-      return
-    }
-
-    if (selectedTagGroup && !sortedTagGroupNames.includes(selectedTagGroup)) {
-      setSelectedTagGroup(sortedTagGroupNames[0] ?? '')
-    }
-  }, [selectedTagGroup, sortedTagGroupNames])
 
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
@@ -2502,9 +2486,15 @@ function App() {
     }
   }
 
-  const addTagGroup = async () => {
-    const nextGroupName = normalizeLabel(newTagGroupName)
+  const createTagGroup = async () => {
+    const nextGroupName = normalizeLabel(window.prompt('Name der neuen Tag-Gruppe', 'Neue Gruppe') ?? '')
     if (!nextGroupName) {
+      return
+    }
+
+    const duplicate = sortedTagGroupNames.find((name) => name.toLowerCase() === nextGroupName.toLowerCase())
+    if (duplicate) {
+      setMessage(`Die Tag-Gruppe "${duplicate}" existiert bereits.`)
       return
     }
 
@@ -2516,18 +2506,37 @@ function App() {
       })
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setFolderOpen(`tag-group-${nextGroupName}`)
-      setSelectedTagGroup(nextGroupName)
-      setNewTagGroupName('')
       setMessage(`Tag-Gruppe angelegt: ${nextGroupName}`)
     } catch (caught) {
       setError(String(caught))
     }
   }
 
-  const addTagToGroup = async () => {
-    const groupName = normalizeLabel(selectedTagGroup)
-    const tagName = normalizeLabel(newTagName)
-    if (!groupName || !tagName) {
+  const createTagInExistingGroup = async (preferredGroup: string | null) => {
+    if (sortedTagGroupNames.length === 0) {
+      setMessage('Lege zuerst eine Tag-Gruppe an.')
+      return
+    }
+
+    const requestedGroup = normalizeLabel(
+      window.prompt('Tag in welcher bestehenden Gruppe anlegen?', preferredGroup ?? sortedTagGroupNames[0] ?? '') ?? ''
+    )
+    if (!requestedGroup) {
+      return
+    }
+    const groupName = sortedTagGroupNames.find((name) => name.toLowerCase() === requestedGroup.toLowerCase())
+    if (!groupName) {
+      setMessage(`Tag-Gruppe "${requestedGroup}" wurde nicht gefunden.`)
+      return
+    }
+
+    const tagName = normalizeLabel(window.prompt(`Neuer Tag in "${groupName}"`, 'Neuer Tag') ?? '')
+    if (!tagName) {
+      return
+    }
+    const duplicateTag = (mergedTagGroups[groupName] ?? []).find((name) => name.toLowerCase() === tagName.toLowerCase())
+    if (duplicateTag) {
+      setMessage(`Der Tag "${duplicateTag}" existiert in "${groupName}" bereits.`)
       return
     }
 
@@ -2539,8 +2548,81 @@ function App() {
       })
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setFolderOpen(`tag-group-${groupName}`)
-      setNewTagName('')
       setMessage(`Tag hinzugefuegt: ${groupName}:${tagName}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const renameTagGroup = async (groupName: string) => {
+    const newGroupName = normalizeLabel(window.prompt(`Tag-Gruppe umbenennen (${groupName})`, groupName) ?? '')
+    if (!newGroupName || newGroupName.toLowerCase() === groupName.toLowerCase()) {
+      return
+    }
+    const duplicateGroup = sortedTagGroupNames.find(
+      (name) => name.toLowerCase() === newGroupName.toLowerCase() && name.toLowerCase() !== groupName.toLowerCase()
+    )
+    if (duplicateGroup) {
+      setMessage(`Die Tag-Gruppe "${duplicateGroup}" existiert bereits.`)
+      return
+    }
+
+    const applyToNotes = window.confirm(
+      `Sollen bestehende Notiz-Tags von "${groupName}:*" automatisch auf "${newGroupName}:*" umgestellt werden?`
+    )
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/rename-group',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupName, newGroupName, applyToNotes }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setFolderOpen(`tag-group-${newGroupName}`)
+      setMessage(
+        applyToNotes
+          ? `Tag-Gruppe umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
+          : 'Tag-Gruppe umbenannt. Historische Notiz-Tags wurden beibehalten.'
+      )
+      await Promise.all([runSearch(searchQuery), refreshReview()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const deleteTagGroup = async (groupName: string) => {
+    const option = window.prompt(
+      `Tag-Gruppe "${groupName}" loeschen:\n1 = Tags auch aus bestehenden Notizen entfernen\n2 = nur aus der Tag-Verwaltung loeschen`,
+      '2'
+    )
+    if (!option || !['1', '2'].includes(option.trim())) {
+      return
+    }
+    const removeFromNotes = option.trim() === '1'
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/delete-group',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupName, removeFromNotes }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setMessage(
+        removeFromNotes
+          ? `Tag-Gruppe geloescht und Tags aus ${response.notesUpdated} Notizen entfernt.`
+          : 'Tag-Gruppe aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.'
+      )
+      await Promise.all([runSearch(searchQuery), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2567,54 +2649,10 @@ function App() {
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setCounts(response.counts)
-      setTagMenuTarget(null)
       setMessage(
         applyToNotes
           ? `Tag umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
           : 'Tag umbenannt. Historische Notiz-Tags wurden beibehalten.'
-      )
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const moveTagToOtherGroup = async (groupName: string, tagName: string) => {
-    const targetGroup = window.prompt(
-      `Tag "${tagName}" nach welcher Gruppe verschieben?`,
-      sortedTagGroupNames.find((name) => name !== groupName) ?? ''
-    )
-    const cleanTarget = normalizeLabel(targetGroup ?? '')
-    if (!cleanTarget || cleanTarget === groupName) {
-      return
-    }
-
-    const applyToNotes = window.confirm(
-      `Soll der Tag in bestehenden Notizen automatisch von "${groupName}:${tagName}" nach "${cleanTarget}:${tagName}" verschoben werden?`
-    )
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/move-tag',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            fromGroup: groupName,
-            tagName,
-            toGroup: cleanTarget,
-            applyToNotes,
-          }),
-        }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setTagMenuTarget(null)
-      setMessage(
-        applyToNotes
-          ? `Tag verschoben und ${response.notesUpdated} Notizen aktualisiert.`
-          : 'Tag in andere Gruppe verschoben. Historische Notiz-Tags wurden beibehalten.'
       )
       await Promise.all([runSearch(searchQuery), refreshReview()])
     } catch (caught) {
@@ -2644,7 +2682,6 @@ function App() {
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setCounts(response.counts)
-      setTagMenuTarget(null)
       setMessage(
         removeFromNotes
           ? `Tag geloescht und aus ${response.notesUpdated} Notizen entfernt.`
@@ -2869,72 +2906,33 @@ function App() {
 
     if (sidebarView === 'tags') {
       return (
-        <div className="sidebar-content">
-          <div className="sidebar-header-row">
-            <h3>Tagging</h3>
-            <button className="icon-button" onClick={() => setTagManagerOpen(true)} title="Tag-Manager oeffnen">
-              +
-            </button>
-          </div>
-
-          <p className="muted-copy">Mit dem Plus oben rechts oeffnest du den Tag-Manager.</p>
-
-          <section className="tree-scroll">
-            {sortedTagGroupNames.length === 0 ? <p className="empty-copy">Keine Tag-Gruppen vorhanden.</p> : null}
-            {sortedTagGroupNames.map((groupName) => {
-              const folderKey = `tag-group-${groupName}`
-              const tags = mergedTagGroups[groupName] ?? []
-              const isOpen = expandedFolders[folderKey] ?? true
-
-              return (
-                <div className="folder-node" key={folderKey}>
-                  <button className="folder-toggle" onClick={() => toggleFolder(folderKey)}>
-                    <span>{isOpen ? 'v' : '>'}</span>
-                    <strong>{groupName}</strong>
-                    <em>{tags.length}</em>
-                  </button>
-
-                  {isOpen ? (
-                    <div className="folder-children">
-                      {tags.length === 0 ? <p className="empty-copy folder-empty">Noch keine Tags.</p> : null}
-                      {tags.map((tag) => (
-                        <div key={`${groupName}:${tag}`} className="tag-pill-row">
-                          <div className="tag-pill">
-                            {groupName}:{tag}
-                          </div>
-                          <div className="tag-row-actions">
-                            <button
-                              className="icon-button muted"
-                              onClick={() =>
-                                setTagMenuTarget((prev) =>
-                                  prev?.groupName === groupName && prev?.tagName === tag ? null : { groupName, tagName: tag }
-                                )
-                              }
-                              title="Tag verwalten"
-                            >
-                              ...
-                            </button>
-                            {tagMenuTarget?.groupName === groupName && tagMenuTarget?.tagName === tag ? (
-                              <div className="tag-context-menu">
-                                <button onClick={() => void renameTag(groupName, tag)}>Tag umbenennen</button>
-                                <button onClick={() => void moveTagToOtherGroup(groupName, tag)}>
-                                  In andere Gruppe verschieben
-                                </button>
-                                <button className="danger" onClick={() => void deleteTag(groupName, tag)}>
-                                  Tag loeschen
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })}
-          </section>
-        </div>
+        <TagSidebar
+          vaultLoaded={vaultLoaded}
+          width={explorerWidth}
+          onWidthChange={setExplorerWidth}
+          sortedGroupNames={sortedTagGroupNames}
+          tagGroups={mergedTagGroups}
+          expandedGroups={expandedFolders}
+          onToggleGroup={toggleFolder}
+          onCreateGroup={() => {
+            void createTagGroup()
+          }}
+          onCreateTag={(groupName) => {
+            void createTagInExistingGroup(groupName)
+          }}
+          onRenameGroup={(groupName) => {
+            void renameTagGroup(groupName)
+          }}
+          onDeleteGroup={(groupName) => {
+            void deleteTagGroup(groupName)
+          }}
+          onRenameTag={(groupName, tagName) => {
+            void renameTag(groupName, tagName)
+          }}
+          onDeleteTag={(groupName, tagName) => {
+            void deleteTag(groupName, tagName)
+          }}
+        />
       )
     }
 
@@ -3526,126 +3524,6 @@ function App() {
         </div>
       ) : null}
 
-      {tagManagerOpen ? (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setTagManagerOpen(false)
-            setTagMenuTarget(null)
-          }}
-        >
-          <aside
-            className="tag-manager-modal"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-          >
-            <header className="sidebar-header-row">
-              <h3>Tag-Manager</h3>
-              <button
-                onClick={() => {
-                  setTagManagerOpen(false)
-                  setTagMenuTarget(null)
-                }}
-              >
-                Schliessen
-              </button>
-            </header>
-
-            <section className="tag-manager-grid">
-              <div className="tag-manager-column">
-                <label className="field-label" htmlFor="manager-new-tag-group-input">
-                  Neue Tag-Gruppe
-                </label>
-                <div className="tag-action-row">
-                  <input
-                    id="manager-new-tag-group-input"
-                    value={newTagGroupName}
-                    onChange={(event) => setNewTagGroupName(event.target.value)}
-                    placeholder="z. B. Customer"
-                  />
-                  <button onClick={() => void addTagGroup()} disabled={!newTagGroupName.trim()}>
-                    Gruppe anlegen
-                  </button>
-                </div>
-              </div>
-
-              <div className="tag-manager-column">
-                <label className="field-label" htmlFor="manager-existing-tag-group-select">
-                  Tag in bestehender Gruppe
-                </label>
-                <div className="tag-action-row">
-                  <select
-                    id="manager-existing-tag-group-select"
-                    value={selectedTagGroup}
-                    onChange={(event) => setSelectedTagGroup(event.target.value)}
-                  >
-                    <option value="" disabled>
-                      Gruppe waehlen
-                    </option>
-                    {sortedTagGroupNames.map((groupName) => (
-                      <option key={groupName} value={groupName}>
-                        {groupName}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    value={newTagName}
-                    onChange={(event) => setNewTagName(event.target.value)}
-                    placeholder="z. B. Acme GmbH"
-                  />
-                  <button onClick={() => void addTagToGroup()} disabled={!selectedTagGroup || !newTagName.trim()}>
-                    Tag anlegen
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section className="tree-scroll">
-              {sortedTagGroupNames.map((groupName) => {
-                const tags = mergedTagGroups[groupName] ?? []
-                return (
-                  <div key={`manager-${groupName}`} className="tag-manager-group">
-                    <h4>{groupName}</h4>
-                    {tags.length === 0 ? <p className="empty-copy">Noch keine Tags.</p> : null}
-                    {tags.map((tag) => (
-                      <div key={`manager-${groupName}-${tag}`} className="tag-pill-row">
-                        <div className="tag-pill">
-                          {groupName}:{tag}
-                        </div>
-                        <div className="tag-row-actions">
-                          <button
-                            className="icon-button muted"
-                            onClick={() =>
-                              setTagMenuTarget((prev) =>
-                                prev?.groupName === groupName && prev?.tagName === tag ? null : { groupName, tagName: tag }
-                              )
-                            }
-                            title="Tag verwalten"
-                          >
-                            ...
-                          </button>
-                          {tagMenuTarget?.groupName === groupName && tagMenuTarget?.tagName === tag ? (
-                            <div className="tag-context-menu">
-                              <button onClick={() => void renameTag(groupName, tag)}>Tag umbenennen</button>
-                              <button onClick={() => void moveTagToOtherGroup(groupName, tag)}>
-                                In andere Gruppe verschieben
-                              </button>
-                              <button className="danger" onClick={() => void deleteTag(groupName, tag)}>
-                                Tag loeschen
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )
-              })}
-            </section>
-          </aside>
-        </div>
-      ) : null}
     </div>
   )
 }

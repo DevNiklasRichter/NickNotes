@@ -670,3 +670,40 @@
   stroke-linejoin: round;
   opacity: 0.86;
 }
+
+.tag-explorer-tree {
+  padding-right: 0.08rem;
+}
+
+.tag-group-row {
+  cursor: pointer;
+}
+
+.tag-entry-row {
+  margin-left: 0.04rem;
+}
+
+.tag-entry-row:hover {
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+}
+
+.tag-entry-marker {
+  width: 0.7rem;
+  min-width: 0.7rem;
+  font-size: 0.68rem;
+  line-height: 1;
+  text-align: center;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.tag-group-empty {
+  padding: 0.12rem 0.38rem 0.22rem 1.98rem;
+  font-size: 0.74rem;
+}
+
+.modern-tag-context {
+  min-width: 210px;
+  border-radius: 12px;
+}
