@@ -5,7 +5,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import '@toast-ui/editor/dist/toastui-editor.css'
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
-import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV2'
+import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
+import type { ExplorerOptions } from './explorer/types'
 import './App.css'
 
 type VaultCounts = {
@@ -98,6 +99,7 @@ const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
 const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
 const SIDEBAR_OPEN_STORAGE_KEY = 'nicknotes-sidebar-open'
 const STATUS_BAR_PREFS_STORAGE_KEY = 'nicknotes-statusbar-prefs'
+const EXPLORER_OPTIONS_STORAGE_KEY = 'nicknotes-explorer-options'
 const EXPLORER_WIDTH_STORAGE_KEY = 'nicknotes-explorer-width'
 const EDITOR_PANEL_OPEN_STORAGE_KEY = 'nicknotes-editor-panel-open'
 const CAPTURE_PANEL_OPEN_STORAGE_KEY = 'nicknotes-capture-panel-open'
@@ -118,6 +120,15 @@ const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefs = {
   showDueToday: false,
   showTotalNotes: false,
   showStateMessage: true,
+}
+
+const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
+  showHiddenFiles: false,
+  showFileExtensions: true,
+  sortMode: 'name',
+  foldersFirst: true,
+  showIcons: false,
+  compactMode: true,
 }
 
 type TagGroupsMap = Record<string, string[]>
@@ -937,6 +948,33 @@ function getStoredStatusBarPrefs(): StatusBarPrefs {
   }
 }
 
+function getStoredExplorerOptions(): ExplorerOptions {
+  if (typeof window === 'undefined') {
+    return { ...DEFAULT_EXPLORER_OPTIONS }
+  }
+
+  try {
+    const raw = window.localStorage.getItem(EXPLORER_OPTIONS_STORAGE_KEY)
+    if (!raw) {
+      return { ...DEFAULT_EXPLORER_OPTIONS }
+    }
+    const parsed = JSON.parse(raw) as Partial<ExplorerOptions>
+    return {
+      showHiddenFiles: parsed.showHiddenFiles ?? DEFAULT_EXPLORER_OPTIONS.showHiddenFiles,
+      showFileExtensions: parsed.showFileExtensions ?? DEFAULT_EXPLORER_OPTIONS.showFileExtensions,
+      sortMode:
+        parsed.sortMode === 'modified' || parsed.sortMode === 'type' || parsed.sortMode === 'name'
+          ? parsed.sortMode
+          : DEFAULT_EXPLORER_OPTIONS.sortMode,
+      foldersFirst: parsed.foldersFirst ?? DEFAULT_EXPLORER_OPTIONS.foldersFirst,
+      showIcons: parsed.showIcons ?? DEFAULT_EXPLORER_OPTIONS.showIcons,
+      compactMode: parsed.compactMode ?? DEFAULT_EXPLORER_OPTIONS.compactMode,
+    }
+  } catch {
+    return { ...DEFAULT_EXPLORER_OPTIONS }
+  }
+}
+
 function areStatusBarPrefsEqual(left: StatusBarPrefs, right: StatusBarPrefs): boolean {
   return (
     left.showNoteBaseName === right.showNoteBaseName &&
@@ -944,6 +982,17 @@ function areStatusBarPrefsEqual(left: StatusBarPrefs, right: StatusBarPrefs): bo
     left.showDueToday === right.showDueToday &&
     left.showTotalNotes === right.showTotalNotes &&
     left.showStateMessage === right.showStateMessage
+  )
+}
+
+function areExplorerOptionsEqual(left: ExplorerOptions, right: ExplorerOptions): boolean {
+  return (
+    left.showHiddenFiles === right.showHiddenFiles &&
+    left.showFileExtensions === right.showFileExtensions &&
+    left.sortMode === right.sortMode &&
+    left.foldersFirst === right.foldersFirst &&
+    left.showIcons === right.showIcons &&
+    left.compactMode === right.compactMode
   )
 }
 
@@ -1019,10 +1068,12 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(getStoredSidebarOpen)
   const [displayName, setDisplayName] = useState(getStoredDisplayName)
   const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
+  const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>(getStoredExplorerOptions)
   const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme)
   const [savedDisplayName, setSavedDisplayName] = useState(getStoredDisplayName)
   const [savedSidebarOpen, setSavedSidebarOpen] = useState(getStoredSidebarOpen)
   const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
+  const [savedExplorerOptions, setSavedExplorerOptions] = useState<ExplorerOptions>(getStoredExplorerOptions)
   const [explorerWidth, setExplorerWidth] = useState(getStoredExplorerWidth)
   const [editorPanelOpen, setEditorPanelOpen] = useState(() =>
     getStoredPanelOpen(EDITOR_PANEL_OPEN_STORAGE_KEY, true)
@@ -1126,8 +1177,20 @@ function App() {
       theme !== savedTheme ||
       displayName !== savedDisplayName ||
       sidebarOpen !== savedSidebarOpen ||
-      !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs),
-    [displayName, savedDisplayName, savedSidebarOpen, savedStatusBarPrefs, savedTheme, sidebarOpen, statusBarPrefs, theme]
+      !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
+      !areExplorerOptionsEqual(explorerOptions, savedExplorerOptions),
+    [
+      displayName,
+      explorerOptions,
+      savedDisplayName,
+      savedExplorerOptions,
+      savedSidebarOpen,
+      savedStatusBarPrefs,
+      savedTheme,
+      sidebarOpen,
+      statusBarPrefs,
+      theme,
+    ]
   )
 
   const refreshTasks = async (force = false) => {
@@ -1679,10 +1742,12 @@ function App() {
       window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName)
       window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? '1' : '0')
       window.localStorage.setItem(STATUS_BAR_PREFS_STORAGE_KEY, JSON.stringify(statusBarPrefs))
+      window.localStorage.setItem(EXPLORER_OPTIONS_STORAGE_KEY, JSON.stringify(explorerOptions))
       setSavedTheme(theme)
       setSavedDisplayName(displayName)
       setSavedSidebarOpen(sidebarOpen)
       setSavedStatusBarPrefs({ ...statusBarPrefs })
+      setSavedExplorerOptions({ ...explorerOptions })
       setMessage('Einstellungen gespeichert.')
       setError('')
       return true
@@ -1697,6 +1762,7 @@ function App() {
     setDisplayName(savedDisplayName)
     setSidebarOpen(savedSidebarOpen)
     setStatusBarPrefs({ ...savedStatusBarPrefs })
+    setExplorerOptions({ ...savedExplorerOptions })
     setMessage('Nicht gespeicherte Einstellungen verworfen.')
   }
 
@@ -2893,6 +2959,7 @@ function App() {
         onMoveFile={moveExplorerFile}
         onMoveFolder={moveExplorerFolder}
         onToggleFavoriteFolder={toggleFavoriteFolder}
+        options={explorerOptions}
         onRefresh={() => {
           void refreshExplorerSidebarData()
         }}
@@ -3134,6 +3201,54 @@ function App() {
                               onChange={(event) => setSidebarOpen(event.target.checked)}
                             />
                             Sidebar anzeigen
+                          </label>
+                        </section>
+
+                        <section className="settings-block">
+                          <h4>Note Explorer</h4>
+                          <label className="checkbox-row" htmlFor="settings-explorer-show-hidden">
+                            <input
+                              id="settings-explorer-show-hidden"
+                              type="checkbox"
+                              checked={explorerOptions.showHiddenFiles}
+                              onChange={(event) =>
+                                setExplorerOptions((prev) => ({ ...prev, showHiddenFiles: event.target.checked }))
+                              }
+                            />
+                            Nicht-Markdown-Dateien anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-explorer-folders-first">
+                            <input
+                              id="settings-explorer-folders-first"
+                              type="checkbox"
+                              checked={explorerOptions.foldersFirst}
+                              onChange={(event) =>
+                                setExplorerOptions((prev) => ({ ...prev, foldersFirst: event.target.checked }))
+                              }
+                            />
+                            Ordner zuerst anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-explorer-show-icons">
+                            <input
+                              id="settings-explorer-show-icons"
+                              type="checkbox"
+                              checked={explorerOptions.showIcons}
+                              onChange={(event) =>
+                                setExplorerOptions((prev) => ({ ...prev, showIcons: event.target.checked }))
+                              }
+                            />
+                            Dateisymbole anzeigen
+                          </label>
+                          <label className="checkbox-row" htmlFor="settings-explorer-compact">
+                            <input
+                              id="settings-explorer-compact"
+                              type="checkbox"
+                              checked={explorerOptions.compactMode}
+                              onChange={(event) =>
+                                setExplorerOptions((prev) => ({ ...prev, compactMode: event.target.checked }))
+                              }
+                            />
+                            Kompakte Zeilen
                           </label>
                         </section>
 
