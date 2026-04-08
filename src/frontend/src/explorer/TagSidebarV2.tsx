@@ -361,6 +361,16 @@ export function TagSidebar({
                 <button
                   className="context-menu-item"
                   onClick={() => {
+                    onCreateTag(contextMenu.target.groupName)
+                    setContextMenu(null)
+                  }}
+                >
+                  <TagContextIcon name="newTag" />
+                  <span>Neuen Tag erstellen</span>
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
                     onRenameGroup(contextMenu.target.groupName)
                     setContextMenu(null)
                   }}

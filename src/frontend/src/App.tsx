@@ -1016,30 +1016,6 @@ function getRelativeVaultPath(path: string, noteBasePath: string): string {
   return normalizedPath
 }
 
-function parseTagFromNote(row: SearchRow): { group: string; tag: string } | null {
-  const title = normalizeLabel(row.title)
-  if (title.includes(':')) {
-    const separatorIndex = title.indexOf(':')
-    const group = normalizeLabel(title.slice(0, separatorIndex))
-    const tag = normalizeLabel(title.slice(separatorIndex + 1))
-    if (group && tag) {
-      return { group, tag }
-    }
-  }
-
-  const normalizedPath = row.path.replace(/\\/g, '/')
-  const tagOverviewMatch = normalizedPath.match(/\/(?:tags|02_tags)\/([^/]+)\/([^/]+)\/overview\.md$/i)
-  if (tagOverviewMatch) {
-    const group = normalizeLabel(tagOverviewMatch[1].replace(/_/g, ' '))
-    const tag = normalizeLabel(tagOverviewMatch[2].replace(/_/g, ' '))
-    if (group && tag) {
-      return { group, tag }
-    }
-  }
-
-  return null
-}
-
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -1540,38 +1516,13 @@ function App() {
     return byKey
   }, [noteGroups])
 
-  const discoveredTagGroups = useMemo(() => {
-    const result: TagGroupsMap = {}
-    for (const row of sortedNotes) {
-      const parsed = parseTagFromNote(row)
-      if (!parsed) {
-        continue
-      }
-
-      if (!result[parsed.group]) {
-        result[parsed.group] = []
-      }
-      result[parsed.group].push(parsed.tag)
-    }
-
-    for (const [group, tags] of Object.entries(result)) {
-      result[group] = Array.from(new Set(tags)).sort((left, right) => left.localeCompare(right, 'de'))
-    }
-
-    return result
-  }, [sortedNotes])
-
   const mergedTagGroups = useMemo(() => {
     const merged: TagGroupsMap = {}
-    const allGroups = new Set([...Object.keys(discoveredTagGroups), ...Object.keys(customTagGroups)])
-
-    for (const group of allGroups) {
-      const combined = [...(discoveredTagGroups[group] ?? []), ...(customTagGroups[group] ?? [])]
-      merged[group] = Array.from(new Set(combined)).sort((left, right) => left.localeCompare(right, 'de'))
+    for (const [group, tags] of Object.entries(customTagGroups)) {
+      merged[group] = Array.from(new Set(tags)).sort((left, right) => left.localeCompare(right, 'de'))
     }
-
     return merged
-  }, [customTagGroups, discoveredTagGroups])
+  }, [customTagGroups])
 
   const sortedTagGroupNames = useMemo(
     () => Object.keys(mergedTagGroups).sort((left, right) => left.localeCompare(right, 'de')),

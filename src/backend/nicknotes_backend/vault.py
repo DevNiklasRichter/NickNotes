@@ -386,22 +386,6 @@ class VaultManager:
 
     def sync_tag_groups_with_index(self, indexer: VaultIndexer) -> dict[str, list[str]]:
         groups = self.read_tag_groups()
-        for row in indexer.get_all_tags():
-            category = _normalize_label(str(row.get("category", "")))
-            tag_name = _normalize_label(str(row.get("display_name") or row.get("slug") or ""))
-            if not category or not tag_name:
-                continue
-
-            target_group = self._resolve_group_name(groups, category)
-            if not target_group:
-                target_group = category
-                groups[target_group] = []
-
-            target_tag = self._resolve_tag_name(groups[target_group], tag_name)
-            if not target_tag:
-                groups[target_group] = _dedupe_sorted([*groups[target_group], tag_name])
-
-        self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups
 
@@ -677,16 +661,6 @@ class VaultManager:
         self._append_to_daily(note_path, note_id, title, created_at, tag_keys)
 
         groups = self.read_tag_groups()
-        for tag in selected_tags:
-            group_name = self._resolve_group_name(groups, tag.category) or _normalize_label(tag.category)
-            display_name = _normalize_label(tag.display_name or tag.slug)
-            if not group_name or not display_name:
-                continue
-            groups.setdefault(group_name, [])
-            if not self._resolve_tag_name(groups[group_name], display_name):
-                groups[group_name] = _dedupe_sorted([*groups[group_name], display_name])
-
-        self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
 
         return {
@@ -774,20 +748,22 @@ class VaultManager:
                 # We keep existing files and overwrite known targets below.
                 continue
 
-        root_lines = ["# Tag Uebersicht", "", "## Gruppen"]
+        # Clean up legacy index files from older tag explorer versions.
+        for legacy_index in self.tag_root_path.rglob("index.md"):
+            try:
+                legacy_index.unlink(missing_ok=True)
+            except OSError:
+                continue
+
         for group_name in sorted(groups, key=lambda item: item.lower()):
             group_slug = slugify(group_name)
             group_dir = self.tag_root_path / group_slug
             group_dir.mkdir(parents=True, exist_ok=True)
 
             tags = _dedupe_sorted(groups.get(group_name, []))
-            self._write_group_index(group_name, tags, group_dir)
-            root_lines.append(f"- [{group_name}]({group_slug}/index.md) ({len(tags)} Tags)")
 
             for tag_name in tags:
                 self.rebuild_tag_page(group_name, tag_name, indexer)
-
-        (self.tag_root_path / "index.md").write_text("\n".join(root_lines) + "\n", encoding="utf-8")
 
     def rebuild_tag_page(self, group_name: str, tag_name: str, indexer: VaultIndexer) -> Path:
         group_slug = slugify(group_name)
@@ -849,17 +825,6 @@ class VaultManager:
         body = "\n".join(body_lines) + "\n"
         tag_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
         return tag_path
-
-    def _write_group_index(self, group_name: str, tags: list[str], group_dir: Path) -> None:
-        lines = [f"# {group_name}", "", "## Tags"]
-        if not tags:
-            lines.append("- Noch keine Tags in dieser Gruppe.")
-        else:
-            for tag_name in tags:
-                tag_slug = slugify(tag_name)
-                lines.append(f"- [{tag_name}]({tag_slug}/overview.md)")
-
-        (group_dir / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _open_tasks_for_tag(self, group_slug: str, tag_slug: str) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
