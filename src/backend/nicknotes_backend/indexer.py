@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,92 +15,97 @@ from .parser import slugify
 class VaultIndexer:
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        self.conn = sqlite3.connect(str(db_path))
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._configure_connection()
         self._init_schema()
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     def _configure_connection(self) -> None:
-        # MEMORY journal is more robust in restricted/sandboxed filesystems.
-        self.conn.execute("PRAGMA journal_mode=MEMORY;")
-        self.conn.execute("PRAGMA temp_store=MEMORY;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.execute("PRAGMA foreign_keys=ON;")
+        with self._lock:
+            # MEMORY journal is more robust in restricted/sandboxed filesystems.
+            self.conn.execute("PRAGMA journal_mode=MEMORY;")
+            self.conn.execute("PRAGMA temp_store=MEMORY;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+            self.conn.execute("PRAGMA foreign_keys=ON;")
 
     def _init_schema(self) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notes (
-              id TEXT PRIMARY KEY,
-              path TEXT NOT NULL,
-              title TEXT,
-              body TEXT,
-              note_type TEXT,
-              created_at TEXT,
-              updated_at TEXT
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tags (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              category TEXT NOT NULL,
-              slug TEXT NOT NULL,
-              display_name TEXT NOT NULL,
-              UNIQUE(category, slug)
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS note_tags (
-              note_id TEXT NOT NULL,
-              tag_id INTEGER NOT NULL,
-              source TEXT NOT NULL,
-              confidence REAL NOT NULL,
-              PRIMARY KEY(note_id, tag_id),
-              FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
-              FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-              id TEXT PRIMARY KEY,
-              note_id TEXT,
-              path TEXT,
-              title TEXT NOT NULL,
-              status TEXT NOT NULL,
-              priority TEXT NOT NULL,
-              due_date TEXT,
-              project_tag TEXT,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
-            USING fts5(note_id UNINDEXED, title, body);
-            """
-        )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                  id TEXT PRIMARY KEY,
+                  path TEXT NOT NULL,
+                  title TEXT,
+                  body TEXT,
+                  note_type TEXT,
+                  created_at TEXT,
+                  updated_at TEXT
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tags (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  category TEXT NOT NULL,
+                  slug TEXT NOT NULL,
+                  display_name TEXT NOT NULL,
+                  UNIQUE(category, slug)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_tags (
+                  note_id TEXT NOT NULL,
+                  tag_id INTEGER NOT NULL,
+                  source TEXT NOT NULL,
+                  confidence REAL NOT NULL,
+                  PRIMARY KEY(note_id, tag_id),
+                  FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
+                  FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                  id TEXT PRIMARY KEY,
+                  note_id TEXT,
+                  path TEXT,
+                  title TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  priority TEXT NOT NULL,
+                  due_date TEXT,
+                  project_tag TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
+                USING fts5(note_id UNINDEXED, title, body);
+                """
+            )
+            self.conn.commit()
 
     def clear_all(self) -> None:
-        cur = self.conn.cursor()
-        cur.execute("DELETE FROM note_tags;")
-        cur.execute("DELETE FROM tasks;")
-        cur.execute("DELETE FROM tags;")
-        cur.execute("DELETE FROM notes;")
-        cur.execute("DELETE FROM notes_fts;")
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM note_tags;")
+            cur.execute("DELETE FROM tasks;")
+            cur.execute("DELETE FROM tags;")
+            cur.execute("DELETE FROM notes;")
+            cur.execute("DELETE FROM notes_fts;")
+            self.conn.commit()
 
     def upsert_note(
         self,
@@ -111,74 +117,77 @@ class VaultIndexer:
         created_at: str,
         updated_at: str,
     ) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO notes(id, path, title, body, note_type, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              path=excluded.path,
-              title=excluded.title,
-              body=excluded.body,
-              note_type=excluded.note_type,
-              created_at=excluded.created_at,
-              updated_at=excluded.updated_at;
-            """,
-            (note_id, path, title, body, note_type, created_at, updated_at),
-        )
-        cur.execute("DELETE FROM notes_fts WHERE note_id = ?;", (note_id,))
-        cur.execute(
-            "INSERT INTO notes_fts(note_id, title, body) VALUES (?, ?, ?);",
-            (note_id, title, body),
-        )
-        self.conn.commit()
-
-    def _ensure_tag(self, ref: TagRef) -> int:
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO tags(category, slug, display_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(category, slug) DO UPDATE SET
-              display_name=excluded.display_name;
-            """,
-            (ref.category, ref.slug, ref.display_name),
-        )
-        cur.execute(
-            "SELECT id FROM tags WHERE category = ? AND slug = ?;",
-            (ref.category, ref.slug),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise RuntimeError("Failed to fetch tag after upsert.")
-        return int(row["id"])
-
-    def set_note_tags(self, note_id: str, tag_rows: list[dict[str, Any]]) -> None:
-        cur = self.conn.cursor()
-        cur.execute("DELETE FROM note_tags WHERE note_id = ?;", (note_id,))
-        for row in tag_rows:
-            ref = TagRef(
-                category=row["category"],
-                slug=row["slug"],
-                display_name=row.get("display_name") or row["slug"],
-            )
-            tag_id = self._ensure_tag(ref)
+        with self._lock:
+            cur = self.conn.cursor()
             cur.execute(
                 """
-                INSERT INTO note_tags(note_id, tag_id, source, confidence)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(note_id, tag_id) DO UPDATE SET
-                  source=excluded.source,
-                  confidence=excluded.confidence;
+                INSERT INTO notes(id, path, title, body, note_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  path=excluded.path,
+                  title=excluded.title,
+                  body=excluded.body,
+                  note_type=excluded.note_type,
+                  created_at=excluded.created_at,
+                  updated_at=excluded.updated_at;
                 """,
-                (
-                    note_id,
-                    tag_id,
-                    row.get("source", "manual"),
-                    float(row.get("confidence", 1.0)),
-                ),
+                (note_id, path, title, body, note_type, created_at, updated_at),
             )
-        self.conn.commit()
+            cur.execute("DELETE FROM notes_fts WHERE note_id = ?;", (note_id,))
+            cur.execute(
+                "INSERT INTO notes_fts(note_id, title, body) VALUES (?, ?, ?);",
+                (note_id, title, body),
+            )
+            self.conn.commit()
+
+    def _ensure_tag(self, ref: TagRef) -> int:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO tags(category, slug, display_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(category, slug) DO UPDATE SET
+                  display_name=excluded.display_name;
+                """,
+                (ref.category, ref.slug, ref.display_name),
+            )
+            cur.execute(
+                "SELECT id FROM tags WHERE category = ? AND slug = ?;",
+                (ref.category, ref.slug),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("Failed to fetch tag after upsert.")
+            return int(row["id"])
+
+    def set_note_tags(self, note_id: str, tag_rows: list[dict[str, Any]]) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM note_tags WHERE note_id = ?;", (note_id,))
+            for row in tag_rows:
+                ref = TagRef(
+                    category=row["category"],
+                    slug=row["slug"],
+                    display_name=row.get("display_name") or row["slug"],
+                )
+                tag_id = self._ensure_tag(ref)
+                cur.execute(
+                    """
+                    INSERT INTO note_tags(note_id, tag_id, source, confidence)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(note_id, tag_id) DO UPDATE SET
+                      source=excluded.source,
+                      confidence=excluded.confidence;
+                    """,
+                    (
+                        note_id,
+                        tag_id,
+                        row.get("source", "manual"),
+                        float(row.get("confidence", 1.0)),
+                    ),
+                )
+            self.conn.commit()
 
     def add_or_update_task(
         self,
@@ -189,158 +198,164 @@ class VaultIndexer:
         created_at: str,
         updated_at: str,
     ) -> None:
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO tasks(id, note_id, path, title, status, priority, due_date, project_tag, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              note_id=excluded.note_id,
-              path=excluded.path,
-              title=excluded.title,
-              status=excluded.status,
-              priority=excluded.priority,
-              due_date=excluded.due_date,
-              project_tag=excluded.project_tag,
-              updated_at=excluded.updated_at;
-            """,
-            (
-                task_id,
-                note_id,
-                path,
-                parsed.title,
-                parsed.status,
-                parsed.priority,
-                parsed.due_date,
-                parsed.project_tag,
-                created_at,
-                updated_at,
-            ),
-        )
-        self.conn.commit()
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO tasks(id, note_id, path, title, status, priority, due_date, project_tag, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  note_id=excluded.note_id,
+                  path=excluded.path,
+                  title=excluded.title,
+                  status=excluded.status,
+                  priority=excluded.priority,
+                  due_date=excluded.due_date,
+                  project_tag=excluded.project_tag,
+                  updated_at=excluded.updated_at;
+                """,
+                (
+                    task_id,
+                    note_id,
+                    path,
+                    parsed.title,
+                    parsed.status,
+                    parsed.priority,
+                    parsed.due_date,
+                    parsed.project_tag,
+                    created_at,
+                    updated_at,
+                ),
+            )
+            self.conn.commit()
 
     def get_all_tags(self) -> list[dict[str, Any]]:
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT category, slug, display_name FROM tags ORDER BY category, display_name;"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT category, slug, display_name FROM tags ORDER BY category, display_name;"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def search_notes(self, query: str, limit: int = 100) -> list[dict[str, Any]]:
-        cur = self.conn.cursor()
-        cleaned = query.strip()
-        if not cleaned:
+        with self._lock:
+            cur = self.conn.cursor()
+            cleaned = query.strip()
+            if not cleaned:
+                cur.execute(
+                    """
+                    SELECT id, title, path, note_type, created_at, updated_at
+                    FROM notes
+                    ORDER BY updated_at DESC
+                    LIMIT ?;
+                    """,
+                    (limit,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+            try:
+                cur.execute(
+                    """
+                    SELECT n.id, n.title, n.path, n.note_type, n.created_at, n.updated_at
+                    FROM notes_fts f
+                    JOIN notes n ON n.id = f.note_id
+                    WHERE notes_fts MATCH ?
+                    ORDER BY n.updated_at DESC
+                    LIMIT ?;
+                    """,
+                    (cleaned, limit),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    return [dict(row) for row in rows]
+            except sqlite3.OperationalError:
+                pass
+
+            like = f"%{cleaned}%"
             cur.execute(
                 """
                 SELECT id, title, path, note_type, created_at, updated_at
                 FROM notes
+                WHERE title LIKE ? OR body LIKE ?
                 ORDER BY updated_at DESC
                 LIMIT ?;
                 """,
-                (limit,),
+                (like, like, limit),
             )
             return [dict(row) for row in cur.fetchall()]
 
-        try:
-            cur.execute(
-                """
-                SELECT n.id, n.title, n.path, n.note_type, n.created_at, n.updated_at
-                FROM notes_fts f
-                JOIN notes n ON n.id = f.note_id
-                WHERE notes_fts MATCH ?
-                ORDER BY n.updated_at DESC
-                LIMIT ?;
-                """,
-                (cleaned, limit),
-            )
-            rows = cur.fetchall()
-            if rows:
-                return [dict(row) for row in rows]
-        except sqlite3.OperationalError:
-            pass
-
-        like = f"%{cleaned}%"
-        cur.execute(
-            """
-            SELECT id, title, path, note_type, created_at, updated_at
-            FROM notes
-            WHERE title LIKE ? OR body LIKE ?
-            ORDER BY updated_at DESC
-            LIMIT ?;
-            """,
-            (like, like, limit),
-        )
-        return [dict(row) for row in cur.fetchall()]
-
     def list_tasks(self, include_done: bool = False) -> list[dict[str, Any]]:
-        cur = self.conn.cursor()
-        if include_done:
-            cur.execute(
-                """
-                SELECT id, title, status, priority, due_date, project_tag, updated_at, path
-                FROM tasks
-                ORDER BY
-                  CASE priority WHEN 'H' THEN 1 WHEN 'M' THEN 2 ELSE 3 END,
-                  COALESCE(due_date, '9999-12-31') ASC,
-                  updated_at DESC;
-                """
-            )
-        else:
-            cur.execute(
-                """
-                SELECT id, title, status, priority, due_date, project_tag, updated_at, path
-                FROM tasks
-                WHERE status <> 'done'
-                ORDER BY
-                  CASE priority WHEN 'H' THEN 1 WHEN 'M' THEN 2 ELSE 3 END,
-                  COALESCE(due_date, '9999-12-31') ASC,
-                  updated_at DESC;
-                """
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.cursor()
+            if include_done:
+                cur.execute(
+                    """
+                    SELECT id, title, status, priority, due_date, project_tag, updated_at, path
+                    FROM tasks
+                    ORDER BY
+                      CASE priority WHEN 'H' THEN 1 WHEN 'M' THEN 2 ELSE 3 END,
+                      COALESCE(due_date, '9999-12-31') ASC,
+                      updated_at DESC;
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, title, status, priority, due_date, project_tag, updated_at, path
+                    FROM tasks
+                    WHERE status <> 'done'
+                    ORDER BY
+                      CASE priority WHEN 'H' THEN 1 WHEN 'M' THEN 2 ELSE 3 END,
+                      COALESCE(due_date, '9999-12-31') ASC,
+                      updated_at DESC;
+                    """
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def notes_for_tag(self, category: str, slug: str) -> list[dict[str, Any]]:
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            SELECT n.id, n.path, n.title, n.created_at, n.updated_at
-            FROM tags t
-            JOIN note_tags nt ON nt.tag_id = t.id
-            JOIN notes n ON n.id = nt.note_id
-            WHERE t.category = ? AND t.slug = ?
-              AND n.note_type <> 'tag_index'
-            ORDER BY n.created_at DESC;
-            """,
-            (category, slug),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT n.id, n.path, n.title, n.created_at, n.updated_at
+                FROM tags t
+                JOIN note_tags nt ON nt.tag_id = t.id
+                JOIN notes n ON n.id = nt.note_id
+                WHERE t.category = ? AND t.slug = ?
+                  AND n.note_type <> 'tag_index'
+                ORDER BY n.created_at DESC;
+                """,
+                (category, slug),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def daily_summary(self, day: date) -> dict[str, Any]:
         day_str = day.isoformat()
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*) AS cnt FROM notes WHERE substr(created_at, 1, 10) = ?;",
-            (day_str,),
-        )
-        notes_count = int(cur.fetchone()["cnt"])
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM tasks
-            WHERE status <> 'done' AND (due_date IS NULL OR due_date >= ?);
-            """,
-            (day_str,),
-        )
-        open_count = int(cur.fetchone()["cnt"])
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM tasks
-            WHERE status = 'done' AND substr(updated_at, 1, 10) = ?;
-            """,
-            (day_str,),
-        )
-        done_count = int(cur.fetchone()["cnt"])
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM notes WHERE substr(created_at, 1, 10) = ?;",
+                (day_str,),
+            )
+            notes_count = int(cur.fetchone()["cnt"])
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM tasks
+                WHERE status <> 'done' AND (due_date IS NULL OR due_date >= ?);
+                """,
+                (day_str,),
+            )
+            open_count = int(cur.fetchone()["cnt"])
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM tasks
+                WHERE status = 'done' AND substr(updated_at, 1, 10) = ?;
+                """,
+                (day_str,),
+            )
+            done_count = int(cur.fetchone()["cnt"])
         return {
             "date": day_str,
             "new_notes": notes_count,
@@ -350,34 +365,35 @@ class VaultIndexer:
 
     def weekly_summary(self, end_day: date) -> dict[str, Any]:
         start = end_day - timedelta(days=6)
-        cur = self.conn.cursor()
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM notes
-            WHERE substr(created_at, 1, 10) BETWEEN ? AND ?;
-            """,
-            (start.isoformat(), end_day.isoformat()),
-        )
-        notes_count = int(cur.fetchone()["cnt"])
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM tasks
-            WHERE status <> 'done';
-            """
-        )
-        open_tasks = int(cur.fetchone()["cnt"])
-        cur.execute(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM tasks
-            WHERE status = 'done'
-              AND substr(updated_at, 1, 10) BETWEEN ? AND ?;
-            """,
-            (start.isoformat(), end_day.isoformat()),
-        )
-        done_week = int(cur.fetchone()["cnt"])
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM notes
+                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?;
+                """,
+                (start.isoformat(), end_day.isoformat()),
+            )
+            notes_count = int(cur.fetchone()["cnt"])
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM tasks
+                WHERE status <> 'done';
+                """
+            )
+            open_tasks = int(cur.fetchone()["cnt"])
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM tasks
+                WHERE status = 'done'
+                  AND substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                """,
+                (start.isoformat(), end_day.isoformat()),
+            )
+            done_week = int(cur.fetchone()["cnt"])
         return {
             "from": start.isoformat(),
             "to": end_day.isoformat(),

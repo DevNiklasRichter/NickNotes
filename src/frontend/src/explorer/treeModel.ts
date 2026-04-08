@@ -12,6 +12,7 @@ type BuildTreeInput = {
   files: ExplorerSourceFile[]
   vaultPath: string
   options: ExplorerOptions
+  folderOrder?: Record<string, string[]>
   expandedNodes: Record<string, boolean>
   selectedNodeId: string | null
   activeFilePath: string
@@ -22,6 +23,8 @@ type BuildTreeInput = {
 type MutableExplorerNode = ExplorerNode & {
   children: MutableExplorerNode[]
   updatedAtMs: number
+  normalizedKey?: string
+  parentKey: string
 }
 
 const PROTECTED_ROOTS = new Set([
@@ -32,6 +35,8 @@ const PROTECTED_ROOTS = new Set([
   'tags',
   'tasks',
 ])
+const FIXED_ROOT_ORDER: string[] = ['daily', 'tags', 'tasks']
+const FIXED_ROOT_RANK = new Map(FIXED_ROOT_ORDER.map((token, index) => [token, index]))
 
 function toRootToken(groupKey: string): string {
   const clean = normalizeGroupKey(groupKey)
@@ -41,6 +46,34 @@ function toRootToken(groupKey: string): string {
 
 function normalizeGroupKey(value: string): string {
   return value.replace(/\\/g, '/').trim().replace(/^\/+|\/+$/g, '')
+}
+
+function toNodeGroupKey(node: MutableExplorerNode): string {
+  if (node.type !== 'folder') {
+    return ''
+  }
+  return normalizeGroupKey(node.normalizedKey || node.path)
+}
+
+function toFixedRootRank(groupKey: string): number {
+  const clean = normalizeGroupKey(groupKey)
+  if (!clean || clean.includes('/')) {
+    return Number.POSITIVE_INFINITY
+  }
+  const rank = FIXED_ROOT_RANK.get(toRootToken(clean))
+  return rank === undefined ? Number.POSITIVE_INFINITY : rank
+}
+
+function toFolderOrderIndex(
+  parentKey: string,
+  folderKey: string,
+  folderOrder: Record<string, string[]>
+): number {
+  const cleanParent = normalizeGroupKey(parentKey)
+  const cleanFolder = normalizeGroupKey(folderKey)
+  const ordered = folderOrder[cleanParent] ?? []
+  const index = ordered.findIndex((value) => normalizeGroupKey(value) === cleanFolder)
+  return index >= 0 ? index : Number.POSITIVE_INFINITY
 }
 
 function stripGroupPrefix(value: string): string {
@@ -115,7 +148,36 @@ function isDefaultExpanded(folderPath: string): boolean {
   return false
 }
 
-function compareNodes(left: MutableExplorerNode, right: MutableExplorerNode, options: ExplorerOptions): number {
+function compareNodes(
+  left: MutableExplorerNode,
+  right: MutableExplorerNode,
+  options: ExplorerOptions,
+  folderOrder: Record<string, string[]>
+): number {
+  if (left.type === 'folder' && right.type === 'folder' && left.parentKey === right.parentKey) {
+    const leftKey = toNodeGroupKey(left)
+    const rightKey = toNodeGroupKey(right)
+    if (left.parentKey === '') {
+      const leftRank = toFixedRootRank(leftKey)
+      const rightRank = toFixedRootRank(rightKey)
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank
+      }
+    }
+
+    const leftPinned = Boolean(left.favorite)
+    const rightPinned = Boolean(right.favorite)
+    if (leftPinned !== rightPinned) {
+      return leftPinned ? -1 : 1
+    }
+
+    const leftIndex = toFolderOrderIndex(left.parentKey, leftKey, folderOrder)
+    const rightIndex = toFolderOrderIndex(right.parentKey, rightKey, folderOrder)
+    if (leftIndex !== rightIndex) {
+      return leftIndex - rightIndex
+    }
+  }
+
   if (left.type !== right.type) {
     if (options.foldersFirst) {
       return left.type === 'folder' ? -1 : 1
@@ -154,11 +216,11 @@ function computeFolderTimestamps(nodes: MutableExplorerNode[]): number {
   return maxTimestamp
 }
 
-function sortTree(nodes: MutableExplorerNode[], options: ExplorerOptions): void {
-  nodes.sort((left, right) => compareNodes(left, right, options))
+function sortTree(nodes: MutableExplorerNode[], options: ExplorerOptions, folderOrder: Record<string, string[]>): void {
+  nodes.sort((left, right) => compareNodes(left, right, options, folderOrder))
   for (const node of nodes) {
     if (node.type === 'folder' && node.children.length > 0) {
-      sortTree(node.children, options)
+      sortTree(node.children, options, folderOrder)
     }
   }
 }
@@ -228,6 +290,7 @@ export function buildExplorerTree({
   files,
   vaultPath,
   options,
+  folderOrder = {},
   expandedNodes,
   selectedNodeId,
   activeFilePath,
@@ -275,6 +338,8 @@ export function buildExplorerTree({
       canCreateGroups: group?.canCreateGroups ?? !['tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
       canDelete: group?.canDelete ?? !PROTECTED_ROOTS.has(cleanKey),
       parentId: parentNode?.id ?? null,
+      parentKey,
+      normalizedKey: cleanKey,
     }
 
     folderByKey.set(cleanKey, node)
@@ -320,6 +385,7 @@ export function buildExplorerTree({
       updatedAtMs: toTimestampMs(file.updated_at),
       modified: dirtyFilePaths?.has(file.path) ?? false,
       parentId: parentNode?.id ?? null,
+      parentKey,
     }
 
     if (parentNode) {
@@ -330,7 +396,7 @@ export function buildExplorerTree({
   }
 
   computeFolderTimestamps(rootNodes)
-  sortTree(rootNodes, options)
+  sortTree(rootNodes, options, folderOrder)
 
   const filteredRoots = filterTree(rootNodes, options, filterQuery.trim().toLowerCase())
 

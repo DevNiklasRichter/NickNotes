@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import '@toast-ui/editor/dist/toastui-editor.css'
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
-import { ExplorerSidebar } from './explorer/ExplorerSidebar'
+import { ExplorerSidebar } from './explorer/ExplorerSidebarFlat'
 import './App.css'
 
 type VaultCounts = {
@@ -764,6 +764,15 @@ function toNoteDisplayName(path: string): string {
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
+}
+
+function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
+  const clean = groupKey.replace(/\\/g, '/').trim().replace(/^\/+|\/+$/g, '')
+  if (!clean || clean.includes('/')) {
+    return false
+  }
+  const token = clean.toLowerCase().replace(/^\d+_/, '')
+  return token === 'daily' || token === 'tags' || token === 'tasks'
 }
 
 function toStorageTagGroups(value: unknown): TagGroupsMap {
@@ -2355,6 +2364,10 @@ function App() {
     if (!group) {
       return
     }
+    if (group.favorite && isPermanentPinnedRootGroupKey(group.key)) {
+      setMessage('Die Ordner daily, tags und tasks sind immer fixiert.')
+      return
+    }
 
     try {
       setError('')
@@ -2364,7 +2377,7 @@ function App() {
         body: JSON.stringify({ groupKey }),
       })
       setNoteGroups(response.groups)
-      setMessage(group.favorite ? 'Favorit entfernt.' : 'Zu Favoriten hinzugefuegt.')
+      setMessage(group.favorite ? 'Fixierung aufgehoben.' : 'Ordner fixiert.')
     } catch (caught) {
       setError(String(caught))
     }

@@ -354,6 +354,8 @@ class VaultManager:
         relative = group_key.replace("\\", "/").strip().strip("/")
         if not relative:
             return self._read_favorite_folders()
+        if self._is_protected_root(relative):
+            raise ValueError("Die Basisordner daily, tags und tasks sind immer fixiert.")
         favorites = [item for item in self._read_favorite_folders() if item != relative]
         self._write_favorite_folders(favorites)
         return self._read_favorite_folders()
