@@ -669,8 +669,8 @@
   gap: 0;
 }
 
-.workspace-grid.with-capture-row {
-  grid-template-rows: minmax(0, 1fr) auto;
+.workspace-grid.with-capture-column {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
 }
 
 .workspace-panel {
@@ -682,8 +682,8 @@
   overflow: hidden;
 }
 
-.workspace-grid.with-capture-row .editor-workspace-panel {
-  border-bottom: 1px solid var(--line);
+.workspace-grid.with-capture-column .editor-workspace-panel {
+  border-right: 1px solid var(--line);
 }
 
 .editor-workspace-panel {
@@ -778,106 +778,40 @@ button.wiki-link-pill:hover {
   border-style: dashed;
 }
 
-.wysiwyg-editor-host {
+.code-editor-host {
   height: 100%;
   width: 100%;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
-.wysiwyg-editor-host .toastui-editor-defaultUI {
+.code-editor-host .cm-editor,
+.code-editor-host .cm-scroller {
+  height: 100%;
+}
+
+.code-editor-host .cm-editor {
   border: none;
   background: var(--surface-contrast);
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
-.wysiwyg-editor-host .toastui-editor-toolbar {
-  border-bottom-color: var(--line);
-  background: var(--surface);
-}
-
-.wysiwyg-editor-host .toastui-editor-toolbar button {
-  border-radius: 6px;
-}
-
-.wysiwyg-editor-host .toastui-editor-toolbar button:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
-.wysiwyg-editor-host .toastui-editor-md-tab-container,
-.wysiwyg-editor-host .toastui-editor-md-container {
-  display: none;
-}
-
-.wysiwyg-editor-host .toastui-editor-main-container {
-  height: auto;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container {
-  background: var(--surface-contrast);
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
+.code-editor-host .cm-scroller {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
-.wysiwyg-editor-host .toastui-editor-ww-container::-webkit-scrollbar {
+.code-editor-host .cm-scroller::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
 
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror {
+.code-editor-host .cm-content {
   padding: 1rem 1.1rem;
   line-height: 1.65;
   color: var(--text);
   min-height: 100%;
   box-sizing: border-box;
-  height: auto;
-  overflow: visible;
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror h1,
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror h2,
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror h3,
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror h4 {
-  color: var(--text);
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror code {
-  background: var(--code-bg);
-  border-radius: 4px;
-  padding: 0.1rem 0.25rem;
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror pre {
-  background: var(--code-bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror table th,
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror table td {
-  border-color: var(--line);
-}
-
-.wysiwyg-editor-host .toastui-editor-ww-container .ProseMirror blockquote {
-  border-left-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.wysiwyg-editor-host .toastui-editor-mode-switch {
-  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .markdown-wikilink {
@@ -1048,7 +982,9 @@ button.wiki-link-pill:hover {
 
 .capture-workspace-panel {
   border-right: none;
-  max-height: 220px;
+  border-left: 1px solid var(--line);
+  max-height: none;
+  min-height: 0;
 }
 
 .capture-panel-body {
@@ -1321,8 +1257,18 @@ button:disabled {
 }
 
 @media (max-width: 1250px) {
-  .workspace-grid.with-capture-row {
-    grid-template-rows: minmax(0, 1fr) auto;
+  .workspace-grid.with-capture-column {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(180px, 240px);
+  }
+
+  .workspace-grid.with-capture-column .editor-workspace-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .workspace-grid.with-capture-column .capture-workspace-panel {
+    border-left: none;
   }
 
   .status-bar {
@@ -1538,8 +1484,7 @@ button:disabled {
   background: color-mix(in srgb, var(--surface-contrast) 94%, transparent);
 }
 
-.wysiwyg-editor-host .toastui-editor-defaultUI,
-.wysiwyg-editor-host .toastui-editor-ww-container {
+.code-editor-host .cm-editor {
   background: color-mix(in srgb, var(--surface-contrast) 94%, transparent);
 }
 

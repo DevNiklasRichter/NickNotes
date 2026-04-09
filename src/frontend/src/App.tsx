@@ -1,10 +1,13 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent, MutableRefObject } from 'react'
-import ToastEditor from '@toast-ui/editor'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { markdown } from '@codemirror/lang-markdown'
+import { bracketMatching, defaultHighlightStyle, indentOnInput, syntaxHighlighting } from '@codemirror/language'
+import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
+import { Compartment, EditorState } from '@codemirror/state'
+import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars, keymap } from '@codemirror/view'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import '@toast-ui/editor/dist/toastui-editor.css'
-import '@toast-ui/editor/dist/theme/toastui-editor-dark.css'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
 import type { ExplorerOptions } from './explorer/types'
@@ -168,100 +171,14 @@ type MarkdownPreviewProps = {
   onOpenWikiLink?: (row: SearchRow) => void
 }
 
-type WysiwygEditorApi = {
+type MarkdownEditorApi = {
   insertText: (text: string) => void
   getSelectedText: () => string
   getMarkdown: () => string
   focus: () => void
 }
 
-type MarkdownShortcutAction =
-  | { command: 'heading'; payload: { level: number; headingType: 'atx' } }
-  | { command: 'bulletList' | 'orderedList' | 'blockQuote' | 'codeBlock' | 'taskList' }
-
-type InlineMarkdownMark = 'strong' | 'emph' | 'strike' | 'code'
-
-type InlineMarkdownShortcutMatch = {
-  mark: InlineMarkdownMark
-  text: string
-  fromOffset: number
-  toOffset: number
-}
-
 const WIKI_LINK_HREF_PREFIX = 'wikilink://'
-
-function detectMarkdownShortcutFromParagraph(text: string): MarkdownShortcutAction | null {
-  if (/^#{1,6}$/.test(text)) {
-    return {
-      command: 'heading',
-      payload: {
-        level: text.length,
-        headingType: 'atx',
-      },
-    }
-  }
-
-  if (/^[-*+]$/.test(text)) {
-    return { command: 'bulletList' }
-  }
-
-  if (/^\d+[.)]$/.test(text)) {
-    return { command: 'orderedList' }
-  }
-
-  if (text === '>') {
-    return { command: 'blockQuote' }
-  }
-
-  if (text === '```') {
-    return { command: 'codeBlock' }
-  }
-
-  return null
-}
-
-function detectInlineMarkdownAtCursor(text: string, cursorOffset: number): InlineMarkdownShortcutMatch | null {
-  if (cursorOffset <= 0) {
-    return null
-  }
-
-  const source = text.slice(0, cursorOffset)
-  const patterns: Array<{ mark: InlineMarkdownMark; regex: RegExp }> = [
-    { mark: 'strong', regex: /(^|\s)\*\*([^*\n][^*\n]*?)\*\*$/ },
-    { mark: 'strike', regex: /(^|\s)~~([^~\n][^~\n]*?)~~$/ },
-    { mark: 'code', regex: /(^|\s)`([^`\n]+)`$/ },
-    { mark: 'emph', regex: /(^|\s)_([^_\n][^_\n]*?)_$/ },
-    { mark: 'emph', regex: /(^|\s)\*([^*\n][^*\n]*?)\*$/ },
-  ]
-
-  for (const pattern of patterns) {
-    const match = source.match(pattern.regex)
-    if (!match) {
-      continue
-    }
-
-    const leading = match[1] ?? ''
-    const inner = match[2] ?? ''
-    if (!inner) {
-      continue
-    }
-
-    const fromOffset = source.length - match[0].length + leading.length
-    const toOffset = source.length
-    if (fromOffset < 0 || toOffset <= fromOffset) {
-      continue
-    }
-
-    return {
-      mark: pattern.mark,
-      text: inner,
-      fromOffset,
-      toOffset,
-    }
-  }
-
-  return null
-}
 
 function parseWikiLinkInner(rawInner: string): { target: string; alias: string | null } | null {
   const inner = rawInner.trim()
@@ -472,32 +389,71 @@ function MarkdownPreview({
   )
 }
 
-type WysiwygMarkdownEditorProps = {
+type CodeMirrorMarkdownEditorProps = {
   value: string
   theme: ThemeMode
   onChange: (nextValue: string) => void
-  onOpenLink?: (href: string) => void
-  editorApiRef: MutableRefObject<WysiwygEditorApi | null>
+  editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
 
-function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRef }: WysiwygMarkdownEditorProps) {
+function buildCodeMirrorTheme(theme: ThemeMode) {
+  return EditorView.theme(
+    {
+      '&': {
+        height: '100%',
+        minHeight: '0',
+        backgroundColor: 'var(--surface-contrast)',
+        color: 'var(--text)',
+      },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: "'Consolas', 'Cascadia Mono', monospace",
+        lineHeight: '1.6',
+      },
+      '.cm-content': {
+        minHeight: '100%',
+        padding: '1rem 1.1rem 1.25rem',
+        caretColor: 'var(--accent)',
+      },
+      '.cm-gutters': {
+        border: 'none',
+        backgroundColor: 'var(--surface)',
+        color: 'var(--muted)',
+      },
+      '.cm-activeLine': {
+        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 35%, transparent)',
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 45%, transparent)',
+      },
+      '.cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 75%, transparent)',
+      },
+      '&.cm-focused': {
+        outline: 'none',
+      },
+      '.cm-searchMatch': {
+        backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--accent) 38%, transparent)',
+      },
+      '.cm-searchMatch.cm-searchMatch-selected': {
+        backgroundColor: 'color-mix(in srgb, var(--accent) 35%, transparent)',
+      },
+    },
+    { dark: theme === 'dark' }
+  )
+}
+
+function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef }: CodeMirrorMarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
-  const editorRef = useRef<ToastEditor | null>(null)
+  const editorRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
-  const onOpenLinkRef = useRef(onOpenLink)
-  const initialValueRef = useRef(value)
   const syncingRef = useRef(false)
-  const pendingChangeTimeoutRef = useRef<number | null>(null)
-  const latestEditorMarkdownRef = useRef(value)
-  const lastDispatchedMarkdownRef = useRef(value)
+  const themeCompartmentRef = useRef(new Compartment())
 
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
-
-  useEffect(() => {
-    onOpenLinkRef.current = onOpenLink
-  }, [onOpenLink])
 
   useEffect(() => {
     const host = hostRef.current
@@ -505,203 +461,58 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
       return
     }
 
-    const flushPendingChange = () => {
-      if (pendingChangeTimeoutRef.current !== null) {
-        window.clearTimeout(pendingChangeTimeoutRef.current)
-        pendingChangeTimeoutRef.current = null
-      }
-
-      if (!editorRef.current || syncingRef.current) {
-        return
-      }
-
-      const nextValue = latestEditorMarkdownRef.current || editorRef.current.getMarkdown()
-      if (nextValue === lastDispatchedMarkdownRef.current) {
-        return
-      }
-
-      lastDispatchedMarkdownRef.current = nextValue
-      onChangeRef.current(nextValue)
-    }
-
-    const schedulePendingChange = () => {
-      if (pendingChangeTimeoutRef.current !== null) {
-        window.clearTimeout(pendingChangeTimeoutRef.current)
-      }
-      pendingChangeTimeoutRef.current = window.setTimeout(() => {
-        flushPendingChange()
-      }, 90)
-    }
-
-    const instance = new ToastEditor({
-      el: host,
-      height: '100%',
-      minHeight: '100%',
-      initialValue: initialValueRef.current,
-      initialEditType: 'wysiwyg',
-      hideModeSwitch: true,
-      usageStatistics: false,
-      autofocus: false,
-      theme: theme === 'dark' ? 'dark' : 'light',
-      toolbarItems: [
-        ['heading', 'bold', 'italic', 'strike'],
-        ['hr', 'quote'],
-        ['ul', 'ol', 'task'],
-        ['table', 'link'],
-        ['code', 'codeblock'],
-      ],
-      events: {
-        change: () => {
-          if (!editorRef.current || syncingRef.current) {
-            return
-          }
-          latestEditorMarkdownRef.current = editorRef.current.getMarkdown()
-          schedulePendingChange()
-        },
-        blur: () => {
-          flushPendingChange()
-        },
-        keydown: (editorType: 'markdown' | 'wysiwyg', event: globalThis.KeyboardEvent) => {
-          if (
-            editorType !== 'wysiwyg' ||
-            event.defaultPrevented ||
-            event.ctrlKey ||
-            event.altKey ||
-            event.metaKey
-          ) {
-            return
-          }
-
-          const inlineTriggerKey = [' ', '.', ',', '!', '?', ';', ':', ')'].includes(event.key) ? event.key : null
-          if (event.key !== 'Enter' && !inlineTriggerKey) {
-            return
-          }
-
-          const internal = editorRef.current as
-            | (ToastEditor & { wwEditor?: { view?: { state: any; dispatch: (transaction: any) => void } } })
-            | null
-          const view = internal?.wwEditor?.view
-          if (!view) {
-            return
-          }
-
-          const state = view.state
-          const selection = state?.selection
-          if (!selection?.empty) {
-            return
-          }
-
-          const from = selection.from
-          const resolved = selection.$from
-          const paragraph = resolved?.parent
-          if (!paragraph || paragraph.type?.name !== 'paragraph') {
-            return
-          }
-
-          if (resolved.parentOffset !== paragraph.textContent.length) {
-            return
-          }
-
-          let shortcut: MarkdownShortcutAction | null = null
-          if (event.key === ' ') {
-            if (/^[-*+]\s\[(?: |x|X)\]$/.test(paragraph.textContent)) {
-              shortcut = { command: 'taskList' }
-            } else {
-              shortcut = detectMarkdownShortcutFromParagraph(paragraph.textContent)
+    const instance = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          markdown(),
+          drawSelection(),
+          dropCursor(),
+          highlightSpecialChars(),
+          highlightActiveLine(),
+          indentOnInput(),
+          bracketMatching(),
+          history(),
+          EditorView.lineWrapping,
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          highlightSelectionMatches(),
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+          themeCompartmentRef.current.of(buildCodeMirrorTheme(theme)),
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged || syncingRef.current) {
+              return
             }
-          }
-          if (event.key === 'Enter' && paragraph.textContent === '```') {
-            shortcut = { command: 'codeBlock' }
-          }
-
-          if (shortcut) {
-            event.preventDefault()
-            const paragraphStart = from - resolved.parentOffset
-            view.dispatch(state.tr.delete(paragraphStart, from))
-
-            if (shortcut.command === 'heading') {
-              instance.exec('heading', shortcut.payload)
-            } else {
-              instance.exec(shortcut.command)
-            }
-
-            latestEditorMarkdownRef.current = instance.getMarkdown()
-            schedulePendingChange()
-            return
-          }
-
-          if (!inlineTriggerKey) {
-            return
-          }
-
-          const inlineShortcut = detectInlineMarkdownAtCursor(paragraph.textContent, resolved.parentOffset)
-          if (!inlineShortcut) {
-            return
-          }
-
-          const markType = state.schema?.marks?.[inlineShortcut.mark]
-          if (!markType) {
-            return
-          }
-
-          event.preventDefault()
-          const paragraphStart = from - resolved.parentOffset
-          const replaceFrom = paragraphStart + inlineShortcut.fromOffset
-          const replaceTo = paragraphStart + inlineShortcut.toOffset
-
-          let nextTr = state.tr.insertText(inlineShortcut.text, replaceFrom, replaceTo)
-          const markEnd = replaceFrom + inlineShortcut.text.length
-          nextTr = nextTr.addMark(replaceFrom, markEnd, markType.create())
-          nextTr = nextTr.insertText(inlineTriggerKey, markEnd)
-          view.dispatch(nextTr)
-
-          latestEditorMarkdownRef.current = instance.getMarkdown()
-          schedulePendingChange()
-        },
-      },
+            onChangeRef.current(update.state.doc.toString())
+          }),
+        ],
+      }),
     })
 
     editorRef.current = instance
-    latestEditorMarkdownRef.current = initialValueRef.current
-    lastDispatchedMarkdownRef.current = initialValueRef.current
     editorApiRef.current = {
-      insertText: (text: string) => instance.insertText(text),
-      getSelectedText: () => instance.getSelectedText(),
-      getMarkdown: () => instance.getMarkdown(),
+      insertText: (text: string) => {
+        const selection = instance.state.selection.main
+        instance.dispatch({
+          changes: { from: selection.from, to: selection.to, insert: text },
+          selection: { anchor: selection.from + text.length },
+          scrollIntoView: true,
+        })
+      },
+      getSelectedText: () => {
+        const selection = instance.state.selection.main
+        return instance.state.doc.sliceString(selection.from, selection.to)
+      },
+      getMarkdown: () => instance.state.doc.toString(),
       focus: () => instance.focus(),
     }
 
-    const onHostClick = (event: MouseEvent) => {
-      const target = event.target
-      if (!(target instanceof HTMLElement)) {
-        return
-      }
-      const link = target.closest('a')
-      if (!(link instanceof HTMLAnchorElement)) {
-        return
-      }
-      const href = link.getAttribute('href') || ''
-      if (!href || !onOpenLinkRef.current) {
-        return
-      }
-      event.preventDefault()
-      event.stopPropagation()
-      onOpenLinkRef.current(href)
-    }
-    host.addEventListener('click', onHostClick)
-
     return () => {
-      flushPendingChange()
       editorApiRef.current = null
-      if (pendingChangeTimeoutRef.current !== null) {
-        window.clearTimeout(pendingChangeTimeoutRef.current)
-        pendingChangeTimeoutRef.current = null
-      }
-      host.removeEventListener('click', onHostClick)
       instance.destroy()
       editorRef.current = null
     }
-  }, [editorApiRef, theme])
+  }, [editorApiRef])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -709,25 +520,35 @@ function WysiwygMarkdownEditor({ value, theme, onChange, onOpenLink, editorApiRe
       return
     }
 
-    const currentValue = instance.getMarkdown()
+    instance.dispatch({
+      effects: themeCompartmentRef.current.reconfigure(buildCodeMirrorTheme(theme)),
+    })
+  }, [theme])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    const currentValue = instance.state.doc.toString()
     if (currentValue === value) {
-      latestEditorMarkdownRef.current = value
-      lastDispatchedMarkdownRef.current = value
       return
     }
 
-    if (currentValue === latestEditorMarkdownRef.current && value !== latestEditorMarkdownRef.current) {
-      return
-    }
-
+    const selection = instance.state.selection.main
+    const nextAnchor = Math.min(value.length, selection.anchor)
+    const nextHead = Math.min(value.length, selection.head)
     syncingRef.current = true
-    instance.setMarkdown(value, false)
+    instance.dispatch({
+      changes: { from: 0, to: currentValue.length, insert: value },
+      selection: { anchor: nextAnchor, head: nextHead },
+      scrollIntoView: false,
+    })
     syncingRef.current = false
-    latestEditorMarkdownRef.current = value
-    lastDispatchedMarkdownRef.current = value
   }, [value])
 
-  return <div className="wysiwyg-editor-host" ref={hostRef} />
+  return <div className="code-editor-host" ref={hostRef} />
 }
 
 function getPreferredTheme(): ThemeMode {
@@ -1094,7 +915,7 @@ function App() {
   const [linkPickerQuery, setLinkPickerQuery] = useState('')
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
   const tagActionDialogRef = useRef<TagActionDialogState>(null)
-  const activeEditorRef = useRef<WysiwygEditorApi | null>(null)
+  const activeEditorRef = useRef<MarkdownEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -2142,37 +1963,6 @@ function App() {
     void openNoteInTab(resolved.path, toNoteDisplayName(resolved.path))
   }
 
-  const handleEditorLinkOpen = (href: string) => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return
-    }
-
-    const cleanHref = href.trim()
-    if (!cleanHref || cleanHref.startsWith('#')) {
-      return
-    }
-
-    if (/^https?:\/\//i.test(cleanHref)) {
-      window.open(cleanHref, '_blank', 'noopener,noreferrer')
-      return
-    }
-
-    const decoded = decodeURIComponent(cleanHref)
-    const target = decoded.startsWith(WIKI_LINK_HREF_PREFIX)
-      ? decodeURIComponent(decoded.slice(WIKI_LINK_HREF_PREFIX.length))
-      : decoded
-
-    const resolved = resolveWikiLink(target.replace(/\.md$/i, ''), activeTab.path)
-    if (resolved) {
-      void openNoteInTab(resolved.path, toNoteDisplayName(resolved.path))
-      return
-    }
-
-    if (/^file:\/\//i.test(decoded)) {
-      window.open(decoded, '_blank', 'noopener,noreferrer')
-    }
-  }
-
   const toggleFolder = (folderKey: string) => {
     setExpandedFolders((prev) => ({ ...prev, [folderKey]: !prev[folderKey] }))
   }
@@ -3091,7 +2881,7 @@ function App() {
             onClick={() => openSidebarView('vault')}
             title="Board"
           >
-            <span className="rail-glyph">▦</span>
+            <span className="rail-glyph">&#x25A6;</span>
             <span className="rail-label">Board</span>
           </button>
           <button
@@ -3099,7 +2889,7 @@ function App() {
             onClick={() => openSidebarView('notes')}
             title="Notizen"
           >
-            <span className="rail-glyph">◉</span>
+            <span className="rail-glyph">&#x25C9;</span>
             <span className="rail-label">Notizen</span>
           </button>
           <button
@@ -3107,7 +2897,7 @@ function App() {
             onClick={() => openSidebarView('tasks')}
             title="Tasks"
           >
-            <span className="rail-glyph">✓</span>
+            <span className="rail-glyph">&#x2713;</span>
             <span className="rail-label">Tasks</span>
           </button>
           <button
@@ -3123,7 +2913,7 @@ function App() {
             onClick={() => openSidebarView('review')}
             title="Review"
           >
-            <span className="rail-glyph">◌</span>
+            <span className="rail-glyph">&#x25CC;</span>
             <span className="rail-label">Review</span>
           </button>
         </div>
@@ -3135,7 +2925,7 @@ function App() {
           onClick={openSettingsTab}
           title="Einstellungen"
         >
-          <span className="rail-glyph">⚙</span>
+          <span className="rail-glyph">&#x2699;</span>
           <span className="rail-label">Einstellungen</span>
         </button>
       </aside>
@@ -3148,7 +2938,7 @@ function App() {
 
       <section className="main-region">
         <div
-          className={`workspace-grid ${showCaptureInline ? 'with-capture-row' : ''}`}
+          className={`workspace-grid ${showCaptureInline ? 'with-capture-column' : ''}`}
         >
           {editorPanelOpen ? (
             <article className="workspace-panel editor-workspace-panel">
@@ -3196,7 +2986,7 @@ function App() {
                       title={tab.title}
                     >
                       <span>{tab.title}</span>
-                      {tab.dirty ? <span className="tab-dirty-dot">●</span> : null}
+                      {tab.dirty ? <span className="tab-dirty-dot">&#x25CF;</span> : null}
                     </button>
                     <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
                       x
@@ -3234,6 +3024,18 @@ function App() {
                 onDrop={handleViewerDrop}
               >
                 <article className="editor-pane">
+                  {activeTab?.kind === 'note' && !activeTab.loading ? (
+                    <div className="note-editor-shell">
+                      <CodeMirrorMarkdownEditor
+                        key={`editor-${activeTab.path}`}
+                        value={activeTab.content}
+                        theme={theme}
+                        onChange={updateActiveNoteContent}
+                        editorApiRef={activeEditorRef}
+                      />
+                    </div>
+                  ) : null}
+
                   {activeTab ? (
                     activeTab.loading ? (
                       <p className="empty-copy">Lade Notiz ...</p>
@@ -3395,16 +3197,6 @@ function App() {
                       </div>
                     ) : (
                       <>
-                        <div className="note-editor-shell">
-                          <WysiwygMarkdownEditor
-                            key={`${activeTab.path}-${theme}`}
-                            value={activeTab.content}
-                            theme={theme}
-                            onChange={updateActiveNoteContent}
-                            onOpenLink={handleEditorLinkOpen}
-                            editorApiRef={activeEditorRef}
-                          />
-                        </div>
                         <div className="wiki-links-strip">
                           <span className="muted-label">Wikilinks</span>
                           {activeWikiLinks.length === 0 ? <span className="empty-copy">Keine Links in dieser Notiz.</span> : null}
@@ -3436,7 +3228,7 @@ function App() {
                     )
                   ) : (
                     <div className="main-empty-state">
-                      <p className="main-empty-glyph">◌</p>
+                      <p className="main-empty-glyph">&#x25CC;</p>
                       <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
                     </div>
                   )}
@@ -3664,4 +3456,5 @@ function App() {
 }
 
 export default App
+
 
