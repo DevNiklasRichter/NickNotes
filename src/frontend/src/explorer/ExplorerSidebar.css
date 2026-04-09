@@ -325,8 +325,12 @@
 }
 
 .row-icon {
-  font-size: 0.8rem;
-  line-height: 1;
+  width: 14px;
+  min-width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--muted) 78%, var(--text) 22%);
 }
 
 .row-content {
@@ -538,13 +542,16 @@
 }
 
 .row-pin-slot {
-  width: 0.7rem;
-  min-width: 0.7rem;
+  width: 0.78rem;
+  min-width: 0.78rem;
   text-align: center;
   opacity: 0.3;
   font-size: 0.66rem;
   line-height: 1;
   color: color-mix(in srgb, var(--muted) 86%, var(--text) 14%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .row-pin-slot.active {
@@ -561,7 +568,7 @@
   line-height: 1;
   font-size: 0.72rem;
   padding: 0;
-  transform: translateY(-0.5px);
+  transform: none;
 }
 
 .row-meta {
@@ -671,6 +678,23 @@
   opacity: 0.86;
 }
 
+.row-action-icon,
+.row-menu-icon,
+.row-pin-icon,
+.row-node-icon,
+.twistie-icon,
+.tag-entry-icon {
+  stroke-width: 1.85;
+}
+
+.row-pin-icon {
+  color: color-mix(in srgb, var(--accent) 78%, var(--text) 22%);
+}
+
+.row-menu-icon {
+  color: currentColor;
+}
+
 .tag-explorer-tree {
   padding-right: 0.08rem;
 }
@@ -696,6 +720,9 @@
   text-align: center;
   color: var(--muted);
   opacity: 0.9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tag-group-empty {
@@ -706,4 +733,102 @@
 .modern-tag-context {
   min-width: 210px;
   border-radius: 12px;
+}
+
+.explorer-icon-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  background: color-mix(in srgb, #000 24%, transparent);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.explorer-icon-picker-modal {
+  width: min(760px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.7rem;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 0.48rem;
+}
+
+.explorer-icon-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.explorer-icon-picker-header h4 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text);
+}
+
+.explorer-icon-picker-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+}
+
+.explorer-icon-picker-search input {
+  border-radius: 8px;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.explorer-icon-picker-current {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.explorer-icon-grid {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.28rem;
+  padding-right: 0.2rem;
+}
+
+.explorer-icon-option {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
+  color: var(--text);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.42rem;
+  text-align: left;
+  box-shadow: none;
+}
+
+.explorer-icon-option:hover {
+  border-color: var(--line-strong);
+}
+
+.explorer-icon-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface-contrast) 45%);
+}
+
+.explorer-icon-option span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-icon-option-glyph {
+  color: var(--text);
 }

@@ -605,10 +605,27 @@
   color: var(--accent);
   font-size: 0.68rem;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-dirty-dot svg {
+  fill: currentColor;
+  stroke-width: 2;
 }
 
 .tab-close {
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-close svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.9;
 }
 
 .editor-tab-context-menu {
@@ -1405,9 +1422,17 @@ button:disabled {
 
 .rail-glyph {
   width: 15px;
-  display: inline-block;
-  text-align: center;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.92;
+}
+
+.rail-glyph svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.85;
 }
 
 .rail-label {
@@ -1501,6 +1526,13 @@ button:disabled {
   margin: 0;
   font-size: 1.6rem;
   line-height: 1;
+  color: var(--muted);
+}
+
+.main-empty-glyph svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
 }
 
 .capture-input-wrap,

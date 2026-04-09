@@ -10,6 +10,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
+import { LucideNamedIcon } from './icons/lucideCatalog'
 import type { ExplorerOptions } from './explorer/types'
 import './App.css'
 
@@ -147,7 +148,7 @@ const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
   showFileExtensions: true,
   sortMode: 'name',
   foldersFirst: true,
-  showIcons: false,
+  showIcons: true,
   compactMode: true,
 }
 
@@ -2674,7 +2675,7 @@ function App() {
             <strong>{noteBaseName || 'Keine NoteBase'}</strong>
             <div className="hover-menu-anchor">
               <button className="icon-button compact muted" title="NoteBase-Menue">
-                ...
+                <LucideNamedIcon name="MoreHorizontal" size={14} />
               </button>
               <div className="hover-menu">
                 <button onClick={() => void renameNoteBase()}>NoteBase umbenennen</button>
@@ -2881,7 +2882,9 @@ function App() {
             onClick={() => openSidebarView('vault')}
             title="Board"
           >
-            <span className="rail-glyph">&#x25A6;</span>
+            <span className="rail-glyph">
+              <LucideNamedIcon name="LayoutGrid" size={14} />
+            </span>
             <span className="rail-label">Board</span>
           </button>
           <button
@@ -2889,7 +2892,9 @@ function App() {
             onClick={() => openSidebarView('notes')}
             title="Notizen"
           >
-            <span className="rail-glyph">&#x25C9;</span>
+            <span className="rail-glyph">
+              <LucideNamedIcon name="FileText" size={14} />
+            </span>
             <span className="rail-label">Notizen</span>
           </button>
           <button
@@ -2897,7 +2902,9 @@ function App() {
             onClick={() => openSidebarView('tasks')}
             title="Tasks"
           >
-            <span className="rail-glyph">&#x2713;</span>
+            <span className="rail-glyph">
+              <LucideNamedIcon name="CheckSquare" size={14} />
+            </span>
             <span className="rail-label">Tasks</span>
           </button>
           <button
@@ -2905,7 +2912,9 @@ function App() {
             onClick={() => openSidebarView('tags')}
             title="Tagging"
           >
-            <span className="rail-glyph">#</span>
+            <span className="rail-glyph">
+              <LucideNamedIcon name="Tag" size={14} />
+            </span>
             <span className="rail-label">Tags</span>
           </button>
           <button
@@ -2913,7 +2922,9 @@ function App() {
             onClick={() => openSidebarView('review')}
             title="Review"
           >
-            <span className="rail-glyph">&#x25CC;</span>
+            <span className="rail-glyph">
+              <LucideNamedIcon name="BarChart3" size={14} />
+            </span>
             <span className="rail-label">Review</span>
           </button>
         </div>
@@ -2925,7 +2936,9 @@ function App() {
           onClick={openSettingsTab}
           title="Einstellungen"
         >
-          <span className="rail-glyph">&#x2699;</span>
+          <span className="rail-glyph">
+            <LucideNamedIcon name="Settings" size={14} />
+          </span>
           <span className="rail-label">Einstellungen</span>
         </button>
       </aside>
@@ -2951,7 +2964,7 @@ function App() {
                     disabled={!activeTab || !activeTab.dirty}
                     title="Speichern"
                   >
-                    S
+                    <LucideNamedIcon name="Save" size={14} />
                   </button>
                   <button
                     className="icon-button compact muted"
@@ -2959,10 +2972,10 @@ function App() {
                     disabled={activeTab?.kind !== 'note' || openNoteTabs.length < 2}
                     title={splitView ? 'Split aus' : 'Split an'}
                   >
-                    |
+                    <LucideNamedIcon name="Columns2" size={14} />
                   </button>
                   <button className="icon-button compact muted" onClick={toggleEditorPanel} title="Editor schliessen">
-                    x
+                    <LucideNamedIcon name="X" size={14} />
                   </button>
                 </div>
               </div>
@@ -2986,10 +2999,14 @@ function App() {
                       title={tab.title}
                     >
                       <span>{tab.title}</span>
-                      {tab.dirty ? <span className="tab-dirty-dot">&#x25CF;</span> : null}
+                      {tab.dirty ? (
+                        <span className="tab-dirty-dot">
+                          <LucideNamedIcon name="Circle" size={8} />
+                        </span>
+                      ) : null}
                     </button>
                     <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
-                      x
+                      <LucideNamedIcon name="X" size={14} />
                     </button>
                   </div>
                 ))}
@@ -3228,7 +3245,9 @@ function App() {
                     )
                   ) : (
                     <div className="main-empty-state">
-                      <p className="main-empty-glyph">&#x25CC;</p>
+                      <p className="main-empty-glyph">
+                        <LucideNamedIcon name="FileText" size={20} />
+                      </p>
                       <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
                     </div>
                   )}
@@ -3260,10 +3279,10 @@ function App() {
                 <h3>Quick Capture</h3>
                 <div className="panel-inline-actions">
                   <button className="icon-button compact muted" onClick={toggleCapturePinned} title="In Dock verschieben">
-                    P
+                    <LucideNamedIcon name="Pin" size={14} />
                   </button>
                   <button className="icon-button compact muted" onClick={closeCapturePanel} title="Quick Capture schliessen">
-                    x
+                    <LucideNamedIcon name="X" size={14} />
                   </button>
                 </div>
               </div>

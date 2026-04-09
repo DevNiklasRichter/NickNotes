@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { LucideNamedIcon } from '../icons/lucideCatalog'
 import './ExplorerSidebar.css'
 
 type ContextMenuTarget =
@@ -42,8 +43,6 @@ type VisibleTagGroup = {
   totalCount: number
 }
 
-type TagContextIconName = 'newFolder' | 'newTag' | 'rename' | 'delete'
-
 const MIN_WIDTH = 220
 const MAX_WIDTH = 520
 
@@ -59,45 +58,6 @@ function isTagTarget(
   tagName: string
 } {
   return target.kind === 'tag'
-}
-
-function TagContextIcon({ name }: { name: TagContextIconName }) {
-  if (name === 'newFolder') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 5.5a1 1 0 0 1 1-1h2l1.1 1.2H12.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
-        <path d="M8 7.8v3.6" />
-        <path d="M6.2 9.6h3.6" />
-      </svg>
-    )
-  }
-  if (name === 'newTag') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 8.2V3.7a1.2 1.2 0 0 1 1.2-1.2h4.5l5.3 5.3-4.8 4.8a1.2 1.2 0 0 1-1.7 0L2.5 8.2z" />
-        <path d="M6.2 5.8h0" />
-        <path d="M10.8 8v3.5" />
-        <path d="M9 9.8h3.6" />
-      </svg>
-    )
-  }
-  if (name === 'rename') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 13h3l7-7-3-3-7 7z" />
-        <path d="M8.5 4.5l3 3" />
-      </svg>
-    )
-  }
-  return (
-    <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M3.5 4h9" />
-      <path d="M5 4V3h6v1" />
-      <path d="M4.5 4l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8" />
-      <path d="M6.4 6.5v4.5" />
-      <path d="M9.6 6.5v4.5" />
-    </svg>
-  )
 }
 
 function openContextAt(
@@ -227,7 +187,7 @@ export function TagSidebar({
             disabled={!vaultLoaded}
             title="Neue Tag-Gruppe"
           >
-            <TagContextIcon name="newFolder" />
+            <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
           </button>
           <button
             className="icon-button compact"
@@ -238,7 +198,7 @@ export function TagSidebar({
             disabled={!vaultLoaded || sortedGroupNames.length === 0}
             title="Neuer Tag in bestehender Gruppe"
           >
-            <TagContextIcon name="newTag" />
+            <LucideNamedIcon name="Tag" className="row-action-icon" size={14} />
           </button>
         </div>
       </div>
@@ -278,7 +238,7 @@ export function TagSidebar({
                       onToggleGroup(group.folderKey)
                     }}
                   >
-                    {isOpen ? '\u25BE' : '\u25B8'}
+                    <LucideNamedIcon name={isOpen ? 'ChevronDown' : 'ChevronRight'} size={12} className="twistie-icon" />
                   </button>
                   <span className="row-name">{group.groupName}</span>
                 </div>
@@ -291,7 +251,7 @@ export function TagSidebar({
                     }
                     title="Gruppe verwalten"
                   >
-                    ...
+                    <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                   </button>
                   <span className="row-count">{visibleCount}</span>
                 </div>
@@ -322,7 +282,7 @@ export function TagSidebar({
                           {' '}
                         </span>
                         <span className="tag-entry-marker" aria-hidden="true">
-                          #
+                          <LucideNamedIcon name="Hash" size={11} className="tag-entry-icon" />
                         </span>
                         <span className="row-name">{tag}</span>
                       </div>
@@ -340,7 +300,7 @@ export function TagSidebar({
                           }
                           title="Tag verwalten"
                         >
-                          ...
+                          <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                         </button>
                       </div>
                     </div>
@@ -365,7 +325,7 @@ export function TagSidebar({
                     setContextMenu(null)
                   }}
                 >
-                  <TagContextIcon name="newTag" />
+                  <LucideNamedIcon name="Tag" className="context-menu-icon" size={14} />
                   <span>Neuen Tag erstellen</span>
                 </button>
                 <button
@@ -375,7 +335,7 @@ export function TagSidebar({
                     setContextMenu(null)
                   }}
                 >
-                  <TagContextIcon name="rename" />
+                  <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
                   <span>Gruppe umbenennen</span>
                 </button>
                 <button
@@ -385,7 +345,7 @@ export function TagSidebar({
                     setContextMenu(null)
                   }}
                 >
-                  <TagContextIcon name="delete" />
+                  <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
                   <span>Gruppe loeschen</span>
                 </button>
               </>
@@ -401,7 +361,7 @@ export function TagSidebar({
                     setContextMenu(null)
                   }}
                 >
-                  <TagContextIcon name="rename" />
+                  <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
                   <span>Tag umbenennen</span>
                 </button>
                 <button
@@ -414,7 +374,7 @@ export function TagSidebar({
                     setContextMenu(null)
                   }}
                 >
-                  <TagContextIcon name="delete" />
+                  <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
                   <span>Tag loeschen</span>
                 </button>
               </>

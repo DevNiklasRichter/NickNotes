@@ -7,6 +7,7 @@ import type {
   ExplorerSourceGroup,
 } from './types'
 import { buildExplorerTree, getParentFolderKey, normalizeGroupKey, toFileExtension } from './treeModel'
+import { LUCIDE_ICON_NAMES, LucideNamedIcon, isLucideIconName } from '../icons/lucideCatalog'
 import './ExplorerSidebar.css'
 
 type ExplorerSidebarProps = {
@@ -37,7 +38,22 @@ type DropPosition = 'before' | 'inside' | 'after'
 type DropIndicator = { nodeId: string; position: DropPosition } | null
 type ContextMenu = { x: number; y: number; nodeId: string } | null
 type FolderFileCount = { direct: number; total: number }
-type ContextIconName = 'open' | 'newFile' | 'newFolder' | 'rename' | 'pin' | 'unpin' | 'delete'
+type NodeIconOverrides = {
+  folders: Record<string, string>
+  files: Record<string, string>
+}
+type IconPickerTarget =
+  | {
+      nodeType: 'folder'
+      path: string
+      label: string
+    }
+  | {
+      nodeType: 'file'
+      path: string
+      label: string
+    }
+type IconPickerState = IconPickerTarget | null
 
 const STORAGE_PREFIX = 'nicknotes-explorer-flat-v3'
 const ROOT_TOKENS = ['daily', 'tags', 'tasks'] as const
@@ -163,11 +179,66 @@ function folderKey(node: ExplorerNode | null | undefined): string {
   return node && node.type === 'folder' ? normalizeGroupKey(node.path) : ''
 }
 
-function rowIcon(node: ExplorerNode): string {
-  if (node.type === 'folder') {
-    return node.expanded ? '📂' : '📁'
+function normalizeFilePathKey(path: string): string {
+  return path.replace(/\\/g, '/').trim().toLowerCase()
+}
+
+function toSafeIconOverrides(value: unknown): NodeIconOverrides {
+  const empty: NodeIconOverrides = { folders: {}, files: {} }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return empty
   }
-  return toFileExtension(node.name) === 'md' ? '📝' : '📄'
+
+  const source = value as Record<string, unknown>
+  const foldersRaw = source.folders
+  const filesRaw = source.files
+  const safeFolders: Record<string, string> = {}
+  const safeFiles: Record<string, string> = {}
+
+  if (typeof foldersRaw === 'object' && foldersRaw !== null && !Array.isArray(foldersRaw)) {
+    for (const [rawPath, rawIcon] of Object.entries(foldersRaw as Record<string, unknown>)) {
+      const path = normalizeGroupKey(rawPath)
+      const iconName = typeof rawIcon === 'string' ? rawIcon.trim() : ''
+      if (path && iconName && isLucideIconName(iconName)) {
+        safeFolders[path] = iconName
+      }
+    }
+  }
+
+  if (typeof filesRaw === 'object' && filesRaw !== null && !Array.isArray(filesRaw)) {
+    for (const [rawPath, rawIcon] of Object.entries(filesRaw as Record<string, unknown>)) {
+      const path = normalizeFilePathKey(rawPath)
+      const iconName = typeof rawIcon === 'string' ? rawIcon.trim() : ''
+      if (path && iconName && isLucideIconName(iconName)) {
+        safeFiles[path] = iconName
+      }
+    }
+  }
+
+  return { folders: safeFolders, files: safeFiles }
+}
+
+function pruneIconOverrides(overrides: NodeIconOverrides, validFolders: Set<string>, validFiles: Set<string>): NodeIconOverrides {
+  const folders: Record<string, string> = {}
+  const files: Record<string, string> = {}
+  for (const [path, iconName] of Object.entries(overrides.folders)) {
+    if (validFolders.has(path) && isLucideIconName(iconName)) {
+      folders[path] = iconName
+    }
+  }
+  for (const [path, iconName] of Object.entries(overrides.files)) {
+    if (validFiles.has(path) && isLucideIconName(iconName)) {
+      files[path] = iconName
+    }
+  }
+  return { folders, files }
+}
+
+function defaultIconNameForNode(node: ExplorerNode): string {
+  if (node.type === 'folder') {
+    return 'Folder'
+  }
+  return toFileExtension(node.name) === 'md' ? 'FileText' : 'File'
 }
 
 function rowName(node: ExplorerNode): string {
@@ -175,73 +246,6 @@ function rowName(node: ExplorerNode): string {
     return node.name
   }
   return /\.md$/i.test(node.name) ? node.name.replace(/\.md$/i, '') : node.name
-}
-
-function ContextIcon({ name }: { name: ContextIconName }) {
-  if (name === 'open') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M6 3h7v7" />
-        <path d="M13 3L7 9" />
-        <path d="M13 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3" />
-      </svg>
-    )
-  }
-  if (name === 'newFile') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M4 2.5h5l3 3V13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" />
-        <path d="M9 2.5V6h3" />
-        <path d="M8 8v4" />
-        <path d="M6 10h4" />
-      </svg>
-    )
-  }
-  if (name === 'newFolder') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 5.5a1 1 0 0 1 1-1h2l1.1 1.2H12.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
-        <path d="M8 7.8v3.6" />
-        <path d="M6.2 9.6h3.6" />
-      </svg>
-    )
-  }
-  if (name === 'rename') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 13h3l7-7-3-3-7 7z" />
-        <path d="M8.5 4.5l3 3" />
-      </svg>
-    )
-  }
-  if (name === 'pin') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M5 2.5h6" />
-        <path d="M6 2.5l1.2 4.3L4.5 9h7L8.8 6.8 10 2.5" />
-        <path d="M8 9v4.5" />
-      </svg>
-    )
-  }
-  if (name === 'unpin') {
-    return (
-      <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M5 2.5h6" />
-        <path d="M6 2.5l1.2 4.3L4.5 9h7L8.8 6.8 10 2.5" />
-        <path d="M8 9v4.5" />
-        <path d="M3 13L13 3" />
-      </svg>
-    )
-  }
-  return (
-    <svg className="context-menu-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M3.5 4h9" />
-      <path d="M5 4V3h6v1" />
-      <path d="M4.5 4l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8" />
-      <path d="M6.4 6.5v4.5" />
-      <path d="M9.6 6.5v4.5" />
-    </svg>
-  )
 }
 
 export function ExplorerSidebar({
@@ -276,6 +280,9 @@ export function ExplorerSidebar({
   const [filterQuery, setFilterQuery] = useState('')
   const [folderOrder, setFolderOrder] = useState<Record<string, string[]>>({})
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null)
+  const [iconOverrides, setIconOverrides] = useState<NodeIconOverrides>({ folders: {}, files: {} })
+  const [iconPicker, setIconPicker] = useState<IconPickerState>(null)
+  const [iconSearchQuery, setIconSearchQuery] = useState('')
 
   const storage = useMemo(
     () => ({
@@ -283,6 +290,7 @@ export function ExplorerSidebar({
       selected: scopedStorageKey(`${STORAGE_PREFIX}-selected`, vaultPath),
       filter: scopedStorageKey(`${STORAGE_PREFIX}-filter`, vaultPath),
       order: scopedStorageKey(`${STORAGE_PREFIX}-order`, vaultPath),
+      icons: scopedStorageKey(`${STORAGE_PREFIX}-icons`, vaultPath),
     }),
     [vaultPath]
   )
@@ -308,17 +316,25 @@ export function ExplorerSidebar({
     setSelectedNodeId(readStorageValue(storage.selected, null))
     setFilterQuery(readStorageValue(storage.filter, ''))
     setFolderOrder(toSafeOrder(readStorageValue(storage.order, {})))
-  }, [storage.expanded, storage.filter, storage.order, storage.selected])
+    setIconOverrides(toSafeIconOverrides(readStorageValue(storage.icons, {})))
+  }, [storage.expanded, storage.filter, storage.icons, storage.order, storage.selected])
 
   useEffect(() => writeStorageValue(storage.expanded, expandedNodes), [expandedNodes, storage.expanded])
   useEffect(() => writeStorageValue(storage.selected, selectedNodeId), [selectedNodeId, storage.selected])
   useEffect(() => writeStorageValue(storage.filter, filterQuery), [filterQuery, storage.filter])
   useEffect(() => writeStorageValue(storage.order, folderOrder), [folderOrder, storage.order])
+  useEffect(() => writeStorageValue(storage.icons, iconOverrides), [iconOverrides, storage.icons])
 
   useEffect(() => {
     const valid = new Set(groups.map((group) => normalizeGroupKey(group.key)))
     setFolderOrder((prev) => sanitizeOrder(prev, valid, fixedRootKeys))
   }, [fixedRootKeys, groups])
+
+  useEffect(() => {
+    const validFolders = new Set(groups.map((group) => normalizeGroupKey(group.key)))
+    const validFiles = new Set(files.map((file) => normalizeFilePathKey(file.path)))
+    setIconOverrides((prev) => pruneIconOverrides(prev, validFolders, validFiles))
+  }, [files, groups])
 
   const tree = useMemo(
     () =>
@@ -403,6 +419,26 @@ export function ExplorerSidebar({
   }, [activeFilePath, tree.fileNodeIdByPath, tree.parentById])
 
   const selectedNode = useMemo(() => tree.visibleNodes.find((entry) => entry.node.selected)?.node ?? null, [tree.visibleNodes])
+
+  const resolveNodeIconName = useCallback(
+    (node: ExplorerNode): string => {
+      if (node.type === 'folder') {
+        const key = normalizeGroupKey(node.path)
+        return iconOverrides.folders[key] || defaultIconNameForNode(node)
+      }
+      const key = normalizeFilePathKey(node.path)
+      return iconOverrides.files[key] || defaultIconNameForNode(node)
+    },
+    [iconOverrides.files, iconOverrides.folders]
+  )
+
+  const visibleIconNames = useMemo(() => {
+    const query = iconSearchQuery.trim().toLowerCase()
+    if (!query) {
+      return LUCIDE_ICON_NAMES
+    }
+    return LUCIDE_ICON_NAMES.filter((name) => name.toLowerCase().includes(query))
+  }, [iconSearchQuery])
 
   const resolveSelectedFolderKey = useCallback((): string => {
     if (!selectedNode) {
@@ -544,6 +580,47 @@ export function ExplorerSidebar({
   }, [])
 
   const contextNode = contextMenu ? tree.nodeById.get(contextMenu.nodeId) ?? null : null
+  const iconPickerCurrentIconName = useMemo(() => {
+    if (!iconPicker) {
+      return ''
+    }
+    if (iconPicker.nodeType === 'folder') {
+      return iconOverrides.folders[iconPicker.path] || 'Folder'
+    }
+    const fileName = iconPicker.path.includes('/') ? iconPicker.path.slice(iconPicker.path.lastIndexOf('/') + 1) : iconPicker.path
+    return iconOverrides.files[iconPicker.path] || (toFileExtension(fileName) === 'md' ? 'FileText' : 'File')
+  }, [iconOverrides.files, iconOverrides.folders, iconPicker])
+
+  const openIconPicker = useCallback((node: ExplorerNode) => {
+    if (node.type === 'folder') {
+      setIconPicker({ nodeType: 'folder', path: normalizeGroupKey(node.path), label: node.name })
+    } else {
+      setIconPicker({ nodeType: 'file', path: normalizeFilePathKey(node.path), label: rowName(node) })
+    }
+    setIconSearchQuery('')
+    setContextMenu(null)
+  }, [])
+
+  const setIconForTarget = useCallback((target: IconPickerTarget, iconName: string | null) => {
+    setIconOverrides((prev) => {
+      if (target.nodeType === 'folder') {
+        const nextFolders = { ...prev.folders }
+        if (iconName) {
+          nextFolders[target.path] = iconName
+        } else {
+          delete nextFolders[target.path]
+        }
+        return { ...prev, folders: nextFolders }
+      }
+      const nextFiles = { ...prev.files }
+      if (iconName) {
+        nextFiles[target.path] = iconName
+      } else {
+        delete nextFiles[target.path]
+      }
+      return { ...prev, files: nextFiles }
+    })
+  }, [])
 
   useEffect(() => {
     if (!contextMenu) {
@@ -586,12 +663,14 @@ export function ExplorerSidebar({
       </header>
       <div className="explorer-toolbar-actions-row">
         <div className="explorer-toolbar-actions">
-          <button className="icon-button compact" onClick={onRefresh} disabled={!vaultLoaded} title="Aktualisieren">↻</button>
+          <button className="icon-button compact" onClick={onRefresh} disabled={!vaultLoaded} title="Aktualisieren">
+            <LucideNamedIcon name="RefreshCw" className="row-action-icon" size={14} />
+          </button>
           <button className="icon-button compact" onClick={runCreateFile} disabled={!vaultLoaded} title="Neue Datei">
-            <ContextIcon name="newFile" />
+            <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
           </button>
           <button className="icon-button compact" onClick={runCreateFolder} disabled={!vaultLoaded} title="Neuer Ordner">
-            <ContextIcon name="newFolder" />
+            <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
           </button>
         </div>
       </div>
@@ -651,7 +730,9 @@ export function ExplorerSidebar({
               >
                 <div className="row-content">
                   <span className={`row-pin-slot ${node.type === 'folder' && node.favorite ? 'active' : ''}`} aria-hidden="true">
-                    {node.type === 'folder' && node.favorite ? '⌖' : ' '}
+                    {node.type === 'folder' && node.favorite ? (
+                      <LucideNamedIcon name="Pin" size={11} className="row-pin-icon" />
+                    ) : null}
                   </span>
                   <button type="button" className={`twistie row-twistie ${node.type === 'folder' ? 'show' : ''}`} onClick={(event) => {
                     event.stopPropagation()
@@ -659,15 +740,21 @@ export function ExplorerSidebar({
                       toggleExpand(node)
                     }
                   }}>
-                    {node.type === 'folder' ? (node.expanded ? '▾' : '▸') : ''}
+                    {node.type === 'folder' ? (
+                      <LucideNamedIcon name={node.expanded ? 'ChevronDown' : 'ChevronRight'} size={12} className="twistie-icon" />
+                    ) : null}
                   </button>
-                  {options.showIcons ? <span className="row-icon">{rowIcon(node)}</span> : null}
+                  {options.showIcons ? (
+                    <span className="row-icon">
+                      <LucideNamedIcon name={resolveNodeIconName(node)} size={14} className="row-node-icon" />
+                    </span>
+                  ) : null}
                   <span className="row-name">{rowName(node)}</span>
                 </div>
                 <div className="row-meta">
                   {node.type === 'folder' ? (
                     <button type="button" className="row-folder-menu" onClick={(event) => openContextMenuAt(event, node)} title="Ordner-Aktionen">
-                      ...
+                      <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                     </button>
                   ) : null}
                   {node.type === 'folder' ? <span className="row-count">{folderCount}</span> : null}
@@ -683,19 +770,19 @@ export function ExplorerSidebar({
           <div className="explorer-context-panel" ref={contextPanelRef}>
             {contextNode.type === 'file' ? (
               <button className="context-menu-item" onClick={() => { void onOpenFile(contextNode.path, contextNode.name); setContextMenu(null) }}>
-                <ContextIcon name="open" />
+                <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
                 <span>Datei oeffnen</span>
               </button>
             ) : null}
             {contextNode.type === 'folder' ? (
               <button className="context-menu-item" onClick={() => { const name = normalizeLabel(window.prompt('Name der neuen Datei', 'Neue Notiz') ?? ''); if (name) { void onCreateFile(normalizeGroupKey(contextNode.path), name) }; setContextMenu(null) }}>
-                <ContextIcon name="newFile" />
+                <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
                 <span>Neue Datei</span>
               </button>
             ) : null}
             {contextNode.type === 'folder' ? (
               <button className="context-menu-item" onClick={() => { const name = normalizeLabel(window.prompt('Name des neuen Ordners', 'Neuer Ordner') ?? ''); if (name) { void onCreateFolder(normalizeGroupKey(contextNode.path), name) }; setContextMenu(null) }}>
-                <ContextIcon name="newFolder" />
+                <LucideNamedIcon name="FolderPlus" className="context-menu-icon" size={14} />
                 <span>Neuer Ordner</span>
               </button>
             ) : null}
@@ -718,12 +805,16 @@ export function ExplorerSidebar({
               }
               setContextMenu(null)
             }}>
-              <ContextIcon name="rename" />
+              <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
               <span>Umbenennen</span>
+            </button>
+            <button className="context-menu-item" onClick={() => { openIconPicker(contextNode) }}>
+              <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
+              <span>Icon festlegen</span>
             </button>
             {contextNode.type === 'folder' ? (
               <button className="context-menu-item" disabled={isPinnedRoot(contextNode.path) && contextNode.favorite} onClick={() => { if (!(isPinnedRoot(contextNode.path) && contextNode.favorite)) { void onToggleFavoriteFolder(normalizeGroupKey(contextNode.path)) }; setContextMenu(null) }}>
-                <ContextIcon name={contextNode.favorite ? 'unpin' : 'pin'} />
+                <LucideNamedIcon name={contextNode.favorite ? 'PinOff' : 'Pin'} className="context-menu-icon" size={14} />
                 <span>{isPinnedRoot(contextNode.path) && contextNode.favorite ? 'Fixierung aktiv (nicht aufhebbar)' : contextNode.favorite ? 'Fixierung aufheben' : 'Ordner fixieren'}</span>
               </button>
             ) : null}
@@ -737,10 +828,84 @@ export function ExplorerSidebar({
               }
               setContextMenu(null)
             }}>
-              <ContextIcon name="delete" />
+              <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
               <span>Loeschen</span>
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {iconPicker ? (
+        <div
+          className="explorer-icon-picker-overlay"
+          onClick={() => {
+            setIconPicker(null)
+            setIconSearchQuery('')
+          }}
+        >
+          <aside
+            className="explorer-icon-picker-modal"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <header className="explorer-icon-picker-header">
+              <h4>Icon waehlen: {iconPicker.label}</h4>
+              <button
+                className="icon-button compact muted"
+                onClick={() => {
+                  setIconPicker(null)
+                  setIconSearchQuery('')
+                }}
+                title="Schliessen"
+              >
+                <LucideNamedIcon name="X" size={14} className="row-action-icon" />
+              </button>
+            </header>
+
+            <div className="explorer-icon-picker-search">
+              <input
+                value={iconSearchQuery}
+                onChange={(event) => setIconSearchQuery(event.target.value)}
+                placeholder="Icon suchen, z. B. folder, file, tag ..."
+                autoFocus
+              />
+              <button
+                className="icon-button compact muted"
+                onClick={() => {
+                  setIconForTarget(iconPicker, null)
+                  setIconPicker(null)
+                  setIconSearchQuery('')
+                }}
+                title="Standardicon wiederherstellen"
+              >
+                <LucideNamedIcon name="RotateCcw" size={14} className="row-action-icon" />
+              </button>
+            </div>
+
+            <p className="explorer-icon-picker-current">
+              Aktuell: <strong>{iconPickerCurrentIconName}</strong>
+            </p>
+
+            <div className="explorer-icon-grid">
+              {visibleIconNames.map((iconName) => (
+                <button
+                  key={`lucide-icon-${iconName}`}
+                  className={`explorer-icon-option ${iconName === iconPickerCurrentIconName ? 'active' : ''}`}
+                  onClick={() => {
+                    setIconForTarget(iconPicker, iconName)
+                    setIconPicker(null)
+                    setIconSearchQuery('')
+                  }}
+                  title={iconName}
+                >
+                  <LucideNamedIcon name={iconName} size={16} className="explorer-icon-option-glyph" />
+                  <span>{iconName}</span>
+                </button>
+              ))}
+              {visibleIconNames.length === 0 ? <p className="empty-copy">Keine passenden Icons gefunden.</p> : null}
+            </div>
+          </aside>
         </div>
       ) : null}
 
