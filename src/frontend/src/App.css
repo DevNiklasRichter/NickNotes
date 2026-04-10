@@ -747,7 +747,7 @@
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--line);
-  background: var(--surface-contrast);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-contrast) 95%, transparent), var(--surface));
   display: flex;
   flex-direction: column;
 }
@@ -759,10 +759,19 @@
 .note-editor-shell {
   min-height: 0;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
   flex: 1;
   display: flex;
   flex-direction: column;
+  padding: 0.58rem;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-contrast) 90%, transparent), transparent);
+}
+
+.code-editor-shell {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
 }
 
 .wiki-links-strip {
@@ -799,6 +808,23 @@ button.wiki-link-pill:hover {
   height: 100%;
   width: 100%;
   min-height: 0;
+  flex: 1;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 14px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface-contrast) 94%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 28px color-mix(in srgb, #000 12%, transparent);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.code-editor-host:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 2px color-mix(in srgb, var(--accent-soft) 72%, transparent),
+    0 16px 30px color-mix(in srgb, #000 14%, transparent);
 }
 
 .code-editor-host .cm-editor,
@@ -808,27 +834,280 @@ button.wiki-link-pill:hover {
 
 .code-editor-host .cm-editor {
   border: none;
-  background: var(--surface-contrast);
+  background: transparent;
 }
 
 .code-editor-host .cm-scroller {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--line-strong) 70%, transparent) transparent;
 }
 
 .code-editor-host .cm-scroller::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 10px;
+  height: 10px;
+}
+
+.code-editor-host .cm-scroller::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--line-strong) 70%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 .code-editor-host .cm-content {
-  padding: 1rem 1.1rem;
-  line-height: 1.65;
-  color: var(--text);
   min-height: 100%;
   box-sizing: border-box;
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 0.995rem;
+}
+
+.code-editor-host .cm-line {
+  max-width: min(860px, calc(100% - 1.6rem));
+  margin: 0 auto;
+}
+
+.code-editor-host .cm-line.cm-activeLine {
+  border-radius: 8px;
+}
+
+.code-editor-host .cm-line.cm-md-heading {
+  font-family: 'Aptos Display', 'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-weight: 680;
+  letter-spacing: -0.012em;
+}
+
+.code-editor-host .cm-line.cm-md-h1 {
+  font-size: 1.72em;
+  line-height: 1.25;
+  margin-top: 0.58em;
+}
+
+.code-editor-host .cm-line.cm-md-h2 {
+  font-size: 1.5em;
+  line-height: 1.3;
+  margin-top: 0.52em;
+}
+
+.code-editor-host .cm-line.cm-md-h3 {
+  font-size: 1.3em;
+  line-height: 1.34;
+  margin-top: 0.45em;
+}
+
+.code-editor-host .cm-line.cm-md-h4 {
+  font-size: 1.16em;
+}
+
+.code-editor-host .cm-line.cm-md-h5 {
+  font-size: 1.06em;
+}
+
+.code-editor-host .cm-line.cm-md-h6 {
+  font-size: 1em;
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+}
+
+.code-editor-host .cm-md-strong {
+  font-weight: 700;
+}
+
+.code-editor-host .cm-md-emphasis {
+  font-style: italic;
+}
+
+.code-editor-host .cm-md-inline-code {
+  font-family: 'Cascadia Mono', 'IBM Plex Mono', 'Consolas', monospace;
+  background: color-mix(in srgb, var(--code-bg) 88%, var(--accent-soft));
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 6px;
+  padding: 0 0.18rem;
+}
+
+.code-editor-host .cm-line.cm-md-code-line {
+  font-family: 'Cascadia Mono', 'IBM Plex Mono', 'Consolas', monospace;
+  font-size: 0.93em;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--code-bg) 88%, transparent);
+  border-radius: 8px;
+  padding: 0.05rem 0.7rem;
+}
+
+.code-editor-host .cm-line.cm-md-quote-line {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  border-radius: 8px;
+  padding-left: 0.68rem;
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+.code-editor-host .cm-line.cm-md-list-line {
+  padding-left: 0.18rem;
+}
+
+.code-editor-host .cm-line.cm-md-task-line {
+  padding-left: 0.18rem;
+}
+
+.code-editor-host .cm-line.cm-md-task-checked {
+  color: color-mix(in srgb, var(--text) 66%, var(--muted));
+}
+
+.code-editor-host .cm-md-task-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25em;
+  min-width: 1.25em;
+  cursor: pointer;
+  user-select: none;
+  color: var(--accent-strong);
+  opacity: 0.92;
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+
+.code-editor-host .cm-md-task-checkbox:hover {
+  transform: scale(1.06);
+  opacity: 1;
+}
+
+.code-editor-host .cm-md-link-text {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 78%, transparent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.code-editor-host .cm-md-link-url {
+  color: color-mix(in srgb, var(--accent) 68%, var(--muted));
+  font-size: 0.94em;
+}
+
+.code-editor-host .cm-md-syntax-token {
+  transition: opacity 0.16s ease, color 0.16s ease;
+}
+
+.code-editor-host .cm-md-syntax-visible {
+  opacity: 0.88;
+}
+
+.code-editor-host .cm-md-syntax-muted {
+  opacity: 0.34;
+}
+
+.code-editor-host .cm-md-list-mark,
+.code-editor-host .cm-md-quote-mark,
+.code-editor-host .cm-md-task-marker {
+  font-weight: 620;
+}
+
+.code-editor-host .cm-line.cm-md-hr-line {
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+  letter-spacing: 0.22em;
+}
+
+.editor-command-palette {
+  position: absolute;
+  z-index: 24;
+  width: min(340px, calc(100% - 1rem));
+  border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-contrast) 95%, transparent);
+  box-shadow:
+    0 18px 34px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  transform-origin: top left;
+  animation: commandPaletteIn 140ms ease;
+  backdrop-filter: blur(9px);
+}
+
+.editor-command-palette.global {
+  top: 0.95rem;
+  left: max(0.5rem, calc(50% - 170px));
+}
+
+.editor-command-palette.slash {
+  transform: translateY(0);
+}
+
+.editor-command-search-row {
+  padding: 0.48rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+}
+
+.editor-command-search-row input {
+  width: 100%;
+  border-radius: 8px;
+  padding: 0.42rem 0.56rem;
+}
+
+.editor-command-slash-meta {
+  padding: 0.42rem 0.58rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+}
+
+.editor-command-list {
+  max-height: min(320px, 44vh);
+  overflow: auto;
+  padding: 0.28rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.editor-command-item {
+  text-align: left;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.38rem 0.5rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.editor-command-item:hover,
+.editor-command-item.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+}
+
+.editor-command-title {
+  color: var(--text);
+  font-weight: 620;
+}
+
+.editor-command-desc {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.editor-command-empty {
+  color: var(--muted);
+  font-size: 0.76rem;
+  padding: 0.52rem;
+}
+
+.editor-command-footnote {
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  color: var(--muted);
+  font-size: 0.68rem;
+  padding: 0.35rem 0.55rem;
+}
+
+@keyframes commandPaletteIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .markdown-wikilink {
@@ -1333,17 +1612,17 @@ button:disabled {
 
 /* Codex-inspired refresh */
 .workbench-shell {
-  grid-template-columns: 178px auto 1fr;
+  grid-template-columns: 156px auto 1fr;
   gap: 0.24rem;
   padding: 0.34rem;
 }
 
 .activity-rail {
-  border-radius: 11px;
+  border-radius: 10px;
   border-color: color-mix(in srgb, var(--line) 88%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, white 8%), var(--surface));
-  padding: 0.44rem 0.4rem;
-  gap: 0.38rem;
+  padding: 0.34rem 0.32rem;
+  gap: 0.26rem;
   align-items: stretch;
 }
 
@@ -1357,13 +1636,13 @@ button:disabled {
 }
 
 .rail-logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
   border: 1px solid var(--line);
   display: inline-grid;
   place-items: center;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   letter-spacing: 0.04em;
   font-weight: 700;
   color: var(--muted);
@@ -1394,17 +1673,17 @@ button:disabled {
 
 .activity-rail button {
   width: 100%;
-  height: 34px;
-  border-radius: 8px;
+  height: 30px;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.4rem;
+  gap: 0.3rem;
   border: 1px solid transparent;
   background: transparent;
-  padding: 0 0.45rem;
+  padding: 0 0.35rem;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 500;
 }
 
@@ -1421,8 +1700,8 @@ button:disabled {
 }
 
 .rail-glyph {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1430,8 +1709,8 @@ button:disabled {
 }
 
 .rail-glyph svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   stroke-width: 1.85;
 }
 
@@ -1568,7 +1847,7 @@ textarea:focus-visible {
 
 @media (max-width: 1320px) {
   .workbench-shell {
-    grid-template-columns: 148px auto 1fr;
+    grid-template-columns: 136px auto 1fr;
   }
 }
 
@@ -1608,4 +1887,36 @@ textarea:focus-visible {
   .rail-label {
     display: none;
   }
+}
+
+.workbench-shell {
+  --app-font-size: 0.78rem;
+}
+
+.workbench-shell :is(
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  span,
+  strong,
+  em,
+  label,
+  button,
+  input,
+  select,
+  textarea,
+  li,
+  a
+) {
+  font-size: var(--app-font-size) !important;
+}
+
+.workbench-shell .markdown-preview {
+  font-size: var(--app-font-size) !important;
+}
+
+.workbench-shell .code-editor-host .cm-content {
+  font-size: 0.995rem !important;
 }

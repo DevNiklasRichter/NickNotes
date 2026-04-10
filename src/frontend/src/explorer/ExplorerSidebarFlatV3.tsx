@@ -2,11 +2,13 @@
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type {
   ExplorerNode,
+  ExplorerIconOverrides,
   ExplorerOptions,
   ExplorerSourceFile,
   ExplorerSourceGroup,
+  ExplorerViewState,
 } from './types'
-import { buildExplorerTree, getParentFolderKey, normalizeGroupKey, toFileExtension } from './treeModel'
+import { buildExplorerTree, getParentFolderKey, normalizeGroupKey, toFileExtension, toRelativePath } from './treeModel'
 import { LUCIDE_ICON_NAMES, LucideNamedIcon, isLucideIconName } from '../icons/lucideCatalog'
 import './ExplorerSidebar.css'
 
@@ -31,17 +33,20 @@ type ExplorerSidebarProps = {
   onMoveFolder: (groupKey: string, targetParentKey: string) => Promise<void>
   onToggleFavoriteFolder: (groupKey: string) => Promise<void>
   options: ExplorerOptions
+  onOptionsChange?: (next: ExplorerOptions) => void
   onRefresh: () => void
+  revealFilePath?: string
+  revealRequestId?: number
+  viewStateSeed?: ExplorerViewState | null
+  viewStateSeedId?: number
+  onViewStateChange?: (next: ExplorerViewState) => void
 }
 
 type DropPosition = 'before' | 'inside' | 'after'
 type DropIndicator = { nodeId: string; position: DropPosition } | null
 type ContextMenu = { x: number; y: number; nodeId: string } | null
 type FolderFileCount = { direct: number; total: number }
-type NodeIconOverrides = {
-  folders: Record<string, string>
-  files: Record<string, string>
-}
+type NodeIconOverrides = ExplorerIconOverrides
 type IconPickerTarget =
   | {
       nodeType: 'folder'
@@ -54,37 +59,30 @@ type IconPickerTarget =
       label: string
     }
 type IconPickerState = IconPickerTarget | null
+type ExplorerActionDialogState =
+  | {
+      kind: 'input'
+      title: string
+      placeholder: string
+      confirmLabel: string
+      value: string
+      validate?: (value: string) => string | null
+      danger?: boolean
+      resolve: (result: { confirmed: boolean; value: string }) => void
+    }
+  | {
+      kind: 'confirm'
+      title: string
+      message: string
+      confirmLabel: string
+      danger?: boolean
+      resolve: (result: { confirmed: boolean }) => void
+    }
 
-const STORAGE_PREFIX = 'nicknotes-explorer-flat-v3'
 const ROOT_TOKENS = ['daily', 'tags', 'tasks'] as const
 const ROOT_TOKEN_SET = new Set<string>(ROOT_TOKENS)
 const MIN_WIDTH = 220
 const MAX_WIDTH = 520
-
-function readStorageValue<T>(key: string, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
-}
-
-function writeStorageValue<T>(key: string, value: T): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Best effort only.
-  }
-}
-
-function normalizeStorageKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
-}
-
-function scopedStorageKey(base: string, vaultPath: string): string {
-  return `${base}-${normalizeStorageKey(vaultPath) || 'default'}`
-}
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
@@ -183,6 +181,34 @@ function normalizeFilePathKey(path: string): string {
   return path.replace(/\\/g, '/').trim().toLowerCase()
 }
 
+function slugifyForDuplicateCheck(raw: string): string {
+  return normalizeLabel(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9_\-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function toParentKey(value: string): string {
+  const clean = normalizeGroupKey(value)
+  if (!clean.includes('/')) {
+    return ''
+  }
+  return clean.slice(0, clean.lastIndexOf('/'))
+}
+
+function toLeafKey(value: string): string {
+  const clean = normalizeGroupKey(value)
+  if (!clean.includes('/')) {
+    return clean
+  }
+  return clean.slice(clean.lastIndexOf('/') + 1)
+}
+
+function toFileStem(name: string): string {
+  return /\.md$/i.test(name) ? name.replace(/\.md$/i, '') : name
+}
+
 function toSafeIconOverrides(value: unknown): NodeIconOverrides {
   const empty: NodeIconOverrides = { folders: {}, files: {} }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -269,7 +295,13 @@ export function ExplorerSidebar({
   onMoveFolder,
   onToggleFavoriteFolder,
   options,
+  onOptionsChange,
   onRefresh,
+  revealFilePath,
+  revealRequestId,
+  viewStateSeed,
+  viewStateSeedId,
+  onViewStateChange,
 }: ExplorerSidebarProps) {
   const treeRef = useRef<HTMLElement | null>(null)
   const contextPanelRef = useRef<HTMLDivElement | null>(null)
@@ -283,17 +315,12 @@ export function ExplorerSidebar({
   const [iconOverrides, setIconOverrides] = useState<NodeIconOverrides>({ folders: {}, files: {} })
   const [iconPicker, setIconPicker] = useState<IconPickerState>(null)
   const [iconSearchQuery, setIconSearchQuery] = useState('')
-
-  const storage = useMemo(
-    () => ({
-      expanded: scopedStorageKey(`${STORAGE_PREFIX}-expanded`, vaultPath),
-      selected: scopedStorageKey(`${STORAGE_PREFIX}-selected`, vaultPath),
-      filter: scopedStorageKey(`${STORAGE_PREFIX}-filter`, vaultPath),
-      order: scopedStorageKey(`${STORAGE_PREFIX}-order`, vaultPath),
-      icons: scopedStorageKey(`${STORAGE_PREFIX}-icons`, vaultPath),
-    }),
-    [vaultPath]
-  )
+  const [actionDialog, setActionDialog] = useState<ExplorerActionDialogState | null>(null)
+  const [sortMenuOpen, setSortMenuOpen] = useState(false)
+  const actionDialogRef = useRef<ExplorerActionDialogState | null>(null)
+  const sortMenuRef = useRef<HTMLDivElement | null>(null)
+  const lastAutoRevealPathRef = useRef('')
+  const lastHandledRevealRequestRef = useRef<number | null>(null)
 
   const fixedRootKeys = useMemo(() => {
     const byToken = new Map<string, string>()
@@ -312,18 +339,51 @@ export function ExplorerSidebar({
   }, [groups])
 
   useEffect(() => {
-    setExpandedNodes(toSafeExpanded(readStorageValue(storage.expanded, {})))
-    setSelectedNodeId(readStorageValue(storage.selected, null))
-    setFilterQuery(readStorageValue(storage.filter, ''))
-    setFolderOrder(toSafeOrder(readStorageValue(storage.order, {})))
-    setIconOverrides(toSafeIconOverrides(readStorageValue(storage.icons, {})))
-  }, [storage.expanded, storage.filter, storage.icons, storage.order, storage.selected])
+    actionDialogRef.current = actionDialog
+  }, [actionDialog])
 
-  useEffect(() => writeStorageValue(storage.expanded, expandedNodes), [expandedNodes, storage.expanded])
-  useEffect(() => writeStorageValue(storage.selected, selectedNodeId), [selectedNodeId, storage.selected])
-  useEffect(() => writeStorageValue(storage.filter, filterQuery), [filterQuery, storage.filter])
-  useEffect(() => writeStorageValue(storage.order, folderOrder), [folderOrder, storage.order])
-  useEffect(() => writeStorageValue(storage.icons, iconOverrides), [iconOverrides, storage.icons])
+  useEffect(() => {
+    if (!sortMenuOpen) {
+      return
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && sortMenuRef.current?.contains(target)) {
+        return
+      }
+      setSortMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [sortMenuOpen])
+
+  useEffect(() => {
+    const seed = viewStateSeed ?? {
+      expandedNodes: {},
+      selectedNodeId: null,
+      filterQuery: '',
+      folderOrder: {},
+      iconOverrides: { folders: {}, files: {} },
+    }
+    setExpandedNodes(toSafeExpanded(seed.expandedNodes))
+    setSelectedNodeId(typeof seed.selectedNodeId === 'string' ? seed.selectedNodeId : null)
+    setFilterQuery(typeof seed.filterQuery === 'string' ? seed.filterQuery : '')
+    setFolderOrder(toSafeOrder(seed.folderOrder))
+    setIconOverrides(toSafeIconOverrides(seed.iconOverrides))
+  }, [viewStateSeed, viewStateSeedId])
+
+  useEffect(() => {
+    if (!onViewStateChange) {
+      return
+    }
+    onViewStateChange({
+      expandedNodes,
+      selectedNodeId,
+      filterQuery,
+      folderOrder,
+      iconOverrides,
+    })
+  }, [expandedNodes, filterQuery, folderOrder, iconOverrides, onViewStateChange, selectedNodeId])
 
   useEffect(() => {
     const valid = new Set(groups.map((group) => normalizeGroupKey(group.key)))
@@ -331,10 +391,13 @@ export function ExplorerSidebar({
   }, [fixedRootKeys, groups])
 
   useEffect(() => {
+    if (!vaultLoaded || groups.length === 0) {
+      return
+    }
     const validFolders = new Set(groups.map((group) => normalizeGroupKey(group.key)))
     const validFiles = new Set(files.map((file) => normalizeFilePathKey(file.path)))
     setIconOverrides((prev) => pruneIconOverrides(prev, validFolders, validFiles))
-  }, [files, groups])
+  }, [files, groups, vaultLoaded])
 
   const tree = useMemo(
     () =>
@@ -394,29 +457,64 @@ export function ExplorerSidebar({
     return null
   }, [tree.visibleNodes])
 
+  const revealPathInTree = useCallback(
+    (path: string): boolean => {
+      if (!path) {
+        return false
+      }
+      const activeId = tree.fileNodeIdByPath.get(path)
+      if (!activeId) {
+        return false
+      }
+      setSelectedNodeId(activeId)
+      setExpandedNodes((prev) => {
+        const next = { ...prev }
+        let changed = false
+        let cursor = tree.parentById.get(activeId) ?? null
+        while (cursor) {
+          if (next[cursor] !== true) {
+            next[cursor] = true
+            changed = true
+          }
+          cursor = tree.parentById.get(cursor) ?? null
+        }
+        return changed ? next : prev
+      })
+      return true
+    },
+    [tree.fileNodeIdByPath, tree.parentById]
+  )
+
   useEffect(() => {
     if (!activeFilePath) {
+      lastAutoRevealPathRef.current = ''
       return
     }
-    const activeId = tree.fileNodeIdByPath.get(activeFilePath)
-    if (!activeId) {
+    if (lastAutoRevealPathRef.current === activeFilePath) {
       return
     }
-    setSelectedNodeId(activeId)
-    setExpandedNodes((prev) => {
-      const next = { ...prev }
-      let changed = false
-      let cursor = tree.parentById.get(activeId) ?? null
-      while (cursor) {
-        if (next[cursor] !== true) {
-          next[cursor] = true
-          changed = true
-        }
-        cursor = tree.parentById.get(cursor) ?? null
-      }
-      return changed ? next : prev
-    })
-  }, [activeFilePath, tree.fileNodeIdByPath, tree.parentById])
+    const revealed = revealPathInTree(activeFilePath)
+    if (revealed) {
+      lastAutoRevealPathRef.current = activeFilePath
+    }
+  }, [activeFilePath, revealPathInTree])
+
+  useEffect(() => {
+    if (typeof revealRequestId !== 'number') {
+      return
+    }
+    if (lastHandledRevealRequestRef.current === revealRequestId) {
+      return
+    }
+    lastHandledRevealRequestRef.current = revealRequestId
+    if (!revealFilePath) {
+      return
+    }
+    const revealed = revealPathInTree(revealFilePath)
+    if (revealed) {
+      lastAutoRevealPathRef.current = revealFilePath
+    }
+  }, [revealFilePath, revealRequestId, revealPathInTree])
 
   const selectedNode = useMemo(() => tree.visibleNodes.find((entry) => entry.node.selected)?.node ?? null, [tree.visibleNodes])
 
@@ -459,21 +557,167 @@ export function ExplorerSidebar({
     }
   }, [])
 
-  const runCreateFile = useCallback(() => {
-    const name = normalizeLabel(window.prompt('Name der neuen Datei', 'Neue Notiz') ?? '')
-    if (!name) {
+  const closeActionDialog = useCallback((confirmed: boolean) => {
+    const current = actionDialogRef.current
+    if (!current) {
       return
     }
-    void onCreateFile(resolveSelectedFolderKey(), name)
-  }, [onCreateFile, resolveSelectedFolderKey])
+    setActionDialog(null)
+    window.setTimeout(() => {
+      if (current.kind === 'input') {
+        current.resolve({ confirmed, value: current.value })
+        return
+      }
+      current.resolve({ confirmed })
+    }, 0)
+  }, [])
 
-  const runCreateFolder = useCallback(() => {
-    const name = normalizeLabel(window.prompt('Name des neuen Ordners', 'Neuer Ordner') ?? '')
+  const setSortMode = useCallback(
+    (mode: ExplorerOptions['sortMode']) => {
+      if (!onOptionsChange) {
+        return
+      }
+      onOptionsChange({ ...options, sortMode: mode })
+      setSortMenuOpen(false)
+    },
+    [onOptionsChange, options]
+  )
+
+  const setSortDirection = useCallback(
+    (direction: ExplorerOptions['sortDirection']) => {
+      if (!onOptionsChange) {
+        return
+      }
+      onOptionsChange({ ...options, sortDirection: direction })
+      setSortMenuOpen(false)
+    },
+    [onOptionsChange, options]
+  )
+
+  const askInputDialog = useCallback(
+    (
+      title: string,
+      placeholder: string,
+      initialValue: string,
+      confirmLabel: string,
+      danger = false,
+      validate?: (value: string) => string | null
+    ): Promise<string | null> =>
+      new Promise((resolve) => {
+        setActionDialog({
+          kind: 'input',
+          title,
+          placeholder,
+          confirmLabel,
+          value: initialValue,
+          validate,
+          danger,
+          resolve: (result) => {
+            resolve(result.confirmed ? normalizeLabel(result.value) : null)
+          },
+        })
+      }),
+    []
+  )
+
+  const askConfirmDialog = useCallback(
+    (title: string, message: string, confirmLabel: string, danger = false): Promise<boolean> =>
+      new Promise((resolve) => {
+        setActionDialog({
+          kind: 'confirm',
+          title,
+          message,
+          confirmLabel,
+          danger,
+          resolve: (result) => {
+            resolve(result.confirmed)
+          },
+        })
+      }),
+    []
+  )
+
+  const hasFolderNameCollision = useCallback(
+    (parentFolderKey: string, proposedName: string): boolean => {
+      const cleanParent = normalizeGroupKey(parentFolderKey)
+      const proposedSlug = slugifyForDuplicateCheck(proposedName)
+      if (!proposedSlug) {
+        return false
+      }
+      return groups.some((group) => {
+        const key = normalizeGroupKey(group.key)
+        if (toParentKey(key) !== cleanParent) {
+          return false
+        }
+        return slugifyForDuplicateCheck(toLeafKey(key)) === proposedSlug
+      })
+    },
+    [groups]
+  )
+
+  const hasFileNameCollision = useCallback(
+    (parentFolderKey: string, proposedName: string): boolean => {
+      const cleanParent = normalizeGroupKey(parentFolderKey)
+      const proposedSlug = slugifyForDuplicateCheck(proposedName)
+      if (!proposedSlug) {
+        return false
+      }
+      return files.some((file) => {
+        const relativePath = normalizeGroupKey(toRelativePath(file.path, vaultPath))
+        const fileParent = toParentKey(relativePath)
+        if (fileParent !== cleanParent) {
+          return false
+        }
+        const fileLeaf = toLeafKey(relativePath)
+        return slugifyForDuplicateCheck(toFileStem(fileLeaf)) === proposedSlug
+      })
+    },
+    [files, vaultPath]
+  )
+
+  const hasNameCollision = useCallback(
+    (parentFolderKey: string, proposedName: string): boolean =>
+      hasFolderNameCollision(parentFolderKey, proposedName) || hasFileNameCollision(parentFolderKey, proposedName),
+    [hasFileNameCollision, hasFolderNameCollision]
+  )
+
+  const runCreateFile = useCallback(async () => {
+    const parentFolderKey = resolveSelectedFolderKey()
+    const name = await askInputDialog(
+      'Neue Datei',
+      'Name der neuen Datei',
+      'Neue Notiz',
+      'Anlegen',
+      false,
+      (value) =>
+        hasNameCollision(parentFolderKey, value)
+          ? 'Datei bereits vorhanden'
+          : null
+    )
     if (!name) {
       return
     }
-    void onCreateFolder(resolveSelectedFolderKey(), name)
-  }, [onCreateFolder, resolveSelectedFolderKey])
+    await onCreateFile(parentFolderKey, name)
+  }, [askInputDialog, hasNameCollision, onCreateFile, resolveSelectedFolderKey])
+
+  const runCreateFolder = useCallback(async () => {
+    const parentFolderKey = resolveSelectedFolderKey()
+    const name = await askInputDialog(
+      'Neuer Ordner',
+      'Name des neuen Ordners',
+      'Neuer Ordner',
+      'Anlegen',
+      false,
+      (value) =>
+        hasNameCollision(parentFolderKey, value)
+          ? 'Ordner bereits vorhanden'
+          : null
+    )
+    if (!name) {
+      return
+    }
+    await onCreateFolder(parentFolderKey, name)
+  }, [askInputDialog, hasNameCollision, onCreateFolder, resolveSelectedFolderKey])
 
   const toggleExpand = useCallback((node: ExplorerNode) => {
     if (node.type !== 'folder') {
@@ -601,6 +845,116 @@ export function ExplorerSidebar({
     setContextMenu(null)
   }, [])
 
+  const createFileInFolderFromContext = useCallback(
+    async (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      setContextMenu(null)
+      const folderKey = normalizeGroupKey(node.path)
+      const name = await askInputDialog(
+        'Neue Datei',
+        'Name der neuen Datei',
+        'Neue Notiz',
+        'Anlegen',
+        false,
+        (value) =>
+          hasNameCollision(folderKey, value)
+            ? 'Datei bereits vorhanden'
+            : null
+      )
+      if (!name) {
+        return
+      }
+      await onCreateFile(folderKey, name)
+    },
+    [askInputDialog, hasNameCollision, onCreateFile]
+  )
+
+  const createFolderInFolderFromContext = useCallback(
+    async (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      setContextMenu(null)
+      const folderKey = normalizeGroupKey(node.path)
+      const name = await askInputDialog(
+        'Neuer Ordner',
+        'Name des neuen Ordners',
+        'Neuer Ordner',
+        'Anlegen',
+        false,
+        (value) =>
+          hasNameCollision(folderKey, value)
+            ? 'Ordner bereits vorhanden'
+            : null
+      )
+      if (!name) {
+        return
+      }
+      await onCreateFolder(folderKey, name)
+    },
+    [askInputDialog, hasNameCollision, onCreateFolder]
+  )
+
+  const renameNodeFromContext = useCallback(
+    async (node: ExplorerNode) => {
+      setContextMenu(null)
+      if (node.type === 'folder') {
+        if (node.canDelete === false) {
+          return
+        }
+        const name = await askInputDialog('Ordner umbenennen', 'Neuer Ordnername', node.name, 'Umbenennen')
+        if (!name || name === node.name) {
+          return
+        }
+        await onRenameFolder(normalizeGroupKey(node.path), name)
+        return
+      }
+      const current = rowName(node)
+      const name = await askInputDialog('Datei umbenennen', 'Neuer Dateiname', current, 'Umbenennen')
+      if (!name || name === current) {
+        return
+      }
+      await onRenameFile(node.path, name)
+    },
+    [askInputDialog, onRenameFile, onRenameFolder]
+  )
+
+  const deleteNodeFromContext = useCallback(
+    async (node: ExplorerNode) => {
+      setContextMenu(null)
+      if (node.type === 'folder') {
+        if (node.canDelete === false) {
+          return
+        }
+        const confirmed = await askConfirmDialog(
+          'Ordner loeschen',
+          `Ordner "${node.name}" wirklich loeschen?`,
+          'Loeschen',
+          true
+        )
+        if (!confirmed) {
+          return
+        }
+        await onDeleteFolder(normalizeGroupKey(node.path))
+        return
+      }
+
+      const confirmed = await askConfirmDialog(
+        'Datei loeschen',
+        `Datei "${node.name}" wirklich loeschen?`,
+        'Loeschen',
+        true
+      )
+      if (!confirmed) {
+        return
+      }
+      await onDeleteFile(node.path)
+    },
+    [askConfirmDialog, onDeleteFile, onDeleteFolder]
+  )
+
   const setIconForTarget = useCallback((target: IconPickerTarget, iconName: string | null) => {
     setIconOverrides((prev) => {
       if (target.nodeType === 'folder') {
@@ -637,6 +991,15 @@ export function ExplorerSidebar({
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [contextMenu])
 
+  const actionDialogValidationMessage =
+    actionDialog && actionDialog.kind === 'input' && actionDialog.validate
+      ? actionDialog.validate(actionDialog.value)
+      : null
+  const canConfirmActionDialog =
+    actionDialog?.kind === 'input'
+      ? Boolean(normalizeLabel(actionDialog.value)) && !actionDialogValidationMessage
+      : Boolean(actionDialog)
+
   return (
     <div
       className="explorer-shell"
@@ -645,13 +1008,16 @@ export function ExplorerSidebar({
         if (isInputEventTarget(event.target) || tree.visibleNodes.length === 0) {
           return
         }
-        const index = Math.max(0, tree.visibleNodes.findIndex((entry) => entry.node.selected))
+        const selectedIndex = tree.visibleNodes.findIndex((entry) => entry.node.selected)
+        const index = selectedIndex >= 0 ? selectedIndex : -1
         if (event.key === 'ArrowDown') {
           event.preventDefault()
-          setSelectedNodeId(tree.visibleNodes[Math.min(tree.visibleNodes.length - 1, index + 1)].node.id)
+          const nextIndex = Math.min(tree.visibleNodes.length - 1, index + 1)
+          setSelectedNodeId(tree.visibleNodes[nextIndex].node.id)
         } else if (event.key === 'ArrowUp') {
           event.preventDefault()
-          setSelectedNodeId(tree.visibleNodes[Math.max(0, index - 1)].node.id)
+          const nextIndex = index < 0 ? 0 : Math.max(0, index - 1)
+          setSelectedNodeId(tree.visibleNodes[nextIndex].node.id)
         }
       }}
     >
@@ -666,18 +1032,82 @@ export function ExplorerSidebar({
           <button className="icon-button compact" onClick={onRefresh} disabled={!vaultLoaded} title="Aktualisieren">
             <LucideNamedIcon name="RefreshCw" className="row-action-icon" size={14} />
           </button>
-          <button className="icon-button compact" onClick={runCreateFile} disabled={!vaultLoaded} title="Neue Datei">
+          <button
+            className="icon-button compact"
+            onClick={() => {
+              void runCreateFile()
+            }}
+            disabled={!vaultLoaded}
+            title="Neue Datei"
+          >
             <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
           </button>
-          <button className="icon-button compact" onClick={runCreateFolder} disabled={!vaultLoaded} title="Neuer Ordner">
+          <button
+            className="icon-button compact"
+            onClick={() => {
+              void runCreateFolder()
+            }}
+            disabled={!vaultLoaded}
+            title="Neuer Ordner"
+          >
             <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
           </button>
+          <div className="explorer-sort-anchor" ref={sortMenuRef}>
+            <button
+              className={`icon-button compact ${sortMenuOpen ? 'active' : ''}`}
+              onClick={() => {
+                setSortMenuOpen((prev) => !prev)
+              }}
+              disabled={!vaultLoaded}
+              title="Sortierung"
+            >
+              <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+            </button>
+            {sortMenuOpen ? (
+              <div className="explorer-sort-menu">
+                <div className="explorer-sort-menu-section">
+                  <span>Sortieren nach</span>
+                  <button className={options.sortMode === 'manual' ? 'active' : ''} onClick={() => setSortMode('manual')}>
+                    Manuell
+                  </button>
+                  <button className={options.sortMode === 'name' ? 'active' : ''} onClick={() => setSortMode('name')}>
+                    Name
+                  </button>
+                  <button className={options.sortMode === 'noteCount' ? 'active' : ''} onClick={() => setSortMode('noteCount')}>
+                    Notizanzahl
+                  </button>
+                  <button className={options.sortMode === 'modified' ? 'active' : ''} onClick={() => setSortMode('modified')}>
+                    Letzte Aenderung
+                  </button>
+                </div>
+                <div className="explorer-sort-menu-section">
+                  <span>Richtung</span>
+                  <button className={options.sortDirection === 'asc' ? 'active' : ''} onClick={() => setSortDirection('asc')}>
+                    Aufsteigend
+                  </button>
+                  <button className={options.sortDirection === 'desc' ? 'active' : ''} onClick={() => setSortDirection('desc')}>
+                    Absteigend
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
       <section
         className="explorer-tree explorer-flat-tree"
         ref={treeRef}
+        onClick={(event) => {
+          const target = event.target
+          if (!(target instanceof HTMLElement)) {
+            return
+          }
+          if (target.closest('.explorer-row')) {
+            return
+          }
+          setSelectedNodeId(null)
+        }}
         onDragOver={(event) => {
           if (draggingNodeId) {
             event.preventDefault()
@@ -775,36 +1205,33 @@ export function ExplorerSidebar({
               </button>
             ) : null}
             {contextNode.type === 'folder' ? (
-              <button className="context-menu-item" onClick={() => { const name = normalizeLabel(window.prompt('Name der neuen Datei', 'Neue Notiz') ?? ''); if (name) { void onCreateFile(normalizeGroupKey(contextNode.path), name) }; setContextMenu(null) }}>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  void createFileInFolderFromContext(contextNode)
+                }}
+              >
                 <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
                 <span>Neue Datei</span>
               </button>
             ) : null}
             {contextNode.type === 'folder' ? (
-              <button className="context-menu-item" onClick={() => { const name = normalizeLabel(window.prompt('Name des neuen Ordners', 'Neuer Ordner') ?? ''); if (name) { void onCreateFolder(normalizeGroupKey(contextNode.path), name) }; setContextMenu(null) }}>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  void createFolderInFolderFromContext(contextNode)
+                }}
+              >
                 <LucideNamedIcon name="FolderPlus" className="context-menu-icon" size={14} />
                 <span>Neuer Ordner</span>
               </button>
             ) : null}
-            <button className="context-menu-item" onClick={() => {
-              if (contextNode.type === 'folder') {
-                if (contextNode.canDelete === false) {
-                  setContextMenu(null)
-                  return
-                }
-                const name = normalizeLabel(window.prompt('Ordner umbenennen', contextNode.name) ?? '')
-                if (name && name !== contextNode.name) {
-                  void onRenameFolder(normalizeGroupKey(contextNode.path), name)
-                }
-              } else {
-                const current = rowName(contextNode)
-                const name = normalizeLabel(window.prompt('Datei umbenennen', current) ?? '')
-                if (name && name !== current) {
-                  void onRenameFile(contextNode.path, name)
-                }
-              }
-              setContextMenu(null)
-            }}>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                void renameNodeFromContext(contextNode)
+              }}
+            >
               <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
               <span>Umbenennen</span>
             </button>
@@ -818,20 +1245,88 @@ export function ExplorerSidebar({
                 <span>{isPinnedRoot(contextNode.path) && contextNode.favorite ? 'Fixierung aktiv (nicht aufhebbar)' : contextNode.favorite ? 'Fixierung aufheben' : 'Ordner fixieren'}</span>
               </button>
             ) : null}
-            <button className="context-menu-item danger" disabled={contextNode.type === 'folder' && contextNode.canDelete === false} onClick={() => {
-              if (contextNode.type === 'folder') {
-                if (window.confirm(`Ordner "${contextNode.name}" wirklich loeschen?`)) {
-                  void onDeleteFolder(normalizeGroupKey(contextNode.path))
-                }
-              } else if (window.confirm(`Datei "${contextNode.name}" wirklich loeschen?`)) {
-                void onDeleteFile(contextNode.path)
-              }
-              setContextMenu(null)
-            }}>
+            <button
+              className="context-menu-item danger"
+              disabled={contextNode.type === 'folder' && contextNode.canDelete === false}
+              onClick={() => {
+                void deleteNodeFromContext(contextNode)
+              }}
+            >
               <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
               <span>Loeschen</span>
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {actionDialog ? (
+        <div
+          className="explorer-action-dialog-overlay"
+          onClick={() => {
+            closeActionDialog(false)
+          }}
+        >
+          <aside
+            className="explorer-action-dialog"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
+            <h4>{actionDialog.title}</h4>
+            {actionDialog.kind === 'confirm' ? <p>{actionDialog.message}</p> : null}
+            {actionDialog.kind === 'input' ? (
+              <input
+                value={actionDialog.value}
+                placeholder={actionDialog.placeholder}
+                onChange={(event) => {
+                  setActionDialog((prev) =>
+                    prev && prev.kind === 'input'
+                      ? {
+                          ...prev,
+                          value: event.target.value,
+                        }
+                      : prev
+                  )
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    if (canConfirmActionDialog) {
+                      closeActionDialog(true)
+                    }
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    closeActionDialog(false)
+                  }
+                }}
+                autoFocus
+              />
+            ) : null}
+            {actionDialog.kind === 'input' && actionDialogValidationMessage ? (
+              <p className="explorer-action-dialog-validation">
+                <LucideNamedIcon name="AlertCircle" size={13} className="explorer-action-dialog-validation-icon" />
+                <span>{actionDialogValidationMessage}</span>
+              </p>
+            ) : null}
+            <div className="explorer-action-dialog-actions">
+              <button
+                className={actionDialog.danger ? 'danger' : ''}
+                disabled={!canConfirmActionDialog}
+                onClick={() => {
+                  closeActionDialog(true)
+                }}
+              >
+                {actionDialog.confirmLabel}
+              </button>
+              <button
+                onClick={() => {
+                  closeActionDialog(false)
+                }}
+              >
+                Abbrechen
+              </button>
+            </div>
+          </aside>
         </div>
       ) : null}
 

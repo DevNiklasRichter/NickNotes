@@ -23,6 +23,7 @@ type BuildTreeInput = {
 type MutableExplorerNode = ExplorerNode & {
   children: MutableExplorerNode[]
   updatedAtMs: number
+  noteCount: number
   normalizedKey?: string
   parentKey: string
 }
@@ -171,10 +172,12 @@ function compareNodes(
       return leftPinned ? -1 : 1
     }
 
-    const leftIndex = toFolderOrderIndex(left.parentKey, leftKey, folderOrder)
-    const rightIndex = toFolderOrderIndex(right.parentKey, rightKey, folderOrder)
-    if (leftIndex !== rightIndex) {
-      return leftIndex - rightIndex
+    if (options.sortMode === 'manual') {
+      const leftIndex = toFolderOrderIndex(left.parentKey, leftKey, folderOrder)
+      const rightIndex = toFolderOrderIndex(right.parentKey, rightKey, folderOrder)
+      if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex
+      }
     }
   }
 
@@ -185,35 +188,40 @@ function compareNodes(
     return left.type === 'file' ? -1 : 1
   }
 
+  if (options.sortMode === 'noteCount' && left.type === 'folder' && right.type === 'folder') {
+    if (left.noteCount !== right.noteCount) {
+      return options.sortDirection === 'asc' ? left.noteCount - right.noteCount : right.noteCount - left.noteCount
+    }
+  }
+
   if (options.sortMode === 'modified') {
     if (left.updatedAtMs !== right.updatedAtMs) {
-      return right.updatedAtMs - left.updatedAtMs
+      return options.sortDirection === 'asc' ? left.updatedAtMs - right.updatedAtMs : right.updatedAtMs - left.updatedAtMs
     }
   }
 
-  if (options.sortMode === 'type') {
-    const leftType = left.type === 'file' ? toFileExtension(left.name) : 'folder'
-    const rightType = right.type === 'file' ? toFileExtension(right.name) : 'folder'
-    const typeCompare = leftType.localeCompare(rightType, 'de')
-    if (typeCompare !== 0) {
-      return typeCompare
-    }
-  }
-
-  return left.name.localeCompare(right.name, 'de')
+  const nameCompare = left.name.localeCompare(right.name, 'de')
+  return options.sortDirection === 'asc' ? nameCompare : -nameCompare
 }
 
-function computeFolderTimestamps(nodes: MutableExplorerNode[]): number {
+function computeFolderAggregates(nodes: MutableExplorerNode[]): { maxTimestamp: number; totalNotes: number } {
   let maxTimestamp = 0
+  let totalNotes = 0
   for (const node of nodes) {
-    if (node.type === 'folder') {
-      node.updatedAtMs = computeFolderTimestamps(node.children)
+    if (node.type === 'file') {
+      node.noteCount = 1
+      totalNotes += 1
+    } else {
+      const childStats = computeFolderAggregates(node.children)
+      node.updatedAtMs = childStats.maxTimestamp
+      node.noteCount = childStats.totalNotes
+      totalNotes += childStats.totalNotes
     }
     if (node.updatedAtMs > maxTimestamp) {
       maxTimestamp = node.updatedAtMs
     }
   }
-  return maxTimestamp
+  return { maxTimestamp, totalNotes }
 }
 
 function sortTree(nodes: MutableExplorerNode[], options: ExplorerOptions, folderOrder: Record<string, string[]>): void {
@@ -297,6 +305,7 @@ export function buildExplorerTree({
   filterQuery,
   dirtyFilePaths,
 }: BuildTreeInput): ExplorerTreeBuildResult {
+  void activeFilePath
   const normalizedGroups = [...groups]
     .map((group) => ({ ...group, key: normalizeGroupKey(group.key) }))
     .sort((left, right) => left.key.length - right.key.length)
@@ -340,6 +349,7 @@ export function buildExplorerTree({
       parentId: parentNode?.id ?? null,
       parentKey,
       normalizedKey: cleanKey,
+      noteCount: 0,
     }
 
     folderByKey.set(cleanKey, node)
@@ -383,6 +393,7 @@ export function buildExplorerTree({
       hidden: isHiddenEntry(fileName) || !isMarkdownFile(fileName),
       updatedAt: file.updated_at,
       updatedAtMs: toTimestampMs(file.updated_at),
+      noteCount: 1,
       modified: dirtyFilePaths?.has(file.path) ?? false,
       parentId: parentNode?.id ?? null,
       parentKey,
@@ -395,12 +406,11 @@ export function buildExplorerTree({
     }
   }
 
-  computeFolderTimestamps(rootNodes)
+  computeFolderAggregates(rootNodes)
   sortTree(rootNodes, options, folderOrder)
 
   const filteredRoots = filterTree(rootNodes, options, filterQuery.trim().toLowerCase())
 
-  const selectedFromPath = fileNodeIdByPath.get(activeFilePath) ?? null
   const nodeById = new Map<string, ExplorerNode>()
   const parentById = new Map<string, string | null>()
 
@@ -417,16 +427,12 @@ export function buildExplorerTree({
   collectMaps(filteredRoots)
 
   let effectiveSelectedNodeId = selectedNodeId
-  if (!effectiveSelectedNodeId || !nodeById.has(effectiveSelectedNodeId)) {
-    effectiveSelectedNodeId = selectedFromPath && nodeById.has(selectedFromPath) ? selectedFromPath : null
+  if (effectiveSelectedNodeId && !nodeById.has(effectiveSelectedNodeId)) {
+    effectiveSelectedNodeId = null
   }
 
   const visibleNodes: ExplorerVisibleNode[] = []
   flattenVisible(filteredRoots, 0, visibleNodes)
-
-  if ((!effectiveSelectedNodeId || !nodeById.has(effectiveSelectedNodeId)) && visibleNodes.length > 0) {
-    effectiveSelectedNodeId = visibleNodes[0].node.id
-  }
 
   applySelection(filteredRoots, effectiveSelectedNodeId)
 

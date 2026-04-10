@@ -76,6 +76,20 @@ class VaultManager:
         if not self.favorite_folders_path.exists():
             self._write_favorite_folders([self.daily_root_name, self.tag_root_name, self.tasks_root_name])
 
+        if not self.ui_settings_path.exists():
+            self.ui_settings_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at": datetime.now().isoformat(timespec="seconds"),
+                        "app": {},
+                        "explorer": {},
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
         self._migrate_legacy_inbox()
 
     def _configure_root_paths(self) -> None:
@@ -93,6 +107,7 @@ class VaultManager:
         self.config_path = self.system_path / "config.json"
         self.tag_groups_path = self.system_path / "tag_groups.json"
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
+        self.ui_settings_path = self.system_path / "ui_settings.json"
 
     def _pick_root_name(self, preferred: str, legacy: str) -> str:
         if (self.vault_path / preferred).is_dir():
@@ -172,16 +187,19 @@ class VaultManager:
 
         siblings = [child for child in parent_path.iterdir() if child.is_dir()]
         for sibling in siblings:
-            if self._label_from_group_dir(sibling.name).lower() == clean_name.lower():
-                return self._group_payload(sibling, set(self._read_favorite_folders()))
+            sibling_token = self._safe_group_dir_token(self._label_from_group_dir(sibling.name))
+            if sibling_token.lower() == token.lower():
+                raise ValueError("Ordner bereits vorhanden")
 
-        target_name = token
-        counter = 2
-        while (parent_path / target_name).exists():
-            target_name = f"{token}_{counter}"
-            counter += 1
+        for sibling_file in parent_path.iterdir():
+            if not sibling_file.is_file():
+                continue
+            if slugify(sibling_file.stem).lower() == token.lower():
+                raise ValueError("Ordner bereits vorhanden")
 
-        target_path = parent_path / target_name
+        target_path = parent_path / token
+        if target_path.exists():
+            raise ValueError("Ordner bereits vorhanden")
         target_path.mkdir(parents=True, exist_ok=True)
         return self._group_payload(target_path, set(self._read_favorite_folders()))
 
@@ -194,17 +212,22 @@ class VaultManager:
         now = datetime.now()
         created_at = now.isoformat(timespec="seconds")
         note_id = make_note_id(now)
-        clean_title = _normalize_label(title) or f"Neue Notiz {now:%Y-%m-%d %H:%M}"
+        clean_title = _normalize_label(title) or "Neue Notiz"
         title_slug = slugify(clean_title) or note_id
 
         note_dir = root_dir / "notes" if self._is_daily_group_key(clean_key) else root_dir
         note_dir.mkdir(parents=True, exist_ok=True)
 
-        note_path = note_dir / f"{now:%Y%m%d_%H%M%S}_{title_slug}.md"
-        suffix = 2
-        while note_path.exists():
-            note_path = note_dir / f"{now:%Y%m%d_%H%M%S}_{title_slug}_{suffix}.md"
-            suffix += 1
+        for sibling_dir in note_dir.iterdir():
+            if not sibling_dir.is_dir():
+                continue
+            sibling_token = self._safe_group_dir_token(self._label_from_group_dir(sibling_dir.name))
+            if sibling_token.lower() == title_slug.lower():
+                raise ValueError("Datei bereits vorhanden")
+
+        note_path = note_dir / f"{title_slug}.md"
+        if note_path.exists():
+            raise ValueError("Datei bereits vorhanden")
 
         frontmatter = {
             "id": note_id,
@@ -367,6 +390,67 @@ class VaultManager:
             return json.loads(self.config_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+
+    def read_ui_settings(self) -> dict[str, Any]:
+        default_payload: dict[str, Any] = {
+            "updated_at": "",
+            "app": {},
+            "explorer": {},
+        }
+        if not self.ui_settings_path.exists():
+            return default_payload
+
+        try:
+            payload = json.loads(self.ui_settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return default_payload
+
+        if not isinstance(payload, dict):
+            return default_payload
+
+        app_settings = payload.get("app")
+        explorer_settings = payload.get("explorer")
+        updated_at = payload.get("updated_at")
+
+        return {
+            "updated_at": updated_at if isinstance(updated_at, str) else "",
+            "app": app_settings if isinstance(app_settings, dict) else {},
+            "explorer": explorer_settings if isinstance(explorer_settings, dict) else {},
+        }
+
+    def update_ui_settings(
+        self,
+        app_settings: dict[str, Any] | None = None,
+        explorer_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        current = self.read_ui_settings()
+        current_app = current.get("app")
+        current_explorer = current.get("explorer")
+        next_app = dict(current_app) if isinstance(current_app, dict) else {}
+        next_explorer = dict(current_explorer) if isinstance(current_explorer, dict) else {}
+
+        if app_settings is not None:
+            if isinstance(app_settings, dict):
+                next_app.update(app_settings)
+            else:
+                next_app = {}
+
+        if explorer_settings is not None:
+            if isinstance(explorer_settings, dict):
+                next_explorer = dict(explorer_settings)
+            else:
+                next_explorer = {}
+
+        payload = {
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "app": next_app,
+            "explorer": next_explorer,
+        }
+        self.ui_settings_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return payload
 
     def read_tag_groups(self) -> dict[str, list[str]]:
         if not self.tag_groups_path.exists():
@@ -939,14 +1023,29 @@ class VaultManager:
         except OSError:
             pass
 
-    def _collect_custom_group_payloads(self, root: Path, favorites: set[str]) -> list[dict[str, Any]]:
+    def _collect_custom_group_payloads(
+        self, root: Path, favorites: set[str], seen: set[Path] | None = None
+    ) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
-        payloads.append(self._group_payload(root, favorites))
+        seen_paths = seen if seen is not None else set()
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            return payloads
+        if resolved_root in seen_paths:
+            return payloads
+        seen_paths.add(resolved_root)
+
+        try:
+            payloads.append(self._group_payload(root, favorites))
+        except (OSError, ValueError):
+            return payloads
+
         child_dirs = self._sorted_dirs(root)
         for child in child_dirs:
             if self._is_system_name(child.name):
                 continue
-            payloads.extend(self._collect_custom_group_payloads(child, favorites))
+            payloads.extend(self._collect_custom_group_payloads(child, favorites, seen_paths))
         return payloads
 
     def _group_payload(self, directory: Path, favorites: set[str]) -> dict[str, Any]:
@@ -1017,7 +1116,22 @@ class VaultManager:
         return self._safe_group_dir_token(value)
 
     def _sorted_dirs(self, directory: Path) -> list[Path]:
-        return sorted([child for child in directory.iterdir() if child.is_dir()], key=lambda item: item.name.lower())
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return []
+
+        dirs: list[Path] = []
+        for child in entries:
+            try:
+                if child.is_symlink():
+                    continue
+                if child.is_dir():
+                    dirs.append(child)
+            except OSError:
+                continue
+
+        return sorted(dirs, key=lambda item: item.name.lower())
 
     def _is_system_name(self, name: str) -> bool:
         return name in {"99_system", "system", ".system"}
@@ -1110,7 +1224,10 @@ class VaultManager:
             if clean == "03_tasks" and (self.vault_path / "tasks").is_dir():
                 clean = "tasks"
             target = self.vault_path / clean
-            if not target.exists() or not target.is_dir():
+            try:
+                if not target.exists() or not target.is_dir():
+                    continue
+            except OSError:
                 continue
             if self._is_system_name(clean.split("/")[0]):
                 continue

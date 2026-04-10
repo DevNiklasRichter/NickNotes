@@ -164,6 +164,11 @@ class FavoriteFolderRequest(BaseModel):
     group_key: str = Field(alias="groupKey")
 
 
+class UiSettingsUpdateRequest(BaseModel):
+    app: dict[str, Any] | None = None
+    explorer: dict[str, Any] | None = None
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "vaultLoaded": state.vault is not None}
@@ -546,6 +551,19 @@ def get_review() -> dict[str, Any]:
         "daily": indexer.daily_summary(today),
         "weekly": indexer.weekly_summary(today),
     }
+
+
+@app.get("/ui-settings")
+def get_ui_settings() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"settings": vault.read_ui_settings()}
+
+
+@app.post("/ui-settings")
+def update_ui_settings(req: UiSettingsUpdateRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    settings = vault.update_ui_settings(app_settings=req.app, explorer_settings=req.explorer)
+    return {"settings": settings}
 
 
 @app.get("/tag-groups")

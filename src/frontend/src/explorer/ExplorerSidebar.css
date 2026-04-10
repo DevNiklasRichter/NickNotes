@@ -47,6 +47,51 @@
   align-items: center;
   justify-content: center;
   gap: 0.22rem;
+  position: relative;
+}
+
+.explorer-sort-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.explorer-sort-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.35rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.explorer-sort-menu-section {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.explorer-sort-menu-section span {
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.explorer-sort-menu-section button {
+  text-align: left;
+  border-radius: 7px;
+  padding: 0.28rem 0.42rem;
+  font-size: 0.76rem;
+}
+
+.explorer-sort-menu-section button.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface-contrast) 45%);
 }
 
 .explorer-shell .icon-button.compact {
@@ -831,4 +876,68 @@
 
 .explorer-icon-option-glyph {
   color: var(--text);
+}
+
+.explorer-action-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 73;
+  background: color-mix(in srgb, #000 22%, transparent);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.explorer-action-dialog {
+  width: min(420px, calc(100vw - 2rem));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.explorer-action-dialog h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.explorer-action-dialog p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.explorer-action-dialog input {
+  border-radius: 8px;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.52rem;
+}
+
+.explorer-action-dialog-validation {
+  margin: -0.1rem 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: #c46f00;
+}
+
+.explorer-action-dialog-validation-icon {
+  color: #d07a00;
+  flex-shrink: 0;
+}
+
+.explorer-action-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.explorer-action-dialog-actions .danger {
+  color: var(--error-text);
+  border-color: var(--error-border);
 }

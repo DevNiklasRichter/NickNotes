@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent, MutableRefObject } from 'react'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
-import { bracketMatching, defaultHighlightStyle, indentOnInput, syntaxHighlighting } from '@codemirror/language'
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
-import { Compartment, EditorState } from '@codemirror/state'
-import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightSpecialChars, keymap } from '@codemirror/view'
+import type { DragEvent, KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
+import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
 import { LucideNamedIcon } from './icons/lucideCatalog'
-import type { ExplorerOptions } from './explorer/types'
+import type { ExplorerOptions, ExplorerViewState } from './explorer/types'
 import './App.css'
 
 type VaultCounts = {
@@ -115,16 +111,7 @@ type TagActionDialogState = {
   resolve: (result: { actionId: string; value: string }) => void
 } | null
 
-const THEME_STORAGE_KEY = 'nicknotes-theme'
-const DISPLAY_NAME_STORAGE_KEY = 'nicknotes-display-name'
 const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
-const SIDEBAR_OPEN_STORAGE_KEY = 'nicknotes-sidebar-open'
-const STATUS_BAR_PREFS_STORAGE_KEY = 'nicknotes-statusbar-prefs'
-const EXPLORER_OPTIONS_STORAGE_KEY = 'nicknotes-explorer-options'
-const EXPLORER_WIDTH_STORAGE_KEY = 'nicknotes-explorer-width'
-const EDITOR_PANEL_OPEN_STORAGE_KEY = 'nicknotes-editor-panel-open'
-const CAPTURE_PANEL_OPEN_STORAGE_KEY = 'nicknotes-capture-panel-open'
-const CAPTURE_PINNED_STORAGE_KEY = 'nicknotes-capture-pinned'
 const SETTINGS_TAB_PATH = '__nicknotes_settings__'
 
 type StatusBarPrefs = {
@@ -146,13 +133,19 @@ const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefs = {
 const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
   showHiddenFiles: false,
   showFileExtensions: true,
-  sortMode: 'name',
+  sortMode: 'manual',
+  sortDirection: 'asc',
   foldersFirst: true,
   showIcons: true,
   compactMode: true,
 }
 
 type TagGroupsMap = Record<string, string[]>
+type UiSettingsPayload = {
+  updated_at?: string
+  app?: Record<string, unknown>
+  explorer?: Record<string, unknown>
+}
 type NoteGroup = {
   key: string
   label: string
@@ -170,13 +163,6 @@ type MarkdownPreviewProps = {
   currentPath?: string
   resolveWikiLink?: (target: string, currentPath?: string) => SearchRow | null
   onOpenWikiLink?: (row: SearchRow) => void
-}
-
-type MarkdownEditorApi = {
-  insertText: (text: string) => void
-  getSelectedText: () => string
-  getMarkdown: () => string
-  focus: () => void
 }
 
 const WIKI_LINK_HREF_PREFIX = 'wikilink://'
@@ -390,178 +376,10 @@ function MarkdownPreview({
   )
 }
 
-type CodeMirrorMarkdownEditorProps = {
-  value: string
-  theme: ThemeMode
-  onChange: (nextValue: string) => void
-  editorApiRef: MutableRefObject<MarkdownEditorApi | null>
-}
-
-function buildCodeMirrorTheme(theme: ThemeMode) {
-  return EditorView.theme(
-    {
-      '&': {
-        height: '100%',
-        minHeight: '0',
-        backgroundColor: 'var(--surface-contrast)',
-        color: 'var(--text)',
-      },
-      '.cm-scroller': {
-        overflow: 'auto',
-        fontFamily: "'Consolas', 'Cascadia Mono', monospace",
-        lineHeight: '1.6',
-      },
-      '.cm-content': {
-        minHeight: '100%',
-        padding: '1rem 1.1rem 1.25rem',
-        caretColor: 'var(--accent)',
-      },
-      '.cm-gutters': {
-        border: 'none',
-        backgroundColor: 'var(--surface)',
-        color: 'var(--muted)',
-      },
-      '.cm-activeLine': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 35%, transparent)',
-      },
-      '.cm-activeLineGutter': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 45%, transparent)',
-      },
-      '.cm-selectionBackground, .cm-content ::selection': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 75%, transparent)',
-      },
-      '&.cm-focused': {
-        outline: 'none',
-      },
-      '.cm-searchMatch': {
-        backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
-        border: '1px solid color-mix(in srgb, var(--accent) 38%, transparent)',
-      },
-      '.cm-searchMatch.cm-searchMatch-selected': {
-        backgroundColor: 'color-mix(in srgb, var(--accent) 35%, transparent)',
-      },
-    },
-    { dark: theme === 'dark' }
-  )
-}
-
-function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef }: CodeMirrorMarkdownEditorProps) {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  const editorRef = useRef<EditorView | null>(null)
-  const onChangeRef = useRef(onChange)
-  const syncingRef = useRef(false)
-  const themeCompartmentRef = useRef(new Compartment())
-
-  useEffect(() => {
-    onChangeRef.current = onChange
-  }, [onChange])
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) {
-      return
-    }
-
-    const instance = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          markdown(),
-          drawSelection(),
-          dropCursor(),
-          highlightSpecialChars(),
-          highlightActiveLine(),
-          indentOnInput(),
-          bracketMatching(),
-          history(),
-          EditorView.lineWrapping,
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          highlightSelectionMatches(),
-          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-          themeCompartmentRef.current.of(buildCodeMirrorTheme(theme)),
-          EditorView.updateListener.of((update) => {
-            if (!update.docChanged || syncingRef.current) {
-              return
-            }
-            onChangeRef.current(update.state.doc.toString())
-          }),
-        ],
-      }),
-    })
-
-    editorRef.current = instance
-    editorApiRef.current = {
-      insertText: (text: string) => {
-        const selection = instance.state.selection.main
-        instance.dispatch({
-          changes: { from: selection.from, to: selection.to, insert: text },
-          selection: { anchor: selection.from + text.length },
-          scrollIntoView: true,
-        })
-      },
-      getSelectedText: () => {
-        const selection = instance.state.selection.main
-        return instance.state.doc.sliceString(selection.from, selection.to)
-      },
-      getMarkdown: () => instance.state.doc.toString(),
-      focus: () => instance.focus(),
-    }
-
-    return () => {
-      editorApiRef.current = null
-      instance.destroy()
-      editorRef.current = null
-    }
-  }, [editorApiRef])
-
-  useEffect(() => {
-    const instance = editorRef.current
-    if (!instance) {
-      return
-    }
-
-    instance.dispatch({
-      effects: themeCompartmentRef.current.reconfigure(buildCodeMirrorTheme(theme)),
-    })
-  }, [theme])
-
-  useEffect(() => {
-    const instance = editorRef.current
-    if (!instance) {
-      return
-    }
-
-    const currentValue = instance.state.doc.toString()
-    if (currentValue === value) {
-      return
-    }
-
-    const selection = instance.state.selection.main
-    const nextAnchor = Math.min(value.length, selection.anchor)
-    const nextHead = Math.min(value.length, selection.head)
-    syncingRef.current = true
-    instance.dispatch({
-      changes: { from: 0, to: currentValue.length, insert: value },
-      selection: { anchor: nextAnchor, head: nextHead },
-      scrollIntoView: false,
-    })
-    syncingRef.current = false
-  }, [value])
-
-  return <div className="code-editor-host" ref={hostRef} />
-}
-
 function getPreferredTheme(): ThemeMode {
   if (typeof window === 'undefined') {
     return 'light'
   }
-
-  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
-  if (storedTheme === 'light' || storedTheme === 'dark') {
-    return storedTheme
-  }
-
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
@@ -656,23 +474,6 @@ function toStorageTagGroups(value: unknown): TagGroupsMap {
   return result
 }
 
-function getStoredDisplayName(): string {
-  if (typeof window === 'undefined') {
-    return 'Max'
-  }
-
-  try {
-    const raw = window.localStorage.getItem(DISPLAY_NAME_STORAGE_KEY)
-    if (!raw) {
-      return 'Max'
-    }
-    const parsed = normalizeLabel(raw)
-    return parsed || 'Max'
-  } catch {
-    return 'Max'
-  }
-}
-
 function getStoredLastNoteBasePath(): string {
   if (typeof window === 'undefined') {
     return ''
@@ -711,110 +512,6 @@ function clearStoredLastNoteBasePath(): void {
   }
 }
 
-function getStoredSidebarOpen(): boolean {
-  if (typeof window === 'undefined') {
-    return true
-  }
-
-  try {
-    const raw = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY)
-    if (raw === '0') {
-      return false
-    }
-    if (raw === '1') {
-      return true
-    }
-  } catch {
-    // Best effort fallback.
-  }
-  return true
-}
-
-function getStoredExplorerWidth(): number {
-  if (typeof window === 'undefined') {
-    return 300
-  }
-
-  try {
-    const raw = window.localStorage.getItem(EXPLORER_WIDTH_STORAGE_KEY)
-    const parsed = Number(raw)
-    if (!Number.isFinite(parsed)) {
-      return 300
-    }
-    return Math.max(220, Math.min(520, Math.round(parsed)))
-  } catch {
-    return 300
-  }
-}
-
-function getStoredPanelOpen(key: string, fallback: boolean): boolean {
-  if (typeof window === 'undefined') {
-    return fallback
-  }
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (raw === '1') {
-      return true
-    }
-    if (raw === '0') {
-      return false
-    }
-  } catch {
-    // Best effort.
-  }
-  return fallback
-}
-
-function getStoredStatusBarPrefs(): StatusBarPrefs {
-  if (typeof window === 'undefined') {
-    return { ...DEFAULT_STATUS_BAR_PREFS }
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STATUS_BAR_PREFS_STORAGE_KEY)
-    if (!raw) {
-      return { ...DEFAULT_STATUS_BAR_PREFS }
-    }
-    const parsed = JSON.parse(raw) as Partial<StatusBarPrefs>
-    return {
-      showNoteBaseName: parsed.showNoteBaseName ?? DEFAULT_STATUS_BAR_PREFS.showNoteBaseName,
-      showOpenTasks: parsed.showOpenTasks ?? DEFAULT_STATUS_BAR_PREFS.showOpenTasks,
-      showDueToday: parsed.showDueToday ?? DEFAULT_STATUS_BAR_PREFS.showDueToday,
-      showTotalNotes: parsed.showTotalNotes ?? DEFAULT_STATUS_BAR_PREFS.showTotalNotes,
-      showStateMessage: parsed.showStateMessage ?? DEFAULT_STATUS_BAR_PREFS.showStateMessage,
-    }
-  } catch {
-    return { ...DEFAULT_STATUS_BAR_PREFS }
-  }
-}
-
-function getStoredExplorerOptions(): ExplorerOptions {
-  if (typeof window === 'undefined') {
-    return { ...DEFAULT_EXPLORER_OPTIONS }
-  }
-
-  try {
-    const raw = window.localStorage.getItem(EXPLORER_OPTIONS_STORAGE_KEY)
-    if (!raw) {
-      return { ...DEFAULT_EXPLORER_OPTIONS }
-    }
-    const parsed = JSON.parse(raw) as Partial<ExplorerOptions>
-    return {
-      showHiddenFiles: parsed.showHiddenFiles ?? DEFAULT_EXPLORER_OPTIONS.showHiddenFiles,
-      showFileExtensions: parsed.showFileExtensions ?? DEFAULT_EXPLORER_OPTIONS.showFileExtensions,
-      sortMode:
-        parsed.sortMode === 'modified' || parsed.sortMode === 'type' || parsed.sortMode === 'name'
-          ? parsed.sortMode
-          : DEFAULT_EXPLORER_OPTIONS.sortMode,
-      foldersFirst: parsed.foldersFirst ?? DEFAULT_EXPLORER_OPTIONS.foldersFirst,
-      showIcons: parsed.showIcons ?? DEFAULT_EXPLORER_OPTIONS.showIcons,
-      compactMode: parsed.compactMode ?? DEFAULT_EXPLORER_OPTIONS.compactMode,
-    }
-  } catch {
-    return { ...DEFAULT_EXPLORER_OPTIONS }
-  }
-}
-
 function areStatusBarPrefsEqual(left: StatusBarPrefs, right: StatusBarPrefs): boolean {
   return (
     left.showNoteBaseName === right.showNoteBaseName &&
@@ -830,10 +527,128 @@ function areExplorerOptionsEqual(left: ExplorerOptions, right: ExplorerOptions):
     left.showHiddenFiles === right.showHiddenFiles &&
     left.showFileExtensions === right.showFileExtensions &&
     left.sortMode === right.sortMode &&
+    left.sortDirection === right.sortDirection &&
     left.foldersFirst === right.foldersFirst &&
     left.showIcons === right.showIcons &&
     left.compactMode === right.compactMode
   )
+}
+
+function toBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function toBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function toThemeMode(value: unknown, fallback: ThemeMode): ThemeMode {
+  return value === 'light' || value === 'dark' ? value : fallback
+}
+
+function toStatusBarPrefsFromSettings(value: unknown): StatusBarPrefs {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_STATUS_BAR_PREFS }
+  }
+  const source = value as Partial<StatusBarPrefs>
+  return {
+    showNoteBaseName: source.showNoteBaseName ?? DEFAULT_STATUS_BAR_PREFS.showNoteBaseName,
+    showOpenTasks: source.showOpenTasks ?? DEFAULT_STATUS_BAR_PREFS.showOpenTasks,
+    showDueToday: source.showDueToday ?? DEFAULT_STATUS_BAR_PREFS.showDueToday,
+    showTotalNotes: source.showTotalNotes ?? DEFAULT_STATUS_BAR_PREFS.showTotalNotes,
+    showStateMessage: source.showStateMessage ?? DEFAULT_STATUS_BAR_PREFS.showStateMessage,
+  }
+}
+
+function toExplorerOptionsFromSettings(value: unknown): ExplorerOptions {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_EXPLORER_OPTIONS }
+  }
+  const source = value as Partial<ExplorerOptions>
+  return {
+    showHiddenFiles: source.showHiddenFiles ?? DEFAULT_EXPLORER_OPTIONS.showHiddenFiles,
+    showFileExtensions: source.showFileExtensions ?? DEFAULT_EXPLORER_OPTIONS.showFileExtensions,
+    sortMode:
+      source.sortMode === 'manual' ||
+      source.sortMode === 'modified' ||
+      source.sortMode === 'noteCount' ||
+      source.sortMode === 'name'
+        ? source.sortMode
+        : DEFAULT_EXPLORER_OPTIONS.sortMode,
+    sortDirection: source.sortDirection === 'desc' || source.sortDirection === 'asc' ? source.sortDirection : DEFAULT_EXPLORER_OPTIONS.sortDirection,
+    foldersFirst: source.foldersFirst ?? DEFAULT_EXPLORER_OPTIONS.foldersFirst,
+    showIcons: source.showIcons ?? DEFAULT_EXPLORER_OPTIONS.showIcons,
+    compactMode: source.compactMode ?? DEFAULT_EXPLORER_OPTIONS.compactMode,
+  }
+}
+
+function toExpandedTagGroups(value: unknown): Record<string, boolean> {
+  const fallback = {
+    daily: true,
+    tags: true,
+    other: true,
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return fallback
+  }
+  const source = value as Record<string, unknown>
+  const next: Record<string, boolean> = {}
+  for (const [key, raw] of Object.entries(source)) {
+    if (!key) {
+      continue
+    }
+    next[key] = Boolean(raw)
+  }
+  return { ...fallback, ...next }
+}
+
+function toExplorerViewStateFromSettings(value: unknown): ExplorerViewState {
+  const fallback: ExplorerViewState = {
+    expandedNodes: {},
+    selectedNodeId: null,
+    filterQuery: '',
+    folderOrder: {},
+    iconOverrides: { folders: {}, files: {} },
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return fallback
+  }
+  const source = value as Record<string, unknown>
+  const expandedNodes =
+    source.expandedNodes && typeof source.expandedNodes === 'object' && !Array.isArray(source.expandedNodes)
+      ? (source.expandedNodes as Record<string, boolean>)
+      : {}
+  const folderOrder =
+    source.folderOrder && typeof source.folderOrder === 'object' && !Array.isArray(source.folderOrder)
+      ? (source.folderOrder as Record<string, string[]>)
+      : {}
+  const iconOverridesRaw =
+    source.iconOverrides && typeof source.iconOverrides === 'object' && !Array.isArray(source.iconOverrides)
+      ? (source.iconOverrides as Record<string, unknown>)
+      : {}
+
+  const iconFolders =
+    iconOverridesRaw.folders && typeof iconOverridesRaw.folders === 'object' && !Array.isArray(iconOverridesRaw.folders)
+      ? (iconOverridesRaw.folders as Record<string, string>)
+      : {}
+  const iconFiles =
+    iconOverridesRaw.files && typeof iconOverridesRaw.files === 'object' && !Array.isArray(iconOverridesRaw.files)
+      ? (iconOverridesRaw.files as Record<string, string>)
+      : {}
+
+  return {
+    expandedNodes,
+    selectedNodeId: typeof source.selectedNodeId === 'string' ? source.selectedNodeId : null,
+    filterQuery: typeof source.filterQuery === 'string' ? source.filterQuery : '',
+    folderOrder,
+    iconOverrides: {
+      folders: iconFolders,
+      files: iconFiles,
+    },
+  }
 }
 
 function toLocalIsoDate(): string {
@@ -859,6 +674,9 @@ function getRelativeVaultPath(path: string, noteBasePath: string): string {
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
+  const uiSettingsReadyRef = useRef(false)
+  const explorerViewSaveTimerRef = useRef<number | null>(null)
+  const appLayoutSaveTimerRef = useRef<number | null>(null)
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
@@ -881,28 +699,28 @@ function App() {
   const [weekly, setWeekly] = useState<ReviewWeekly | null>(null)
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
-  const [sidebarOpen, setSidebarOpen] = useState(getStoredSidebarOpen)
-  const [displayName, setDisplayName] = useState(getStoredDisplayName)
-  const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
-  const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>(getStoredExplorerOptions)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [displayName, setDisplayName] = useState('Max')
+  const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
+  const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
   const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme)
-  const [savedDisplayName, setSavedDisplayName] = useState(getStoredDisplayName)
-  const [savedSidebarOpen, setSavedSidebarOpen] = useState(getStoredSidebarOpen)
-  const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>(getStoredStatusBarPrefs)
-  const [savedExplorerOptions, setSavedExplorerOptions] = useState<ExplorerOptions>(getStoredExplorerOptions)
-  const [explorerWidth, setExplorerWidth] = useState(getStoredExplorerWidth)
-  const [editorPanelOpen, setEditorPanelOpen] = useState(() =>
-    getStoredPanelOpen(EDITOR_PANEL_OPEN_STORAGE_KEY, true)
-  )
-  const [capturePanelOpen, setCapturePanelOpen] = useState(() =>
-    getStoredPanelOpen(CAPTURE_PANEL_OPEN_STORAGE_KEY, true)
-  )
-  const [capturePinned, setCapturePinned] = useState(() => getStoredPanelOpen(CAPTURE_PINNED_STORAGE_KEY, true))
+  const [savedDisplayName, setSavedDisplayName] = useState('Max')
+  const [savedSidebarOpen, setSavedSidebarOpen] = useState(true)
+  const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
+  const [savedExplorerOptions, setSavedExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
+  const [explorerWidth, setExplorerWidth] = useState(300)
+  const [editorPanelOpen, setEditorPanelOpen] = useState(true)
+  const [capturePanelOpen, setCapturePanelOpen] = useState(true)
+  const [capturePinned, setCapturePinned] = useState(true)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     daily: true,
     tags: true,
     other: true,
   })
+  const [explorerViewSeed, setExplorerViewSeed] = useState<ExplorerViewState | null>(null)
+  const [explorerViewSeedId, setExplorerViewSeedId] = useState(0)
+  const [explorerRevealPath, setExplorerRevealPath] = useState('')
+  const [explorerRevealRequestId, setExplorerRevealRequestId] = useState(0)
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
   const [viewerDropActive, setViewerDropActive] = useState(false)
@@ -948,6 +766,18 @@ function App() {
     }
   }, [])
 
+  useEffect(
+    () => () => {
+      if (explorerViewSaveTimerRef.current) {
+        window.clearTimeout(explorerViewSaveTimerRef.current)
+      }
+      if (appLayoutSaveTimerRef.current) {
+        window.clearTimeout(appLayoutSaveTimerRef.current)
+      }
+    },
+    []
+  )
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     if (window.nicknotes?.setWindowTheme) {
@@ -958,36 +788,24 @@ function App() {
   }, [theme])
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(EXPLORER_WIDTH_STORAGE_KEY, String(explorerWidth))
-    } catch {
-      // Best effort.
+    if (!vaultLoaded || !uiSettingsReadyRef.current) {
+      return
     }
-  }, [explorerWidth])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(EDITOR_PANEL_OPEN_STORAGE_KEY, editorPanelOpen ? '1' : '0')
-    } catch {
-      // Best effort.
+    if (appLayoutSaveTimerRef.current) {
+      window.clearTimeout(appLayoutSaveTimerRef.current)
     }
-  }, [editorPanelOpen])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(CAPTURE_PANEL_OPEN_STORAGE_KEY, capturePanelOpen ? '1' : '0')
-    } catch {
-      // Best effort.
+    appLayoutSaveTimerRef.current = window.setTimeout(() => {
+      void saveUiSettingsPatch({ app: buildLayoutUiSettings() }).catch(() => {
+        // Best effort.
+      })
+    }, 250)
+    return () => {
+      if (appLayoutSaveTimerRef.current) {
+        window.clearTimeout(appLayoutSaveTimerRef.current)
+        appLayoutSaveTimerRef.current = null
+      }
     }
-  }, [capturePanelOpen])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(CAPTURE_PINNED_STORAGE_KEY, capturePinned ? '1' : '0')
-    } catch {
-      // Best effort.
-    }
-  }, [capturePinned])
+  }, [backendUrl, capturePanelOpen, capturePinned, editorPanelOpen, expandedFolders, explorerWidth, vaultLoaded])
 
   const settingsDirty = useMemo(
     () =>
@@ -1136,6 +954,79 @@ function App() {
     ])
   }
 
+  const saveUiSettingsPatch = async (patch: { app?: Record<string, unknown>; explorer?: ExplorerViewState }) => {
+    await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings', {
+      method: 'POST',
+      body: JSON.stringify(patch),
+    })
+  }
+
+  const buildFullAppUiSettings = (): Record<string, unknown> => ({
+    theme,
+    displayName,
+    sidebarOpen,
+    statusBarPrefs,
+    explorerOptions,
+    explorerWidth,
+    editorPanelOpen,
+    capturePanelOpen,
+    capturePinned,
+    tagExpandedGroups: expandedFolders,
+  })
+
+  const buildLayoutUiSettings = (): Record<string, unknown> => ({
+    explorerWidth,
+    editorPanelOpen,
+    capturePanelOpen,
+    capturePinned,
+    tagExpandedGroups: expandedFolders,
+  })
+
+  const applyUiSettings = (settings: UiSettingsPayload) => {
+    const appSettings = settings.app ?? {}
+
+    const nextTheme = toThemeMode(appSettings.theme, getPreferredTheme())
+    const nextDisplayName = normalizeLabel(typeof appSettings.displayName === 'string' ? appSettings.displayName : '') || 'Max'
+    const nextSidebarOpen = toBoolean(appSettings.sidebarOpen, true)
+    const nextStatusBarPrefs = toStatusBarPrefsFromSettings(appSettings.statusBarPrefs)
+    const nextExplorerOptions = toExplorerOptionsFromSettings(appSettings.explorerOptions)
+    const nextExplorerWidth = toBoundedNumber(appSettings.explorerWidth, 300, 220, 520)
+    const nextEditorPanelOpen = toBoolean(appSettings.editorPanelOpen, true)
+    const nextCapturePanelOpen = toBoolean(appSettings.capturePanelOpen, true)
+    const nextCapturePinned = toBoolean(appSettings.capturePinned, true)
+    const nextExpandedGroups = toExpandedTagGroups(appSettings.tagExpandedGroups)
+
+    setTheme(nextTheme)
+    setDisplayName(nextDisplayName)
+    setSidebarOpen(nextSidebarOpen)
+    setStatusBarPrefs(nextStatusBarPrefs)
+    setExplorerOptions(nextExplorerOptions)
+    setSavedTheme(nextTheme)
+    setSavedDisplayName(nextDisplayName)
+    setSavedSidebarOpen(nextSidebarOpen)
+    setSavedStatusBarPrefs(nextStatusBarPrefs)
+    setSavedExplorerOptions(nextExplorerOptions)
+    setExplorerWidth(nextExplorerWidth)
+    setEditorPanelOpen(nextEditorPanelOpen)
+    setCapturePanelOpen(nextCapturePanelOpen)
+    setCapturePinned(nextCapturePinned)
+    setExpandedFolders(nextExpandedGroups)
+
+    const nextExplorerViewState = toExplorerViewStateFromSettings(settings.explorer)
+    setExplorerViewSeed(nextExplorerViewState)
+    setExplorerViewSeedId((prev) => prev + 1)
+    uiSettingsReadyRef.current = true
+  }
+
+  const loadUiSettings = async () => {
+    try {
+      const response = await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings')
+      applyUiSettings(response.settings ?? {})
+    } catch {
+      uiSettingsReadyRef.current = true
+    }
+  }
+
   const openVaultAtPath = async (rawPath: string, successMessage: string): Promise<boolean> => {
     const path = normalizeLabel(rawPath)
     if (!path) {
@@ -1151,6 +1042,7 @@ function App() {
       body: JSON.stringify({ path }),
     })
     const loadedPath = response.noteBasePath ?? path
+    uiSettingsReadyRef.current = false
     setVaultPath(loadedPath)
     setVaultLoaded(true)
     setCounts(response.counts)
@@ -1161,6 +1053,7 @@ function App() {
     setMessage(successMessage)
     setError('')
 
+    await loadUiSettings()
     await refreshWorkspaceData(true)
     return true
   }
@@ -1169,7 +1062,10 @@ function App() {
     try {
       const state = await apiRequest<BackendState>(backendUrl, '/state')
       if (!state.vaultLoaded) {
+        uiSettingsReadyRef.current = false
         setVaultLoaded(false)
+        setExplorerViewSeed(null)
+        setExplorerViewSeedId((prev) => prev + 1)
         const rememberedPath = getStoredLastNoteBasePath()
         if (rememberedPath && !autoOpenTriedRef.current) {
           autoOpenTriedRef.current = true
@@ -1189,12 +1085,14 @@ function App() {
       const loadedPath = state.noteBasePath ?? state.vaultPath ?? ''
       setVaultPath(loadedPath)
       storeLastNoteBasePath(loadedPath)
+      uiSettingsReadyRef.current = false
       if (state.counts) {
         setCounts(state.counts)
       }
       setMessage('NoteBase geladen.')
       setError('')
 
+      await loadUiSettings()
       await refreshWorkspaceData(true)
     } catch (caught) {
       setError(`Backend nicht erreichbar: ${String(caught)}`)
@@ -1492,11 +1390,13 @@ function App() {
       setVaultPath(response.noteBasePath ?? response.vaultPath)
       setVaultLoaded(true)
       setCounts(response.counts)
+      uiSettingsReadyRef.current = false
       storeLastNoteBasePath(response.noteBasePath ?? response.vaultPath)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
       setMessage(`Neue NoteBase erstellt: ${response.noteBasePath ?? response.vaultPath}`)
+      await loadUiSettings()
       await refreshWorkspaceData(true)
     } catch (caught) {
       setError(String(caught))
@@ -1517,13 +1417,13 @@ function App() {
     }
   }
 
-  const saveSettings = (): boolean => {
+  const saveSettings = async (): Promise<boolean> => {
     try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-      window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName)
-      window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, sidebarOpen ? '1' : '0')
-      window.localStorage.setItem(STATUS_BAR_PREFS_STORAGE_KEY, JSON.stringify(statusBarPrefs))
-      window.localStorage.setItem(EXPLORER_OPTIONS_STORAGE_KEY, JSON.stringify(explorerOptions))
+      if (vaultLoaded) {
+        await saveUiSettingsPatch({
+          app: buildFullAppUiSettings(),
+        })
+      }
       setSavedTheme(theme)
       setSavedDisplayName(displayName)
       setSavedSidebarOpen(sidebarOpen)
@@ -1678,6 +1578,7 @@ function App() {
         body: JSON.stringify({ confirmDelete: true }),
       })
       setVaultLoaded(false)
+      uiSettingsReadyRef.current = false
       setVaultPath('')
       setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
       setTasks([])
@@ -1691,6 +1592,8 @@ function App() {
       setCompareNotePath('')
       setCustomTagGroups({})
       setNoteGroups([])
+      setExplorerViewSeed(null)
+      setExplorerViewSeedId((prev) => prev + 1)
       clearStoredLastNoteBasePath()
       setMessage(`NoteBase geloescht: ${response.deletedPath}`)
     } catch (caught) {
@@ -1887,6 +1790,16 @@ function App() {
     setCompareNotePath('')
   }
 
+  const revealActiveNoteInExplorer = () => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+    setSidebarView('notes')
+    setSidebarOpen(true)
+    setExplorerRevealPath(activeTab.path)
+    setExplorerRevealRequestId((prev) => prev + 1)
+  }
+
   const showNoteInSplitView = (path: string) => {
     if (openNoteTabs.length < 2) {
       return
@@ -1970,6 +1883,20 @@ function App() {
 
   const setFolderOpen = (folderKey: string) => {
     setExpandedFolders((prev) => ({ ...prev, [folderKey]: true }))
+  }
+
+  const handleExplorerViewStateChange = (nextState: ExplorerViewState) => {
+    if (!vaultLoaded || !uiSettingsReadyRef.current) {
+      return
+    }
+    if (explorerViewSaveTimerRef.current) {
+      window.clearTimeout(explorerViewSaveTimerRef.current)
+    }
+    explorerViewSaveTimerRef.current = window.setTimeout(() => {
+      void saveUiSettingsPatch({ explorer: nextState }).catch(() => {
+        // Best effort.
+      })
+    }, 250)
   }
 
   const getDraggedNoteData = (event: DragEvent<HTMLElement>) => {
@@ -2824,6 +2751,12 @@ function App() {
         onMoveFolder={moveExplorerFolder}
         onToggleFavoriteFolder={toggleFavoriteFolder}
         options={explorerOptions}
+        onOptionsChange={setExplorerOptions}
+        revealFilePath={explorerRevealPath}
+        revealRequestId={explorerRevealRequestId}
+        viewStateSeed={explorerViewSeed}
+        viewStateSeedId={explorerViewSeedId}
+        onViewStateChange={handleExplorerViewStateChange}
         onRefresh={() => {
           void refreshExplorerSidebarData()
         }}
@@ -2965,6 +2898,14 @@ function App() {
                     title="Speichern"
                   >
                     <LucideNamedIcon name="Save" size={14} />
+                  </button>
+                  <button
+                    className="icon-button compact muted"
+                    onClick={revealActiveNoteInExplorer}
+                    disabled={activeTab?.kind !== 'note'}
+                    title="Im Explorer anzeigen"
+                  >
+                    <LucideNamedIcon name="FolderSearch" size={14} />
                   </button>
                   <button
                     className="icon-button compact muted"
@@ -3204,9 +3145,14 @@ function App() {
                         </section>
 
                         <div className="settings-editor-actions">
-                          <button onClick={saveSettings} disabled={!settingsDirty}>
-                            Speichern
-                          </button>
+                            <button
+                              onClick={() => {
+                                void saveSettings()
+                              }}
+                              disabled={!settingsDirty}
+                            >
+                              Speichern
+                            </button>
                           <button onClick={discardSettings} disabled={!settingsDirty}>
                             Verwerfen
                           </button>

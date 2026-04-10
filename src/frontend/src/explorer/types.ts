@@ -1,6 +1,7 @@
 ﻿export type ExplorerNodeType = 'file' | 'folder'
 
-export type ExplorerSortMode = 'name' | 'modified' | 'type'
+export type ExplorerSortMode = 'manual' | 'name' | 'modified' | 'noteCount'
+export type ExplorerSortDirection = 'asc' | 'desc'
 
 export type ExplorerGitStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
 
@@ -50,9 +51,23 @@ export type ExplorerOptions = {
   showHiddenFiles: boolean
   showFileExtensions: boolean
   sortMode: ExplorerSortMode
+  sortDirection: ExplorerSortDirection
   foldersFirst: boolean
   showIcons: boolean
   compactMode: boolean
+}
+
+export type ExplorerIconOverrides = {
+  folders: Record<string, string>
+  files: Record<string, string>
+}
+
+export type ExplorerViewState = {
+  expandedNodes: Record<string, boolean>
+  selectedNodeId: string | null
+  filterQuery: string
+  folderOrder: Record<string, string[]>
+  iconOverrides: ExplorerIconOverrides
 }
 
 export type ExplorerTreeBuildResult = {
