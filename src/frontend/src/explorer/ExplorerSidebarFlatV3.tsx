@@ -321,6 +321,14 @@ export function ExplorerSidebar({
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const lastAutoRevealPathRef = useRef('')
   const lastHandledRevealRequestRef = useRef<number | null>(null)
+  const previewClickTimerRef = useRef<number | null>(null)
+
+  const clearPreviewClickTimer = useCallback(() => {
+    if (previewClickTimerRef.current !== null) {
+      window.clearTimeout(previewClickTimerRef.current)
+      previewClickTimerRef.current = null
+    }
+  }, [])
 
   const fixedRootKeys = useMemo(() => {
     const byToken = new Map<string, string>()
@@ -356,6 +364,12 @@ export function ExplorerSidebar({
     window.addEventListener('pointerdown', onPointerDown)
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [sortMenuOpen])
+
+  useEffect(() => {
+    return () => {
+      clearPreviewClickTimer()
+    }
+  }, [clearPreviewClickTimer])
 
   useEffect(() => {
     const seed = viewStateSeed ?? {
@@ -1125,7 +1139,7 @@ export function ExplorerSidebar({
           const dropPos = dropIndicator?.nodeId === node.id ? dropIndicator.position : null
           const canDrag = node.type === 'file' || (node.canDelete !== false && !isPinnedRoot(node.path))
           const countInfo = folderFileCounts.get(node.id)
-          const folderCount = node.type === 'folder' ? (node.expanded ? countInfo?.direct ?? 0 : countInfo?.total ?? 0) : 0
+          const folderCount = node.type === 'folder' ? (countInfo?.total ?? 0) : 0
 
           return (
             <div key={node.id} className="explorer-row-wrap">
@@ -1146,10 +1160,17 @@ export function ExplorerSidebar({
                 onClick={() => {
                   setSelectedNodeId(node.id)
                   if (node.type === 'file') {
-                    void onPreviewFile(node.path, node.name)
+                    clearPreviewClickTimer()
+                    previewClickTimerRef.current = window.setTimeout(() => {
+                      previewClickTimerRef.current = null
+                      void onPreviewFile(node.path, node.name)
+                    }, 280)
+                  } else {
+                    clearPreviewClickTimer()
                   }
                 }}
                 onDoubleClick={() => {
+                  clearPreviewClickTimer()
                   if (node.type === 'folder') {
                     toggleExpand(node)
                   } else {

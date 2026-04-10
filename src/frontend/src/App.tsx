@@ -8,6 +8,12 @@ import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
 import { LucideNamedIcon } from './icons/lucideCatalog'
 import type { ExplorerOptions, ExplorerViewState } from './explorer/types'
+import {
+  normalizeTagColor,
+  normalizeTagGroups,
+  normalizeTagId,
+  type TagGroupDefinition,
+} from './tags/tagTypes'
 import './App.css'
 
 type VaultCounts = {
@@ -101,14 +107,31 @@ type TagActionDialogAction = {
   label: string
   tone?: TagActionDialogTone
 }
+type TagGroupFormValues = {
+  id: string
+  displayName: string
+  color: string
+}
+type TagFormValues = {
+  id: string
+  displayName: string
+}
+type TagActionDialogResult = {
+  actionId: string
+  value: string
+  groupValues?: TagGroupFormValues
+  tagValues?: TagFormValues
+}
 type TagActionDialogState = {
-  kind: 'input' | 'choice'
+  kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form'
   title: string
   message?: string
   placeholder?: string
   value: string
+  groupValues?: TagGroupFormValues
+  tagValues?: TagFormValues
   actions: TagActionDialogAction[]
-  resolve: (result: { actionId: string; value: string }) => void
+  resolve: (result: TagActionDialogResult) => void
 } | null
 
 const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
@@ -140,7 +163,19 @@ const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
   compactMode: true,
 }
 
-type TagGroupsMap = Record<string, string[]>
+const TAG_COLOR_PRESETS = [
+  '#4f8cff',
+  '#2fba7a',
+  '#ff8a4f',
+  '#d26cf5',
+  '#ff5a6f',
+  '#6c7dff',
+  '#f0a202',
+  '#2ec4b6',
+  '#94a3b8',
+  '#f43f5e',
+]
+
 type UiSettingsPayload = {
   updated_at?: string
   app?: Record<string, unknown>
@@ -444,34 +479,8 @@ function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
   return token === 'daily' || token === 'tags' || token === 'tasks'
 }
 
-function toStorageTagGroups(value: unknown): TagGroupsMap {
-  if (!value || typeof value !== 'object') {
-    return {}
-  }
-
-  const result: TagGroupsMap = {}
-  const candidate = value as Record<string, unknown>
-  for (const [groupName, maybeTags] of Object.entries(candidate)) {
-    if (typeof groupName !== 'string' || !Array.isArray(maybeTags)) {
-      continue
-    }
-
-    const cleanGroup = normalizeLabel(groupName)
-    if (!cleanGroup) {
-      continue
-    }
-
-    const cleanTags = maybeTags
-      .filter((entry): entry is string => typeof entry === 'string')
-      .map((entry) => normalizeLabel(entry))
-      .filter(Boolean)
-
-    result[cleanGroup] = Array.from(new Set(cleanTags)).sort((left, right) =>
-      left.localeCompare(right, 'de')
-    )
-  }
-
-  return result
+function toStorageTagGroups(value: unknown): TagGroupDefinition[] {
+  return normalizeTagGroups(value)
 }
 
 function getStoredLastNoteBasePath(): string {
@@ -721,7 +730,7 @@ function App() {
   const [explorerViewSeedId, setExplorerViewSeedId] = useState(0)
   const [explorerRevealPath, setExplorerRevealPath] = useState('')
   const [explorerRevealRequestId, setExplorerRevealRequestId] = useState(0)
-  const [customTagGroups, setCustomTagGroups] = useState<TagGroupsMap>({})
+  const [customTagGroups, setCustomTagGroups] = useState<TagGroupDefinition[]>([])
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
   const [viewerDropActive, setViewerDropActive] = useState(false)
 
@@ -916,7 +925,7 @@ function App() {
       return
     }
 
-    const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups')
+    const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups')
     setCustomTagGroups(toStorageTagGroups(response.groups))
   }
 
@@ -1036,7 +1045,7 @@ function App() {
     const response = await apiRequest<{
       counts: VaultCounts
       noteBasePath?: string
-      tagGroups?: TagGroupsMap
+      tagGroups?: unknown
     }>(backendUrl, '/notebase/open', {
       method: 'POST',
       body: JSON.stringify({ path }),
@@ -1260,18 +1269,14 @@ function App() {
     return byKey
   }, [noteGroups])
 
-  const mergedTagGroups = useMemo(() => {
-    const merged: TagGroupsMap = {}
-    for (const [group, tags] of Object.entries(customTagGroups)) {
-      merged[group] = Array.from(new Set(tags)).sort((left, right) => left.localeCompare(right, 'de'))
+  const mergedTagGroups = useMemo(() => toStorageTagGroups({ tagGroups: customTagGroups }), [customTagGroups])
+  const mergedTagGroupsById = useMemo(() => {
+    const map = new Map<string, TagGroupDefinition>()
+    for (const group of mergedTagGroups) {
+      map.set(group.id.toLowerCase(), group)
     }
-    return merged
-  }, [customTagGroups])
-
-  const sortedTagGroupNames = useMemo(
-    () => Object.keys(mergedTagGroups).sort((left, right) => left.localeCompare(right, 'de')),
-    [mergedTagGroups]
-  )
+    return map
+  }, [mergedTagGroups])
 
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
@@ -1377,7 +1382,7 @@ function App() {
         vaultPath: string
         noteBasePath?: string
         counts: VaultCounts
-        tagGroups?: TagGroupsMap
+        tagGroups?: unknown
       }>(
         backendUrl,
         '/notebase/create',
@@ -1482,7 +1487,7 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ counts: VaultCounts; tagGroups?: TagGroupsMap }>(
+      const response = await apiRequest<{ counts: VaultCounts; tagGroups?: unknown }>(
         backendUrl,
         '/notes/save',
         {
@@ -1535,7 +1540,7 @@ function App() {
         counts: VaultCounts
         vaultPath: string
         noteBasePath?: string
-        tagGroups?: TagGroupsMap
+        tagGroups?: unknown
       }>(backendUrl, '/notebase/rename', {
         method: 'POST',
         body: JSON.stringify({ newName }),
@@ -1590,7 +1595,7 @@ function App() {
       setActiveNotePath('')
       setSplitView(false)
       setCompareNotePath('')
-      setCustomTagGroups({})
+      setCustomTagGroups([])
       setNoteGroups([])
       setExplorerViewSeed(null)
       setExplorerViewSeedId((prev) => prev + 1)
@@ -2193,13 +2198,15 @@ function App() {
   }
 
   const openTagActionDialog = (config: {
-    kind: 'input' | 'choice'
+    kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form'
     title: string
     message?: string
     placeholder?: string
     initialValue?: string
+    initialGroupValues?: TagGroupFormValues
+    initialTagValues?: TagFormValues
     actions: TagActionDialogAction[]
-  }): Promise<{ actionId: string; value: string }> =>
+  }): Promise<TagActionDialogResult> =>
     new Promise((resolve) => {
       setTagActionDialog({
         kind: config.kind,
@@ -2207,6 +2214,8 @@ function App() {
         message: config.message,
         placeholder: config.placeholder,
         value: config.initialValue ?? '',
+        groupValues: config.initialGroupValues,
+        tagValues: config.initialTagValues,
         actions: config.actions,
         resolve,
       })
@@ -2217,28 +2226,16 @@ function App() {
     if (!current) {
       return
     }
-    const payload = { actionId, value: current.value }
+    const payload: TagActionDialogResult = {
+      actionId,
+      value: current.value,
+      groupValues: current.groupValues,
+      tagValues: current.tagValues,
+    }
     setTagActionDialog(null)
     window.setTimeout(() => {
       current.resolve(payload)
     }, 0)
-  }
-
-  const askTagText = async (title: string, initialValue: string, placeholder: string, confirmLabel: string): Promise<string | null> => {
-    const result = await openTagActionDialog({
-      kind: 'input',
-      title,
-      placeholder,
-      initialValue,
-      actions: [
-        { id: 'confirm', label: confirmLabel, tone: 'primary' },
-        { id: 'cancel', label: 'Abbrechen' },
-      ],
-    })
-    if (result.actionId !== 'confirm') {
-      return null
-    }
-    return normalizeLabel(result.value)
   }
 
   const askTagChoice = async (
@@ -2258,112 +2255,245 @@ function App() {
     return result.actionId
   }
 
+  const openTagGroupFormDialog = async (config: {
+    title: string
+    message?: string
+    confirmLabel: string
+    initialValues: TagGroupFormValues
+    colorOnly?: boolean
+  }): Promise<TagGroupFormValues | null> => {
+    const kind = config.colorOnly ? 'color-form' : 'group-form'
+    const result = await openTagActionDialog({
+      kind,
+      title: config.title,
+      message: config.message,
+      initialGroupValues: config.initialValues,
+      actions: [
+        { id: 'confirm', label: config.confirmLabel, tone: 'primary' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (result.actionId !== 'confirm' || !result.groupValues) {
+      return null
+    }
+    return {
+      id: normalizeTagId(result.groupValues.id),
+      displayName: normalizeLabel(result.groupValues.displayName),
+      color: normalizeTagColor(result.groupValues.color),
+    }
+  }
+
+  const openTagFormDialog = async (config: {
+    title: string
+    message?: string
+    confirmLabel: string
+    initialValues: TagFormValues
+  }): Promise<TagFormValues | null> => {
+    const result = await openTagActionDialog({
+      kind: 'tag-form',
+      title: config.title,
+      message: config.message,
+      initialTagValues: config.initialValues,
+      actions: [
+        { id: 'confirm', label: config.confirmLabel, tone: 'primary' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (result.actionId !== 'confirm' || !result.tagValues) {
+      return null
+    }
+    return {
+      id: normalizeTagId(result.tagValues.id),
+      displayName: normalizeLabel(result.tagValues.displayName),
+    }
+  }
+
+  const resolveTagGroupById = (groupId: string): TagGroupDefinition | null => {
+    const clean = normalizeTagId(groupId)
+    if (!clean) {
+      return null
+    }
+    return mergedTagGroupsById.get(clean.toLowerCase()) ?? null
+  }
+
   const createTagGroup = async () => {
-    const nextGroupName = await askTagText('Neue Tag-Gruppe', 'Neue Gruppe', 'Name der Gruppe', 'Anlegen')
-    if (!nextGroupName) {
+    const form = await openTagGroupFormDialog({
+      title: 'Neue Tag-Gruppe',
+      confirmLabel: 'Anlegen',
+      initialValues: {
+        id: 'projekt',
+        displayName: 'Projekte',
+        color: TAG_COLOR_PRESETS[0],
+      },
+    })
+    if (!form) {
+      return
+    }
+    const nextGroupId = normalizeTagId(form.id)
+    if (!nextGroupId) {
+      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
-    const duplicate = sortedTagGroupNames.find((name) => name.toLowerCase() === nextGroupName.toLowerCase())
+    const duplicate = resolveTagGroupById(nextGroupId)
     if (duplicate) {
-      setMessage(`Die Tag-Gruppe "${duplicate}" existiert bereits.`)
+      setMessage(`Die Tag-Gruppe "${duplicate.displayName}" (${duplicate.id}) existiert bereits.`)
       return
     }
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups/add-group', {
+      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-group', {
         method: 'POST',
-        body: JSON.stringify({ groupName: nextGroupName }),
+        body: JSON.stringify({
+          groupId: nextGroupId,
+          displayName: normalizeLabel(form.displayName) || nextGroupId,
+          color: normalizeTagColor(form.color),
+        }),
       })
       setCustomTagGroups(toStorageTagGroups(response.groups))
-      setFolderOpen(`tag-group-${nextGroupName}`)
-      setMessage(`Tag-Gruppe angelegt: ${nextGroupName}`)
+      setFolderOpen(`tag-group-${nextGroupId}`)
+      setMessage(`Tag-Gruppe angelegt: ${form.displayName || nextGroupId}`)
     } catch (caught) {
       setError(String(caught))
     }
   }
 
   const createTagInExistingGroup = async (preferredGroup: string | null) => {
-    if (sortedTagGroupNames.length === 0) {
+    if (mergedTagGroups.length === 0) {
       setMessage('Lege zuerst eine Tag-Gruppe an.')
       return
     }
 
-    const requestedGroup = normalizeLabel(preferredGroup ?? sortedTagGroupNames[0] ?? '')
-    const groupName = sortedTagGroupNames.find((name) => name.toLowerCase() === requestedGroup.toLowerCase()) ?? sortedTagGroupNames[0]
-    if (!groupName) {
+    const firstGroup = mergedTagGroups[0] ?? null
+    const requestedGroup = preferredGroup ? resolveTagGroupById(preferredGroup) : null
+    const group = requestedGroup ?? firstGroup
+    if (!group) {
       setMessage('Keine gueltige Tag-Gruppe gefunden.')
       return
     }
 
-    const tagName = await askTagText(`Neuer Tag in "${groupName}"`, 'Neuer Tag', 'Tag-Name', 'Anlegen')
-    if (!tagName) {
+    const form = await openTagFormDialog({
+      title: `Neuer Tag in "${group.displayName}"`,
+      confirmLabel: 'Anlegen',
+      initialValues: {
+        id: 'neuer-tag',
+        displayName: 'Neuer Tag',
+      },
+    })
+    if (!form) {
       return
     }
-    const duplicateTag = (mergedTagGroups[groupName] ?? []).find((name) => name.toLowerCase() === tagName.toLowerCase())
+    const tagId = normalizeTagId(form.id)
+    if (!tagId) {
+      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      return
+    }
+
+    const duplicateTag = group.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
     if (duplicateTag) {
-      setMessage(`Der Tag "${duplicateTag}" existiert in "${groupName}" bereits.`)
+      setMessage(`Der Tag "${duplicateTag.displayName}" (${duplicateTag.id}) existiert in "${group.displayName}" bereits.`)
       return
     }
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap }>(backendUrl, '/tag-groups/add-tag', {
+      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-tag', {
         method: 'POST',
-        body: JSON.stringify({ groupName, tagName }),
+        body: JSON.stringify({
+          groupId: group.id,
+          tagId,
+          displayName: normalizeLabel(form.displayName) || tagId,
+        }),
       })
       setCustomTagGroups(toStorageTagGroups(response.groups))
-      setFolderOpen(`tag-group-${groupName}`)
-      setMessage(`Tag hinzugefuegt: ${groupName}:${tagName}`)
+      setFolderOpen(`tag-group-${group.id}`)
+      setMessage(`Tag hinzugefuegt: ${group.displayName} / ${form.displayName || tagId}`)
     } catch (caught) {
       setError(String(caught))
     }
   }
 
   const renameTagGroup = async (groupName: string) => {
-    const newGroupName = await askTagText(`Tag-Gruppe umbenennen (${groupName})`, groupName, 'Neuer Gruppenname', 'Umbenennen')
-    if (!newGroupName || newGroupName.toLowerCase() === groupName.toLowerCase()) {
-      return
-    }
-    const duplicateGroup = sortedTagGroupNames.find(
-      (name) => name.toLowerCase() === newGroupName.toLowerCase() && name.toLowerCase() !== groupName.toLowerCase()
-    )
-    if (duplicateGroup) {
-      setMessage(`Die Tag-Gruppe "${duplicateGroup}" existiert bereits.`)
+    const group = resolveTagGroupById(groupName)
+    if (!group) {
+      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
       return
     }
 
-    const applyChoice = await askTagChoice(
-      'Notiz-Tags mit umbenennen?',
-      `Sollen bestehende Notiz-Tags von "${groupName}:*" automatisch auf "${newGroupName}:*" umgestellt werden?`,
-      [
-        { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-        { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
-      ]
-    )
-    if (!applyChoice) {
+    const form = await openTagGroupFormDialog({
+      title: `Tag-Gruppe bearbeiten (${group.displayName})`,
+      confirmLabel: 'Speichern',
+      initialValues: {
+        id: group.id,
+        displayName: group.displayName,
+        color: group.color || TAG_COLOR_PRESETS[0],
+      },
+    })
+    if (!form) {
       return
     }
-    const applyToNotes = applyChoice === 'apply'
+    const newGroupId = normalizeTagId(form.id)
+    if (!newGroupId) {
+      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      return
+    }
+
+    const duplicateGroup = resolveTagGroupById(newGroupId)
+    if (duplicateGroup && duplicateGroup.id.toLowerCase() !== group.id.toLowerCase()) {
+      setMessage(`Die Tag-Gruppe "${duplicateGroup.displayName}" (${duplicateGroup.id}) existiert bereits.`)
+      return
+    }
+
+    const nextDisplayName = normalizeLabel(form.displayName) || newGroupId
+    const newColor = normalizeTagColor(form.color)
+
+    const idChanged = newGroupId.toLowerCase() !== group.id.toLowerCase()
+    const displayChanged = normalizeLabel(nextDisplayName) !== group.displayName
+    const colorChanged = newColor !== group.color
+    if (!idChanged && !displayChanged && !colorChanged) {
+      return
+    }
+
+    let applyToNotes = false
+    if (idChanged) {
+      const applyChoice = await askTagChoice(
+        'Notiz-Tags mit umbenennen?',
+        `Sollen bestehende Notiz-Tags von "${group.id}:*" automatisch auf "${newGroupId}:*" umgestellt werden?`,
+        [
+          { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
+          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+        ]
+      )
+      if (!applyChoice) {
+        return
+      }
+      applyToNotes = applyChoice === 'apply'
+    }
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
         backendUrl,
         '/tag-groups/rename-group',
         {
           method: 'POST',
-          body: JSON.stringify({ groupName, newGroupName, applyToNotes }),
+          body: JSON.stringify({
+            groupId: group.id,
+            newGroupId,
+            newDisplayName: normalizeLabel(nextDisplayName) || newGroupId,
+            newColor,
+            applyToNotes,
+          }),
         }
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setCounts(response.counts)
-      setFolderOpen(`tag-group-${newGroupName}`)
+      setFolderOpen(`tag-group-${newGroupId}`)
       setMessage(
-        applyToNotes
+        idChanged && applyToNotes
           ? `Tag-Gruppe umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
-          : 'Tag-Gruppe umbenannt. Historische Notiz-Tags wurden beibehalten.'
+          : 'Tag-Gruppe aktualisiert.'
       )
       await Promise.all([runSearch(searchQuery), refreshReview()])
     } catch (caught) {
@@ -2371,9 +2501,61 @@ function App() {
     }
   }
 
+  const setTagGroupColor = async (groupName: string) => {
+    const group = resolveTagGroupById(groupName)
+    if (!group) {
+      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
+      return
+    }
+
+    const form = await openTagGroupFormDialog({
+      title: `Farbe fuer "${group.displayName}"`,
+      confirmLabel: 'Speichern',
+      initialValues: {
+        id: group.id,
+        displayName: group.displayName,
+        color: group.color || TAG_COLOR_PRESETS[0],
+      },
+      colorOnly: true,
+    })
+    if (!form) {
+      return
+    }
+
+    const newColor = normalizeTagColor(form.color)
+    if (newColor === group.color) {
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
+        backendUrl,
+        '/tag-groups/rename-group',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            groupId: group.id,
+            newGroupId: group.id,
+            newDisplayName: group.displayName,
+            newColor,
+            applyToNotes: false,
+          }),
+        }
+      )
+      setCustomTagGroups(toStorageTagGroups(response.groups))
+      setCounts(response.counts)
+      setMessage(`Farbe aktualisiert: ${group.displayName}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
   const deleteTagGroup = async (groupName: string) => {
+    const group = resolveTagGroupById(groupName)
+    const groupLabel = group ? `${group.displayName} (${group.id})` : groupName
     const option = await askTagChoice(
-      `Tag-Gruppe "${groupName}" loeschen`,
+      `Tag-Gruppe "${groupLabel}" loeschen`,
       'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
       [
         { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
@@ -2387,12 +2569,12 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
         backendUrl,
         '/tag-groups/delete-group',
         {
           method: 'POST',
-          body: JSON.stringify({ groupName, removeFromNotes }),
+          body: JSON.stringify({ groupId: groupName, removeFromNotes }),
         }
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
@@ -2409,39 +2591,89 @@ function App() {
   }
 
   const renameTag = async (groupName: string, tagName: string) => {
-    const newTagName = await askTagText(`Tag umbenennen (${groupName}:${tagName})`, tagName, 'Neuer Tag-Name', 'Umbenennen')
-    if (!newTagName || newTagName === tagName) {
+    const group = resolveTagGroupById(groupName)
+    if (!group) {
+      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
       return
     }
-    const applyChoice = await askTagChoice(
-      'Notiz-Tags mit umbenennen?',
-      `Soll "${groupName}:${tagName}" in allen Notizen automatisch in "${groupName}:${newTagName}" umbenannt werden?`,
-      [
-        { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-        { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
-      ]
+
+    const tag = group.tags.find((entry) => entry.id.toLowerCase() === tagName.toLowerCase())
+    if (!tag) {
+      setMessage(`Tag nicht gefunden: ${groupName}/${tagName}`)
+      return
+    }
+
+    const form = await openTagFormDialog({
+      title: `Tag bearbeiten (${group.displayName} / ${tag.displayName})`,
+      confirmLabel: 'Speichern',
+      initialValues: {
+        id: tag.id,
+        displayName: tag.displayName,
+      },
+    })
+    if (!form) {
+      return
+    }
+    const newTagId = normalizeTagId(form.id)
+    if (!newTagId) {
+      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      return
+    }
+
+    const duplicate = group.tags.find(
+      (entry) => entry.id.toLowerCase() === newTagId.toLowerCase() && entry.id.toLowerCase() !== tag.id.toLowerCase()
     )
-    if (!applyChoice) {
+    if (duplicate) {
+      setMessage(`Der Tag "${duplicate.displayName}" (${duplicate.id}) existiert in "${group.displayName}" bereits.`)
       return
     }
-    const applyToNotes = applyChoice === 'apply'
+
+    const nextDisplayName = normalizeLabel(form.displayName) || newTagId
+
+    const idChanged = newTagId.toLowerCase() !== tag.id.toLowerCase()
+    const displayChanged = normalizeLabel(nextDisplayName) !== tag.displayName
+    if (!idChanged && !displayChanged) {
+      return
+    }
+
+    let applyToNotes = false
+    if (idChanged) {
+      const applyChoice = await askTagChoice(
+        'Notiz-Tags mit umbenennen?',
+        `Soll "${group.id}:${tag.id}" in allen Notizen automatisch in "${group.id}:${newTagId}" umbenannt werden?`,
+        [
+          { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
+          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+        ]
+      )
+      if (!applyChoice) {
+        return
+      }
+      applyToNotes = applyChoice === 'apply'
+    }
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
         backendUrl,
         '/tag-groups/rename-tag',
         {
           method: 'POST',
-          body: JSON.stringify({ groupName, tagName, newTagName, applyToNotes }),
+          body: JSON.stringify({
+            groupId: group.id,
+            tagId: tag.id,
+            newTagId,
+            newDisplayName: normalizeLabel(nextDisplayName) || newTagId,
+            applyToNotes,
+          }),
         }
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setCounts(response.counts)
       setMessage(
-        applyToNotes
+        idChanged && applyToNotes
           ? `Tag umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
-          : 'Tag umbenannt. Historische Notiz-Tags wurden beibehalten.'
+          : 'Tag aktualisiert.'
       )
       await Promise.all([runSearch(searchQuery), refreshReview()])
     } catch (caught) {
@@ -2450,8 +2682,11 @@ function App() {
   }
 
   const deleteTag = async (groupName: string, tagName: string) => {
+    const group = resolveTagGroupById(groupName)
+    const tag = group?.tags.find((entry) => entry.id.toLowerCase() === tagName.toLowerCase()) ?? null
+    const tagLabel = tag && group ? `${group.displayName} / ${tag.displayName}` : `${groupName}:${tagName}`
     const option = await askTagChoice(
-      `Tag "${groupName}:${tagName}" loeschen`,
+      `Tag "${tagLabel}" loeschen`,
       'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
       [
         { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
@@ -2465,12 +2700,12 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ groups: TagGroupsMap; notesUpdated: number; counts: VaultCounts }>(
+      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
         backendUrl,
         '/tag-groups/delete-tag',
         {
           method: 'POST',
-          body: JSON.stringify({ groupName, tagName, removeFromNotes }),
+          body: JSON.stringify({ groupId: groupName, tagId: tagName, removeFromNotes }),
         }
       )
       setCustomTagGroups(toStorageTagGroups(response.groups))
@@ -2703,8 +2938,7 @@ function App() {
           vaultLoaded={vaultLoaded}
           width={explorerWidth}
           onWidthChange={setExplorerWidth}
-          sortedGroupNames={sortedTagGroupNames}
-          tagGroups={mergedTagGroups}
+          groups={mergedTagGroups}
           expandedGroups={expandedFolders}
           onToggleGroup={toggleFolder}
           onCreateGroup={() => {
@@ -2715,6 +2949,9 @@ function App() {
           }}
           onRenameGroup={(groupName) => {
             void renameTagGroup(groupName)
+          }}
+          onSetGroupColor={(groupName) => {
+            void setTagGroupColor(groupName)
           }}
           onDeleteGroup={(groupName) => {
             void deleteTagGroup(groupName)
@@ -2888,9 +3125,43 @@ function App() {
         >
           {editorPanelOpen ? (
             <article className="workspace-panel editor-workspace-panel">
-              <div className="panel-header-row">
-                <h3>{activeTab?.title || 'Editor'}</h3>
-                <div className="panel-inline-actions">
+              <div className="editor-tabs">
+                <div className="editor-tab-list">
+                  {openTabs.map((tab) => {
+                    const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
+                    return (
+                      <div
+                        key={`editor-tab-${tab.path}`}
+                        className={`editor-tab ${activeTab?.path === tab.path ? 'active' : ''}`}
+                        onContextMenu={(event) => {
+                          event.preventDefault()
+                          setTabContextMenu({ x: event.clientX, y: event.clientY, path: tab.path })
+                        }}
+                      >
+                        <button
+                          className="tab-open"
+                          onClick={() => {
+                            setActiveNotePath(tab.path)
+                            setEditorPanelOpen(true)
+                          }}
+                          title={displayTitle}
+                        >
+                          <span>{displayTitle}</span>
+                          {tab.dirty ? (
+                            <span className="tab-dirty-dot">
+                              <LucideNamedIcon name="Circle" size={8} />
+                            </span>
+                          ) : null}
+                        </button>
+                        <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
+                          <LucideNamedIcon name="X" size={14} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="editor-tab-actions">
                   <button
                     className="icon-button compact muted"
                     onClick={() => (activeTab ? void saveTab(activeTab.path) : undefined)}
@@ -2919,38 +3190,6 @@ function App() {
                     <LucideNamedIcon name="X" size={14} />
                   </button>
                 </div>
-              </div>
-
-              <div className="editor-tabs">
-                {openTabs.map((tab) => (
-                  <div
-                    key={`editor-tab-${tab.path}`}
-                    className={`editor-tab ${activeTab?.path === tab.path ? 'active' : ''}`}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      setTabContextMenu({ x: event.clientX, y: event.clientY, path: tab.path })
-                    }}
-                  >
-                    <button
-                      className="tab-open"
-                      onClick={() => {
-                        setActiveNotePath(tab.path)
-                        setEditorPanelOpen(true)
-                      }}
-                      title={tab.title}
-                    >
-                      <span>{tab.title}</span>
-                      {tab.dirty ? (
-                        <span className="tab-dirty-dot">
-                          <LucideNamedIcon name="Circle" size={8} />
-                        </span>
-                      ) : null}
-                    </button>
-                    <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
-                      <LucideNamedIcon name="X" size={14} />
-                    </button>
-                  </div>
-                ))}
               </div>
 
               {splitView && activeTab?.kind === 'note' && compareCandidates.length > 0 ? (
@@ -2988,6 +3227,7 @@ function App() {
                         key={`editor-${activeTab.path}`}
                         value={activeTab.content}
                         theme={theme}
+                        tagGroups={mergedTagGroups}
                         onChange={updateActiveNoteContent}
                         editorApiRef={activeEditorRef}
                       />
@@ -3368,6 +3608,21 @@ function App() {
             onClick={(event) => {
               event.stopPropagation()
             }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                closeTagActionDialog('cancel')
+                return
+              }
+              if (event.key === 'Enter') {
+                const target = event.target
+                if (target instanceof HTMLTextAreaElement) {
+                  return
+                }
+                event.preventDefault()
+                closeTagActionDialog('confirm')
+              }
+            }}
           >
             <header className="sidebar-header-row">
               <h3>{tagActionDialog.title}</h3>
@@ -3395,6 +3650,227 @@ function App() {
                   }
                 }}
               />
+            ) : null}
+
+            {tagActionDialog.kind === 'group-form' ? (
+              <div className="tag-form-grid">
+                <label className="tag-form-label" htmlFor="tag-group-id">
+                  Gruppen-ID
+                </label>
+                <input
+                  id="tag-group-id"
+                  autoFocus
+                  value={tagActionDialog.groupValues?.id ?? ''}
+                  placeholder="z. B. projekt"
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setTagActionDialog((current) =>
+                      current && current.kind === 'group-form'
+                        ? {
+                            ...current,
+                            groupValues: {
+                              id: nextValue,
+                              displayName: current.groupValues?.displayName ?? '',
+                              color: current.groupValues?.color ?? TAG_COLOR_PRESETS[0],
+                            },
+                          }
+                        : current
+                    )
+                  }}
+                />
+
+                <label className="tag-form-label" htmlFor="tag-group-display-name">
+                  Anzeigename
+                </label>
+                <input
+                  id="tag-group-display-name"
+                  value={tagActionDialog.groupValues?.displayName ?? ''}
+                  placeholder="z. B. Projekte"
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setTagActionDialog((current) =>
+                      current && current.kind === 'group-form'
+                        ? {
+                            ...current,
+                            groupValues: {
+                              id: current.groupValues?.id ?? '',
+                              displayName: nextValue,
+                              color: current.groupValues?.color ?? TAG_COLOR_PRESETS[0],
+                            },
+                          }
+                        : current
+                    )
+                  }}
+                />
+
+                <label className="tag-form-label">Farbe</label>
+                <div className="tag-color-picker-stack">
+                  <div className="tag-color-presets">
+                    {TAG_COLOR_PRESETS.map((preset) => {
+                      const isActive = normalizeTagColor(tagActionDialog.groupValues?.color ?? '') === normalizeTagColor(preset)
+                      return (
+                        <button
+                          key={`tag-color-${preset}`}
+                          type="button"
+                          className={`tag-color-swatch ${isActive ? 'active' : ''}`}
+                          style={{ backgroundColor: preset }}
+                          onClick={() => {
+                            setTagActionDialog((current) =>
+                              current && current.kind === 'group-form'
+                                ? {
+                                    ...current,
+                                    groupValues: {
+                                      id: current.groupValues?.id ?? '',
+                                      displayName: current.groupValues?.displayName ?? '',
+                                      color: preset,
+                                    },
+                                  }
+                                : current
+                            )
+                          }}
+                          title={preset}
+                          aria-label={`Farbe ${preset}`}
+                        />
+                      )
+                    })}
+                  </div>
+                  <div className="tag-color-custom-row">
+                    <input
+                      type="color"
+                      value={normalizeTagColor(tagActionDialog.groupValues?.color ?? TAG_COLOR_PRESETS[0])}
+                      onChange={(event) => {
+                        const nextColor = normalizeTagColor(event.target.value)
+                        setTagActionDialog((current) =>
+                          current && current.kind === 'group-form'
+                            ? {
+                                ...current,
+                                groupValues: {
+                                  id: current.groupValues?.id ?? '',
+                                  displayName: current.groupValues?.displayName ?? '',
+                                  color: nextColor,
+                                },
+                              }
+                            : current
+                        )
+                      }}
+                      aria-label="Benutzerdefinierte Farbe"
+                    />
+                    <span className="muted-copy">Eigene Farbe waehlen</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {tagActionDialog.kind === 'tag-form' ? (
+              <div className="tag-form-grid">
+                <label className="tag-form-label" htmlFor="tag-id">
+                  Tag-ID
+                </label>
+                <input
+                  id="tag-id"
+                  autoFocus
+                  value={tagActionDialog.tagValues?.id ?? ''}
+                  placeholder="z. B. projekt-a"
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setTagActionDialog((current) =>
+                      current && current.kind === 'tag-form'
+                        ? {
+                            ...current,
+                            tagValues: {
+                              id: nextValue,
+                              displayName: current.tagValues?.displayName ?? '',
+                            },
+                          }
+                        : current
+                    )
+                  }}
+                />
+
+                <label className="tag-form-label" htmlFor="tag-display-name">
+                  Anzeigename
+                </label>
+                <input
+                  id="tag-display-name"
+                  value={tagActionDialog.tagValues?.displayName ?? ''}
+                  placeholder="z. B. Projekt A"
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setTagActionDialog((current) =>
+                      current && current.kind === 'tag-form'
+                        ? {
+                            ...current,
+                            tagValues: {
+                              id: current.tagValues?.id ?? '',
+                              displayName: nextValue,
+                            },
+                          }
+                        : current
+                    )
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {tagActionDialog.kind === 'color-form' ? (
+              <div className="tag-form-grid">
+                <label className="tag-form-label">Farbe</label>
+                <div className="tag-color-picker-stack">
+                  <div className="tag-color-presets">
+                    {TAG_COLOR_PRESETS.map((preset) => {
+                      const isActive = normalizeTagColor(tagActionDialog.groupValues?.color ?? '') === normalizeTagColor(preset)
+                      return (
+                        <button
+                          key={`group-color-only-${preset}`}
+                          type="button"
+                          className={`tag-color-swatch ${isActive ? 'active' : ''}`}
+                          style={{ backgroundColor: preset }}
+                          onClick={() => {
+                            setTagActionDialog((current) =>
+                              current && current.kind === 'color-form'
+                                ? {
+                                    ...current,
+                                    groupValues: {
+                                      id: current.groupValues?.id ?? '',
+                                      displayName: current.groupValues?.displayName ?? '',
+                                      color: preset,
+                                    },
+                                  }
+                                : current
+                            )
+                          }}
+                          title={preset}
+                          aria-label={`Farbe ${preset}`}
+                        />
+                      )
+                    })}
+                  </div>
+                  <div className="tag-color-custom-row">
+                    <input
+                      type="color"
+                      autoFocus
+                      value={normalizeTagColor(tagActionDialog.groupValues?.color ?? TAG_COLOR_PRESETS[0])}
+                      onChange={(event) => {
+                        const nextColor = normalizeTagColor(event.target.value)
+                        setTagActionDialog((current) =>
+                          current && current.kind === 'color-form'
+                            ? {
+                                ...current,
+                                groupValues: {
+                                  id: current.groupValues?.id ?? '',
+                                  displayName: current.groupValues?.displayName ?? '',
+                                  color: nextColor,
+                                },
+                              }
+                            : current
+                        )
+                      }}
+                      aria-label="Benutzerdefinierte Farbe"
+                    />
+                    <span className="muted-copy">Eigene Farbe waehlen</span>
+                  </div>
+                </div>
+              </div>
             ) : null}
 
             <div className="tag-action-modal-actions">

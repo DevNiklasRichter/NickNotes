@@ -62,8 +62,18 @@ export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
       '.cm-activeLineGutter': {
         backgroundColor: 'transparent',
       },
-      '.cm-selectionBackground, .cm-content ::selection': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 86%, transparent)',
+      '.cm-content ::selection': {
+        backgroundColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',
+      },
+      '.cm-selectionMatch': {
+        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 82%, transparent)',
+        outline: '1px solid color-mix(in srgb, var(--accent) 28%, transparent)',
+        borderRadius: '4px',
+      },
+      '.cm-selectionMatch-main': {
+        backgroundColor: 'color-mix(in srgb, var(--accent) 28%, var(--surface-contrast) 72%)',
+        outline: '1px solid color-mix(in srgb, var(--accent) 52%, transparent)',
+        borderRadius: '4px',
       },
       '&.cm-focused': {
         outline: 'none',

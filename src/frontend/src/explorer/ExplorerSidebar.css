@@ -748,6 +748,19 @@
   cursor: pointer;
 }
 
+.tag-group-id,
+.tag-entry-id {
+  font-size: 0.68rem;
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+  margin-left: 0.34rem;
+}
+
+.tag-colored-label {
+  color: color-mix(in srgb, var(--tag-accent) 78%, var(--text));
+  font-weight: 620;
+  text-shadow: 0 0 0.1px color-mix(in srgb, var(--tag-accent) 50%, transparent);
+}
+
 .tag-entry-row {
   margin-left: 0.04rem;
 }

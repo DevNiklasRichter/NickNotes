@@ -1,6 +1,7 @@
 ﻿import { syntaxTree } from '@codemirror/language'
-import type { EditorState, Extension } from '@codemirror/state'
+import { Facet, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
+import { buildTagLookup, findTagDefinition, type TagGroupDefinition, type TagLookup } from '../tags/tagTypes'
 
 type SelectionRange = {
   from: number
@@ -43,6 +44,16 @@ const listMarkMutedDeco = Decoration.mark({ class: 'cm-md-list-mark cm-md-syntax
 const quoteMarkVisibleDeco = Decoration.mark({ class: 'cm-md-quote-mark cm-md-syntax-token cm-md-syntax-visible' })
 const quoteMarkMutedDeco = Decoration.mark({ class: 'cm-md-quote-mark cm-md-syntax-token cm-md-syntax-muted' })
 const taskMarkerVisibleDeco = Decoration.mark({ class: 'cm-md-task-marker cm-md-syntax-token cm-md-syntax-visible' })
+const inlineTagSourceDeco = Decoration.mark({ class: 'cm-md-inline-tag-source' })
+
+const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
+const EMPTY_TAG_LOOKUP = buildTagLookup([])
+
+export const markdownTagLookupFacet = Facet.define<TagLookup, TagLookup>({
+  combine(values) {
+    return values.length > 0 ? values[values.length - 1] : EMPTY_TAG_LOOKUP
+  },
+})
 
 class TaskCheckboxWidget extends WidgetType {
   readonly checked: boolean
@@ -74,6 +85,76 @@ class TaskCheckboxWidget extends WidgetType {
   ignoreEvent(): boolean {
     return false
   }
+}
+
+class InlineTagWidget extends WidgetType {
+  readonly groupDisplayName: string
+  readonly tagDisplayName: string
+  readonly groupColor: string
+  readonly syntax: string
+
+  constructor(groupDisplayName: string, tagDisplayName: string, groupColor: string, syntax: string) {
+    super()
+    this.groupDisplayName = groupDisplayName
+    this.tagDisplayName = tagDisplayName
+    this.groupColor = groupColor
+    this.syntax = syntax
+  }
+
+  eq(other: InlineTagWidget): boolean {
+    return (
+      other.groupDisplayName === this.groupDisplayName &&
+      other.tagDisplayName === this.tagDisplayName &&
+      other.groupColor === this.groupColor &&
+      other.syntax === this.syntax
+    )
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-md-inline-tag-chip'
+    element.style.setProperty('--cm-md-tag-color', this.groupColor)
+    element.textContent = this.tagDisplayName
+    element.title = `${this.groupDisplayName} / ${this.tagDisplayName}`
+    element.setAttribute('aria-label', `Tag ${this.tagDisplayName}`)
+    return element
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
+type ParsedInlineTag = {
+  from: number
+  to: number
+  groupId: string
+  tagId: string
+  syntax: string
+}
+
+function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInlineTag[] {
+  const matches: ParsedInlineTag[] = []
+  INLINE_TAG_PATTERN.lastIndex = 0
+  let result = INLINE_TAG_PATTERN.exec(lineText)
+
+  while (result) {
+    const full = result[0] ?? ''
+    const groupId = (result[1] ?? '').toLowerCase()
+    const tagId = (result[2] ?? '').toLowerCase()
+    if (full && groupId && tagId) {
+      matches.push({
+        from: lineFrom + result.index,
+        to: lineFrom + result.index + full.length,
+        groupId,
+        tagId,
+        syntax: full,
+      })
+    }
+    result = INLINE_TAG_PATTERN.exec(lineText)
+  }
+
+  return matches
 }
 
 function addRange(entries: DecorationEntry[], from: number, to: number, decoration: Decoration): void {
@@ -206,11 +287,54 @@ function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineCla
   }
 }
 
+function decorateInlineTags(entries: DecorationEntry[], view: EditorView, selections: readonly SelectionRange[], lookup: TagLookup): void {
+  const processedLines = new Set<number>()
+  for (const range of view.visibleRanges) {
+    const end = Math.max(range.from, range.to - 1)
+    let line = view.state.doc.lineAt(range.from)
+    const endLine = view.state.doc.lineAt(end).number
+
+    while (true) {
+      if (!processedLines.has(line.number)) {
+        const lineIsActive = intersectsSelection(line.from, line.to, selections)
+        const tags = parseInlineTagsInLine(line.text, line.from)
+        for (const tag of tags) {
+          const tagIsActive = lineIsActive || intersectsSelection(tag.from, tag.to, selections)
+          if (tagIsActive) {
+            addRange(entries, tag.from, tag.to, inlineTagSourceDeco)
+            continue
+          }
+
+          const resolved = findTagDefinition(lookup, tag.groupId, tag.tagId)
+          const groupDisplayName = resolved?.group.displayName ?? tag.groupId
+          const tagDisplayName = resolved?.tag.displayName ?? tag.tagId
+          const groupColor = resolved?.group.color ?? '#4f8cff'
+          addRange(
+            entries,
+            tag.from,
+            tag.to,
+            Decoration.replace({
+              widget: new InlineTagWidget(groupDisplayName, tagDisplayName, groupColor, tag.syntax),
+            })
+          )
+        }
+        processedLines.add(line.number)
+      }
+
+      if (line.number >= endLine) {
+        break
+      }
+      line = view.state.doc.line(line.number + 1)
+    }
+  }
+}
+
 function buildDecorations(view: EditorView): DecorationSet {
   const entries: DecorationEntry[] = []
   const doc = view.state.doc
   const selections = view.state.selection.ranges.map((range) => ({ from: range.from, to: range.to }))
   const lineClassSeen = new Set<string>()
+  const tagLookup = view.state.facet(markdownTagLookupFacet)
 
   for (const range of view.visibleRanges) {
     syntaxTree(view.state).iterate({
@@ -319,6 +443,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
 
   decorateTaskLines(entries, view, lineClassSeen, selections)
+  decorateInlineTags(entries, view, selections, tagLookup)
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
   return Decoration.set(ranges, true)
@@ -368,23 +493,28 @@ const markdownPreviewPlugin = ViewPlugin.fromClass(
 
     constructor(view: EditorView) {
       this.decorations = buildDecorations(view)
+      view.requestMeasure()
     }
 
     update(update: ViewUpdate): void {
+      const configChanged = update.startState.facet(markdownTagLookupFacet) !== update.state.facet(markdownTagLookupFacet)
       if (update.selectionSet && !update.docChanged && !update.viewportChanged) {
         const previous = update.startState.selection.main
         const current = update.state.selection.main
         if (previous.empty && current.empty) {
           const previousLine = update.startState.doc.lineAt(previous.head).number
           const currentLine = update.state.doc.lineAt(current.head).number
-          if (previousLine === currentLine) {
+          if (previousLine === currentLine && !configChanged) {
             return
           }
         }
       }
 
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged || configChanged) {
         this.decorations = buildDecorations(update.view)
+        if (update.docChanged || update.viewportChanged) {
+          update.view.requestMeasure()
+        }
       }
     }
   },
@@ -393,10 +523,56 @@ const markdownPreviewPlugin = ViewPlugin.fromClass(
   }
 )
 
+export function markdownTagLookupExtension(tagGroups: TagGroupDefinition[]): Extension {
+  return markdownTagLookupFacet.of(buildTagLookup(tagGroups))
+}
+
 export function liveMarkdownPreview(): Extension {
   return [
     markdownPreviewPlugin,
     EditorView.domEventHandlers({
+      dblclick: (event, view) => {
+        if (event.button !== 0) {
+          return false
+        }
+
+        const target = event.target
+        if (!(target instanceof Node)) {
+          return false
+        }
+
+        if (target instanceof HTMLElement && target.closest('.cm-md-task-checkbox')) {
+          return false
+        }
+        if (target instanceof HTMLElement && target.closest('.cm-md-inline-tag-chip')) {
+          return false
+        }
+
+        let position = -1
+        try {
+          position = view.posAtDOM(target, 0)
+        } catch {
+          return false
+        }
+
+        if (position < 0 || position > view.state.doc.length) {
+          return false
+        }
+
+        const word = view.state.wordAt(position) ?? view.state.wordAt(Math.max(0, position - 1))
+        if (!word || word.from === word.to) {
+          return false
+        }
+
+        event.preventDefault()
+        view.focus()
+        view.dispatch({
+          selection: { anchor: word.from, head: word.to },
+          scrollIntoView: false,
+          userEvent: 'select.pointer',
+        })
+        return true
+      },
       mousedown: (event, view) => {
         const target = event.target
         if (!(target instanceof HTMLElement)) {

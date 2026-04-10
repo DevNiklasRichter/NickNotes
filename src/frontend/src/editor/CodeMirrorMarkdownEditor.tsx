@@ -26,8 +26,9 @@ import {
   type MarkdownCommandId,
 } from './editorCommands'
 import { markdownKeyBindings } from './markdownCommands'
-import { liveMarkdownPreview } from './markdownLivePreview'
+import { liveMarkdownPreview, markdownTagLookupExtension } from './markdownLivePreview'
 import { buildCodeMirrorTheme, markdownHighlightExtension } from './markdownTheme'
+import type { TagDefinition, TagGroupDefinition } from '../tags/tagTypes'
 
 type PaletteAnchor = {
   left: number
@@ -48,6 +49,27 @@ type PaletteState =
       query: string
       selectedIndex: number
     }
+  | {
+      mode: 'tag-group'
+      query: string
+      selectedIndex: number
+      context: {
+        from: number
+        to: number
+        anchor: PaletteAnchor
+      }
+    }
+  | {
+      mode: 'tag-item'
+      query: string
+      selectedIndex: number
+      group: TagGroupDefinition
+      context: {
+        from: number
+        to: number
+        anchor: PaletteAnchor
+      }
+    }
 
 export type MarkdownEditorApi = {
   insertText: (text: string) => void
@@ -61,6 +83,7 @@ export type MarkdownEditorApi = {
 type CodeMirrorMarkdownEditorProps = {
   value: string
   theme: 'light' | 'dark'
+  tagGroups: TagGroupDefinition[]
   onChange: (nextValue: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
@@ -140,7 +163,32 @@ function clampIndex(index: number, itemCount: number): number {
   return Math.max(0, Math.min(index, itemCount - 1))
 }
 
-export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef }: CodeMirrorMarkdownEditorProps) {
+type PaletteItem =
+  | {
+      kind: 'tag-root'
+      title: string
+      description: string
+    }
+  | {
+      kind: 'command'
+      command: MarkdownCommand
+    }
+  | {
+      kind: 'tag-group'
+      group: TagGroupDefinition
+    }
+  | {
+      kind: 'tag'
+      group: TagGroupDefinition
+      tag: TagDefinition
+    }
+  | {
+      kind: 'tag-direct'
+      group: TagGroupDefinition
+      tag: TagDefinition
+    }
+
+export function CodeMirrorMarkdownEditor({ value, theme, tagGroups, onChange, editorApiRef }: CodeMirrorMarkdownEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const paletteInputRef = useRef<HTMLInputElement | null>(null)
@@ -148,21 +196,72 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
   const onChangeRef = useRef(onChange)
   const syncingRef = useRef(false)
   const themeCompartmentRef = useRef(new Compartment())
+  const tagLookupCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialThemeRef = useRef(theme)
+  const initialTagGroupsRef = useRef(tagGroups)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
 
-  const paletteQuery = paletteState ? paletteState.query : ''
-  const filteredCommands = useMemo(() => {
-    return filterMarkdownCommands(paletteQuery)
-  }, [paletteQuery])
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    if (!paletteState) {
+      return []
+    }
 
-  const filteredCommandsRef = useRef<MarkdownCommand[]>([])
+    if (paletteState.mode === 'slash') {
+      return [
+        {
+          kind: 'tag-root',
+          title: 'Tag',
+          description: 'Fuegt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
+        },
+        ...filterMarkdownCommands(paletteState.query).map<PaletteItem>((command) => ({ kind: 'command', command })),
+      ]
+    }
+
+    if (paletteState.mode === 'palette') {
+      return filterMarkdownCommands(paletteState.query).map<PaletteItem>((command) => ({ kind: 'command', command }))
+    }
+
+    if (paletteState.mode === 'tag-group') {
+      const query = paletteState.query.trim().toLowerCase()
+      const groupItems = (!query
+        ? tagGroups
+        : tagGroups.filter((group) => `${group.id} ${group.displayName}`.toLowerCase().includes(query))
+      ).map<PaletteItem>((group) => ({ kind: 'tag-group', group }))
+
+      if (!query) {
+        return groupItems
+      }
+
+      const directTagItems: PaletteItem[] = []
+      for (const group of tagGroups) {
+        for (const tag of group.tags) {
+          const searchable = `${group.id}/${tag.id} ${group.displayName} ${tag.displayName}`.toLowerCase()
+          if (searchable.includes(query)) {
+            directTagItems.push({ kind: 'tag-direct', group, tag })
+          }
+        }
+      }
+
+      return [...groupItems, ...directTagItems]
+    }
+
+    const query = paletteState.query.trim().toLowerCase()
+    const tags = paletteState.group.tags
+    if (!query) {
+      return tags.map<PaletteItem>((tag) => ({ kind: 'tag', group: paletteState.group, tag }))
+    }
+    return tags
+      .filter((tag) => `${tag.id} ${tag.displayName}`.toLowerCase().includes(query))
+      .map<PaletteItem>((tag) => ({ kind: 'tag', group: paletteState.group, tag }))
+  }, [paletteState, tagGroups])
+
+  const paletteItemsRef = useRef<PaletteItem[]>([])
 
   useEffect(() => {
-    filteredCommandsRef.current = filteredCommands
-  }, [filteredCommands])
+    paletteItemsRef.current = paletteItems
+  }, [paletteItems])
 
   useEffect(() => {
     paletteStateRef.current = paletteState
@@ -173,14 +272,19 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
   }, [onChange])
 
   useEffect(() => {
-    if (!paletteState || paletteState.mode !== 'palette') {
+    if (!paletteState || (paletteState.mode !== 'palette' && paletteState.mode !== 'tag-group' && paletteState.mode !== 'tag-item')) {
       return
     }
     window.requestAnimationFrame(() => {
-      paletteInputRef.current?.focus()
-      paletteInputRef.current?.select()
+      const input = paletteInputRef.current
+      if (!input) {
+        return
+      }
+      input.focus()
+      const cursor = input.value.length
+      input.setSelectionRange(cursor, cursor)
     })
-  }, [paletteState])
+  }, [paletteState?.mode])
 
   useEffect(() => {
     if (!paletteState) {
@@ -223,7 +327,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
       if (!current) {
         return false
       }
-      const available = filteredCommandsRef.current.length
+      const available = paletteItemsRef.current.length
       if (available === 0) {
         return true
       }
@@ -237,6 +341,17 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
       return true
     }
 
+    const insertTagSyntax = (view: EditorView, from: number, to: number, groupId: string, tagId: string): void => {
+      const syntax = `{tag:${groupId}/${tagId}}`
+      const cursor = from + syntax.length
+      view.dispatch({
+        changes: { from, to, insert: syntax },
+        selection: { anchor: cursor, head: cursor },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+    }
+
     const applyPaletteCommand = (indexOverride?: number): boolean => {
       const current = paletteStateRef.current
       const view = editorRef.current
@@ -244,24 +359,79 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
         return false
       }
 
-      const available = filteredCommandsRef.current
+      const available = paletteItemsRef.current
       if (available.length === 0) {
         return true
       }
 
       const index = clampIndex(typeof indexOverride === 'number' ? indexOverride : current.selectedIndex, available.length)
-      const command = available[index]
-      const context =
-        current.mode === 'slash'
-          ? {
-              replaceFrom: current.from,
-              replaceTo: current.to,
-            }
-          : undefined
+      const item = available[index]
 
-      runMarkdownCommand(view, command.id, context)
-      setPaletteState(null)
-      view.focus()
+      if (item.kind === 'command') {
+        const context =
+          current.mode === 'slash'
+            ? {
+                replaceFrom: current.from,
+                replaceTo: current.to,
+              }
+            : undefined
+        runMarkdownCommand(view, item.command.id, context)
+        setPaletteState(null)
+        view.focus()
+        return true
+      }
+
+      if (item.kind === 'tag-root') {
+        if (current.mode !== 'slash') {
+          return false
+        }
+        setPaletteState({
+          mode: 'tag-group',
+          query: '',
+          selectedIndex: 0,
+          context: {
+            from: current.from,
+            to: current.to,
+            anchor: current.anchor,
+          },
+        })
+        return true
+      }
+
+      if (item.kind === 'tag-group') {
+        if (current.mode !== 'tag-group') {
+          return false
+        }
+        setPaletteState({
+          mode: 'tag-item',
+          query: '',
+          selectedIndex: 0,
+          group: item.group,
+          context: current.context,
+        })
+        return true
+      }
+
+      if (item.kind === 'tag-direct') {
+        if (current.mode !== 'tag-group') {
+          return false
+        }
+        insertTagSyntax(view, current.context.from, current.context.to, item.group.id, item.tag.id)
+        setPaletteState(null)
+        view.focus()
+        return true
+      }
+
+      if (item.kind === 'tag') {
+        if (current.mode !== 'tag-item') {
+          return false
+        }
+        insertTagSyntax(view, current.context.from, current.context.to, item.group.id, item.tag.id)
+        setPaletteState(null)
+        view.focus()
+        return true
+      }
+
       return true
     }
 
@@ -276,7 +446,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
 
     const syncSlashPalette = (view: EditorView): void => {
       const current = paletteStateRef.current
-      if (current && current.mode === 'palette') {
+      if (current && current.mode !== 'slash') {
         return
       }
 
@@ -342,6 +512,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
           history(),
           EditorView.lineWrapping,
           markdownHighlightExtension,
+          tagLookupCompartmentRef.current.of(markdownTagLookupExtension(initialTagGroupsRef.current)),
           highlightSelectionMatches(),
           placeholder('Starte mit einer Notiz ...'),
           liveMarkdownPreview(),
@@ -437,6 +608,17 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
       return
     }
 
+    instance.dispatch({
+      effects: tagLookupCompartmentRef.current.reconfigure(markdownTagLookupExtension(tagGroups)),
+    })
+  }, [tagGroups])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
     const currentValue = instance.state.doc.toString()
     if (currentValue === value) {
       return
@@ -455,28 +637,8 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
     syncingRef.current = false
   }, [value])
 
-  const executeCommand = (command: MarkdownCommand) => {
-    const current = paletteStateRef.current
-    const view = editorRef.current
-    if (!view) {
-      return
-    }
-
-    const context =
-      current && current.mode === 'slash'
-        ? {
-            replaceFrom: current.from,
-            replaceTo: current.to,
-          }
-        : undefined
-
-    runMarkdownCommand(view, command.id, context)
-    setPaletteState(null)
-    view.focus()
-  }
-
   const onPaletteInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (!paletteState || paletteState.mode !== 'palette') {
+    if (!paletteState || (paletteState.mode !== 'palette' && paletteState.mode !== 'tag-group' && paletteState.mode !== 'tag-item')) {
       return
     }
 
@@ -486,7 +648,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
         if (!current) {
           return current
         }
-        const available = filteredCommands.length
+        const available = paletteItems.length
         if (available === 0) {
           return current
         }
@@ -501,7 +663,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
         if (!current) {
           return current
         }
-        const available = filteredCommands.length
+        const available = paletteItems.length
         if (available === 0) {
           return current
         }
@@ -512,24 +674,125 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
 
     if (event.key === 'Enter') {
       event.preventDefault()
-      const activeCommandIndex = clampIndex(paletteState.selectedIndex, filteredCommands.length)
-      const command = filteredCommands[activeCommandIndex]
-      if (command) {
-        executeCommand(command)
-      }
+      const activeIndex = clampIndex(paletteState.selectedIndex, paletteItems.length)
+      applyPaletteItemByIndex(activeIndex)
       return
     }
 
     if (event.key === 'Escape') {
       event.preventDefault()
+      if (paletteState.mode === 'tag-item') {
+        setPaletteState({
+          mode: 'tag-group',
+          query: '',
+          selectedIndex: 0,
+          context: paletteState.context,
+        })
+        return
+      }
       setPaletteState(null)
       editorRef.current?.focus()
+      return
     }
   }
 
-  const paletteLeft = paletteState && paletteState.mode === 'slash' ? paletteState.anchor.left : undefined
-  const paletteTop = paletteState && paletteState.mode === 'slash' ? paletteState.anchor.top : undefined
-  const activeCommandIndex = clampIndex(paletteState ? paletteState.selectedIndex : 0, filteredCommands.length)
+  const applyPaletteItemByIndex = (index: number) => {
+    const view = editorRef.current
+    if (!view) {
+      return
+    }
+    const current = paletteStateRef.current
+    if (!current) {
+      return
+    }
+    const item = paletteItems[index]
+    if (!item) {
+      return
+    }
+    if (item.kind === 'command') {
+      const context =
+        current.mode === 'slash'
+          ? {
+              replaceFrom: current.from,
+              replaceTo: current.to,
+            }
+          : undefined
+      runMarkdownCommand(view, item.command.id, context)
+      setPaletteState(null)
+      view.focus()
+      return
+    }
+    if (item.kind === 'tag-root') {
+      if (current.mode !== 'slash') {
+        return
+      }
+      setPaletteState({
+        mode: 'tag-group',
+        query: '',
+        selectedIndex: 0,
+        context: { from: current.from, to: current.to, anchor: current.anchor },
+      })
+      return
+    }
+    if (item.kind === 'tag-group') {
+      if (current.mode !== 'tag-group') {
+        return
+      }
+      setPaletteState({
+        mode: 'tag-item',
+        query: '',
+        selectedIndex: 0,
+        group: item.group,
+        context: current.context,
+      })
+      return
+    }
+    if (item.kind === 'tag-direct') {
+      if (current.mode !== 'tag-group') {
+        return
+      }
+      const syntax = `{tag:${item.group.id}/${item.tag.id}}`
+      const cursor = current.context.from + syntax.length
+      view.dispatch({
+        changes: { from: current.context.from, to: current.context.to, insert: syntax },
+        selection: { anchor: cursor, head: cursor },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+      setPaletteState(null)
+      view.focus()
+      return
+    }
+    if (item.kind === 'tag') {
+      if (current.mode !== 'tag-item') {
+        return
+      }
+      const syntax = `{tag:${item.group.id}/${item.tag.id}}`
+      const cursor = current.context.from + syntax.length
+      view.dispatch({
+        changes: { from: current.context.from, to: current.context.to, insert: syntax },
+        selection: { anchor: cursor, head: cursor },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+      setPaletteState(null)
+      view.focus()
+    }
+  }
+
+  const isAnchoredPalette = paletteState && (paletteState.mode === 'slash' || paletteState.mode === 'tag-group' || paletteState.mode === 'tag-item')
+  const paletteLeft = isAnchoredPalette
+    ? paletteState.mode === 'slash'
+      ? paletteState.anchor.left
+      : paletteState.context.anchor.left
+    : undefined
+  const paletteTop = isAnchoredPalette
+    ? paletteState.mode === 'slash'
+      ? paletteState.anchor.top
+      : paletteState.context.anchor.top
+    : undefined
+  const activeCommandIndex = clampIndex(paletteState ? paletteState.selectedIndex : 0, paletteItems.length)
+  const showSearchInput = paletteState ? paletteState.mode !== 'slash' : false
 
   return (
     <div className="code-editor-shell" ref={shellRef}>
@@ -537,10 +800,10 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
 
       {paletteState ? (
         <div
-          className={`editor-command-palette ${paletteState.mode === 'slash' ? 'slash' : 'global'}`}
-          style={paletteState.mode === 'slash' ? { left: `${paletteLeft}px`, top: `${paletteTop}px` } : undefined}
+          className={`editor-command-palette ${isAnchoredPalette ? 'slash' : 'global'}`}
+          style={isAnchoredPalette ? { left: `${paletteLeft}px`, top: `${paletteTop}px` } : undefined}
         >
-          {paletteState.mode === 'palette' ? (
+          {showSearchInput ? (
             <div className="editor-command-search-row">
               <input
                 ref={paletteInputRef}
@@ -548,7 +811,7 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
                 onChange={(event) => {
                   const nextQuery = event.target.value
                   setPaletteState((current) =>
-                    current && current.mode === 'palette'
+                    current && current.mode !== 'slash'
                       ? {
                           ...current,
                           query: nextQuery,
@@ -558,33 +821,78 @@ export function CodeMirrorMarkdownEditor({ value, theme, onChange, editorApiRef 
                   )
                 }}
                 onKeyDown={onPaletteInputKeyDown}
-                placeholder="Befehl suchen (z. B. task, code, link)"
+                placeholder={
+                  paletteState.mode === 'palette'
+                    ? 'Befehl suchen (z. B. task, code, link)'
+                    : paletteState.mode === 'tag-group'
+                      ? 'Tag-Gruppe oder Tag suchen'
+                      : 'Tag suchen'
+                }
               />
             </div>
           ) : (
             <div className="editor-command-slash-meta">/{paletteState.query || ''}</div>
           )}
 
+          {paletteState.mode === 'tag-item' ? (
+            <div className="editor-command-slash-meta">
+              Gruppe: {paletteState.group.displayName} ({paletteState.group.id})
+            </div>
+          ) : null}
+
           <div className="editor-command-list" role="listbox" aria-label="Markdown-Befehle">
-            {filteredCommands.length === 0 ? <div className="editor-command-empty">Kein passender Befehl.</div> : null}
-            {filteredCommands.map((command, index) => (
-              <button
-                key={command.id}
-                type="button"
-                className={`editor-command-item ${index === activeCommandIndex ? 'active' : ''}`}
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                }}
-                onClick={() => executeCommand(command)}
-              >
-                <span className="editor-command-title">{command.title}</span>
-                <span className="editor-command-desc">{command.description}</span>
-              </button>
-            ))}
+            {paletteItems.length === 0 ? <div className="editor-command-empty">Kein passender Eintrag.</div> : null}
+            {paletteItems.map((item, index) => {
+              const title =
+                item.kind === 'command'
+                  ? item.command.title
+                  : item.kind === 'tag-root'
+                    ? item.title
+                    : item.kind === 'tag-group'
+                      ? item.group.displayName
+                      : `${item.tag.displayName}`
+              const description =
+                item.kind === 'command'
+                  ? item.command.description
+                  : item.kind === 'tag-root'
+                    ? item.description
+                    : item.kind === 'tag-group'
+                      ? `${item.group.id} • ${item.group.tags.length} Tags`
+                      : `${item.group.displayName} (${item.group.id}) • {tag:${item.group.id}/${item.tag.id}}`
+              const key =
+                item.kind === 'command'
+                  ? item.command.id
+                  : item.kind === 'tag-root'
+                    ? 'tag-root'
+                    : item.kind === 'tag-group'
+                      ? `group-${item.group.id}`
+                      : item.kind === 'tag-direct'
+                        ? `tag-direct-${item.group.id}-${item.tag.id}`
+                        : `tag-${item.group.id}-${item.tag.id}`
+
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`editor-command-item ${index === activeCommandIndex ? 'active' : ''}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                  }}
+                  onClick={() => applyPaletteItemByIndex(index)}
+                >
+                  <span className="editor-command-title">{title}</span>
+                  <span className="editor-command-desc">{description}</span>
+                </button>
+              )
+            })}
           </div>
 
           <div className="editor-command-footnote">
-            {paletteState.mode === 'slash' ? '↑ ↓ waehlen • Enter ausfuehren • Esc schliessen' : 'Enter ausfuehren • Esc schliessen'}
+            {paletteState.mode === 'slash'
+              ? '↑ ↓ waehlen • Enter ausfuehren • Esc schliessen'
+              : paletteState.mode === 'tag-item'
+                ? '↑ ↓ waehlen • Enter einfuegen • Esc zurueck'
+                : '↑ ↓ waehlen • Enter ausfuehren • Esc schliessen'}
           </div>
         </div>
       ) : null}

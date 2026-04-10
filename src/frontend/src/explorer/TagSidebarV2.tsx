@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { CSSProperties } from 'react'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import type { TagDefinition, TagGroupDefinition } from '../tags/tagTypes'
 import './ExplorerSidebar.css'
 
 type ContextMenuTarget =
   | {
       kind: 'group'
-      groupName: string
+      groupId: string
     }
   | {
       kind: 'tag'
-      groupName: string
-      tagName: string
+      groupId: string
+      tagId: string
     }
 
 type ContextMenuState = {
@@ -24,22 +26,22 @@ type TagSidebarProps = {
   vaultLoaded: boolean
   width: number
   onWidthChange: (nextWidth: number) => void
-  sortedGroupNames: string[]
-  tagGroups: Record<string, string[]>
+  groups: TagGroupDefinition[]
   expandedGroups: Record<string, boolean>
   onToggleGroup: (folderKey: string) => void
   onCreateGroup: () => void
-  onCreateTag: (preferredGroup: string | null) => void
-  onRenameGroup: (groupName: string) => void
-  onDeleteGroup: (groupName: string) => void
-  onRenameTag: (groupName: string, tagName: string) => void
-  onDeleteTag: (groupName: string, tagName: string) => void
+  onCreateTag: (preferredGroupId: string | null) => void
+  onRenameGroup: (groupId: string) => void
+  onSetGroupColor: (groupId: string) => void
+  onDeleteGroup: (groupId: string) => void
+  onRenameTag: (groupId: string, tagId: string) => void
+  onDeleteTag: (groupId: string, tagId: string) => void
 }
 
 type VisibleTagGroup = {
-  groupName: string
+  group: TagGroupDefinition
   folderKey: string
-  tags: string[]
+  tags: TagDefinition[]
   totalCount: number
 }
 
@@ -54,8 +56,8 @@ function isTagTarget(
   target: ContextMenuTarget
 ): target is {
   kind: 'tag'
-  groupName: string
-  tagName: string
+  groupId: string
+  tagId: string
 } {
   return target.kind === 'tag'
 }
@@ -64,11 +66,11 @@ function openContextAt(
   event: ReactMouseEvent<HTMLElement>,
   target: ContextMenuTarget,
   setContextMenu: (next: ContextMenuState) => void,
-  setSelectedGroupName: (next: string) => void
+  setSelectedGroupId: (next: string) => void
 ) {
   event.preventDefault()
   event.stopPropagation()
-  setSelectedGroupName(target.groupName)
+  setSelectedGroupId(target.groupId)
   setContextMenu({ x: event.clientX, y: event.clientY, target })
 }
 
@@ -76,45 +78,42 @@ export function TagSidebar({
   vaultLoaded,
   width,
   onWidthChange,
-  sortedGroupNames,
-  tagGroups,
+  groups,
   expandedGroups,
   onToggleGroup,
   onCreateGroup,
   onCreateTag,
   onRenameGroup,
+  onSetGroupColor,
   onDeleteGroup,
   onRenameTag,
   onDeleteTag,
 }: TagSidebarProps) {
   const [filterQuery, setFilterQuery] = useState('')
-  const [selectedGroupName, setSelectedGroupName] = useState<string>('')
+  const [selectedGroupId, setSelectedGroupId] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const contextPanelRef = useRef<HTMLDivElement | null>(null)
 
   const visibleGroups = useMemo<VisibleTagGroup[]>(() => {
     const query = normalizeQuery(filterQuery)
-    return sortedGroupNames.reduce<VisibleTagGroup[]>((result, groupName) => {
-      const tags = tagGroups[groupName] ?? []
+    return groups.reduce<VisibleTagGroup[]>((result, group) => {
       if (!query) {
         result.push({
-          groupName,
-          folderKey: `tag-group-${groupName}`,
-          tags,
-          totalCount: tags.length,
+          group,
+          folderKey: `tag-group-${group.id}`,
+          tags: group.tags,
+          totalCount: group.tags.length,
         })
         return result
       }
 
-      const groupMatch = groupName.toLowerCase().includes(query)
+      const groupBag = `${group.id} ${group.displayName}`.toLowerCase()
+      const groupMatch = groupBag.includes(query)
       const matchingTags = groupMatch
-        ? tags
-        : tags.filter((tag) => {
-            const cleanTag = tag.toLowerCase()
-            if (cleanTag.includes(query)) {
-              return true
-            }
-            return `${groupName}:${tag}`.toLowerCase().includes(query)
+        ? group.tags
+        : group.tags.filter((tag) => {
+            const tagBag = `${tag.id} ${tag.displayName} ${group.id}/${tag.id}`.toLowerCase()
+            return tagBag.includes(query)
           })
 
       if (!groupMatch && matchingTags.length === 0) {
@@ -122,24 +121,24 @@ export function TagSidebar({
       }
 
       result.push({
-        groupName,
-        folderKey: `tag-group-${groupName}`,
+        group,
+        folderKey: `tag-group-${group.id}`,
         tags: matchingTags,
-        totalCount: tags.length,
+        totalCount: group.tags.length,
       })
       return result
     }, [])
-  }, [filterQuery, sortedGroupNames, tagGroups])
+  }, [filterQuery, groups])
 
   useEffect(() => {
-    if (!selectedGroupName && sortedGroupNames.length > 0) {
-      setSelectedGroupName(sortedGroupNames[0])
+    if (!selectedGroupId && groups.length > 0) {
+      setSelectedGroupId(groups[0].id)
       return
     }
-    if (selectedGroupName && !sortedGroupNames.some((name) => name.toLowerCase() === selectedGroupName.toLowerCase())) {
-      setSelectedGroupName(sortedGroupNames[0] ?? '')
+    if (selectedGroupId && !groups.some((group) => group.id.toLowerCase() === selectedGroupId.toLowerCase())) {
+      setSelectedGroupId(groups[0]?.id ?? '')
     }
-  }, [selectedGroupName, sortedGroupNames])
+  }, [groups, selectedGroupId])
 
   useEffect(() => {
     if (!contextMenu) {
@@ -193,9 +192,9 @@ export function TagSidebar({
             className="icon-button compact"
             onClick={(event) => {
               event.stopPropagation()
-              onCreateTag(selectedGroupName || null)
+              onCreateTag(selectedGroupId || null)
             }}
-            disabled={!vaultLoaded || sortedGroupNames.length === 0}
+            disabled={!vaultLoaded || groups.length === 0}
             title="Neuer Tag in bestehender Gruppe"
           >
             <LucideNamedIcon name="Tag" className="row-action-icon" size={14} />
@@ -206,23 +205,23 @@ export function TagSidebar({
       <section className="explorer-tree explorer-flat-tree tag-explorer-tree">
         {visibleGroups.length === 0 ? <p className="empty-copy">Keine passenden Tags oder Gruppen.</p> : null}
 
-        {visibleGroups.map((group) => {
-          const isOpen = expandedGroups[group.folderKey] ?? true
-          const visibleCount = isOpen ? group.tags.length : group.totalCount
-          const isSelected = selectedGroupName.toLowerCase() === group.groupName.toLowerCase()
+        {visibleGroups.map((entry) => {
+          const { group } = entry
+          const isOpen = expandedGroups[entry.folderKey] ?? true
+          const isSelected = selectedGroupId.toLowerCase() === group.id.toLowerCase()
 
           return (
-            <div key={group.folderKey} className="explorer-row-wrap">
+            <div key={entry.folderKey} className="explorer-row-wrap">
               <div
                 className={`explorer-row compact tag-group-row ${isSelected ? 'selected' : ''}`}
                 style={{ paddingLeft: '8px' }}
                 onClick={(event) => {
                   event.stopPropagation()
                   setContextMenu(null)
-                  setSelectedGroupName(group.groupName)
-                  onToggleGroup(group.folderKey)
+                  setSelectedGroupId(group.id)
+                  onToggleGroup(entry.folderKey)
                 }}
-                onContextMenu={(event) => openContextAt(event, { kind: 'group', groupName: group.groupName }, setContextMenu, setSelectedGroupName)}
+                onContextMenu={(event) => openContextAt(event, { kind: 'group', groupId: group.id }, setContextMenu, setSelectedGroupId)}
               >
                 <div className="row-content">
                   <span className="row-pin-slot" aria-hidden="true">
@@ -234,47 +233,43 @@ export function TagSidebar({
                     onClick={(event) => {
                       event.stopPropagation()
                       setContextMenu(null)
-                      setSelectedGroupName(group.groupName)
-                      onToggleGroup(group.folderKey)
+                      setSelectedGroupId(group.id)
+                      onToggleGroup(entry.folderKey)
                     }}
                   >
                     <LucideNamedIcon name={isOpen ? 'ChevronDown' : 'ChevronRight'} size={12} className="twistie-icon" />
                   </button>
-                  <span className="row-name">{group.groupName}</span>
+                  <span className="row-name tag-colored-label" style={{ '--tag-accent': group.color } as CSSProperties}>
+                    {group.displayName}
+                  </span>
+                  <span className="tag-group-id">{group.id}</span>
                 </div>
                 <div className="row-meta">
                   <button
                     type="button"
                     className="row-folder-menu"
-                    onClick={(event) =>
-                      openContextAt(event, { kind: 'group', groupName: group.groupName }, setContextMenu, setSelectedGroupName)
-                    }
+                    onClick={(event) => openContextAt(event, { kind: 'group', groupId: group.id }, setContextMenu, setSelectedGroupId)}
                     title="Gruppe verwalten"
                   >
                     <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                   </button>
-                  <span className="row-count">{visibleCount}</span>
+                  <span className="row-count">{entry.totalCount}</span>
                 </div>
               </div>
 
               {isOpen
-                ? group.tags.map((tag) => (
+                ? entry.tags.map((tag) => (
                     <div
-                      key={`${group.groupName}:${tag}`}
+                      key={`${group.id}:${tag.id}`}
                       className="explorer-row compact tag-entry-row"
                       style={{ paddingLeft: '30px' }}
                       onClick={(event) => {
                         event.stopPropagation()
                         setContextMenu(null)
-                        setSelectedGroupName(group.groupName)
+                        setSelectedGroupId(group.id)
                       }}
                       onContextMenu={(event) =>
-                        openContextAt(
-                          event,
-                          { kind: 'tag', groupName: group.groupName, tagName: tag },
-                          setContextMenu,
-                          setSelectedGroupName
-                        )
+                        openContextAt(event, { kind: 'tag', groupId: group.id, tagId: tag.id }, setContextMenu, setSelectedGroupId)
                       }
                     >
                       <div className="row-content">
@@ -284,19 +279,17 @@ export function TagSidebar({
                         <span className="tag-entry-marker" aria-hidden="true">
                           <LucideNamedIcon name="Hash" size={11} className="tag-entry-icon" />
                         </span>
-                        <span className="row-name">{tag}</span>
+                        <span className="row-name tag-colored-label" style={{ '--tag-accent': group.color } as CSSProperties}>
+                          {tag.displayName}
+                        </span>
+                        <span className="tag-entry-id">{tag.id}</span>
                       </div>
                       <div className="row-meta">
                         <button
                           type="button"
                           className="row-folder-menu"
                           onClick={(event) =>
-                            openContextAt(
-                              event,
-                              { kind: 'tag', groupName: group.groupName, tagName: tag },
-                              setContextMenu,
-                              setSelectedGroupName
-                            )
+                            openContextAt(event, { kind: 'tag', groupId: group.id, tagId: tag.id }, setContextMenu, setSelectedGroupId)
                           }
                           title="Tag verwalten"
                         >
@@ -307,7 +300,7 @@ export function TagSidebar({
                   ))
                 : null}
 
-              {isOpen && group.tags.length === 0 ? <p className="empty-copy tag-group-empty">Noch keine Tags.</p> : null}
+              {isOpen && entry.tags.length === 0 ? <p className="empty-copy tag-group-empty">Noch keine Tags.</p> : null}
             </div>
           )
         })}
@@ -321,7 +314,7 @@ export function TagSidebar({
                 <button
                   className="context-menu-item"
                   onClick={() => {
-                    onCreateTag(contextMenu.target.groupName)
+                    onCreateTag(contextMenu.target.groupId)
                     setContextMenu(null)
                   }}
                 >
@@ -331,17 +324,27 @@ export function TagSidebar({
                 <button
                   className="context-menu-item"
                   onClick={() => {
-                    onRenameGroup(contextMenu.target.groupName)
+                    onRenameGroup(contextMenu.target.groupId)
                     setContextMenu(null)
                   }}
                 >
                   <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
-                  <span>Gruppe umbenennen</span>
+                  <span>Gruppe bearbeiten</span>
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    onSetGroupColor(contextMenu.target.groupId)
+                    setContextMenu(null)
+                  }}
+                >
+                  <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
+                  <span>Farbe setzen</span>
                 </button>
                 <button
                   className="context-menu-item danger"
                   onClick={() => {
-                    onDeleteGroup(contextMenu.target.groupName)
+                    onDeleteGroup(contextMenu.target.groupId)
                     setContextMenu(null)
                   }}
                 >
@@ -357,12 +360,12 @@ export function TagSidebar({
                     if (!isTagTarget(contextMenu.target)) {
                       return
                     }
-                    onRenameTag(contextMenu.target.groupName, contextMenu.target.tagName)
+                    onRenameTag(contextMenu.target.groupId, contextMenu.target.tagId)
                     setContextMenu(null)
                   }}
                 >
                   <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
-                  <span>Tag umbenennen</span>
+                  <span>Tag bearbeiten</span>
                 </button>
                 <button
                   className="context-menu-item danger"
@@ -370,7 +373,7 @@ export function TagSidebar({
                     if (!isTagTarget(contextMenu.target)) {
                       return
                     }
-                    onDeleteTag(contextMenu.target.groupName, contextMenu.target.tagName)
+                    onDeleteTag(contextMenu.target.groupId, contextMenu.target.tagId)
                     setContextMenu(null)
                   }}
                 >

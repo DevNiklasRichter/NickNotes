@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,25 @@ def _normalize_label(value: str) -> str:
 
 def _dedupe_sorted(values: list[str]) -> list[str]:
     return sorted(set(values), key=lambda item: item.lower())
+
+
+DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
+
+
+def _normalize_tag_id(value: str) -> str:
+    clean = _normalize_label(value).strip().lower()
+    clean = re.sub(r"[^a-z0-9]+", "-", clean)
+    clean = clean.strip("-")
+    return clean
+
+
+def _normalize_tag_color(value: str) -> str:
+    clean = value.strip().lower()
+    if len(clean) == 4 and clean.startswith("#") and all(char in "0123456789abcdef" for char in clean[1:]):
+        return clean
+    if len(clean) == 7 and clean.startswith("#") and all(char in "0123456789abcdef" for char in clean[1:]):
+        return clean
+    return DEFAULT_TAG_GROUP_COLOR
 
 
 def _normalize_tag_key(raw: str) -> str:
@@ -63,14 +83,14 @@ class VaultManager:
                 encoding="utf-8",
             )
 
-        if not self.tag_groups_path.exists():
-            defaults = {
-                "Person": [],
-                "Project": [],
-                "Customer": [],
-                "Machine No": [],
-                "Machine Type": [],
-            }
+        if not self.read_tag_groups():
+            defaults = [
+                {"id": "person", "displayName": "Person", "color": "#4f8cff", "tags": []},
+                {"id": "project", "displayName": "Project", "color": "#2fba7a", "tags": []},
+                {"id": "customer", "displayName": "Customer", "color": "#ff8a4f", "tags": []},
+                {"id": "machine-no", "displayName": "Machine No", "color": "#7a78ff", "tags": []},
+                {"id": "machine-type", "displayName": "Machine Type", "color": "#d26cf5", "tags": []},
+            ]
             self._write_tag_groups(defaults)
 
         if not self.favorite_folders_path.exists():
@@ -452,167 +472,223 @@ class VaultManager:
         )
         return payload
 
-    def read_tag_groups(self) -> dict[str, list[str]]:
+    def read_tag_groups(self) -> list[dict[str, Any]]:
+        config = self.read_config()
+        if isinstance(config, dict) and "tagGroups" in config:
+            return self._normalize_tag_groups(config.get("tagGroups"))
+
         if not self.tag_groups_path.exists():
-            return {}
+            return []
 
         try:
             payload = json.loads(self.tag_groups_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            return {}
+            return []
 
-        if isinstance(payload, dict) and "groups" in payload:
+        if isinstance(payload, dict) and "tagGroups" in payload:
+            source = payload.get("tagGroups")
+        elif isinstance(payload, dict) and "groups" in payload:
             source = payload.get("groups")
         else:
             source = payload
 
-        return self._normalize_tag_groups(source)
+        normalized = self._normalize_tag_groups(source)
+        if normalized:
+            # One-way migration: legacy tag_groups.json -> config.json.
+            self._write_tag_groups(normalized)
+        return normalized
 
-    def sync_tag_groups_with_index(self, indexer: VaultIndexer) -> dict[str, list[str]]:
+    def sync_tag_groups_with_index(self, indexer: VaultIndexer) -> list[dict[str, Any]]:
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
         return groups
 
-    def add_tag_group(self, group_name: str, indexer: VaultIndexer) -> dict[str, list[str]]:
+    def add_tag_group(self, group_id: str, display_name: str, color: str, indexer: VaultIndexer) -> list[dict[str, Any]]:
         groups = self.read_tag_groups()
-        clean_group = _normalize_label(group_name)
-        if not clean_group:
+        clean_group_id = _normalize_tag_id(group_id)
+        if not clean_group_id:
             return groups
 
-        existing = self._resolve_group_name(groups, clean_group)
-        if not existing:
-            groups[clean_group] = []
+        existing = self._resolve_group_entry(groups, clean_group_id)
+        if existing is None:
+            groups.append(
+                {
+                    "id": clean_group_id,
+                    "displayName": _normalize_label(display_name) or clean_group_id,
+                    "color": _normalize_tag_color(color),
+                    "tags": [],
+                }
+            )
+            groups = self._normalize_tag_groups(groups)
 
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups
 
-    def add_tag_to_group(self, group_name: str, tag_name: str, indexer: VaultIndexer) -> dict[str, list[str]]:
+    def add_tag_to_group(
+        self,
+        group_id: str,
+        tag_id: str,
+        display_name: str,
+        indexer: VaultIndexer,
+    ) -> list[dict[str, Any]]:
         groups = self.read_tag_groups()
-        clean_group = _normalize_label(group_name)
-        clean_tag = _normalize_label(tag_name)
-        if not clean_group or not clean_tag:
+        clean_group_id = _normalize_tag_id(group_id)
+        clean_tag_id = _normalize_tag_id(tag_id)
+        if not clean_group_id or not clean_tag_id:
             return groups
 
-        target_group = self._resolve_group_name(groups, clean_group)
-        if not target_group:
-            target_group = clean_group
-            groups[target_group] = []
+        target_group = self._resolve_group_entry(groups, clean_group_id)
+        if target_group is None:
+            target_group = {
+                "id": clean_group_id,
+                "displayName": clean_group_id,
+                "color": DEFAULT_TAG_GROUP_COLOR,
+                "tags": [],
+            }
+            groups.append(target_group)
 
-        existing_tag = self._resolve_tag_name(groups[target_group], clean_tag)
-        if not existing_tag:
-            groups[target_group] = _dedupe_sorted([*groups[target_group], clean_tag])
+        target_tag = self._resolve_tag_entry(target_group, clean_tag_id)
+        if target_tag is None:
+            target_group.setdefault("tags", []).append(
+                {
+                    "id": clean_tag_id,
+                    "displayName": _normalize_label(display_name) or clean_tag_id,
+                }
+            )
+            target_group["tags"] = self._sorted_tag_entries(target_group.get("tags", []))
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups
 
     def rename_tag_group(
         self,
-        group_name: str,
-        new_group_name: str,
+        group_id: str,
+        new_group_id: str,
+        new_display_name: str,
+        new_color: str,
         apply_to_notes: bool,
         indexer: VaultIndexer,
-    ) -> tuple[dict[str, list[str]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         groups = self.read_tag_groups()
-        source_group = self._resolve_group_name(groups, group_name)
-        if not source_group:
-            raise ValueError(f"Tag group not found: {group_name}")
+        source_group = self._resolve_group_entry(groups, group_id)
+        if source_group is None:
+            raise ValueError(f"Tag group not found: {group_id}")
 
-        next_group = _normalize_label(new_group_name)
-        if not next_group:
-            raise ValueError("New group name cannot be empty")
+        next_group_id = _normalize_tag_id(new_group_id)
+        if not next_group_id:
+            raise ValueError("New group id cannot be empty")
 
-        duplicate_group = self._resolve_group_name(groups, next_group)
-        if duplicate_group and duplicate_group != source_group:
-            raise ValueError(f"Tag group already exists: {next_group}")
+        duplicate_group = self._resolve_group_entry(groups, next_group_id)
+        if duplicate_group is not None and duplicate_group is not source_group:
+            raise ValueError(f"Tag group already exists: {next_group_id}")
 
-        if next_group == source_group:
-            return groups, 0
+        old_group_id = str(source_group.get("id", "")).strip()
+        id_changed = old_group_id.lower() != next_group_id.lower()
 
-        source_tags = list(groups.get(source_group, []))
-        groups.pop(source_group, None)
-        groups[next_group] = _dedupe_sorted(source_tags)
+        source_group["id"] = next_group_id
+        source_group["displayName"] = _normalize_label(new_display_name) or next_group_id
+        source_group["color"] = _normalize_tag_color(new_color)
 
         touched = 0
-        if apply_to_notes:
-            for tag_name in source_tags:
+        if id_changed and apply_to_notes:
+            for tag in source_group.get("tags", []):
+                tag_id = str(tag.get("id", "")).strip()
+                if not tag_id:
+                    continue
                 touched += self._rewrite_tag_references(
-                    old_key=self._to_tag_key(source_group, tag_name),
-                    new_key=self._to_tag_key(next_group, tag_name),
+                    old_key=self._to_tag_key(old_group_id, tag_id),
+                    new_key=self._to_tag_key(next_group_id, tag_id),
                     remove=False,
                 )
             if touched > 0:
                 indexer.reindex_vault(self.vault_path)
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups, touched
 
     def delete_tag_group(
         self,
-        group_name: str,
+        group_id: str,
         remove_from_notes: bool,
         indexer: VaultIndexer,
-    ) -> tuple[dict[str, list[str]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         groups = self.read_tag_groups()
-        target_group = self._resolve_group_name(groups, group_name)
-        if not target_group:
-            raise ValueError(f"Tag group not found: {group_name}")
+        target_group = self._resolve_group_entry(groups, group_id)
+        if target_group is None:
+            raise ValueError(f"Tag group not found: {group_id}")
 
-        target_tags = list(groups.get(target_group, []))
-        groups.pop(target_group, None)
+        target_group_id = str(target_group.get("id", "")).strip()
+        target_tags = [str(tag.get("id", "")).strip() for tag in target_group.get("tags", [])]
+        groups = [group for group in groups if group is not target_group]
 
         touched = 0
         if remove_from_notes:
-            for tag_name in target_tags:
+            for tag_id in target_tags:
+                if not tag_id:
+                    continue
                 touched += self._rewrite_tag_references(
-                    old_key=self._to_tag_key(target_group, tag_name),
+                    old_key=self._to_tag_key(target_group_id, tag_id),
                     new_key="",
                     remove=True,
                 )
             if touched > 0:
                 indexer.reindex_vault(self.vault_path)
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups, touched
 
     def rename_tag(
         self,
-        group_name: str,
-        tag_name: str,
-        new_tag_name: str,
+        group_id: str,
+        tag_id: str,
+        new_tag_id: str,
+        new_display_name: str,
         apply_to_notes: bool,
         indexer: VaultIndexer,
-    ) -> tuple[dict[str, list[str]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         groups = self.read_tag_groups()
-        target_group = self._resolve_group_name(groups, group_name)
-        if not target_group:
-            raise ValueError(f"Tag group not found: {group_name}")
+        target_group = self._resolve_group_entry(groups, group_id)
+        if target_group is None:
+            raise ValueError(f"Tag group not found: {group_id}")
 
-        old_tag = self._resolve_tag_name(groups[target_group], tag_name)
-        if not old_tag:
-            raise ValueError(f"Tag not found: {group_name}:{tag_name}")
+        source_tag = self._resolve_tag_entry(target_group, tag_id)
+        if source_tag is None:
+            raise ValueError(f"Tag not found: {group_id}:{tag_id}")
 
-        next_tag = _normalize_label(new_tag_name)
-        if not next_tag:
-            raise ValueError("New tag name cannot be empty")
+        next_tag_id = _normalize_tag_id(new_tag_id)
+        if not next_tag_id:
+            raise ValueError("New tag id cannot be empty")
 
-        duplicate = self._resolve_tag_name(groups[target_group], next_tag)
-        if duplicate and duplicate != old_tag:
-            raise ValueError(f"Tag already exists: {target_group}:{next_tag}")
+        duplicate_tag = self._resolve_tag_entry(target_group, next_tag_id)
+        if duplicate_tag is not None and duplicate_tag is not source_tag:
+            raise ValueError(f"Tag already exists: {group_id}:{next_tag_id}")
 
-        groups[target_group] = [next_tag if item == old_tag else item for item in groups[target_group]]
-        groups[target_group] = _dedupe_sorted(groups[target_group])
+        old_group_id = str(target_group.get("id", "")).strip()
+        old_tag_id = str(source_tag.get("id", "")).strip()
+        id_changed = old_tag_id.lower() != next_tag_id.lower()
 
-        old_key = self._to_tag_key(target_group, old_tag)
-        new_key = self._to_tag_key(target_group, next_tag)
+        source_tag["id"] = next_tag_id
+        source_tag["displayName"] = _normalize_label(new_display_name) or next_tag_id
+        target_group["tags"] = self._sorted_tag_entries(target_group.get("tags", []))
+
         touched = 0
-        if apply_to_notes:
-            touched = self._rewrite_tag_references(old_key=old_key, new_key=new_key, remove=False)
-            indexer.reindex_vault(self.vault_path)
+        if id_changed and apply_to_notes:
+            touched = self._rewrite_tag_references(
+                old_key=self._to_tag_key(old_group_id, old_tag_id),
+                new_key=self._to_tag_key(old_group_id, next_tag_id),
+                remove=False,
+            )
+            if touched > 0:
+                indexer.reindex_vault(self.vault_path)
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups, touched
@@ -624,67 +700,96 @@ class VaultManager:
         to_group: str,
         apply_to_notes: bool,
         indexer: VaultIndexer,
-    ) -> tuple[dict[str, list[str]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         groups = self.read_tag_groups()
-        source_group = self._resolve_group_name(groups, from_group)
-        if not source_group:
+        source_group = self._resolve_group_entry(groups, from_group)
+        if source_group is None:
             raise ValueError(f"Tag group not found: {from_group}")
 
-        source_tag = self._resolve_tag_name(groups[source_group], tag_name)
-        if not source_tag:
+        source_tag = self._resolve_tag_entry(source_group, tag_name)
+        if source_tag is None:
             raise ValueError(f"Tag not found: {from_group}:{tag_name}")
 
-        clean_target_group = _normalize_label(to_group)
+        clean_target_group = _normalize_tag_id(to_group)
         if not clean_target_group:
             raise ValueError("Target group cannot be empty")
 
-        target_group = self._resolve_group_name(groups, clean_target_group)
-        if not target_group:
-            target_group = clean_target_group
-            groups[target_group] = []
+        target_group = self._resolve_group_entry(groups, clean_target_group)
+        if target_group is None:
+            target_group = {
+                "id": clean_target_group,
+                "displayName": clean_target_group,
+                "color": DEFAULT_TAG_GROUP_COLOR,
+                "tags": [],
+            }
+            groups.append(target_group)
 
-        existing_target = self._resolve_tag_name(groups[target_group], source_tag)
-        if not existing_target:
-            groups[target_group] = _dedupe_sorted([*groups[target_group], source_tag])
-        groups[source_group] = [item for item in groups[source_group] if item != source_tag]
+        target_existing = self._resolve_tag_entry(target_group, str(source_tag.get("id", "")))
+        if target_existing is None:
+            target_group.setdefault("tags", []).append(
+                {
+                    "id": str(source_tag.get("id", "")).strip(),
+                    "displayName": _normalize_label(str(source_tag.get("displayName", "")).strip())
+                    or str(source_tag.get("id", "")).strip(),
+                }
+            )
+            target_group["tags"] = self._sorted_tag_entries(target_group.get("tags", []))
 
-        old_key = self._to_tag_key(source_group, source_tag)
-        new_key = self._to_tag_key(target_group, source_tag)
+        source_group["tags"] = [
+            tag for tag in source_group.get("tags", []) if str(tag.get("id", "")).strip().lower() != str(source_tag.get("id", "")).strip().lower()
+        ]
+
+        old_group_id = str(source_group.get("id", "")).strip()
+        moved_tag_id = str(source_tag.get("id", "")).strip()
+        new_group_id = str(target_group.get("id", "")).strip()
         touched = 0
         if apply_to_notes:
-            touched = self._rewrite_tag_references(old_key=old_key, new_key=new_key, remove=False)
-            indexer.reindex_vault(self.vault_path)
+            touched = self._rewrite_tag_references(
+                old_key=self._to_tag_key(old_group_id, moved_tag_id),
+                new_key=self._to_tag_key(new_group_id, moved_tag_id),
+                remove=False,
+            )
+            if touched > 0:
+                indexer.reindex_vault(self.vault_path)
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups, touched
 
     def delete_tag(
         self,
-        group_name: str,
-        tag_name: str,
+        group_id: str,
+        tag_id: str,
         remove_from_notes: bool,
         indexer: VaultIndexer,
-    ) -> tuple[dict[str, list[str]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         groups = self.read_tag_groups()
-        target_group = self._resolve_group_name(groups, group_name)
-        if not target_group:
-            raise ValueError(f"Tag group not found: {group_name}")
+        target_group = self._resolve_group_entry(groups, group_id)
+        if target_group is None:
+            raise ValueError(f"Tag group not found: {group_id}")
 
-        target_tag = self._resolve_tag_name(groups[target_group], tag_name)
-        if not target_tag:
-            raise ValueError(f"Tag not found: {group_name}:{tag_name}")
+        target_tag = self._resolve_tag_entry(target_group, tag_id)
+        if target_tag is None:
+            raise ValueError(f"Tag not found: {group_id}:{tag_id}")
 
-        groups[target_group] = [item for item in groups[target_group] if item != target_tag]
+        target_group_id = str(target_group.get("id", "")).strip()
+        target_tag_id = str(target_tag.get("id", "")).strip()
+        target_group["tags"] = [
+            tag for tag in target_group.get("tags", []) if str(tag.get("id", "")).strip().lower() != target_tag_id.lower()
+        ]
+
         touched = 0
         if remove_from_notes:
             touched = self._rewrite_tag_references(
-                old_key=self._to_tag_key(target_group, target_tag),
+                old_key=self._to_tag_key(target_group_id, target_tag_id),
                 new_key="",
                 remove=True,
             )
-            indexer.reindex_vault(self.vault_path)
+            if touched > 0:
+                indexer.reindex_vault(self.vault_path)
 
+        groups = self._normalize_tag_groups(groups)
         self._write_tag_groups(groups)
         self.rebuild_all_tag_pages(groups, indexer)
         return groups, touched
@@ -819,7 +924,7 @@ class VaultManager:
             updated = existing.rstrip() + "\n" + line + "\n"
             daily_path.write_text(updated, encoding="utf-8")
 
-    def rebuild_all_tag_pages(self, groups: dict[str, list[str]], indexer: VaultIndexer) -> None:
+    def rebuild_all_tag_pages(self, groups: list[dict[str, Any]], indexer: VaultIndexer) -> None:
         self.tag_root_path.mkdir(parents=True, exist_ok=True)
         for child in self.tag_root_path.iterdir():
             try:
@@ -839,21 +944,31 @@ class VaultManager:
             except OSError:
                 continue
 
-        for group_name in sorted(groups, key=lambda item: item.lower()):
-            group_slug = slugify(group_name)
+        normalized_groups = self._normalize_tag_groups(groups)
+        for group in normalized_groups:
+            group_id = str(group.get("id", "")).strip()
+            group_display_name = str(group.get("displayName", "")).strip() or group_id
+            group_slug = slugify(group_id)
             group_dir = self.tag_root_path / group_slug
             group_dir.mkdir(parents=True, exist_ok=True)
 
-            tags = _dedupe_sorted(groups.get(group_name, []))
+            for tag in group.get("tags", []):
+                tag_id = str(tag.get("id", "")).strip()
+                tag_display_name = str(tag.get("displayName", "")).strip() or tag_id
+                self.rebuild_tag_page(group_id, group_display_name, tag_id, tag_display_name, indexer)
 
-            for tag_name in tags:
-                self.rebuild_tag_page(group_name, tag_name, indexer)
-
-    def rebuild_tag_page(self, group_name: str, tag_name: str, indexer: VaultIndexer) -> Path:
-        group_slug = slugify(group_name)
-        tag_slug = slugify(tag_name)
+    def rebuild_tag_page(
+        self,
+        group_id: str,
+        group_display_name: str,
+        tag_id: str,
+        tag_display_name: str,
+        indexer: VaultIndexer,
+    ) -> Path:
+        group_slug = slugify(group_id)
+        tag_slug = slugify(tag_id)
         if not group_slug or not tag_slug:
-            raise ValueError(f"Invalid tag reference: {group_name}:{tag_name}")
+            raise ValueError(f"Invalid tag reference: {group_id}:{tag_id}")
 
         tag_dir = self.tag_root_path / group_slug / tag_slug
         tag_dir.mkdir(parents=True, exist_ok=True)
@@ -866,15 +981,15 @@ class VaultManager:
         frontmatter = {
             "id": f"tag_{group_slug}_{tag_slug}",
             "type": "tag_index",
-            "group": group_name,
-            "tag": tag_name,
+            "group": group_display_name,
+            "tag": tag_display_name,
             "created_at": now,
             "updated_at": now,
             "tags": [f"{group_slug}:{tag_slug}"],
         }
 
         body_lines = [
-            f"# {group_name} / {tag_name}",
+            f"# {group_display_name} / {tag_display_name}",
             "",
             "## Uebersicht",
             f"- Verknuepfte Notizen: {len(rows)}",
@@ -1281,68 +1396,139 @@ class VaultManager:
             remapped.append(item)
         self._write_favorite_folders(remapped)
 
-    def _to_tag_key(self, group_name: str, tag_name: str) -> str:
-        return f"{slugify(group_name)}:{slugify(tag_name)}"
+    def _to_tag_key(self, group_id: str, tag_id: str) -> str:
+        group_slug = _normalize_tag_id(group_id)
+        tag_slug = _normalize_tag_id(tag_id)
+        if not group_slug or not tag_slug:
+            return ""
+        return f"{group_slug}:{tag_slug}"
 
-    def _resolve_group_name(self, groups: dict[str, list[str]], name: str) -> str | None:
-        clean_name = _normalize_label(name)
-        if not clean_name:
+    def _resolve_group_entry(self, groups: list[dict[str, Any]], group_id: str) -> dict[str, Any] | None:
+        clean_group_id = _normalize_tag_id(group_id)
+        if not clean_group_id:
             return None
-
-        for candidate in groups:
-            if candidate.lower() == clean_name.lower():
-                return candidate
-        clean_slug = slugify(clean_name)
-        for candidate in groups:
-            if slugify(candidate) == clean_slug:
-                return candidate
+        for group in groups:
+            candidate = _normalize_tag_id(str(group.get("id", "")))
+            if candidate and candidate.lower() == clean_group_id.lower():
+                return group
         return None
 
-    def _resolve_tag_name(self, tags: list[str], name: str) -> str | None:
-        clean_name = _normalize_label(name)
-        if not clean_name:
+    def _resolve_tag_entry(self, group: dict[str, Any], tag_id: str) -> dict[str, Any] | None:
+        clean_tag_id = _normalize_tag_id(tag_id)
+        if not clean_tag_id:
             return None
-
-        for candidate in tags:
-            if candidate.lower() == clean_name.lower():
-                return candidate
-
-        clean_slug = slugify(clean_name)
-        for candidate in tags:
-            if slugify(candidate) == clean_slug:
-                return candidate
+        tags = group.get("tags", [])
+        if not isinstance(tags, list):
+            return None
+        for tag in tags:
+            if not isinstance(tag, dict):
+                continue
+            candidate = _normalize_tag_id(str(tag.get("id", "")))
+            if candidate and candidate.lower() == clean_tag_id.lower():
+                return tag
         return None
 
-    def _normalize_tag_groups(self, value: Any) -> dict[str, list[str]]:
-        if not isinstance(value, dict):
-            return {}
+    def _sorted_tag_entries(self, tags: Any) -> list[dict[str, str]]:
+        if not isinstance(tags, list):
+            return []
 
-        normalized: dict[str, list[str]] = {}
-        for raw_group, raw_tags in value.items():
-            if not isinstance(raw_group, str):
+        entries: dict[str, dict[str, str]] = {}
+        for tag in tags:
+            if isinstance(tag, str):
+                tag_id = _normalize_tag_id(tag)
+                if not tag_id:
+                    continue
+                display_name = _normalize_label(tag) or tag_id
+            elif isinstance(tag, dict):
+                tag_id = _normalize_tag_id(str(tag.get("id", "")))
+                if not tag_id:
+                    continue
+                display_name = _normalize_label(str(tag.get("displayName", ""))) or tag_id
+            else:
                 continue
 
-            group_name = _normalize_label(raw_group)
-            if not group_name:
-                continue
+            existing = entries.get(tag_id)
+            if existing is None or existing["displayName"] == existing["id"]:
+                entries[tag_id] = {"id": tag_id, "displayName": display_name}
 
-            if not isinstance(raw_tags, list):
-                normalized[group_name] = []
-                continue
+        return sorted(entries.values(), key=lambda item: item["displayName"].lower())
 
-            tags = [_normalize_label(str(item)) for item in raw_tags]
-            tags = [item for item in tags if item]
-            normalized[group_name] = _dedupe_sorted(tags)
+    def _normalize_tag_groups(self, value: Any) -> list[dict[str, Any]]:
+        normalized: dict[str, dict[str, Any]] = {}
 
-        return dict(sorted(normalized.items(), key=lambda item: item[0].lower()))
+        if isinstance(value, dict):
+            for raw_group, raw_tags in value.items():
+                if not isinstance(raw_group, str):
+                    continue
+                group_id = _normalize_tag_id(raw_group)
+                if not group_id:
+                    continue
+                display_name = _normalize_label(raw_group) or group_id
+                tags = self._sorted_tag_entries(raw_tags)
+                normalized[group_id] = {
+                    "id": group_id,
+                    "displayName": display_name,
+                    "color": DEFAULT_TAG_GROUP_COLOR,
+                    "tags": tags,
+                }
+        elif isinstance(value, list):
+            for raw_group in value:
+                if not isinstance(raw_group, dict):
+                    continue
+                group_id = _normalize_tag_id(str(raw_group.get("id", "")))
+                if not group_id:
+                    continue
 
-    def _write_tag_groups(self, groups: dict[str, list[str]]) -> None:
+                display_name = _normalize_label(str(raw_group.get("displayName", ""))) or group_id
+                color = _normalize_tag_color(str(raw_group.get("color", "")))
+                tags = self._sorted_tag_entries(raw_group.get("tags", []))
+
+                existing = normalized.get(group_id)
+                if existing is None:
+                    normalized[group_id] = {
+                        "id": group_id,
+                        "displayName": display_name,
+                        "color": color,
+                        "tags": tags,
+                    }
+                    continue
+
+                merged_tags = self._sorted_tag_entries([*existing.get("tags", []), *tags])
+                normalized[group_id] = {
+                    "id": group_id,
+                    "displayName": display_name or existing.get("displayName", group_id),
+                    "color": color or existing.get("color", DEFAULT_TAG_GROUP_COLOR),
+                    "tags": merged_tags,
+                }
+
+        return sorted(normalized.values(), key=lambda item: str(item.get("displayName", item.get("id", ""))).lower())
+
+    def _write_tag_groups(self, groups: Any) -> None:
         clean_groups = self._normalize_tag_groups(groups)
-        payload = {
+        config = self.read_config()
+        if not isinstance(config, dict):
+            config = {}
+        config["tagGroups"] = clean_groups
+        if "mode" not in config:
+            config["mode"] = "core"
+        if not isinstance(config.get("openai"), dict):
+            config["openai"] = {
+                "enabled": False,
+                "model": "gpt-4.1-mini",
+                "api_key_env": "OPENAI_API_KEY",
+            }
+
+        self.config_path.write_text(
+            json.dumps(config, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        # Keep legacy file in sync for backwards compatibility with older builds.
+        legacy_payload = {
             "updated_at": datetime.now().isoformat(timespec="seconds"),
-            "groups": clean_groups,
+            "tagGroups": clean_groups,
         }
         self.tag_groups_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
+            json.dumps(legacy_payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )

@@ -83,42 +83,48 @@ class NoteSaveRequest(BaseModel):
 
 
 class TagGroupRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
+    group_id: str = Field(alias="groupId")
+    display_name: str = Field(default="", alias="displayName")
+    color: str = Field(default="#4f8cff")
 
 
 class TagCreateRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
-    tag_name: str = Field(alias="tagName")
+    group_id: str = Field(alias="groupId")
+    tag_id: str = Field(alias="tagId")
+    display_name: str = Field(default="", alias="displayName")
 
 
 class TagRenameRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
-    tag_name: str = Field(alias="tagName")
-    new_tag_name: str = Field(alias="newTagName")
+    group_id: str = Field(alias="groupId")
+    tag_id: str = Field(alias="tagId")
+    new_tag_id: str = Field(alias="newTagId")
+    new_display_name: str = Field(default="", alias="newDisplayName")
     apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 
 class TagGroupRenameRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
-    new_group_name: str = Field(alias="newGroupName")
+    group_id: str = Field(alias="groupId")
+    new_group_id: str = Field(alias="newGroupId")
+    new_display_name: str = Field(default="", alias="newDisplayName")
+    new_color: str = Field(default="#4f8cff", alias="newColor")
     apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 
 class TagGroupDeleteRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
+    group_id: str = Field(alias="groupId")
     remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
 
 
 class TagMoveRequest(BaseModel):
     from_group: str = Field(alias="fromGroup")
-    tag_name: str = Field(alias="tagName")
+    tag_id: str = Field(alias="tagId")
     to_group: str = Field(alias="toGroup")
     apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 
 class TagDeleteRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
-    tag_name: str = Field(alias="tagName")
+    group_id: str = Field(alias="groupId")
+    tag_id: str = Field(alias="tagId")
     remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
 
 
@@ -575,14 +581,14 @@ def get_tag_groups() -> dict[str, Any]:
 @app.post("/tag-groups/add-group")
 def add_tag_group(req: TagGroupRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
-    groups = vault.add_tag_group(req.group_name, indexer)
+    groups = vault.add_tag_group(req.group_id, req.display_name, req.color, indexer)
     return {"groups": groups}
 
 
 @app.post("/tag-groups/add-tag")
 def add_tag(req: TagCreateRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
-    groups = vault.add_tag_to_group(req.group_name, req.tag_name, indexer)
+    groups = vault.add_tag_to_group(req.group_id, req.tag_id, req.display_name, indexer)
     return {"groups": groups}
 
 
@@ -591,8 +597,10 @@ def rename_tag_group(req: TagGroupRenameRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.rename_tag_group(
-            group_name=req.group_name,
-            new_group_name=req.new_group_name,
+            group_id=req.group_id,
+            new_group_id=req.new_group_id,
+            new_display_name=req.new_display_name,
+            new_color=req.new_color,
             apply_to_notes=req.apply_to_notes,
             indexer=indexer,
         )
@@ -607,7 +615,7 @@ def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.delete_tag_group(
-            group_name=req.group_name,
+            group_id=req.group_id,
             remove_from_notes=req.remove_from_notes,
             indexer=indexer,
         )
@@ -622,9 +630,10 @@ def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.rename_tag(
-            group_name=req.group_name,
-            tag_name=req.tag_name,
-            new_tag_name=req.new_tag_name,
+            group_id=req.group_id,
+            tag_id=req.tag_id,
+            new_tag_id=req.new_tag_id,
+            new_display_name=req.new_display_name,
             apply_to_notes=req.apply_to_notes,
             indexer=indexer,
         )
@@ -640,7 +649,7 @@ def move_tag(req: TagMoveRequest) -> dict[str, Any]:
     try:
         groups, touched = vault.move_tag(
             from_group=req.from_group,
-            tag_name=req.tag_name,
+            tag_name=req.tag_id,
             to_group=req.to_group,
             apply_to_notes=req.apply_to_notes,
             indexer=indexer,
@@ -656,8 +665,8 @@ def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.delete_tag(
-            group_name=req.group_name,
-            tag_name=req.tag_name,
+            group_id=req.group_id,
+            tag_id=req.tag_id,
             remove_from_notes=req.remove_from_notes,
             indexer=indexer,
         )
