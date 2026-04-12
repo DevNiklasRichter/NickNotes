@@ -2062,3 +2062,176 @@ textarea:focus-visible {
 .workbench-shell .code-editor-host .cm-content :is(span, strong, em, a, code) {
   font-size: inherit !important;
 }
+
+/* Minimal workspace refresh */
+.workbench-shell {
+  grid-template-columns: 112px auto 1fr;
+  gap: 0;
+  padding: 0;
+}
+
+.activity-rail {
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg-layer-1);
+  padding: 0.28rem 0.22rem;
+  position: relative;
+  z-index: 1;
+}
+
+.left-sidebar {
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  overflow: visible;
+  background: var(--surface-contrast);
+  position: relative;
+  z-index: 2;
+}
+
+.sidebar-content {
+  border-left: none;
+  background: transparent;
+}
+
+.main-region {
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.editor-tabs {
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  padding: 0.22rem 0.32rem;
+  gap: 0.12rem;
+}
+
+.editor-tab-list {
+  gap: 0;
+}
+
+.editor-tab {
+  border: none;
+  border-right: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.editor-tab.active {
+  border-color: color-mix(in srgb, var(--line) 88%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 68%, transparent);
+}
+
+.tab-open {
+  min-width: 0;
+  padding: 0.28rem 0.44rem;
+}
+
+.tab-close {
+  padding: 0.2rem 0.3rem;
+}
+
+.editor-tab-actions {
+  border-left: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+}
+
+.workbench-shell .icon-button,
+.workbench-shell .icon-button.compact {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.workbench-shell .icon-button:hover,
+.workbench-shell .icon-button.compact:hover {
+  border: none;
+  background: transparent;
+  color: var(--text);
+}
+
+.editor-pane {
+  border-right: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.editor-pane-tab-title {
+  display: none;
+}
+
+.wiki-links-strip.workspace-wide {
+  border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  width: 100%;
+}
+
+.workspace-grid.with-capture-column {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 8px minmax(120px, var(--capture-inline-height, 220px));
+}
+
+.capture-resize-handle {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  cursor: row-resize;
+}
+
+.capture-resize-handle::before {
+  content: '';
+  position: absolute;
+  left: 28%;
+  right: 28%;
+  top: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--line-strong) 84%, transparent);
+}
+
+.capture-resize-handle.active::before,
+.capture-resize-handle:hover::before {
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.capture-workspace-panel {
+  grid-column: 1;
+  grid-row: 3;
+  border-left: none;
+  border-top: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.workspace-grid.with-capture-column .editor-workspace-panel {
+  border-right: none;
+  border-bottom: none;
+}
+
+.editor-command-palette {
+  z-index: 260;
+}
+
+.note-editor-shell {
+  padding: 0;
+  background: transparent;
+}
+
+.code-editor-host {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.code-editor-host:focus-within {
+  border: none;
+  box-shadow: none;
+}
+
+.editor-tab-actions .icon-button.compact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}

@@ -266,7 +266,7 @@ function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineCla
           const markerFrom = line.from + match[1].length
           const markerTo = markerFrom + 3
           const checked = match[2].toLowerCase() === 'x'
-          const markerIsActive = intersectsSelection(markerFrom, markerTo, selections)
+          const markerIsActive = intersectsSelection(Math.max(line.from, markerFrom - 1), Math.min(line.to, markerTo + 1), selections)
 
           addLineClass(entries, line.from, `cm-md-task-line ${checked ? 'cm-md-task-checked' : 'cm-md-task-open'}`, lineClassSeen)
 
@@ -298,7 +298,7 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
       if (!processedLines.has(line.number)) {
         const tags = parseInlineTagsInLine(line.text, line.from)
         for (const tag of tags) {
-          const tagIsActive = intersectsSelection(tag.from, tag.to, selections)
+          const tagIsActive = intersectsSelection(Math.max(line.from, tag.from - 1), Math.min(line.to, tag.to + 1), selections)
           if (tagIsActive) {
             addRange(entries, tag.from, tag.to, inlineTagSourceDeco)
             continue
@@ -497,18 +497,6 @@ const markdownPreviewPlugin = ViewPlugin.fromClass(
 
     update(update: ViewUpdate): void {
       const configChanged = update.startState.facet(markdownTagLookupFacet) !== update.state.facet(markdownTagLookupFacet)
-      if (update.selectionSet && !update.docChanged && !update.viewportChanged) {
-        const previous = update.startState.selection.main
-        const current = update.state.selection.main
-        if (previous.empty && current.empty) {
-          const previousLine = update.startState.doc.lineAt(previous.head).number
-          const currentLine = update.state.doc.lineAt(current.head).number
-          if (previousLine === currentLine && !configChanged) {
-            return
-          }
-        }
-      }
-
       if (update.docChanged || update.selectionSet || update.viewportChanged || configChanged) {
         this.decorations = buildDecorations(update.view)
         if (update.docChanged || update.viewportChanged) {

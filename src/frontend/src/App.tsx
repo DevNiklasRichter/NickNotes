@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
+import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
@@ -600,6 +600,7 @@ function App() {
   const uiSettingsReadyRef = useRef(false)
   const explorerViewSaveTimerRef = useRef<number | null>(null)
   const appLayoutSaveTimerRef = useRef<number | null>(null)
+  const workspaceGridRef = useRef<HTMLDivElement | null>(null)
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
@@ -637,6 +638,8 @@ function App() {
   const [editorPanelOpen, setEditorPanelOpen] = useState(true)
   const [capturePanelOpen, setCapturePanelOpen] = useState(true)
   const [capturePinned, setCapturePinned] = useState(true)
+  const [captureInlineHeight, setCaptureInlineHeight] = useState(220)
+  const [captureResizing, setCaptureResizing] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     daily: true,
     tags: true,
@@ -668,8 +671,40 @@ function App() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (!captureResizing) {
+      return
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      const host = workspaceGridRef.current
+      if (!host) {
+        return
+      }
+      const rect = host.getBoundingClientRect()
+      const nextHeight = Math.round(rect.bottom - event.clientY)
+      const bounded = Math.max(120, Math.min(rect.height - 180, nextHeight))
+      setCaptureInlineHeight(bounded)
+    }
+
+    const onPointerUp = () => {
+      setCaptureResizing(false)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+    }
+  }, [captureResizing])
+
+  useEffect(() => {
     tagActionDialogRef.current = tagActionDialog
   }, [tagActionDialog])
+
+  useEffect(() => {
+    document.title = ''
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -1271,6 +1306,8 @@ function App() {
     }
     return next
   }, [activeTab, openNoteTabs, splitPanePaths, splitView])
+  const activeNoteDisplayTitle =
+    activeTab && activeTab.kind === 'note' ? activeTab.title.replace(/\.md$/i, '') : ''
 
   useEffect(() => {
     if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
@@ -3181,11 +3218,11 @@ function App() {
           className={settingsTabOpen ? 'active' : ''}
           onClick={openSettingsTab}
           title="Einstellungen"
+          aria-label="Einstellungen"
         >
           <span className="rail-glyph">
             <LucideNamedIcon name="Settings" size={14} />
           </span>
-          <span className="rail-label">Einstellungen</span>
         </button>
       </aside>
 
@@ -3197,7 +3234,15 @@ function App() {
 
       <section className="main-region">
         <div
+          ref={workspaceGridRef}
           className={`workspace-grid ${showCaptureInline ? 'with-capture-column' : ''}`}
+          style={
+            showCaptureInline
+              ? ({
+                  '--capture-inline-height': `${captureInlineHeight}px`,
+                } as CSSProperties)
+              : undefined
+          }
         >
           {editorPanelOpen ? (
             <article className="workspace-panel editor-workspace-panel">
@@ -3489,37 +3534,7 @@ function App() {
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      <>
-                        <div className="wiki-links-strip">
-                          <span className="muted-label">Wikilinks</span>
-                          {activeWikiLinks.length === 0 ? <span className="empty-copy">Keine Links in dieser Notiz.</span> : null}
-                          {activeWikiLinks.map((link) => {
-                            if (link.resolved) {
-                              const resolvedPath = link.resolved.path
-                              return (
-                                <button
-                                  key={`wiki-link-${link.target}`}
-                                  className="wiki-link-pill"
-                                  onClick={() => void openNoteInTab(resolvedPath, toNoteDisplayName(resolvedPath))}
-                                >
-                                  {link.alias || toNoteDisplayName(resolvedPath)}
-                                </button>
-                              )
-                            }
-
-                            return (
-                              <span key={`wiki-link-${link.target}`} className="wiki-link-pill unresolved">
-                                {link.alias || link.target}
-                              </span>
-                            )
-                          })}
-                          <button className="wiki-link-pill" onClick={openWikiLinkPicker}>
-                            + Link
-                          </button>
-                        </div>
-                      </>
-                    )
+                    ) : null
                   ) : (
                     <div className="main-empty-state">
                       <p className="main-empty-glyph">
@@ -3584,7 +3599,48 @@ function App() {
                   </aside>
                 ) : null}
               </div>
+
+              {activeTab?.kind === 'note' ? (
+                <div className="wiki-links-strip workspace-wide">
+                  <span className="muted-label">Wikilinks • {activeNoteDisplayTitle || toNoteDisplayName(activeTab.path)}</span>
+                  {activeWikiLinks.length === 0 ? <span className="empty-copy">Keine Links in dieser Notiz.</span> : null}
+                  {activeWikiLinks.map((link) => {
+                    if (link.resolved) {
+                      const resolvedPath = link.resolved.path
+                      return (
+                        <button
+                          key={`wiki-link-${link.target}`}
+                          className="wiki-link-pill"
+                          onClick={() => void openNoteInTab(resolvedPath, toNoteDisplayName(resolvedPath))}
+                        >
+                          {link.alias || toNoteDisplayName(resolvedPath)}
+                        </button>
+                      )
+                    }
+
+                    return (
+                      <span key={`wiki-link-${link.target}`} className="wiki-link-pill unresolved">
+                        {link.alias || link.target}
+                      </span>
+                    )
+                  })}
+                  <button className="wiki-link-pill" onClick={openWikiLinkPicker}>
+                    + Link
+                  </button>
+                </div>
+              ) : null}
             </article>
+          ) : null}
+
+          {showCaptureInline ? (
+            <div
+              className={`capture-resize-handle ${captureResizing ? 'active' : ''}`}
+              onPointerDown={(event) => {
+                event.preventDefault()
+                setCaptureResizing(true)
+              }}
+              title="Quick Capture Hoehe anpassen"
+            />
           ) : null}
 
           {showCaptureInline ? (

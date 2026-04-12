@@ -214,8 +214,14 @@ function resolveSlashAnchor(view: EditorView, position: number, host: HTMLElemen
 
   const rect = host.getBoundingClientRect()
   const panelWidth = 340
+  const panelHeight = 340
   const left = Math.max(10, Math.min(coords.left - rect.left - 16, rect.width - panelWidth - 10))
-  const top = Math.max(10, coords.bottom - rect.top + 8)
+  const preferredBelow = coords.bottom - rect.top + 8
+  const maxTop = Math.max(10, rect.height - panelHeight - 10)
+  const top =
+    preferredBelow <= maxTop
+      ? preferredBelow
+      : Math.max(10, Math.min(maxTop, coords.top - rect.top - panelHeight - 8))
   return { left, top }
 }
 
@@ -281,12 +287,24 @@ export function CodeMirrorMarkdownEditor({
     }
 
     if (paletteState.mode === 'slash') {
+      const slashQuery = paletteState.query.trim().toLowerCase()
+      const directTagItems: PaletteItem[] =
+        slashQuery.length === 0
+          ? []
+          : tagGroups.flatMap((group) =>
+              group.tags
+                .filter((tag) =>
+                  `${group.id}/${tag.id} ${group.displayName} ${tag.displayName}`.toLowerCase().includes(slashQuery)
+                )
+                .map<PaletteItem>((tag) => ({ kind: 'tag-direct', group, tag }))
+            )
       return [
         {
           kind: 'tag-root',
           title: 'Tag',
           description: 'Fuegt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
         },
+        ...directTagItems,
         ...filterMarkdownCommands(paletteState.query).map<PaletteItem>((command) => ({ kind: 'command', command })),
       ]
     }
@@ -485,10 +503,12 @@ export function CodeMirrorMarkdownEditor({
       }
 
       if (item.kind === 'tag-direct') {
-        if (current.mode !== 'tag-group') {
+        if (current.mode !== 'tag-group' && current.mode !== 'slash') {
           return false
         }
-        insertTagSyntax(view, current.context.from, current.context.to, item.group.id, item.tag.id)
+        const from = current.mode === 'slash' ? current.from : current.context.from
+        const to = current.mode === 'slash' ? current.to : current.context.to
+        insertTagSyntax(view, from, to, item.group.id, item.tag.id)
         setPaletteState(null)
         view.focus()
         return true
@@ -834,13 +854,15 @@ export function CodeMirrorMarkdownEditor({
       return
     }
     if (item.kind === 'tag-direct') {
-      if (current.mode !== 'tag-group') {
+      if (current.mode !== 'tag-group' && current.mode !== 'slash') {
         return
       }
+      const from = current.mode === 'slash' ? current.from : current.context.from
+      const to = current.mode === 'slash' ? current.to : current.context.to
       const syntax = `{tag:${item.group.id}/${item.tag.id}}`
-      const cursor = current.context.from + syntax.length
+      const cursor = from + syntax.length
       view.dispatch({
-        changes: { from: current.context.from, to: current.context.to, insert: syntax },
+        changes: { from, to, insert: syntax },
         selection: { anchor: cursor, head: cursor },
         scrollIntoView: true,
         userEvent: 'input.type',
