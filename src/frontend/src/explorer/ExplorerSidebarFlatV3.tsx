@@ -33,6 +33,8 @@ type ExplorerSidebarProps = {
   onMoveFolder: (groupKey: string, targetParentKey: string) => Promise<void>
   onToggleFavoriteFolder: (groupKey: string) => Promise<void>
   options: ExplorerOptions
+  contentMatchFilePathKeys?: Set<string>
+  onFilterQueryChange?: (query: string) => void
   onOptionsChange?: (next: ExplorerOptions) => void
   onRefresh: () => void
   revealFilePath?: string
@@ -295,6 +297,8 @@ export function ExplorerSidebar({
   onMoveFolder,
   onToggleFavoriteFolder,
   options,
+  contentMatchFilePathKeys,
+  onFilterQueryChange,
   onOptionsChange,
   onRefresh,
   revealFilePath,
@@ -400,6 +404,10 @@ export function ExplorerSidebar({
   }, [expandedNodes, filterQuery, folderOrder, iconOverrides, onViewStateChange, selectedNodeId])
 
   useEffect(() => {
+    onFilterQueryChange?.(filterQuery)
+  }, [filterQuery, onFilterQueryChange])
+
+  useEffect(() => {
     const valid = new Set(groups.map((group) => normalizeGroupKey(group.key)))
     setFolderOrder((prev) => sanitizeOrder(prev, valid, fixedRootKeys))
   }, [fixedRootKeys, groups])
@@ -425,9 +433,22 @@ export function ExplorerSidebar({
         selectedNodeId,
         activeFilePath,
         filterQuery,
+        contentMatchFilePathKeys,
         dirtyFilePaths,
       }),
-    [activeFilePath, dirtyFilePaths, expandedNodes, files, filterQuery, folderOrder, groups, options, selectedNodeId, vaultPath]
+    [
+      activeFilePath,
+      contentMatchFilePathKeys,
+      dirtyFilePaths,
+      expandedNodes,
+      files,
+      filterQuery,
+      folderOrder,
+      groups,
+      options,
+      selectedNodeId,
+      vaultPath,
+    ]
   )
 
   const folderFileCounts = useMemo(() => {
@@ -1036,78 +1057,93 @@ export function ExplorerSidebar({
       }}
     >
       <header className="explorer-toolbar">
-        <h3>NOTIZEN</h3>
-        <div className="explorer-toolbar-search">
-          <input className="explorer-search-input" value={filterQuery} onChange={(event) => setFilterQuery(event.target.value)} placeholder="Dateien filtern" />
-        </div>
-      </header>
-      <div className="explorer-toolbar-actions-row">
-        <div className="explorer-toolbar-actions">
-          <button className="icon-button compact" onClick={onRefresh} disabled={!vaultLoaded} title="Aktualisieren">
-            <LucideNamedIcon name="RefreshCw" className="row-action-icon" size={14} />
-          </button>
-          <button
-            className="icon-button compact"
-            onClick={() => {
-              void runCreateFile()
-            }}
-            disabled={!vaultLoaded}
-            title="Neue Datei"
-          >
-            <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
-          </button>
-          <button
-            className="icon-button compact"
-            onClick={() => {
-              void runCreateFolder()
-            }}
-            disabled={!vaultLoaded}
-            title="Neuer Ordner"
-          >
-            <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
-          </button>
-          <div className="explorer-sort-anchor" ref={sortMenuRef}>
+        <div className="explorer-toolbar-top">
+          <div className="explorer-toolbar-left">
+            <div className="explorer-sort-anchor" ref={sortMenuRef}>
+              <button
+                className={`icon-button compact ${sortMenuOpen ? 'active' : ''}`}
+                onClick={() => {
+                  setSortMenuOpen((prev) => !prev)
+                }}
+                disabled={!vaultLoaded}
+                title="Darstellungsreihenfolge"
+              >
+                <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+              </button>
+              {sortMenuOpen ? (
+                <div className="explorer-sort-menu">
+                  <div className="explorer-sort-menu-section">
+                    <span>Sortieren nach</span>
+                    <button className={options.sortMode === 'manual' ? 'active' : ''} onClick={() => setSortMode('manual')}>
+                      Manuell
+                    </button>
+                    <button className={options.sortMode === 'name' ? 'active' : ''} onClick={() => setSortMode('name')}>
+                      Name
+                    </button>
+                    <button className={options.sortMode === 'noteCount' ? 'active' : ''} onClick={() => setSortMode('noteCount')}>
+                      Notizanzahl
+                    </button>
+                    <button className={options.sortMode === 'modified' ? 'active' : ''} onClick={() => setSortMode('modified')}>
+                      Letzte Aenderung
+                    </button>
+                  </div>
+                  <div className="explorer-sort-menu-section">
+                    <span>Richtung</span>
+                    <button className={options.sortDirection === 'asc' ? 'active' : ''} onClick={() => setSortDirection('asc')}>
+                      Aufsteigend
+                    </button>
+                    <button className={options.sortDirection === 'desc' ? 'active' : ''} onClick={() => setSortDirection('desc')}>
+                      Absteigend
+                    </button>
+                  </div>
+                  <div className="explorer-sort-menu-section">
+                    <button onClick={onRefresh} disabled={!vaultLoaded}>
+                      Aktualisieren
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <h3>Notizen</h3>
+
+          <div className="explorer-toolbar-right">
             <button
-              className={`icon-button compact ${sortMenuOpen ? 'active' : ''}`}
+              className="icon-button compact"
               onClick={() => {
-                setSortMenuOpen((prev) => !prev)
+                void runCreateFile()
               }}
               disabled={!vaultLoaded}
-              title="Sortierung"
+              title="Neue Notiz"
             >
-              <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+              <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
             </button>
-            {sortMenuOpen ? (
-              <div className="explorer-sort-menu">
-                <div className="explorer-sort-menu-section">
-                  <span>Sortieren nach</span>
-                  <button className={options.sortMode === 'manual' ? 'active' : ''} onClick={() => setSortMode('manual')}>
-                    Manuell
-                  </button>
-                  <button className={options.sortMode === 'name' ? 'active' : ''} onClick={() => setSortMode('name')}>
-                    Name
-                  </button>
-                  <button className={options.sortMode === 'noteCount' ? 'active' : ''} onClick={() => setSortMode('noteCount')}>
-                    Notizanzahl
-                  </button>
-                  <button className={options.sortMode === 'modified' ? 'active' : ''} onClick={() => setSortMode('modified')}>
-                    Letzte Aenderung
-                  </button>
-                </div>
-                <div className="explorer-sort-menu-section">
-                  <span>Richtung</span>
-                  <button className={options.sortDirection === 'asc' ? 'active' : ''} onClick={() => setSortDirection('asc')}>
-                    Aufsteigend
-                  </button>
-                  <button className={options.sortDirection === 'desc' ? 'active' : ''} onClick={() => setSortDirection('desc')}>
-                    Absteigend
-                  </button>
-                </div>
-              </div>
-            ) : null}
+            <button
+              className="icon-button compact"
+              onClick={() => {
+                void runCreateFolder()
+              }}
+              disabled={!vaultLoaded}
+              title="Neuer Ordner"
+            >
+              <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
+            </button>
           </div>
         </div>
-      </div>
+
+        <div className="explorer-toolbar-search">
+          <div className="explorer-search-input-wrap">
+            <LucideNamedIcon name="Search" className="explorer-search-icon" size={14} />
+            <input
+              className="explorer-search-input"
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              placeholder="Search"
+            />
+          </div>
+        </div>
+      </header>
 
       <section
         className="explorer-tree explorer-flat-tree"

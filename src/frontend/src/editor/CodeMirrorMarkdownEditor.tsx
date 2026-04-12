@@ -7,8 +7,10 @@ import { javascript } from '@codemirror/lang-javascript'
 import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, LanguageDescription } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
-import { Compartment, EditorState } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
+  Decoration,
+  type DecorationSet,
   drawSelection,
   dropCursor,
   EditorView,
@@ -16,6 +18,8 @@ import {
   highlightSpecialChars,
   keymap,
   placeholder,
+  ViewPlugin,
+  type ViewUpdate,
 } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 
@@ -84,6 +88,7 @@ type CodeMirrorMarkdownEditorProps = {
   value: string
   theme: 'light' | 'dark'
   tagGroups: TagGroupDefinition[]
+  searchHighlightQuery?: string
   onChange: (nextValue: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
@@ -116,6 +121,64 @@ const codeLanguages = [
     support: css(),
   }),
 ]
+
+const explorerSearchHitDeco = Decoration.mark({ class: 'cm-explorer-search-hit' })
+
+function normalizeSearchTerm(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function buildSearchTermDecorations(state: EditorState, query: string): DecorationSet {
+  const cleanQuery = normalizeSearchTerm(query)
+  if (!cleanQuery) {
+    return Decoration.none
+  }
+
+  const ranges: ReturnType<typeof explorerSearchHitDeco.range>[] = []
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    const line = state.doc.line(lineNumber)
+    const haystack = line.text.toLowerCase()
+    let fromIndex = 0
+    while (fromIndex <= haystack.length - cleanQuery.length) {
+      const at = haystack.indexOf(cleanQuery, fromIndex)
+      if (at < 0) {
+        break
+      }
+      const from = line.from + at
+      const to = from + cleanQuery.length
+      ranges.push(explorerSearchHitDeco.range(from, to))
+      fromIndex = at + Math.max(1, cleanQuery.length)
+    }
+  }
+
+  return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none
+}
+
+function buildExplorerSearchHighlightExtension(query: string): Extension {
+  const cleanQuery = normalizeSearchTerm(query)
+  if (!cleanQuery) {
+    return []
+  }
+
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(view: EditorView) {
+        this.decorations = buildSearchTermDecorations(view.state, cleanQuery)
+      }
+
+      update(update: ViewUpdate): void {
+        if (update.docChanged) {
+          this.decorations = buildSearchTermDecorations(update.state, cleanQuery)
+        }
+      }
+    },
+    {
+      decorations: (instance) => instance.decorations,
+    }
+  )
+}
 
 function detectSlashMatch(view: EditorView): SlashMatch | null {
   const selection = view.state.selection.main
@@ -188,7 +251,14 @@ type PaletteItem =
       tag: TagDefinition
     }
 
-export function CodeMirrorMarkdownEditor({ value, theme, tagGroups, onChange, editorApiRef }: CodeMirrorMarkdownEditorProps) {
+export function CodeMirrorMarkdownEditor({
+  value,
+  theme,
+  tagGroups,
+  searchHighlightQuery = '',
+  onChange,
+  editorApiRef,
+}: CodeMirrorMarkdownEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const paletteInputRef = useRef<HTMLInputElement | null>(null)
@@ -197,9 +267,11 @@ export function CodeMirrorMarkdownEditor({ value, theme, tagGroups, onChange, ed
   const syncingRef = useRef(false)
   const themeCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
+  const searchHighlightCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialThemeRef = useRef(theme)
   const initialTagGroupsRef = useRef(tagGroups)
+  const initialSearchHighlightQueryRef = useRef(searchHighlightQuery)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
 
@@ -513,6 +585,9 @@ export function CodeMirrorMarkdownEditor({ value, theme, tagGroups, onChange, ed
           EditorView.lineWrapping,
           markdownHighlightExtension,
           tagLookupCompartmentRef.current.of(markdownTagLookupExtension(initialTagGroupsRef.current)),
+          searchHighlightCompartmentRef.current.of(
+            buildExplorerSearchHighlightExtension(initialSearchHighlightQueryRef.current)
+          ),
           highlightSelectionMatches(),
           placeholder('Starte mit einer Notiz ...'),
           liveMarkdownPreview(),
@@ -612,6 +687,17 @@ export function CodeMirrorMarkdownEditor({ value, theme, tagGroups, onChange, ed
       effects: tagLookupCompartmentRef.current.reconfigure(markdownTagLookupExtension(tagGroups)),
     })
   }, [tagGroups])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    instance.dispatch({
+      effects: searchHighlightCompartmentRef.current.reconfigure(buildExplorerSearchHighlightExtension(searchHighlightQuery)),
+    })
+  }, [searchHighlightQuery])
 
   useEffect(() => {
     const instance = editorRef.current

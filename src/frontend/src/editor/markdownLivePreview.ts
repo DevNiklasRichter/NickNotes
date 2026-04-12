@@ -266,11 +266,11 @@ function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineCla
           const markerFrom = line.from + match[1].length
           const markerTo = markerFrom + 3
           const checked = match[2].toLowerCase() === 'x'
-          const lineIsActive = intersectsSelection(line.from, line.to, selections)
+          const markerIsActive = intersectsSelection(markerFrom, markerTo, selections)
 
           addLineClass(entries, line.from, `cm-md-task-line ${checked ? 'cm-md-task-checked' : 'cm-md-task-open'}`, lineClassSeen)
 
-          if (lineIsActive) {
+          if (markerIsActive) {
             addRange(entries, markerFrom, markerTo, taskMarkerVisibleDeco)
           } else {
             addRange(entries, markerFrom, markerTo, Decoration.replace({ widget: new TaskCheckboxWidget(checked, markerFrom, markerTo) }))
@@ -296,10 +296,9 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
 
     while (true) {
       if (!processedLines.has(line.number)) {
-        const lineIsActive = intersectsSelection(line.from, line.to, selections)
         const tags = parseInlineTagsInLine(line.text, line.from)
         for (const tag of tags) {
-          const tagIsActive = lineIsActive || intersectsSelection(tag.from, tag.to, selections)
+          const tagIsActive = intersectsSelection(tag.from, tag.to, selections)
           if (tagIsActive) {
             addRange(entries, tag.from, tag.to, inlineTagSourceDeco)
             continue

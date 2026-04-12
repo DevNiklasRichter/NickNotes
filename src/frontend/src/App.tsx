@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
@@ -191,17 +189,6 @@ type NoteGroup = {
   canDelete?: boolean
 }
 
-type MarkdownPreviewProps = {
-  content: string
-  emptyText?: string
-  className?: string
-  currentPath?: string
-  resolveWikiLink?: (target: string, currentPath?: string) => SearchRow | null
-  onOpenWikiLink?: (row: SearchRow) => void
-}
-
-const WIKI_LINK_HREF_PREFIX = 'wikilink://'
-
 function parseWikiLinkInner(rawInner: string): { target: string; alias: string | null } | null {
   const inner = rawInner.trim()
   if (!inner) {
@@ -234,21 +221,6 @@ function extractWikiLinks(content: string): Array<{ raw: string; target: string;
   }
 
   return matches
-}
-
-function toMarkdownWithWikiHref(content: string): string {
-  return content.replace(/\[\[([^[\]\n]+)\]\]/g, (full, innerRaw: string) => {
-    const parsed = parseWikiLinkInner(innerRaw)
-    if (!parsed) {
-      return full
-    }
-
-    const label = (parsed.alias ?? parsed.target).replace(/\[|\]/g, '').trim()
-    if (!label) {
-      return full
-    }
-    return `[${label}](${WIKI_LINK_HREF_PREFIX}${encodeURIComponent(parsed.target)})`
-  })
 }
 
 function normalizeWikiLookup(value: string): string {
@@ -350,64 +322,6 @@ function resolveWikiLinkTarget(
     chooseShortestPathRow(relative, noteBasePath) ||
     chooseShortestPathRow(exact, noteBasePath) ||
     chooseShortestPathRow(fuzzy, noteBasePath)
-  )
-}
-
-function MarkdownPreview({
-  content,
-  emptyText = 'Leere Notiz.',
-  className,
-  currentPath,
-  resolveWikiLink,
-  onOpenWikiLink,
-}: MarkdownPreviewProps) {
-  const classes = className ? `markdown-preview ${className}` : 'markdown-preview'
-  const renderedContent = useMemo(() => toMarkdownWithWikiHref(content), [content])
-
-  if (!content.trim()) {
-    return (
-      <div className={classes}>
-        <p className="empty-copy">{emptyText}</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className={classes}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children }) => {
-            if (href?.startsWith(WIKI_LINK_HREF_PREFIX) && resolveWikiLink) {
-              const target = decodeURIComponent(href.slice(WIKI_LINK_HREF_PREFIX.length))
-              const resolved = resolveWikiLink(target, currentPath)
-              if (resolved && onOpenWikiLink) {
-                return (
-                  <button
-                    className="markdown-wikilink"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      onOpenWikiLink(resolved)
-                    }}
-                  >
-                    {children}
-                  </button>
-                )
-              }
-              return <span className="markdown-wikilink unresolved">{children}</span>
-            }
-
-            return (
-              <a href={href} target="_blank" rel="noreferrer">
-                {children}
-              </a>
-            )
-          },
-        }}
-      >
-        {renderedContent}
-      </ReactMarkdown>
-    </div>
   )
 }
 
@@ -703,6 +617,8 @@ function App() {
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
   const [explorerFiles, setExplorerFiles] = useState<SearchRow[]>([])
+  const [explorerFilterQuery, setExplorerFilterQuery] = useState('')
+  const [explorerContentMatchPathKeys, setExplorerContentMatchPathKeys] = useState<Set<string>>(new Set())
 
   const [daily, setDaily] = useState<ReviewDaily | null>(null)
   const [weekly, setWeekly] = useState<ReviewWeekly | null>(null)
@@ -737,13 +653,16 @@ function App() {
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
   const [activeNotePath, setActiveNotePath] = useState('')
   const [splitView, setSplitView] = useState(false)
-  const [compareNotePath, setCompareNotePath] = useState('')
+  const [splitPanePaths, setSplitPanePaths] = useState<string[]>([])
+  const [draggingTabPath, setDraggingTabPath] = useState('')
+  const [splitDropActive, setSplitDropActive] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
   const [linkPickerOpen, setLinkPickerOpen] = useState(false)
   const [linkPickerQuery, setLinkPickerQuery] = useState('')
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
   const tagActionDialogRef = useRef<TagActionDialogState>(null)
   const activeEditorRef = useRef<MarkdownEditorApi | null>(null)
+  const secondaryEditorRef = useRef<MarkdownEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -895,6 +814,43 @@ function App() {
       }
     }
   }
+
+  useEffect(() => {
+    if (!vaultLoaded) {
+      setExplorerContentMatchPathKeys(new Set())
+      return
+    }
+
+    const query = explorerFilterQuery.trim()
+    if (!query) {
+      setExplorerContentMatchPathKeys(new Set())
+      return
+    }
+
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      void apiRequest<{ items: SearchRow[] }>(backendUrl, `/search?query=${encodeURIComponent(query)}`)
+        .then((response) => {
+          if (cancelled) {
+            return
+          }
+          const next = new Set(
+            response.items.map((row) => row.path.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase())
+          )
+          setExplorerContentMatchPathKeys(next)
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setExplorerContentMatchPathKeys(new Set())
+          }
+        })
+    }, 180)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [backendUrl, explorerFilterQuery, vaultLoaded])
 
   const refreshAllNotes = async (force = false) => {
     if (!vaultLoaded && !force) {
@@ -1165,7 +1121,7 @@ function App() {
   useEffect(() => {
     if (openTabs.length === 0) {
       setActiveNotePath('')
-      setCompareNotePath('')
+      setSplitPanePaths([])
       setSplitView(false)
       return
     }
@@ -1174,14 +1130,25 @@ function App() {
       setActiveNotePath(openTabs[openTabs.length - 1].path)
     }
 
-    if (compareNotePath && !openTabs.some((tab) => tab.kind === 'note' && tab.path === compareNotePath)) {
-      setCompareNotePath('')
-    }
+    const openNotePathSet = new Set(openTabs.filter((tab) => tab.kind === 'note').map((tab) => tab.path))
+    setSplitPanePaths((prev) => {
+      const seen = new Set<string>()
+      const next: string[] = []
+      for (const path of prev) {
+        if (!path || path === activeNotePath || !openNotePathSet.has(path) || seen.has(path)) {
+          continue
+        }
+        seen.add(path)
+        next.push(path)
+      }
+      return next.length === prev.length && next.every((path, index) => path === prev[index]) ? prev : next
+    })
 
     if (openTabs.filter((tab) => tab.kind === 'note').length < 2 && splitView) {
       setSplitView(false)
+      setSplitPanePaths([])
     }
-  }, [activeNotePath, compareNotePath, openTabs, splitView])
+  }, [activeNotePath, openTabs, splitView])
 
   useEffect(() => {
     setOpenTabs((prev) =>
@@ -1284,11 +1251,38 @@ function App() {
     () => new Set(openNoteTabs.filter((tab) => tab.dirty).map((tab) => tab.path)),
     [openNoteTabs]
   )
-  const compareCandidates = openNoteTabs.filter((tab) => tab.path !== activeTab?.path)
-  const compareTab =
-    splitView && activeTab?.kind === 'note'
-      ? openNoteTabs.find((tab) => tab.path === compareNotePath) ?? compareCandidates[0] ?? null
-      : null
+  const splitPaneTabs = useMemo(() => {
+    if (!splitView || activeTab?.kind !== 'note') {
+      return [] as NoteTab[]
+    }
+    const byPath = new Map(openNoteTabs.map((tab) => [tab.path, tab]))
+    const seen = new Set<string>()
+    const next: NoteTab[] = []
+    for (const path of splitPanePaths) {
+      if (!path || path === activeTab.path || seen.has(path)) {
+        continue
+      }
+      const tab = byPath.get(path)
+      if (!tab) {
+        continue
+      }
+      seen.add(path)
+      next.push(tab)
+    }
+    return next
+  }, [activeTab, openNoteTabs, splitPanePaths, splitView])
+
+  useEffect(() => {
+    if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
+      return
+    }
+    const candidate = openNoteTabs.find((tab) => tab.path !== activeTab.path)
+    if (!candidate) {
+      return
+    }
+    setSplitPanePaths([candidate.path])
+  }, [activeTab, openNoteTabs, splitPanePaths.length, splitView])
+
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
   const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.path === tabContextMenu.path) ?? null : null
@@ -1552,7 +1546,7 @@ function App() {
       setOpenTabs([])
       setActiveNotePath('')
       setSplitView(false)
-      setCompareNotePath('')
+      setSplitPanePaths([])
       storeLastNoteBasePath(loadedPath)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
@@ -1594,7 +1588,7 @@ function App() {
       setOpenTabs([])
       setActiveNotePath('')
       setSplitView(false)
-      setCompareNotePath('')
+      setSplitPanePaths([])
       setCustomTagGroups([])
       setNoteGroups([])
       setExplorerViewSeed(null)
@@ -1689,12 +1683,15 @@ function App() {
     return response.content
   }
 
-  const openNoteInTab = async (path: string, suggestedTitle?: string) => {
+  const openNoteInTab = async (path: string, suggestedTitle?: string, options?: { activate?: boolean }) => {
+    const shouldActivate = options?.activate !== false
     const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
     const existing = openTabs.find((tab) => tab.path === path)
     if (existing) {
       setEditorPanelOpen(true)
-      setActiveNotePath(path)
+      if (shouldActivate) {
+        setActiveNotePath(path)
+      }
       return
     }
 
@@ -1710,7 +1707,9 @@ function App() {
       },
     ])
     setEditorPanelOpen(true)
-    setActiveNotePath(path)
+    if (shouldActivate) {
+      setActiveNotePath(path)
+    }
 
     try {
       const content = await fetchNoteContent(path)
@@ -1770,9 +1769,7 @@ function App() {
     }
     window.setTimeout(() => {
       setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
-      if (compareNotePath === path) {
-        setCompareNotePath('')
-      }
+      setSplitPanePaths((prev) => prev.filter((entry) => entry !== path))
       setTabContextMenu(null)
     }, 0)
   }
@@ -1792,7 +1789,7 @@ function App() {
       }, 0)
     }
     setSplitView(false)
-    setCompareNotePath('')
+    setSplitPanePaths([])
   }
 
   const revealActiveNoteInExplorer = () => {
@@ -1813,16 +1810,17 @@ function App() {
     if (!targetPath) {
       return
     }
-    setCompareNotePath(targetPath)
+    setSplitPanePaths((prev) => {
+      if (prev.includes(targetPath) || targetPath === activeNotePath) {
+        return prev
+      }
+      return [...prev, targetPath]
+    })
     setSplitView(true)
     setTabContextMenu(null)
   }
 
-  const updateActiveNoteContent = (nextContent: string) => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return
-    }
-    const tabPath = activeTab.path
+  const updateNoteContentByPath = (tabPath: string, nextContent: string) => {
     setOpenTabs((prev) =>
       prev.map((tab) => {
         if (tab.path !== tabPath || tab.kind !== 'note') {
@@ -1831,6 +1829,13 @@ function App() {
         return { ...tab, content: nextContent, dirty: true }
       })
     )
+  }
+
+  const updateActiveNoteContent = (nextContent: string) => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return
+    }
+    updateNoteContentByPath(activeTab.path, nextContent)
   }
 
   const openWikiLinkPicker = () => {
@@ -1926,6 +1931,20 @@ function App() {
 
   const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
 
+  const sanitizeSplitPanePaths = (paths: string[], nextActivePath: string = activeNotePath): string[] => {
+    const seen = new Set<string>()
+    const next: string[] = []
+    for (const rawPath of paths) {
+      const cleanPath = normalizePath(rawPath)
+      if (!cleanPath || cleanPath === normalizePath(nextActivePath) || seen.has(cleanPath)) {
+        continue
+      }
+      seen.add(cleanPath)
+      next.push(cleanPath)
+    }
+    return next
+  }
+
   const remapOpenNotePaths = (fromPrefix: string, toPrefix: string) => {
     const cleanFrom = normalizePath(fromPrefix)
     const cleanTo = normalizePath(toPrefix)
@@ -1963,7 +1982,7 @@ function App() {
       })
     )
     setActiveNotePath((prev) => rewritePath(prev))
-    setCompareNotePath((prev) => rewritePath(prev))
+    setSplitPanePaths((prev) => sanitizeSplitPanePaths(prev.map((path) => rewritePath(path))))
   }
 
   const createExplorerFolder = async (parentGroupKey: string, groupName: string) => {
@@ -2724,11 +2743,63 @@ function App() {
   const handleViewerDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault()
     setViewerDropActive(false)
+    setSplitDropActive(false)
     const payload = getDraggedNoteData(event)
     if (!payload) {
       return
     }
     void openNoteInTab(payload.path, payload.title)
+  }
+
+  const handleDropOnPrimaryPane = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setViewerDropActive(false)
+    const payload = getDraggedNoteData(event)
+    if (!payload) {
+      return
+    }
+
+    void (async () => {
+      await openNoteInTab(payload.path, payload.title, { activate: true })
+      setActiveNotePath(payload.path)
+      setSplitPanePaths((prev) => sanitizeSplitPanePaths(prev.filter((path) => normalizePath(path) !== normalizePath(payload.path)), payload.path))
+    })()
+  }
+
+  const handleDropOnSplitPane = (event: DragEvent<HTMLElement>, currentPanePath: string) => {
+    event.preventDefault()
+    setViewerDropActive(false)
+    const payload = getDraggedNoteData(event)
+    if (!payload) {
+      return
+    }
+
+    void (async () => {
+      await openNoteInTab(payload.path, payload.title, { activate: false })
+      setSplitView(true)
+      setSplitPanePaths((prev) => {
+        const replaced = prev.map((path) =>
+          normalizePath(path) === normalizePath(currentPanePath) ? normalizePath(payload.path) : normalizePath(path)
+        )
+        return sanitizeSplitPanePaths(replaced)
+      })
+    })()
+  }
+
+  const handleDropToNewSplitPane = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    setSplitDropActive(false)
+    setViewerDropActive(false)
+    const payload = getDraggedNoteData(event)
+    if (!payload) {
+      return
+    }
+
+    void (async () => {
+      await openNoteInTab(payload.path, payload.title, { activate: false })
+      setSplitView(true)
+      setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, normalizePath(payload.path)]))
+    })()
   }
 
   const toggleSplitView = () => {
@@ -2737,11 +2808,14 @@ function App() {
     }
 
     setSplitView((previous) => {
-      if (!previous && !compareNotePath) {
+      if (!previous && splitPanePaths.length === 0) {
         const candidate = openNoteTabs.find((tab) => tab.path !== activeNotePath)
         if (candidate) {
-          setCompareNotePath(candidate.path)
+          setSplitPanePaths(sanitizeSplitPanePaths([candidate.path]))
         }
+      }
+      if (previous) {
+        setSplitPanePaths([])
       }
       return !previous
     })
@@ -2988,6 +3062,8 @@ function App() {
         onMoveFolder={moveExplorerFolder}
         onToggleFavoriteFolder={toggleFavoriteFolder}
         options={explorerOptions}
+        contentMatchFilePathKeys={explorerContentMatchPathKeys}
+        onFilterQueryChange={setExplorerFilterQuery}
         onOptionsChange={setExplorerOptions}
         revealFilePath={explorerRevealPath}
         revealRequestId={explorerRevealRequestId}
@@ -3133,6 +3209,22 @@ function App() {
                       <div
                         key={`editor-tab-${tab.path}`}
                         className={`editor-tab ${activeTab?.path === tab.path ? 'active' : ''}`}
+                        draggable={tab.kind === 'note'}
+                        onDragStart={(event) => {
+                          if (tab.kind !== 'note') {
+                            event.preventDefault()
+                            return
+                          }
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('application/x-open-tab-path', tab.path)
+                          event.dataTransfer.setData('application/x-open-tab-title', tab.title)
+                          event.dataTransfer.setData('text/plain', tab.path)
+                          setDraggingTabPath(tab.path)
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTabPath('')
+                          setSplitDropActive(false)
+                        }}
                         onContextMenu={(event) => {
                           event.preventDefault()
                           setTabContextMenu({ x: event.clientX, y: event.clientY, path: tab.path })
@@ -3192,25 +3284,8 @@ function App() {
                 </div>
               </div>
 
-              {splitView && activeTab?.kind === 'note' && compareCandidates.length > 0 ? (
-                <div className="compare-selector">
-                  <label htmlFor="compare-note-select">Vergleichs-Tab</label>
-                  <select
-                    id="compare-note-select"
-                    value={compareTab?.path || ''}
-                    onChange={(event) => setCompareNotePath(event.target.value)}
-                  >
-                    {compareCandidates.map((candidate) => (
-                      <option key={candidate.path} value={candidate.path}>
-                        {candidate.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
               <div
-                className={`editor-grid ${splitView && compareTab ? 'split' : ''} ${
+                className={`editor-grid ${splitView && splitPaneTabs.length > 0 ? 'split' : ''} ${
                   viewerDropActive ? 'drop-active' : ''
                 }`}
                 onDragOver={(event) => {
@@ -3219,8 +3294,23 @@ function App() {
                 }}
                 onDragLeave={() => setViewerDropActive(false)}
                 onDrop={handleViewerDrop}
+                style={
+                  splitView && activeTab?.kind === 'note' && splitPaneTabs.length > 0
+                    ? { gridTemplateColumns: `repeat(${1 + splitPaneTabs.length}, minmax(0, 1fr))` }
+                    : undefined
+                }
               >
-                <article className="editor-pane">
+                <article
+                  className="editor-pane"
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    setViewerDropActive(true)
+                  }}
+                  onDrop={(event) => {
+                    event.stopPropagation()
+                    handleDropOnPrimaryPane(event)
+                  }}
+                >
                   {activeTab?.kind === 'note' && !activeTab.loading ? (
                     <div className="note-editor-shell">
                       <CodeMirrorMarkdownEditor
@@ -3228,6 +3318,7 @@ function App() {
                         value={activeTab.content}
                         theme={theme}
                         tagGroups={mergedTagGroups}
+                        searchHighlightQuery={explorerFilterQuery}
                         onChange={updateActiveNoteContent}
                         editorApiRef={activeEditorRef}
                       />
@@ -3439,21 +3530,58 @@ function App() {
                   )}
                 </article>
 
-                {splitView && compareTab ? (
-                  <article className="editor-pane">
-                    {compareTab.loading ? (
-                      <p className="empty-copy">Lade Vergleich ...</p>
-                    ) : (
-                      <MarkdownPreview
-                        content={compareTab.content}
-                        currentPath={compareTab.path}
-                        resolveWikiLink={resolveWikiLink}
-                        onOpenWikiLink={(row) => {
-                          void openNoteInTab(row.path, toNoteDisplayName(row.path))
+                {splitView && activeTab?.kind === 'note'
+                  ? splitPaneTabs.map((paneTab) => (
+                      <article
+                        key={`split-pane-${paneTab.path}`}
+                        className="editor-pane split-editor-pane"
+                        onDragOver={(event) => {
+                          event.preventDefault()
+                          setViewerDropActive(true)
                         }}
-                      />
-                    )}
-                  </article>
+                        onDrop={(event) => {
+                          event.stopPropagation()
+                          handleDropOnSplitPane(event, paneTab.path)
+                        }}
+                      >
+                        {paneTab.loading ? (
+                          <p className="empty-copy">Lade Notiz ...</p>
+                        ) : (
+                          <div className="note-editor-shell split-note-editor-shell">
+                            <CodeMirrorMarkdownEditor
+                              key={`editor-split-${paneTab.path}`}
+                              value={paneTab.content}
+                              theme={theme}
+                              tagGroups={mergedTagGroups}
+                              searchHighlightQuery={explorerFilterQuery}
+                              onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
+                              editorApiRef={secondaryEditorRef}
+                            />
+                          </div>
+                        )}
+                      </article>
+                    ))
+                  : null}
+
+                {draggingTabPath ? (
+                  <aside
+                    className={`editor-split-dropzone ${splitDropActive ? 'active' : ''}`}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setSplitDropActive(true)
+                    }}
+                    onDragLeave={() => {
+                      setSplitDropActive(false)
+                    }}
+                    onDrop={(event) => {
+                      event.stopPropagation()
+                      handleDropToNewSplitPane(event)
+                    }}
+                    title="Als neues Split-Fenster oeffnen"
+                  >
+                    <LucideNamedIcon name="Plus" size={18} />
+                  </aside>
                 ) : null}
               </div>
             </article>

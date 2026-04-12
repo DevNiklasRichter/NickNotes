@@ -28,6 +28,19 @@ export const markdownHighlightExtension: Extension = [
 ]
 
 export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
+  const selectionBackground =
+    mode === 'dark'
+      ? 'color-mix(in srgb, #91b4ff 44%, transparent)'
+      : 'color-mix(in srgb, #3b82f6 30%, transparent)'
+  const selectionMatchBackground =
+    mode === 'dark'
+      ? 'color-mix(in srgb, #d3bc6d 34%, transparent)'
+      : 'color-mix(in srgb, #facc15 28%, transparent)'
+  const selectionMatchMainBackground =
+    mode === 'dark'
+      ? 'color-mix(in srgb, #eab308 44%, transparent)'
+      : 'color-mix(in srgb, #f59e0b 36%, transparent)'
+
   return EditorView.theme(
     {
       '&': {
@@ -62,17 +75,17 @@ export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
       '.cm-activeLineGutter': {
         backgroundColor: 'transparent',
       },
-      '.cm-content ::selection': {
-        backgroundColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',
+      '.cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: selectionBackground,
       },
       '.cm-selectionMatch': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 82%, transparent)',
-        outline: '1px solid color-mix(in srgb, var(--accent) 28%, transparent)',
+        backgroundColor: selectionMatchBackground,
+        outline: mode === 'dark' ? '1px solid rgba(250, 204, 21, 0.42)' : '1px solid rgba(217, 119, 6, 0.32)',
         borderRadius: '4px',
       },
       '.cm-selectionMatch-main': {
-        backgroundColor: 'color-mix(in srgb, var(--accent) 28%, var(--surface-contrast) 72%)',
-        outline: '1px solid color-mix(in srgb, var(--accent) 52%, transparent)',
+        backgroundColor: selectionMatchMainBackground,
+        outline: mode === 'dark' ? '1px solid rgba(250, 204, 21, 0.62)' : '1px solid rgba(217, 119, 6, 0.48)',
         borderRadius: '4px',
       },
       '&.cm-focused': {

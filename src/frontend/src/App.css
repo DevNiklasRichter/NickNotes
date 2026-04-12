@@ -564,9 +564,20 @@
 }
 
 .editor-tab-actions button {
-  padding: 0.28rem 0.52rem;
+  display: inline-grid;
+  place-items: center;
   border-radius: 8px;
   font-size: 0.76rem;
+}
+
+.editor-tab-actions .icon-button.compact {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.editor-tab-actions .icon-button.compact svg {
+  display: block;
 }
 
 .split-drop-target {
@@ -584,6 +595,28 @@
   color: var(--text);
 }
 
+.editor-split-dropzone {
+  position: absolute;
+  top: 50%;
+  right: 0.52rem;
+  transform: translateY(-50%);
+  z-index: 8;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--line-strong) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
+  color: var(--muted);
+  display: inline-grid;
+  place-items: center;
+}
+
+.editor-split-dropzone.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--surface-contrast) 20%);
+  color: var(--accent-strong);
+}
+
 .editor-tab {
   display: flex;
   align-items: center;
@@ -595,6 +628,14 @@
 .editor-tab.active {
   border-color: var(--accent);
   box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.editor-tab[draggable='true'] {
+  cursor: grab;
+}
+
+.editor-tab[draggable='true']:active {
+  cursor: grabbing;
 }
 
 .tab-open,
@@ -680,6 +721,7 @@
   grid-template-columns: 1fr;
   overflow: hidden;
   flex: 1;
+  position: relative;
 }
 
 .editor-grid.split {
@@ -762,6 +804,14 @@
   background: linear-gradient(180deg, color-mix(in srgb, var(--surface-contrast) 95%, transparent), var(--surface));
   display: flex;
   flex-direction: column;
+}
+
+.split-editor-pane {
+  border-left: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
+.split-note-editor-shell {
+  border-left: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 
 .editor-grid.split .editor-pane:last-child {
@@ -1026,15 +1076,16 @@ button.wiki-link-pill:hover {
   opacity: 0;
 }
 
-.code-editor-host .cm-line:hover .cm-md-syntax-token,
-.code-editor-host .cm-line.cm-activeLine .cm-md-syntax-token {
-  opacity: 0.6;
-}
-
 .code-editor-host .cm-md-list-mark,
 .code-editor-host .cm-md-quote-mark,
 .code-editor-host .cm-md-task-marker {
   font-weight: 620;
+}
+
+.code-editor-host .cm-explorer-search-hit {
+  background: color-mix(in srgb, #facc15 56%, transparent);
+  border-radius: 0.1rem;
+  box-shadow: inset 0 -1px 0 rgba(245, 158, 11, 0.58);
 }
 
 .code-editor-host .cm-line.cm-md-hr-line {

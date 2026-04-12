@@ -17,6 +17,7 @@ type BuildTreeInput = {
   selectedNodeId: string | null
   activeFilePath: string
   filterQuery: string
+  contentMatchFilePathKeys?: Set<string>
   dirtyFilePaths?: Set<string>
 }
 
@@ -47,6 +48,10 @@ function toRootToken(groupKey: string): string {
 
 function normalizeGroupKey(value: string): string {
   return value.replace(/\\/g, '/').trim().replace(/^\/+|\/+$/g, '')
+}
+
+function normalizeFilePathKey(path: string): string {
+  return path.replace(/\\/g, '/').trim().replace(/\/+$/g, '').toLowerCase()
 }
 
 function toNodeGroupKey(node: MutableExplorerNode): string {
@@ -233,7 +238,7 @@ function sortTree(nodes: MutableExplorerNode[], options: ExplorerOptions, folder
   }
 }
 
-function matchesQuery(node: MutableExplorerNode, query: string): boolean {
+function matchesQuery(node: MutableExplorerNode, query: string, contentMatchFilePathKeys: Set<string>): boolean {
   if (!query) {
     return true
   }
@@ -242,7 +247,10 @@ function matchesQuery(node: MutableExplorerNode, query: string): boolean {
     return true
   }
   if (node.type === 'file') {
-    return nodeName.replace(/\.md$/i, '').includes(query)
+    if (nodeName.replace(/\.md$/i, '').includes(query)) {
+      return true
+    }
+    return contentMatchFilePathKeys.has(normalizeFilePathKey(node.path))
   }
   return false
 }
@@ -254,7 +262,12 @@ function cloneNode(node: MutableExplorerNode): MutableExplorerNode {
   }
 }
 
-function filterTree(nodes: MutableExplorerNode[], options: ExplorerOptions, query: string): MutableExplorerNode[] {
+function filterTree(
+  nodes: MutableExplorerNode[],
+  options: ExplorerOptions,
+  query: string,
+  contentMatchFilePathKeys: Set<string>
+): MutableExplorerNode[] {
   const filtered: MutableExplorerNode[] = []
 
   for (const sourceNode of nodes) {
@@ -263,8 +276,8 @@ function filterTree(nodes: MutableExplorerNode[], options: ExplorerOptions, quer
     }
 
     const node = cloneNode(sourceNode)
-    node.children = filterTree(node.children, options, query)
-    const selfMatches = matchesQuery(node, query)
+    node.children = filterTree(node.children, options, query, contentMatchFilePathKeys)
+    const selfMatches = matchesQuery(node, query, contentMatchFilePathKeys)
     const hasChildren = node.children.length > 0
 
     if (!query || selfMatches || hasChildren) {
@@ -303,6 +316,7 @@ export function buildExplorerTree({
   selectedNodeId,
   activeFilePath,
   filterQuery,
+  contentMatchFilePathKeys,
   dirtyFilePaths,
 }: BuildTreeInput): ExplorerTreeBuildResult {
   void activeFilePath
@@ -409,7 +423,12 @@ export function buildExplorerTree({
   computeFolderAggregates(rootNodes)
   sortTree(rootNodes, options, folderOrder)
 
-  const filteredRoots = filterTree(rootNodes, options, filterQuery.trim().toLowerCase())
+  const filteredRoots = filterTree(
+    rootNodes,
+    options,
+    filterQuery.trim().toLowerCase(),
+    contentMatchFilePathKeys ?? new Set<string>()
+  )
 
   const nodeById = new Map<string, ExplorerNode>()
   const parentById = new Map<string, string | null>()
