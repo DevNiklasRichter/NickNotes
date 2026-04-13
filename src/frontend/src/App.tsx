@@ -2206,6 +2206,30 @@ function App() {
     }
   }
 
+  const migrateExistingNotesToTemplate = async () => {
+    if (!vaultLoaded) {
+      return
+    }
+    try {
+      setError('')
+      const response = await apiRequest<{ updated: number; counts: VaultCounts; tagGroups?: unknown }>(
+        backendUrl,
+        '/notes/migrate-templates',
+        {
+          method: 'POST',
+        }
+      )
+      setCounts(response.counts)
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setMessage(`Templates angewendet: ${response.updated} Dateien aktualisiert.`)
+      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
   const createExplorerTask = async (groupKey: string, title: string) => {
     const cleanTitle = normalizeLabel(title)
     if (!cleanTitle) {
@@ -3120,6 +3144,9 @@ function App() {
           <div className="stacked-actions">
             <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
             <button onClick={() => void createVault()}>NoteBase anlegen</button>
+            <button onClick={() => void migrateExistingNotesToTemplate()} disabled={!vaultLoaded}>
+              Templates migrieren
+            </button>
           </div>
         </div>
       )

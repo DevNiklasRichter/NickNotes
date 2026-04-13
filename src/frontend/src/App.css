@@ -2269,6 +2269,102 @@ textarea:focus-visible {
   line-height: 1;
 }
 
+.note-properties-panel {
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-contrast) 92%, transparent);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.48rem;
+}
+
+.split-note-properties-panel {
+  padding: 0.42rem 0.46rem;
+}
+
+.note-title-row {
+  display: flex;
+  align-items: center;
+}
+
+.note-title-input {
+  width: 100%;
+  font-size: 1.18rem;
+  font-weight: 650;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.2rem 0.05rem 0.28rem;
+}
+
+.note-title-input:focus {
+  outline: none;
+  border-bottom-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+
+.note-properties-grid {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  align-items: start;
+  gap: 0.35rem 0.5rem;
+}
+
+.note-properties-grid.compact {
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 0.28rem 0.44rem;
+}
+
+.property-key {
+  font-size: 0.73rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.24rem;
+}
+
+.property-value-stack {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.property-value-static {
+  font-size: 0.82rem;
+  color: var(--text);
+  padding-top: 0.2rem;
+}
+
+.note-properties-grid input,
+.note-properties-grid select {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.28rem 0.38rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.property-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.property-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 999px;
+  padding: 0.12rem 0.48rem;
+  font-size: 0.72rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+}
+
+.property-chip.auto {
+  color: var(--muted);
+}
+
 /* Visual cohesion adjustments (titlebar + side panels) */
 .window-titlebar {
   border-bottom: none !important;

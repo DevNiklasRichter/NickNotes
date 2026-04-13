@@ -21,10 +21,11 @@ def dump_markdown(frontmatter: dict[str, Any], body: str) -> str:
 
 
 def parse_markdown_text(text: str) -> tuple[dict[str, Any], str]:
-    if not text.startswith("---\n"):
-        return {}, text
+    normalized_text = text.lstrip("\ufeff")
+    if not normalized_text.startswith("---\n"):
+        return {}, normalized_text
 
-    lines = text.splitlines()
+    lines = normalized_text.splitlines()
     frontmatter: dict[str, Any] = {}
     current_list_key: str | None = None
     end_idx = None
@@ -51,7 +52,7 @@ def parse_markdown_text(text: str) -> tuple[dict[str, Any], str]:
                 current_list_key = None
 
     if end_idx is None:
-        return {}, text
+        return {}, normalized_text
 
     body = "\n".join(lines[end_idx + 1 :]).lstrip("\n")
     return frontmatter, body

@@ -24,6 +24,7 @@ type ExplorerSidebarProps = {
   onOpenFile: (path: string, title?: string) => Promise<void>
   onPreviewFile: (path: string, title?: string) => Promise<void>
   onCreateFile: (parentFolderKey: string, title: string) => Promise<void>
+  onCreateTask: (parentFolderKey: string, title: string) => Promise<void>
   onCreateFolder: (parentFolderKey: string, name: string) => Promise<void>
   onRenameFile: (path: string, newName: string) => Promise<void>
   onRenameFolder: (groupKey: string, newName: string) => Promise<void>
@@ -288,6 +289,7 @@ export function ExplorerSidebar({
   onOpenFile,
   onPreviewFile,
   onCreateFile,
+  onCreateTask,
   onCreateFolder,
   onRenameFile,
   onRenameFolder,
@@ -716,43 +718,36 @@ export function ExplorerSidebar({
     [hasFileNameCollision, hasFolderNameCollision]
   )
 
+  const suggestSequentialName = useCallback(
+    (parentFolderKey: string, baseName: string): string => {
+      let candidate = normalizeLabel(baseName) || baseName
+      let suffix = 2
+      while (hasNameCollision(parentFolderKey, candidate)) {
+        candidate = `${baseName} ${suffix}`
+        suffix += 1
+      }
+      return candidate
+    },
+    [hasNameCollision]
+  )
+
   const runCreateFile = useCallback(async () => {
     const parentFolderKey = resolveSelectedFolderKey()
-    const name = await askInputDialog(
-      'Neue Datei',
-      'Name der neuen Datei',
-      'Neue Notiz',
-      'Anlegen',
-      false,
-      (value) =>
-        hasNameCollision(parentFolderKey, value)
-          ? 'Datei bereits vorhanden'
-          : null
-    )
-    if (!name) {
-      return
-    }
+    const name = suggestSequentialName(parentFolderKey, 'New Note')
     await onCreateFile(parentFolderKey, name)
-  }, [askInputDialog, hasNameCollision, onCreateFile, resolveSelectedFolderKey])
+  }, [onCreateFile, resolveSelectedFolderKey, suggestSequentialName])
+
+  const runCreateTask = useCallback(async () => {
+    const parentFolderKey = resolveSelectedFolderKey()
+    const name = suggestSequentialName(parentFolderKey, 'New Task')
+    await onCreateTask(parentFolderKey, name)
+  }, [onCreateTask, resolveSelectedFolderKey, suggestSequentialName])
 
   const runCreateFolder = useCallback(async () => {
     const parentFolderKey = resolveSelectedFolderKey()
-    const name = await askInputDialog(
-      'Neuer Ordner',
-      'Name des neuen Ordners',
-      'Neuer Ordner',
-      'Anlegen',
-      false,
-      (value) =>
-        hasNameCollision(parentFolderKey, value)
-          ? 'Ordner bereits vorhanden'
-          : null
-    )
-    if (!name) {
-      return
-    }
+    const name = suggestSequentialName(parentFolderKey, 'New Folder')
     await onCreateFolder(parentFolderKey, name)
-  }, [askInputDialog, hasNameCollision, onCreateFolder, resolveSelectedFolderKey])
+  }, [onCreateFolder, resolveSelectedFolderKey, suggestSequentialName])
 
   const toggleExpand = useCallback((node: ExplorerNode) => {
     if (node.type !== 'folder') {
@@ -887,23 +882,23 @@ export function ExplorerSidebar({
       }
       setContextMenu(null)
       const folderKey = normalizeGroupKey(node.path)
-      const name = await askInputDialog(
-        'Neue Datei',
-        'Name der neuen Datei',
-        'Neue Notiz',
-        'Anlegen',
-        false,
-        (value) =>
-          hasNameCollision(folderKey, value)
-            ? 'Datei bereits vorhanden'
-            : null
-      )
-      if (!name) {
-        return
-      }
+      const name = suggestSequentialName(folderKey, 'New Note')
       await onCreateFile(folderKey, name)
     },
-    [askInputDialog, hasNameCollision, onCreateFile]
+    [onCreateFile, suggestSequentialName]
+  )
+
+  const createTaskInFolderFromContext = useCallback(
+    async (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      setContextMenu(null)
+      const folderKey = normalizeGroupKey(node.path)
+      const name = suggestSequentialName(folderKey, 'New Task')
+      await onCreateTask(folderKey, name)
+    },
+    [onCreateTask, suggestSequentialName]
   )
 
   const createFolderInFolderFromContext = useCallback(
@@ -913,23 +908,10 @@ export function ExplorerSidebar({
       }
       setContextMenu(null)
       const folderKey = normalizeGroupKey(node.path)
-      const name = await askInputDialog(
-        'Neuer Ordner',
-        'Name des neuen Ordners',
-        'Neuer Ordner',
-        'Anlegen',
-        false,
-        (value) =>
-          hasNameCollision(folderKey, value)
-            ? 'Ordner bereits vorhanden'
-            : null
-      )
-      if (!name) {
-        return
-      }
+      const name = suggestSequentialName(folderKey, 'New Folder')
       await onCreateFolder(folderKey, name)
     },
-    [askInputDialog, hasNameCollision, onCreateFolder]
+    [onCreateFolder, suggestSequentialName]
   )
 
   const renameNodeFromContext = useCallback(
@@ -1122,6 +1104,16 @@ export function ExplorerSidebar({
             <button
               className="icon-button compact"
               onClick={() => {
+                void runCreateTask()
+              }}
+              disabled={!vaultLoaded}
+              title="New Task"
+            >
+              <LucideNamedIcon name="CheckSquare" className="row-action-icon" size={14} />
+            </button>
+            <button
+              className="icon-button compact"
+              onClick={() => {
                 void runCreateFolder()
               }}
               disabled={!vaultLoaded}
@@ -1270,6 +1262,17 @@ export function ExplorerSidebar({
               >
                 <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
                 <span>Neue Datei</span>
+              </button>
+            ) : null}
+            {contextNode.type === 'folder' ? (
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  void createTaskInFolderFromContext(contextNode)
+                }}
+              >
+                <LucideNamedIcon name="CheckSquare" className="context-menu-icon" size={14} />
+                <span>Neue Task</span>
               </button>
             ) : null}
             {contextNode.type === 'folder' ? (

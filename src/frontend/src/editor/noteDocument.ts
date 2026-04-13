@@ -187,10 +187,11 @@ export function extractRelatedLinks(body: string): string[] {
 }
 
 function parseFrontmatter(text: string): { frontmatter: Record<string, unknown>; body: string; hadFrontmatter: boolean } {
-  if (!text.startsWith('---\n')) {
-    return { frontmatter: {}, body: text, hadFrontmatter: false }
+  const normalizedText = text.replace(/^\uFEFF/, '')
+  if (!normalizedText.startsWith('---\n')) {
+    return { frontmatter: {}, body: normalizedText, hadFrontmatter: false }
   }
-  const lines = text.split('\n')
+  const lines = normalizedText.split('\n')
   const frontmatter: Record<string, unknown> = {}
   let currentListKey: string | null = null
   let endIndex = -1
@@ -229,7 +230,7 @@ function parseFrontmatter(text: string): { frontmatter: Record<string, unknown>;
   }
 
   if (endIndex < 0) {
-    return { frontmatter: {}, body: text, hadFrontmatter: false }
+    return { frontmatter: {}, body: normalizedText, hadFrontmatter: false }
   }
 
   const body = lines.slice(endIndex + 1).join('\n').replace(/^\n+/, '')
@@ -255,13 +256,28 @@ function toFrontmatterLines(frontmatter: Record<string, unknown>): string[] {
 
 export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNoteDocument {
   const parsed = parseFrontmatter(text)
-  const rawFrontmatter = parsed.frontmatter
+  let rawFrontmatter = parsed.frontmatter
+  let rawBody = parsed.body
+  const nested = parseFrontmatter(rawBody.replace(/^\uFEFF/, ''))
+  if (nested.hadFrontmatter) {
+    const outerTitle = String(rawFrontmatter.title || '')
+      .trim()
+      .toLowerCase()
+    const outerType = normalizeType(rawFrontmatter.type)
+    const nestedType = normalizeType(nested.frontmatter.type)
+    const suspiciousOuterTitle = outerTitle === '' || outerTitle === '---' || outerTitle === 'ï»¿---' || outerTitle === '\ufeff---'
+    if (suspiciousOuterTitle || (outerType === 'note' && nestedType !== outerType)) {
+      rawFrontmatter = nested.frontmatter
+      rawBody = nested.body
+    }
+  }
+
   const noteType = normalizeType(rawFrontmatter.type)
   const createdAt = String(rawFrontmatter.created_at || '').trim() || nowIso()
   const explicitTitle = normalizeLabel(String(rawFrontmatter.title || ''))
-  const bodyTitle = extractTitleFromBody(parsed.body)
+  const bodyTitle = extractTitleFromBody(rawBody)
   const nextTitle = explicitTitle || bodyTitle || normalizeLabel(fallbackTitle) || 'New Note'
-  const nextBody = stripMatchingTitleHeading(parsed.body, nextTitle)
+  const nextBody = stripMatchingTitleHeading(rawBody, nextTitle)
 
   const id = String(rawFrontmatter.id || '').trim() || createNodeId(noteType)
   const nodeId = String(rawFrontmatter.node_id || '').trim() || id

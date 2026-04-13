@@ -142,6 +142,11 @@ def _extract_related_links(body: str) -> list[str]:
     return sorted(related, key=lambda item: item.lower())
 
 
+def _looks_like_corrupt_title(value: str) -> bool:
+    clean = value.strip().lower()
+    return clean in {"", "---", "ï»¿---", "\ufeff---"}
+
+
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
@@ -495,6 +500,15 @@ class VaultManager:
         touch_updated: bool = True,
     ) -> tuple[str, dict[str, Any]]:
         frontmatter, raw_body = parse_markdown_text(text)
+        nested_frontmatter, nested_body = parse_markdown_text(raw_body.lstrip("\ufeff"))
+        if nested_frontmatter:
+            outer_title = str(frontmatter.get("title", "")).strip()
+            outer_type = _normalize_note_type(str(frontmatter.get("type", "note")))
+            nested_type = _normalize_note_type(str(nested_frontmatter.get("type", "note")))
+            if _looks_like_corrupt_title(outer_title) or (outer_type == "note" and nested_type != outer_type):
+                frontmatter = dict(nested_frontmatter)
+                raw_body = nested_body
+
         now_iso = datetime.now().isoformat(timespec="seconds")
 
         try:
@@ -1257,6 +1271,8 @@ class VaultManager:
 
         frontmatter = {
             "id": f"tag_{group_slug}_{tag_slug}",
+            "node_id": f"tag_{group_slug}_{tag_slug}",
+            "title": f"{group_display_name} / {tag_display_name}",
             "type": "tag_index",
             "group": group_display_name,
             "tag": tag_display_name,
