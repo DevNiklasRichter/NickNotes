@@ -65,6 +65,12 @@ type SearchRow = {
   path: string
 }
 
+type MediaUploadResponse = {
+  mediaPath: string
+  markdownPath: string
+  fileName: string
+}
+
 type ReviewDaily = {
   date: string
   new_notes: number
@@ -233,12 +239,15 @@ function getPreferredTheme(): ThemeMode {
 }
 
 async function apiRequest<T>(baseUrl: string, endpoint: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? {})
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
+  if (!isFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
   })
 
   if (!response.ok) {
@@ -319,6 +328,30 @@ function normalizeRelatedCandidate(raw: string): string {
   }
   clean = clean.replace(/\\/g, '/').replace(/\.md$/i, '')
   return clean
+}
+
+function deriveImageAltText(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, '')
+  const label = normalizeLabel(base.replace(/[_-]+/g, ' '))
+  return label || 'Image'
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'))
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const marker = 'base64,'
+      const markerIndex = result.indexOf(marker)
+      if (markerIndex < 0) {
+        reject(new Error('Ungueltiges Bildformat.'))
+        return
+      }
+      resolve(result.slice(markerIndex + marker.length))
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 function normalizeTaskStatusValue(raw: string): TaskStatus {
@@ -1879,9 +1912,6 @@ function App() {
 
   const updateNoteTitleByPath = (tabPath: string, nextTitle: string) => {
     const cleanTitle = normalizeLabel(nextTitle)
-    if (!cleanTitle) {
-      return
-    }
     updateNoteDocumentByPath(tabPath, (document) => ({
       ...document,
       frontmatter: {
@@ -1897,9 +1927,10 @@ function App() {
       frontmatter: {
         ...document.frontmatter,
         type: nextType,
-        status: nextType === 'task' ? normalizeTaskStatusValue(document.frontmatter.status) : 'open',
-        priority: nextType === 'task' ? normalizeTaskPriorityValue(document.frontmatter.priority) : 'medium',
-        due_date: nextType === 'task' ? document.frontmatter.due_date : '',
+        // Keep task metadata stable across type toggles so values survive note <-> task switches.
+        status: normalizeTaskStatusValue(document.frontmatter.status),
+        priority: normalizeTaskPriorityValue(document.frontmatter.priority),
+        due_date: document.frontmatter.due_date,
       },
     }))
   }
@@ -2080,10 +2111,10 @@ function App() {
             onChange={(event) => {
               updateNoteTitleByPath(tabPath, event.target.value)
             }}
-            onBlur={() => {
-              void syncNotePathWithTitle(tabPath)
+            onBlur={(event) => {
+              void syncNotePathWithTitle(tabPath, event.currentTarget.value)
             }}
-            placeholder="Titel"
+            placeholder="Untitled"
           />
         </div>
 
@@ -2324,15 +2355,19 @@ function App() {
     )
   }
 
-  const syncNotePathWithTitle = async (tabPath: string) => {
+  const syncNotePathWithTitle = async (tabPath: string, rawTitleOverride?: string) => {
     const tab = openTabs.find((entry) => entry.path === tabPath && entry.kind === 'note')
     if (!tab || tab.loading) {
       return
     }
     const document = parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
-    const targetTitle = normalizeLabel(document.frontmatter.title)
+    const typedTitle = normalizeLabel(rawTitleOverride ?? document.frontmatter.title)
+    const targetTitle = typedTitle || 'Untitled'
+    if (!typedTitle) {
+      updateNoteTitleByPath(tabPath, targetTitle)
+    }
     const currentStem = normalizeLabel(toNoteDisplayName(tab.path))
-    if (!targetTitle || currentStem.toLowerCase() === targetTitle.toLowerCase()) {
+    if (currentStem.toLowerCase() === targetTitle.toLowerCase()) {
       return
     }
     await renameExplorerFile(tab.path, targetTitle)
@@ -2343,6 +2378,29 @@ function App() {
       return
     }
     updateNoteContentByPath(activeTab.path, nextBody)
+  }
+
+  const uploadImageForNote = async (notePath: string, file: File): Promise<string | null> => {
+    if (!notePath || !file) {
+      return null
+    }
+    try {
+      const encoded = await readFileAsBase64(file)
+      const response = await apiRequest<MediaUploadResponse>(backendUrl, '/notes/media/add', {
+        method: 'POST',
+        body: JSON.stringify({
+          path: notePath,
+          fileName: file.name || 'image',
+          contentType: file.type || '',
+          dataBase64: encoded,
+        }),
+      })
+      const altText = deriveImageAltText(file.name || response.fileName)
+      return `![${altText}](${response.markdownPath})`
+    } catch (caught) {
+      setError(String(caught))
+      return null
+    }
   }
 
   const toggleFolder = (folderKey: string) => {
@@ -2692,6 +2750,28 @@ function App() {
       })
       setCounts(response.counts)
       remapOpenNotePaths(path, response.renamedPath)
+      try {
+        const refreshed = await fetchNoteContent(response.renamedPath)
+        const parsed = parseNoteDocument(refreshed, toNoteDisplayName(response.renamedPath))
+        const normalized = serializeNoteDocument(parsed)
+        const renamedPathLower = normalizePath(response.renamedPath).toLowerCase()
+        setOpenTabs((prev) =>
+          prev.map((tab) => {
+            if (tab.kind !== 'note' || normalizePath(tab.path).toLowerCase() !== renamedPathLower) {
+              return tab
+            }
+            return {
+              ...tab,
+              title: parsed.frontmatter.title || toNoteDisplayName(response.renamedPath),
+              content: normalized,
+              dirty: false,
+              loading: false,
+            }
+          })
+        )
+      } catch {
+        // Best effort refresh of canonical title/content after rename.
+      }
       setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
     } catch (caught) {
@@ -3842,9 +3922,12 @@ function App() {
                             embeddedInScroll
                             value={activeNoteDocument.body}
                             theme={theme}
+                            notePath={activeTab.path}
+                            backendUrl={backendUrl}
                             tagGroups={mergedTagGroups}
                             searchHighlightQuery={explorerFilterQuery}
                             onChange={updateActiveNoteContent}
+                            onInsertImageAsset={(file) => uploadImageForNote(activeTab.path, file)}
                             editorApiRef={activeEditorRef}
                           />
                         </div>
@@ -4055,9 +4138,12 @@ function App() {
                                   embeddedInScroll
                                   value={paneDocument.body}
                                   theme={theme}
+                                  notePath={paneTab.path}
+                                  backendUrl={backendUrl}
                                   tagGroups={mergedTagGroups}
                                   searchHighlightQuery={explorerFilterQuery}
                                   onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
+                                  onInsertImageAsset={(file) => uploadImageForNote(paneTab.path, file)}
                                   editorApiRef={secondaryEditorRef}
                                 />
                               </div>

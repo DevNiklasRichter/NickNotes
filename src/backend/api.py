@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import shutil
 import subprocess
@@ -11,6 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
@@ -80,6 +83,13 @@ class NoteOpenRequest(BaseModel):
 class NoteSaveRequest(BaseModel):
     path: str
     content: str
+
+
+class NoteMediaAddRequest(BaseModel):
+    path: str
+    file_name: str = Field(alias="fileName")
+    content_type: str = Field(default="", alias="contentType")
+    data_base64: str = Field(alias="dataBase64")
 
 
 class TagGroupRequest(BaseModel):
@@ -471,7 +481,7 @@ def explorer_files() -> dict[str, Any]:
             continue
         top = relative.split("/", 1)[0]
 
-        if top in {".system", "system", "99_system", "02_entities"}:
+        if top in {".system", "system", "99_system", "02_entities", ".media"}:
             continue
         if hide_legacy_daily and top == "01_daily":
             continue
@@ -537,6 +547,41 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
     }
+
+
+@app.post("/notes/media/add")
+def add_note_media_asset(req: NoteMediaAddRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    try:
+        payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail=f"Ungueltige Bilddaten: {exc}") from exc
+
+    try:
+        result = vault.add_note_media_asset(
+            note_path=req.path,
+            filename=req.file_name or "image",
+            content_type=req.content_type or "",
+            data=payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "mediaPath": result["media_path"],
+        "markdownPath": result["markdown_path"],
+        "fileName": result["file_name"],
+    }
+
+
+@app.get("/notes/media/content")
+def get_note_media_content(path: str, source: str) -> FileResponse:
+    vault, _indexer = _require_loaded()
+    try:
+        asset_path, mime_type = vault.resolve_note_media_asset(note_path=path, source=source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(path=asset_path, media_type=mime_type, filename=asset_path.name)
 
 
 @app.post("/notes/open")

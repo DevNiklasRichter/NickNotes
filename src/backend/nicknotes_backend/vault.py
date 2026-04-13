@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import re
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,10 +25,24 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
 
 DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
 TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
+TASK_PRIORITIES = ("low", "medium", "high")
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
+MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]\n]*\]\(([^)\n]+)\)")
+MEDIA_IMAGE_CONTENT_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/svg+xml": ".svg",
+    "image/avif": ".avif",
+}
+MEDIA_IMAGE_EXTENSIONS = set(MEDIA_IMAGE_CONTENT_TYPES.values())
+MAX_MEDIA_ASSET_BYTES = 20 * 1024 * 1024
 
 
 def _normalize_tag_id(value: str) -> str:
@@ -74,6 +90,24 @@ def _normalize_note_type(raw: str) -> str:
 def _normalize_task_status(raw: str) -> str:
     clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
     return clean if clean in TASK_STATUSES else "open"
+
+
+def _normalize_task_priority(raw: str) -> str:
+    clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    if clean in {"h", "high"}:
+        return "high"
+    if clean in {"m", "medium"}:
+        return "medium"
+    if clean in {"l", "low"}:
+        return "low"
+    return clean if clean in TASK_PRIORITIES else "medium"
+
+
+def _normalize_due_date(raw: str) -> str:
+    clean = raw.strip()
+    if not clean:
+        return ""
+    return clean if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean) else ""
 
 
 def _extract_title_from_body(body: str) -> str:
@@ -147,6 +181,25 @@ def _looks_like_corrupt_title(value: str) -> bool:
     return clean in {"", "---", "ï»¿---", "\ufeff---"}
 
 
+def _extract_markdown_link_target(raw_target: str) -> str:
+    clean = raw_target.strip()
+    if not clean:
+        return ""
+
+    if clean.startswith("<"):
+        end = clean.find(">")
+        if end > 1:
+            return clean[1:end].strip()
+
+    separators = (' "', " '", "\t", "\r", "\n")
+    for separator in separators:
+        if separator in clean:
+            clean = clean.split(separator, 1)[0].strip()
+            break
+
+    return clean
+
+
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
@@ -156,11 +209,13 @@ class VaultManager:
         self.daily_root_path = self._ensure_root_directory("daily", "01_daily")
         self.tag_root_path = self._ensure_root_directory("tags", "02_tags")
         self.tasks_root_path = self._ensure_root_directory("tasks", "03_tasks")
+        self.media_root_path = self.vault_path / ".media"
         self.system_path = self._ensure_system_directory()
         self._configure_root_paths()
 
         (self.tasks_root_path / "open").mkdir(parents=True, exist_ok=True)
         (self.tasks_root_path / "done").mkdir(parents=True, exist_ok=True)
+        self.media_root_path.mkdir(parents=True, exist_ok=True)
         self.system_path.mkdir(parents=True, exist_ok=True)
 
         if not self.config_path.exists():
@@ -212,11 +267,13 @@ class VaultManager:
         self.daily_root_name = self._pick_root_name("daily", "01_daily")
         self.tag_root_name = self._pick_root_name("tags", "02_tags")
         self.tasks_root_name = self._pick_root_name("tasks", "03_tasks")
+        self.media_root_name = ".media"
         self.system_root_name = self._pick_system_root_name()
 
         self.daily_root_path = self.vault_path / self.daily_root_name
         self.tag_root_path = self.vault_path / self.tag_root_name
         self.tasks_root_path = self.vault_path / self.tasks_root_name
+        self.media_root_path = self.vault_path / self.media_root_name
         self.system_path = self.vault_path / self.system_root_name
 
         self.db_path = self.system_path / "index.db"
@@ -283,7 +340,12 @@ class VaultManager:
         groups: list[dict[str, Any]] = []
         favorites = set(self._read_favorite_folders())
         for child in self._sorted_dirs(self.vault_path):
-            if self._is_system_name(child.name) or child.name == "02_entities" or self._is_hidden_legacy_root(child.name):
+            if (
+                self._is_system_name(child.name)
+                or child.name == "02_entities"
+                or child.name == self.media_root_name
+                or self._is_hidden_legacy_root(child.name)
+            ):
                 continue
             groups.extend(self._collect_custom_group_payloads(child, favorites))
         return groups
@@ -339,6 +401,7 @@ class VaultManager:
         note_dir.mkdir(parents=True, exist_ok=True)
         note_path = self._next_available_note_path(note_dir, safe_stem)
         normalized_status = _normalize_task_status(status)
+        normalized_priority = _normalize_task_priority("medium")
         note_content = self._build_note_document(
             body="",
             title=clean_title,
@@ -348,6 +411,8 @@ class VaultManager:
             created_at=now.isoformat(timespec="seconds"),
             updated_at=now.isoformat(timespec="seconds"),
             status=normalized_status,
+            priority=normalized_priority,
+            due_date="",
             manual_tags=[],
             manual_related=[],
             auto_tags=[],
@@ -449,11 +514,15 @@ class VaultManager:
         if destination != file_path:
             file_path.rename(destination)
 
+        resolved_title = clean_name
+        if destination.stem.lower() != safe_stem.lower():
+            resolved_title = self._label_from_group_dir(destination.stem)
+
         original = destination.read_text(encoding="utf-8")
         normalized, _meta = self.normalize_note_markdown_text(
             text=original,
             path=destination,
-            force_title=clean_name,
+            force_title=resolved_title,
             touch_updated=True,
         )
         if normalized != original:
@@ -490,7 +559,153 @@ class VaultManager:
     def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
         file_path = self._resolve_note_file(note_path)
         file_path.unlink(missing_ok=False)
+        self._cleanup_orphan_media_assets()
         indexer.reindex_vault(self.vault_path)
+
+    def add_note_media_asset(
+        self,
+        note_path: str,
+        filename: str,
+        content_type: str,
+        data: bytes,
+    ) -> dict[str, str]:
+        note_file = self._resolve_note_file(note_path)
+        payload = bytes(data)
+        if not payload:
+            raise ValueError("Die Bilddatei ist leer.")
+        if len(payload) > MAX_MEDIA_ASSET_BYTES:
+            raise ValueError("Bilddatei ist zu gross (maximal 20 MB).")
+
+        clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+        if clean_content_type and not clean_content_type.startswith("image/"):
+            raise ValueError("Nur Bilddateien koennen eingefuegt werden.")
+
+        suffix = Path(filename or "").suffix.lower()
+        if suffix == ".jpe":
+            suffix = ".jpg"
+        if suffix not in MEDIA_IMAGE_EXTENSIONS:
+            mapped = MEDIA_IMAGE_CONTENT_TYPES.get(clean_content_type, "")
+            if mapped:
+                suffix = mapped
+            else:
+                guessed = mimetypes.guess_extension(clean_content_type or "") or ""
+                guessed = ".jpg" if guessed == ".jpe" else guessed.lower()
+                suffix = guessed if guessed in MEDIA_IMAGE_EXTENSIONS else ".png"
+
+        safe_note_token = self._safe_entry_name(note_file.stem) or "note"
+        self.media_root_path.mkdir(parents=True, exist_ok=True)
+        target_path = self.media_root_path / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+        while target_path.exists():
+            target_path = self.media_root_path / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+
+        target_path.write_bytes(payload)
+        vault_relative = target_path.relative_to(self.vault_path).as_posix()
+        markdown_path = f"/{vault_relative}"
+        return {
+            "media_path": vault_relative,
+            "markdown_path": markdown_path,
+            "file_name": target_path.name,
+        }
+
+    def resolve_note_media_asset(self, note_path: str, source: str) -> tuple[Path, str]:
+        note_file = self._resolve_note_file(note_path)
+        asset_path = self._resolve_media_source_path(note_file, source, allow_missing=False)
+        mime_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
+        return asset_path, mime_type
+
+    def _resolve_media_source_path(self, note_file: Path, source: str, allow_missing: bool) -> Path:
+        clean_source = _extract_markdown_link_target(source)
+        if not clean_source:
+            raise ValueError("Leere Bildreferenz.")
+
+        lowered = clean_source.lower()
+        if lowered.startswith(("http://", "https://", "data:", "mailto:", "file://")):
+            raise ValueError("Externe Bildreferenzen werden hier nicht verwaltet.")
+
+        if clean_source.startswith("/"):
+            resolved = (self.vault_path / clean_source.lstrip("/")).resolve()
+        else:
+            resolved = (note_file.parent / clean_source).resolve()
+            if not self._is_inside_media_root(resolved):
+                normalized = clean_source.replace("\\", "/")
+                if normalized.startswith("./"):
+                    normalized = normalized[2:]
+                if normalized.startswith(".media/"):
+                    resolved = (self.vault_path / normalized).resolve()
+
+        try:
+            resolved.relative_to(self.vault_path.resolve())
+        except ValueError as exc:
+            raise ValueError("Ungueltige Bildreferenz.") from exc
+
+        if not self._is_inside_media_root(resolved):
+            raise ValueError("Bildreferenzen muessen auf .media zeigen.")
+
+        if not allow_missing and (not resolved.exists() or not resolved.is_file()):
+            raise ValueError(f"Bilddatei nicht gefunden: {clean_source}")
+
+        return resolved
+
+    def _is_inside_media_root(self, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(self.media_root_path.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _parse_markdown_image_sources(self, markdown: str) -> list[str]:
+        sources: list[str] = []
+        for match in MARKDOWN_IMAGE_PATTERN.finditer(markdown):
+            target = _extract_markdown_link_target(match.group(1))
+            if target:
+                sources.append(target)
+        return sources
+
+    def _collect_referenced_media_assets(self) -> set[Path]:
+        referenced: set[Path] = set()
+        for note_file in self._iter_markdown_files_for_tag_updates():
+            try:
+                markdown = note_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+
+            for source in self._parse_markdown_image_sources(markdown):
+                try:
+                    resolved = self._resolve_media_source_path(note_file, source, allow_missing=True).resolve()
+                except ValueError:
+                    continue
+                referenced.add(resolved)
+        return referenced
+
+    def _cleanup_orphan_media_assets(self) -> None:
+        if not self.media_root_path.exists() or not self.media_root_path.is_dir():
+            return
+
+        referenced_assets = self._collect_referenced_media_assets()
+
+        for media_file in sorted(self.media_root_path.rglob("*"), reverse=True):
+            if not media_file.is_file():
+                continue
+            try:
+                resolved = media_file.resolve()
+            except OSError:
+                continue
+            if resolved in referenced_assets:
+                continue
+            try:
+                media_file.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+        for directory in sorted(self.media_root_path.rglob("*"), reverse=True):
+            if not directory.is_dir():
+                continue
+            try:
+                if any(directory.iterdir()):
+                    continue
+                directory.rmdir()
+            except OSError:
+                continue
 
     def normalize_note_markdown_text(
         self,
@@ -521,9 +736,10 @@ class VaultManager:
 
         note_type = _normalize_note_type(str(frontmatter.get("type", "note")))
         detected_title = _extract_title_from_body(raw_body)
-        title = _normalize_label(force_title) or _normalize_label(str(frontmatter.get("title", "")))
+        raw_frontmatter_title = str(frontmatter.get("title", ""))
+        title = _normalize_label(force_title) or _normalize_label(raw_frontmatter_title)
         if not title:
-            title = detected_title or self._label_from_group_dir(path.stem)
+            title = "Untitled" if "title" in frontmatter and not raw_frontmatter_title.strip() else detected_title or self._label_from_group_dir(path.stem)
         body = _strip_matching_title_heading(raw_body, title)
 
         manual_tags: list[str] = []
@@ -556,7 +772,9 @@ class VaultManager:
         created_at = str(frontmatter.get("created_at", "")).strip() or fallback_created
         previous_updated = str(frontmatter.get("updated_at", "")).strip() or fallback_updated
         updated_at = now_iso if touch_updated else previous_updated
-        status = _normalize_task_status(str(frontmatter.get("status", "open"))) if note_type == "task" else ""
+        status = _normalize_task_status(str(frontmatter.get("status", "open")))
+        priority = _normalize_task_priority(str(frontmatter.get("priority", "medium")))
+        due_date = _normalize_due_date(str(frontmatter.get("due_date", "")))
 
         known_keys = {
             "id",
@@ -564,6 +782,8 @@ class VaultManager:
             "title",
             "type",
             "status",
+            "priority",
+            "due_date",
             "created_at",
             "updated_at",
             "tags",
@@ -586,6 +806,8 @@ class VaultManager:
             created_at=created_at,
             updated_at=updated_at,
             status=status,
+            priority=priority,
+            due_date=due_date,
             manual_tags=manual_tags,
             manual_related=manual_related,
             auto_tags=auto_tags,
@@ -598,6 +820,8 @@ class VaultManager:
             "title": title,
             "type": note_type,
             "status": status,
+            "priority": priority,
+            "due_date": due_date,
             "created_at": created_at,
             "updated_at": updated_at,
             "tags": manual_tags,
@@ -633,6 +857,19 @@ class VaultManager:
             if destination != note_path:
                 note_path.rename(destination)
                 changed = True
+            if destination.stem.lower() != safe_stem.lower():
+                resolved_title = self._label_from_group_dir(destination.stem)
+                current = destination.read_text(encoding="utf-8")
+                resolved_text, resolved_meta = self.normalize_note_markdown_text(
+                    text=current,
+                    path=destination,
+                    force_title=resolved_title,
+                    touch_updated=False,
+                )
+                meta = resolved_meta
+                if resolved_text != current:
+                    destination.write_text(resolved_text, encoding="utf-8")
+                    changed = True
 
         return destination, meta, changed
 
@@ -644,6 +881,7 @@ class VaultManager:
             touch_updated=True,
             rename_by_title=True,
         )
+        self._cleanup_orphan_media_assets()
         indexer.reindex_vault(self.vault_path)
         return {
             "path": final_path,
@@ -1381,7 +1619,15 @@ class VaultManager:
 
     def _iter_markdown_files_for_tag_updates(self) -> list[Path]:
         files: list[Path] = []
-        excluded = {"00_inbox", "02_entities", self.tag_root_name, "02_tags", self.system_root_name, "99_system"}
+        excluded = {
+            "00_inbox",
+            "02_entities",
+            self.tag_root_name,
+            "02_tags",
+            self.system_root_name,
+            "99_system",
+            self.media_root_name,
+        }
         for child in self.vault_path.iterdir():
             if not child.is_dir() or child.name in excluded or self._is_hidden_legacy_root(child.name):
                 continue
@@ -1542,6 +1788,8 @@ class VaultManager:
         created_at: str,
         updated_at: str,
         status: str,
+        priority: str,
+        due_date: str,
         manual_tags: list[str],
         manual_related: list[str],
         auto_tags: list[str],
@@ -1553,6 +1801,9 @@ class VaultManager:
             "node_id": node_id,
             "title": title,
             "type": note_type,
+            "status": _normalize_task_status(status),
+            "priority": _normalize_task_priority(priority),
+            "due_date": _normalize_due_date(due_date),
             "created_at": created_at,
             "updated_at": updated_at,
             "tags": _dedupe_sorted(manual_tags),
@@ -1560,8 +1811,6 @@ class VaultManager:
             "related": _dedupe_sorted(manual_related),
             "related_auto": _dedupe_sorted(auto_related),
         }
-        if note_type == "task":
-            frontmatter["status"] = _normalize_task_status(status)
         if extra:
             for key, value in extra.items():
                 if key not in frontmatter:
@@ -1616,12 +1865,14 @@ class VaultManager:
             self.daily_root_name,
             self.tag_root_name,
             self.tasks_root_name,
+            self.media_root_name,
             "01_daily",
             "02_tags",
             "03_tasks",
             "daily",
             "tags",
             "tasks",
+            ".media",
         }
 
     def _is_daily_group_key(self, key: str) -> bool:

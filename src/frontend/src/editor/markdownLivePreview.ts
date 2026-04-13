@@ -24,6 +24,11 @@ type DecorationEntry = {
   line?: boolean
 }
 
+type LivePreviewOptions = {
+  notePath?: string
+  backendUrl?: string
+}
+
 const HEADING_OWNER_NAMES = new Set(['ATXHeading1', 'ATXHeading2', 'ATXHeading3', 'ATXHeading4', 'ATXHeading5', 'ATXHeading6'])
 const EMPHASIS_OWNER_NAMES = new Set(['StrongEmphasis', 'Emphasis'])
 const CODE_OWNER_NAMES = new Set(['InlineCode', 'FencedCode'])
@@ -47,6 +52,7 @@ const taskMarkerVisibleDeco = Decoration.mark({ class: 'cm-md-task-marker cm-md-
 const inlineTagSourceDeco = Decoration.mark({ class: 'cm-md-inline-tag-source' })
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
+const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
 const EMPTY_TAG_LOOKUP = buildTagLookup([])
 
 export const markdownTagLookupFacet = Facet.define<TagLookup, TagLookup>({
@@ -125,12 +131,73 @@ class InlineTagWidget extends WidgetType {
   }
 }
 
+class InlineImageWidget extends WidgetType {
+  readonly alt: string
+  readonly source: string
+  readonly notePath: string
+  readonly backendUrl: string
+
+  constructor(alt: string, source: string, notePath: string, backendUrl: string) {
+    super()
+    this.alt = alt
+    this.source = source
+    this.notePath = notePath
+    this.backendUrl = backendUrl
+  }
+
+  eq(other: InlineImageWidget): boolean {
+    return (
+      other.alt === this.alt &&
+      other.source === this.source &&
+      other.notePath === this.notePath &&
+      other.backendUrl === this.backendUrl
+    )
+  }
+
+  toDOM(): HTMLElement {
+    const wrapper = document.createElement('span')
+    wrapper.className = 'cm-md-image-widget'
+
+    const image = document.createElement('img')
+    image.className = 'cm-md-image'
+    image.loading = 'lazy'
+    image.alt = this.alt || 'Image'
+    const params = new URLSearchParams({
+      path: this.notePath,
+      source: this.source,
+    })
+    const cleanBackendUrl = this.backendUrl.replace(/\/+$/, '')
+    image.src = `${cleanBackendUrl}/notes/media/content?${params.toString()}`
+    wrapper.appendChild(image)
+
+    if (this.alt) {
+      const caption = document.createElement('span')
+      caption.className = 'cm-md-image-caption'
+      caption.textContent = this.alt
+      wrapper.appendChild(caption)
+    }
+
+    return wrapper
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
 type ParsedInlineTag = {
   from: number
   to: number
   groupId: string
   tagId: string
   syntax: string
+}
+
+type ParsedInlineImage = {
+  from: number
+  to: number
+  alt: string
+  source: string
 }
 
 function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInlineTag[] {
@@ -152,6 +219,49 @@ function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInline
       })
     }
     result = INLINE_TAG_PATTERN.exec(lineText)
+  }
+
+  return matches
+}
+
+function extractMarkdownTarget(rawTarget: string): string {
+  const clean = rawTarget.trim()
+  if (!clean) {
+    return ''
+  }
+  if (clean.startsWith('<')) {
+    const end = clean.indexOf('>')
+    if (end > 1) {
+      return clean.slice(1, end).trim()
+    }
+  }
+  if (clean.includes(' "')) {
+    return clean.split(' "', 1)[0]?.trim() ?? ''
+  }
+  if (clean.includes(" '")) {
+    return clean.split(" '", 1)[0]?.trim() ?? ''
+  }
+  return clean
+}
+
+function parseInlineImagesInLine(lineText: string, lineFrom: number): ParsedInlineImage[] {
+  const matches: ParsedInlineImage[] = []
+  INLINE_IMAGE_PATTERN.lastIndex = 0
+  let result = INLINE_IMAGE_PATTERN.exec(lineText)
+
+  while (result) {
+    const full = result[0] ?? ''
+    const alt = (result[1] ?? '').trim()
+    const source = extractMarkdownTarget(result[2] ?? '')
+    if (full && source) {
+      matches.push({
+        from: lineFrom + result.index,
+        to: lineFrom + result.index + full.length,
+        alt,
+        source,
+      })
+    }
+    result = INLINE_IMAGE_PATTERN.exec(lineText)
   }
 
   return matches
@@ -328,7 +438,57 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
   }
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
+function decorateInlineImages(
+  entries: DecorationEntry[],
+  view: EditorView,
+  selections: readonly SelectionRange[],
+  options: LivePreviewOptions
+): void {
+  const notePath = (options.notePath ?? '').trim()
+  const backendUrl = (options.backendUrl ?? '').trim()
+  if (!notePath || !backendUrl) {
+    return
+  }
+
+  const processedLines = new Set<number>()
+  for (const range of view.visibleRanges) {
+    const end = Math.max(range.from, range.to - 1)
+    let line = view.state.doc.lineAt(range.from)
+    const endLine = view.state.doc.lineAt(end).number
+
+    while (true) {
+      if (!processedLines.has(line.number)) {
+        const images = parseInlineImagesInLine(line.text, line.from)
+        for (const image of images) {
+          if (/^(https?:\/\/|data:|file:\/\/|mailto:)/i.test(image.source)) {
+            continue
+          }
+          const imageIsActive = intersectsSelection(Math.max(line.from, image.from - 1), Math.min(line.to, image.to + 1), selections)
+          if (imageIsActive) {
+            continue
+          }
+
+          addRange(
+            entries,
+            image.from,
+            image.to,
+            Decoration.replace({
+              widget: new InlineImageWidget(image.alt, image.source, notePath, backendUrl),
+            })
+          )
+        }
+        processedLines.add(line.number)
+      }
+
+      if (line.number >= endLine) {
+        break
+      }
+      line = view.state.doc.line(line.number + 1)
+    }
+  }
+}
+
+function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
   const entries: DecorationEntry[] = []
   const doc = view.state.doc
   const selections = view.state.selection.ranges.map((range) => ({ from: range.from, to: range.to }))
@@ -443,6 +603,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
   decorateTaskLines(entries, view, lineClassSeen, selections)
   decorateInlineTags(entries, view, selections, tagLookup)
+  decorateInlineImages(entries, view, selections, options)
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
   return Decoration.set(ranges, true)
@@ -486,37 +647,39 @@ function toggleTaskMarker(view: EditorView, markerFrom: number, markerTo: number
   return true
 }
 
-const markdownPreviewPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet
+function createMarkdownPreviewPlugin(options: LivePreviewOptions): Extension {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
 
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view)
-      view.requestMeasure()
-    }
+      constructor(view: EditorView) {
+        this.decorations = buildDecorations(view, options)
+        view.requestMeasure()
+      }
 
-    update(update: ViewUpdate): void {
-      const configChanged = update.startState.facet(markdownTagLookupFacet) !== update.state.facet(markdownTagLookupFacet)
-      if (update.docChanged || update.selectionSet || update.viewportChanged || configChanged) {
-        this.decorations = buildDecorations(update.view)
-        if (update.docChanged || update.viewportChanged) {
-          update.view.requestMeasure()
+      update(update: ViewUpdate): void {
+        const configChanged = update.startState.facet(markdownTagLookupFacet) !== update.state.facet(markdownTagLookupFacet)
+        if (update.docChanged || update.selectionSet || update.viewportChanged || configChanged) {
+          this.decorations = buildDecorations(update.view, options)
+          if (update.docChanged || update.viewportChanged) {
+            update.view.requestMeasure()
+          }
         }
       }
+    },
+    {
+      decorations: (instance) => instance.decorations,
     }
-  },
-  {
-    decorations: (instance) => instance.decorations,
-  }
-)
+  )
+}
 
 export function markdownTagLookupExtension(tagGroups: TagGroupDefinition[]): Extension {
   return markdownTagLookupFacet.of(buildTagLookup(tagGroups))
 }
 
-export function liveMarkdownPreview(): Extension {
+export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension {
   return [
-    markdownPreviewPlugin,
+    createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
       dblclick: (event, view) => {
         if (event.button !== 0) {
@@ -532,6 +695,9 @@ export function liveMarkdownPreview(): Extension {
           return false
         }
         if (target instanceof HTMLElement && target.closest('.cm-md-inline-tag-chip')) {
+          return false
+        }
+        if (target instanceof HTMLElement && target.closest('.cm-md-image-widget')) {
           return false
         }
 

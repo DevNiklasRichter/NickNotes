@@ -46,7 +46,7 @@ export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
       '&': {
         height: '100%',
         minHeight: '0',
-        backgroundColor: 'var(--surface-contrast)',
+        backgroundColor: 'var(--editor-note-bg)',
         color: 'var(--text)',
       },
       '.cm-scroller': {
@@ -70,7 +70,7 @@ export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
         color: 'var(--muted)',
       },
       '.cm-activeLine': {
-        backgroundColor: 'color-mix(in srgb, var(--accent-soft) 28%, transparent)',
+        backgroundColor: 'transparent',
       },
       '.cm-activeLineGutter': {
         backgroundColor: 'transparent',

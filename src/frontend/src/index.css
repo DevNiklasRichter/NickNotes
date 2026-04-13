@@ -3,6 +3,7 @@
   --text: #1f2328;
   --muted: #6a727f;
   --surface: #f3f4f6;
+  --editor-note-bg: #f6f7f9;
   --surface-strong: #eceef2;
   --surface-contrast: #fbfbfc;
   --line: #d6dae1;
@@ -38,6 +39,7 @@
   --text: #edf0f5;
   --muted: #a7afbd;
   --surface: #1f242d;
+  --editor-note-bg: #1f242d;
   --surface-strong: #262c36;
   --surface-contrast: #2b313d;
   --line: #3b4351;

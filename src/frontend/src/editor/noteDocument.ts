@@ -305,16 +305,19 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
 
   const noteType = normalizeType(rawFrontmatter.type)
   const createdAt = String(rawFrontmatter.created_at || '').trim() || nowIso()
-  const explicitTitle = normalizeLabel(String(rawFrontmatter.title || ''))
+  const hasExplicitTitle = Object.prototype.hasOwnProperty.call(rawFrontmatter, 'title')
+  const explicitTitleRaw = String(rawFrontmatter.title ?? '')
+  const explicitTitle = normalizeLabel(explicitTitleRaw)
+  const keepBlankTitle = hasExplicitTitle && explicitTitleRaw.trim() === ''
   const bodyTitle = extractTitleFromBody(rawBody)
-  const nextTitle = explicitTitle || bodyTitle || normalizeLabel(fallbackTitle) || 'New Note'
+  const nextTitle = keepBlankTitle ? '' : explicitTitle || bodyTitle || normalizeLabel(fallbackTitle) || 'New Note'
   const nextBody = stripMatchingTitleHeading(rawBody, nextTitle)
 
   const id = String(rawFrontmatter.id || '').trim() || createNodeId(noteType)
   const nodeId = String(rawFrontmatter.node_id || '').trim() || id
-  const status = noteType === 'task' ? normalizeStatus(rawFrontmatter.status) : 'open'
-  const priority = noteType === 'task' ? normalizePriority(rawFrontmatter.priority) : 'medium'
-  const dueDate = noteType === 'task' ? normalizeDueDate(rawFrontmatter.due_date) : ''
+  const status = normalizeStatus(rawFrontmatter.status)
+  const priority = normalizePriority(rawFrontmatter.priority)
+  const dueDate = normalizeDueDate(rawFrontmatter.due_date)
   const tags = Array.from(new Set(ensureListOfStrings(rawFrontmatter.tags).map(normalizeTagKey).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
   )
@@ -371,11 +374,9 @@ export function serializeNoteDocument(document: ParsedNoteDocument): string {
     related_auto: extractRelatedLinks(document.body),
   }
 
-  if (document.frontmatter.type === 'task') {
-    frontmatter.status = document.frontmatter.status
-    frontmatter.priority = document.frontmatter.priority
-    frontmatter.due_date = document.frontmatter.due_date
-  }
+  frontmatter.status = document.frontmatter.status
+  frontmatter.priority = document.frontmatter.priority
+  frontmatter.due_date = document.frontmatter.due_date
   for (const [key, value] of Object.entries(document.frontmatter.extra || {})) {
     if (!KNOWN_KEYS.has(key)) {
       frontmatter[key] = value

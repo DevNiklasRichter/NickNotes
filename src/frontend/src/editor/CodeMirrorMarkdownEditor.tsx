@@ -14,7 +14,6 @@ import {
   drawSelection,
   dropCursor,
   EditorView,
-  highlightActiveLine,
   highlightSpecialChars,
   keymap,
   placeholder,
@@ -87,11 +86,14 @@ export type MarkdownEditorApi = {
 type CodeMirrorMarkdownEditorProps = {
   value: string
   theme: 'light' | 'dark'
+  notePath?: string
+  backendUrl?: string
   tagGroups: TagGroupDefinition[]
   searchHighlightQuery?: string
   className?: string
   embeddedInScroll?: boolean
   onChange: (nextValue: string) => void
+  onInsertImageAsset?: (file: File) => Promise<string | null>
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
 
@@ -234,6 +236,18 @@ function clampIndex(index: number, itemCount: number): number {
   return Math.max(0, Math.min(index, itemCount - 1))
 }
 
+function extractImageFiles(fileList: FileList | null | undefined): File[] {
+  if (!fileList || fileList.length === 0) {
+    return []
+  }
+  return Array.from(fileList).filter((file) => {
+    if (file.type.toLowerCase().startsWith('image/')) {
+      return true
+    }
+    return /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(file.name)
+  })
+}
+
 type PaletteItem =
   | {
       kind: 'tag-root'
@@ -262,11 +276,14 @@ type PaletteItem =
 export function CodeMirrorMarkdownEditor({
   value,
   theme,
+  notePath = '',
+  backendUrl = '',
   tagGroups,
   searchHighlightQuery = '',
   className = '',
   embeddedInScroll = false,
   onChange,
+  onInsertImageAsset,
   editorApiRef,
 }: CodeMirrorMarkdownEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -274,12 +291,16 @@ export function CodeMirrorMarkdownEditor({
   const paletteInputRef = useRef<HTMLInputElement | null>(null)
   const editorRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
+  const onInsertImageAssetRef = useRef(onInsertImageAsset)
   const syncingRef = useRef(false)
   const themeCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
   const searchHighlightCompartmentRef = useRef(new Compartment())
+  const previewCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialThemeRef = useRef(theme)
+  const initialNotePathRef = useRef(notePath)
+  const initialBackendUrlRef = useRef(backendUrl)
   const initialTagGroupsRef = useRef(tagGroups)
   const initialSearchHighlightQueryRef = useRef(searchHighlightQuery)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
@@ -364,6 +385,10 @@ export function CodeMirrorMarkdownEditor({
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  useEffect(() => {
+    onInsertImageAssetRef.current = onInsertImageAsset
+  }, [onInsertImageAsset])
 
   useEffect(() => {
     if (!paletteState || (paletteState.mode !== 'palette' && paletteState.mode !== 'tag-group' && paletteState.mode !== 'tag-item')) {
@@ -589,6 +614,45 @@ export function CodeMirrorMarkdownEditor({
       })
     }
 
+    const insertImageMarkdown = async (view: EditorView, files: File[], position?: number): Promise<boolean> => {
+      const uploader = onInsertImageAssetRef.current
+      if (!uploader || files.length === 0) {
+        return false
+      }
+
+      let insertAt =
+        typeof position === 'number'
+          ? Math.max(0, Math.min(position, view.state.doc.length))
+          : view.state.selection.main.from
+      let inserted = false
+
+      for (const file of files) {
+        try {
+          const snippet = await uploader(file)
+          if (!snippet) {
+            continue
+          }
+          const prefix = insertAt > 0 && view.state.doc.sliceString(insertAt - 1, insertAt) !== '\n' ? '\n' : ''
+          const text = `${prefix}${snippet}\n`
+          view.dispatch({
+            changes: { from: insertAt, to: insertAt, insert: text },
+            selection: { anchor: insertAt + text.length },
+            scrollIntoView: true,
+            userEvent: 'input.paste',
+          })
+          insertAt += text.length
+          inserted = true
+        } catch {
+          continue
+        }
+      }
+
+      if (inserted) {
+        view.focus()
+      }
+      return inserted
+    }
+
     const instance = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -602,7 +666,6 @@ export function CodeMirrorMarkdownEditor({
           drawSelection(),
           dropCursor(),
           highlightSpecialChars(),
-          highlightActiveLine(),
           indentOnInput(),
           bracketMatching(),
           history(),
@@ -614,7 +677,12 @@ export function CodeMirrorMarkdownEditor({
           ),
           highlightSelectionMatches(),
           placeholder('Starte mit einer Notiz ...'),
-          liveMarkdownPreview(),
+          previewCompartmentRef.current.of(
+            liveMarkdownPreview({
+              notePath: initialNotePathRef.current,
+              backendUrl: initialBackendUrlRef.current,
+            })
+          ),
           keymap.of([
             {
               key: 'Mod-k',
@@ -646,6 +714,30 @@ export function CodeMirrorMarkdownEditor({
             ...historyKeymap,
             ...searchKeymap,
           ]),
+          EditorView.domEventHandlers({
+            paste: (event, view) => {
+              const imageFiles = extractImageFiles(event.clipboardData?.files)
+              if (imageFiles.length === 0) {
+                return false
+              }
+              event.preventDefault()
+              event.stopPropagation()
+              void insertImageMarkdown(view, imageFiles)
+              return true
+            },
+            drop: (event, view) => {
+              const imageFiles = extractImageFiles(event.dataTransfer?.files)
+              if (imageFiles.length === 0) {
+                return false
+              }
+              event.preventDefault()
+              event.stopPropagation()
+              const coords = { x: event.clientX, y: event.clientY }
+              const dropPos = view.posAtCoords(coords) ?? view.state.selection.main.from
+              void insertImageMarkdown(view, imageFiles, dropPos)
+              return true
+            },
+          }),
           themeCompartmentRef.current.of(buildCodeMirrorTheme(initialThemeRef.current)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !syncingRef.current) {
@@ -722,6 +814,22 @@ export function CodeMirrorMarkdownEditor({
       effects: searchHighlightCompartmentRef.current.reconfigure(buildExplorerSearchHighlightExtension(searchHighlightQuery)),
     })
   }, [searchHighlightQuery])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    instance.dispatch({
+      effects: previewCompartmentRef.current.reconfigure(
+        liveMarkdownPreview({
+          notePath,
+          backendUrl,
+        })
+      ),
+    })
+  }, [notePath, backendUrl])
 
   useEffect(() => {
     const instance = editorRef.current
