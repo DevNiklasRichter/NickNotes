@@ -2346,8 +2346,8 @@ textarea:focus-visible {
 }
 
 .split-note-properties-panel .note-title-input {
-  font-size: 1.62rem;
-  line-height: 1.18;
+  font-size: clamp(3.4rem, 2.8rem + 1.1vw, 4.3rem);
+  line-height: 1.08;
 }
 
 .note-title-row {
@@ -2357,15 +2357,15 @@ textarea:focus-visible {
 
 .note-title-input {
   width: 100%;
-  font-size: 1.92rem;
+  font-size: clamp(5.8rem, 4.9rem + 1.8vw, 7.2rem);
   font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.14;
+  letter-spacing: -0.03em;
+  line-height: 1.04;
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 0;
   background: transparent;
-  padding: 0.08rem 0.05rem 0.42rem;
+  padding: 0.08rem 0.05rem 0.56rem;
 }
 
 .note-title-input:focus {

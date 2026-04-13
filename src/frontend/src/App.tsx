@@ -341,14 +341,7 @@ function taskStatusDotClassName(raw: string): string {
 }
 
 function taskStatusOptionLabel(value: TaskStatus): string {
-  const icon: Record<TaskStatus, string> = {
-    new_topic: '🔵',
-    open: '🔴',
-    in_progress: '🟡',
-    on_hold: '⚪',
-    done: '🟢',
-  }
-  return `${icon[value]} ${TASK_STATUS_LABELS[value]}`
+  return TASK_STATUS_LABELS[value]
 }
 
 function normalizeTaskPriorityValue(raw: string): TaskPriority {
@@ -374,12 +367,7 @@ function taskPriorityDotClassName(raw: string): string {
 }
 
 function taskPriorityOptionLabel(value: TaskPriority): string {
-  const icon: Record<TaskPriority, string> = {
-    low: '🟢',
-    medium: '🟡',
-    high: '🔴',
-  }
-  return `${icon[value]} ${TASK_PRIORITY_LABELS[value]}`
+  return TASK_PRIORITY_LABELS[value]
 }
 
 function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
