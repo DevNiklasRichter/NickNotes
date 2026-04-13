@@ -727,6 +727,12 @@
   gap: 0.42rem;
 }
 
+.context-menu-divider {
+  height: 1px;
+  margin: 0.2rem 0.16rem;
+  background: color-mix(in srgb, var(--line) 82%, transparent);
+}
+
 .context-menu-item:disabled .context-menu-icon {
   opacity: 0.5;
 }

@@ -721,7 +721,6 @@ export function CodeMirrorMarkdownEditor({
                 return false
               }
               event.preventDefault()
-              event.stopPropagation()
               void insertImageMarkdown(view, imageFiles)
               return true
             },
@@ -731,7 +730,6 @@ export function CodeMirrorMarkdownEditor({
                 return false
               }
               event.preventDefault()
-              event.stopPropagation()
               const coords = { x: event.clientX, y: event.clientY }
               const dropPos = view.posAtCoords(coords) ?? view.state.selection.main.from
               void insertImageMarkdown(view, imageFiles, dropPos)

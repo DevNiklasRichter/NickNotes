@@ -52,7 +52,7 @@ const taskMarkerVisibleDeco = Decoration.mark({ class: 'cm-md-task-marker cm-md-
 const inlineTagSourceDeco = Decoration.mark({ class: 'cm-md-inline-tag-source' })
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
-const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
+const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)((?:\s*\{[^}\n]*\})*)/g
 const EMPTY_TAG_LOOKUP = buildTagLookup([])
 
 export const markdownTagLookupFacet = Facet.define<TagLookup, TagLookup>({
@@ -136,13 +136,30 @@ class InlineImageWidget extends WidgetType {
   readonly source: string
   readonly notePath: string
   readonly backendUrl: string
+  readonly width: number | null
+  readonly height: number | null
+  readonly from: number
+  readonly to: number
 
-  constructor(alt: string, source: string, notePath: string, backendUrl: string) {
+  constructor(
+    alt: string,
+    source: string,
+    notePath: string,
+    backendUrl: string,
+    width: number | null,
+    height: number | null,
+    from: number,
+    to: number
+  ) {
     super()
     this.alt = alt
     this.source = source
     this.notePath = notePath
     this.backendUrl = backendUrl
+    this.width = width
+    this.height = height
+    this.from = from
+    this.to = to
   }
 
   eq(other: InlineImageWidget): boolean {
@@ -150,13 +167,27 @@ class InlineImageWidget extends WidgetType {
       other.alt === this.alt &&
       other.source === this.source &&
       other.notePath === this.notePath &&
-      other.backendUrl === this.backendUrl
+      other.backendUrl === this.backendUrl &&
+      other.width === this.width &&
+      other.height === this.height &&
+      other.from === this.from &&
+      other.to === this.to
     )
   }
 
   toDOM(): HTMLElement {
     const wrapper = document.createElement('span')
     wrapper.className = 'cm-md-image-widget'
+    wrapper.dataset.imageFrom = String(this.from)
+    wrapper.dataset.imageTo = String(this.to)
+    wrapper.dataset.imageAlt = this.alt
+    wrapper.dataset.imageSource = this.source
+    if (this.width) {
+      wrapper.dataset.imageWidth = String(this.width)
+    }
+    if (this.height) {
+      wrapper.dataset.imageHeight = String(this.height)
+    }
 
     const image = document.createElement('img')
     image.className = 'cm-md-image'
@@ -168,20 +199,31 @@ class InlineImageWidget extends WidgetType {
     })
     const cleanBackendUrl = this.backendUrl.replace(/\/+$/, '')
     image.src = `${cleanBackendUrl}/notes/media/content?${params.toString()}`
+    if (this.width) {
+      image.style.width = `${this.width}px`
+    }
+    if (this.height) {
+      image.style.height = `${this.height}px`
+    }
     wrapper.appendChild(image)
 
-    if (this.alt) {
-      const caption = document.createElement('span')
-      caption.className = 'cm-md-image-caption'
-      caption.textContent = this.alt
-      wrapper.appendChild(caption)
+    const handles = document.createElement('span')
+    handles.className = 'cm-md-image-handles'
+    for (const direction of ['nw', 'ne', 'sw', 'se']) {
+      const handle = document.createElement('button')
+      handle.type = 'button'
+      handle.className = `cm-md-image-handle cm-md-image-handle-${direction}`
+      handle.dataset.resizeDirection = direction
+      handle.setAttribute('aria-label', `Bild ${direction} skalieren`)
+      handles.appendChild(handle)
     }
+    wrapper.appendChild(handles)
 
     return wrapper
   }
 
   ignoreEvent(): boolean {
-    return true
+    return false
   }
 }
 
@@ -198,6 +240,8 @@ type ParsedInlineImage = {
   to: number
   alt: string
   source: string
+  width: number | null
+  height: number | null
 }
 
 function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInlineTag[] {
@@ -244,6 +288,40 @@ function extractMarkdownTarget(rawTarget: string): string {
   return clean
 }
 
+function clampImageDimension(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 320
+  }
+  return Math.max(80, Math.min(2400, Math.round(value)))
+}
+
+function parseImageSizeAttributes(rawAttributes: string | undefined): { width: number | null; height: number | null } {
+  const input = (rawAttributes ?? '').trim()
+  if (!input) {
+    return { width: null, height: null }
+  }
+
+  const widthMatches = Array.from(input.matchAll(/\b(?:w|width)\s*=\s*(\d{1,5})\b/gi))
+  const heightMatches = Array.from(input.matchAll(/\b(?:h|height)\s*=\s*(\d{1,5})\b/gi))
+  const widthMatch = widthMatches.length > 0 ? widthMatches[widthMatches.length - 1] : null
+  const heightMatch = heightMatches.length > 0 ? heightMatches[heightMatches.length - 1] : null
+
+  const width = widthMatch && widthMatch[1] ? clampImageDimension(Number.parseInt(widthMatch[1], 10)) : null
+  const height = heightMatch && heightMatch[1] ? clampImageDimension(Number.parseInt(heightMatch[1], 10)) : null
+  return { width, height }
+}
+
+function sanitizeAltForMarkdown(value: string): string {
+  return value.replace(/[\r\n]/g, ' ').replace(/]/g, '\\]').trim()
+}
+
+function buildImageMarkdown(alt: string, source: string, width: number, height: number): string {
+  const safeAlt = sanitizeAltForMarkdown(alt)
+  const safeWidth = clampImageDimension(width)
+  const safeHeight = clampImageDimension(height)
+  return `![${safeAlt}](${source}){width=${safeWidth} height=${safeHeight}}`
+}
+
 function parseInlineImagesInLine(lineText: string, lineFrom: number): ParsedInlineImage[] {
   const matches: ParsedInlineImage[] = []
   INLINE_IMAGE_PATTERN.lastIndex = 0
@@ -253,12 +331,15 @@ function parseInlineImagesInLine(lineText: string, lineFrom: number): ParsedInli
     const full = result[0] ?? ''
     const alt = (result[1] ?? '').trim()
     const source = extractMarkdownTarget(result[2] ?? '')
+    const size = parseImageSizeAttributes(result[3])
     if (full && source) {
       matches.push({
         from: lineFrom + result.index,
         to: lineFrom + result.index + full.length,
         alt,
         source,
+        width: size.width,
+        height: size.height,
       })
     }
     result = INLINE_IMAGE_PATTERN.exec(lineText)
@@ -318,6 +399,15 @@ function intersectsSelection(from: number, to: number, selections: readonly Sele
   return selections.some((selection) => {
     if (selection.from === selection.to) {
       return selection.from >= from && selection.from <= to
+    }
+    return selection.from < to && selection.to > from
+  })
+}
+
+function intersectsImageMarkup(from: number, to: number, selections: readonly SelectionRange[]): boolean {
+  return selections.some((selection) => {
+    if (selection.from === selection.to) {
+      return selection.from > from && selection.from < to
     }
     return selection.from < to && selection.to > from
   })
@@ -463,7 +553,7 @@ function decorateInlineImages(
           if (/^(https?:\/\/|data:|file:\/\/|mailto:)/i.test(image.source)) {
             continue
           }
-          const imageIsActive = intersectsSelection(Math.max(line.from, image.from - 1), Math.min(line.to, image.to + 1), selections)
+          const imageIsActive = intersectsImageMarkup(image.from, image.to, selections)
           if (imageIsActive) {
             continue
           }
@@ -473,7 +563,16 @@ function decorateInlineImages(
             image.from,
             image.to,
             Decoration.replace({
-              widget: new InlineImageWidget(image.alt, image.source, notePath, backendUrl),
+              widget: new InlineImageWidget(
+                image.alt,
+                image.source,
+                notePath,
+                backendUrl,
+                image.width,
+                image.height,
+                image.from,
+                image.to
+              ),
             })
           )
         }
@@ -647,6 +746,134 @@ function toggleTaskMarker(view: EditorView, markerFrom: number, markerTo: number
   return true
 }
 
+type ResizeDirection = 'nw' | 'ne' | 'sw' | 'se'
+
+function startImageResize(
+  view: EditorView,
+  wrapper: HTMLElement,
+  handle: HTMLElement,
+  pointerDownEvent: PointerEvent
+): boolean {
+  const direction = (handle.dataset.resizeDirection ?? '') as ResizeDirection
+  if (!['nw', 'ne', 'sw', 'se'].includes(direction)) {
+    return false
+  }
+  if (pointerDownEvent.button !== 0) {
+    return false
+  }
+
+  const from = Number.parseInt(wrapper.dataset.imageFrom ?? '', 10)
+  const to = Number.parseInt(wrapper.dataset.imageTo ?? '', 10)
+  const source = wrapper.dataset.imageSource ?? ''
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !source) {
+    return false
+  }
+
+  const alt = wrapper.dataset.imageAlt ?? ''
+  const image = wrapper.querySelector<HTMLImageElement>('.cm-md-image')
+  if (!image) {
+    return false
+  }
+
+  const startRect = image.getBoundingClientRect()
+  const startWidth = Math.max(80, startRect.width)
+  const startHeight = Math.max(80, startRect.height)
+  const aspectRatio = startHeight > 0 ? startWidth / startHeight : 1
+  const startX = pointerDownEvent.clientX
+  const startY = pointerDownEvent.clientY
+  const activePointerId = pointerDownEvent.pointerId
+  let rafId: number | null = null
+  let latestX = startX
+  let latestY = startY
+
+  try {
+    handle.setPointerCapture(activePointerId)
+  } catch {
+    // Ignore pointer-capture failures and fall back to window listeners.
+  }
+
+  const applyResize = (clientX: number, clientY: number) => {
+    const deltaX = clientX - startX
+    const deltaY = clientY - startY
+
+    const signedDeltaX = direction.includes('e') ? deltaX : -deltaX
+    const signedDeltaY = direction.includes('s') ? deltaY : -deltaY
+    const dominantDelta = Math.abs(signedDeltaX) >= Math.abs(signedDeltaY) ? signedDeltaX : signedDeltaY
+
+    const width = clampImageDimension(startWidth + dominantDelta)
+    const height = clampImageDimension(width / Math.max(0.1, aspectRatio))
+    image.style.width = `${width}px`
+    image.style.height = `${height}px`
+    wrapper.dataset.imageWidth = String(width)
+    wrapper.dataset.imageHeight = String(height)
+  }
+
+  const finishResize = () => {
+    if (rafId !== null) {
+      window.cancelAnimationFrame(rafId)
+      rafId = null
+    }
+    window.removeEventListener('pointermove', onPointerMove)
+    window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerCancel)
+    try {
+      handle.releasePointerCapture(activePointerId)
+    } catch {
+      // Safe no-op if capture was never set or already released.
+    }
+
+    const width = clampImageDimension(Number.parseFloat(wrapper.dataset.imageWidth ?? String(startWidth)))
+    const height = clampImageDimension(Number.parseFloat(wrapper.dataset.imageHeight ?? String(startHeight)))
+    const nextMarkdown = buildImageMarkdown(alt, source, width, height)
+    view.dispatch({
+      changes: { from, to, insert: nextMarkdown },
+      selection: { anchor: from + nextMarkdown.length },
+      scrollIntoView: false,
+      userEvent: 'input.type',
+    })
+    view.focus()
+  }
+
+  const onPointerMove = (event: PointerEvent) => {
+    if (event.pointerId !== activePointerId) {
+      return
+    }
+    if ((event.buttons & 1) === 0) {
+      finishResize()
+      return
+    }
+    event.preventDefault()
+    latestX = event.clientX
+    latestY = event.clientY
+    if (rafId !== null) {
+      return
+    }
+    rafId = window.requestAnimationFrame(() => {
+      rafId = null
+      applyResize(latestX, latestY)
+    })
+  }
+
+  const onPointerUp = (event: PointerEvent) => {
+    if (event.pointerId !== activePointerId) {
+      return
+    }
+    finishResize()
+  }
+
+  const onPointerCancel = (event: PointerEvent) => {
+    if (event.pointerId !== activePointerId) {
+      return
+    }
+    finishResize()
+  }
+
+  window.addEventListener('pointermove', onPointerMove, { passive: false })
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerCancel)
+  return true
+}
+
 function createMarkdownPreviewPlugin(options: LivePreviewOptions): Extension {
   return ViewPlugin.fromClass(
     class {
@@ -681,6 +908,27 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
   return [
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
+      pointerdown: (event, view) => {
+        if (event.button !== 0) {
+          return false
+        }
+        const target = event.target
+        if (!(target instanceof HTMLElement)) {
+          return false
+        }
+        const resizeHandle = target.closest<HTMLElement>('.cm-md-image-handle')
+        if (!resizeHandle) {
+          return false
+        }
+        const imageWidget = resizeHandle.closest<HTMLElement>('.cm-md-image-widget')
+        if (!imageWidget) {
+          return false
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        view.focus()
+        return startImageResize(view, imageWidget, resizeHandle, event)
+      },
       dblclick: (event, view) => {
         if (event.button !== 0) {
           return false

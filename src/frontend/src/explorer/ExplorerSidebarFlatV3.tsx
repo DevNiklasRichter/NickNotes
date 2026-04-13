@@ -47,7 +47,10 @@ type ExplorerSidebarProps = {
 
 type DropPosition = 'before' | 'inside' | 'after'
 type DropIndicator = { nodeId: string; position: DropPosition } | null
-type ContextMenu = { x: number; y: number; nodeId: string } | null
+type ContextMenu =
+  | { x: number; y: number; target: 'tree' }
+  | { x: number; y: number; target: 'node'; nodeId: string }
+  | null
 type FolderFileCount = { direct: number; total: number }
 type NodeIconOverrides = ExplorerIconOverrides
 type IconPickerTarget =
@@ -749,12 +752,103 @@ export function ExplorerSidebar({
     await onCreateFolder(parentFolderKey, name)
   }, [onCreateFolder, resolveSelectedFolderKey, suggestSequentialName])
 
+  const collectFolderNodeIds = useCallback((rootNode: ExplorerNode): string[] => {
+    if (rootNode.type !== 'folder') {
+      return []
+    }
+    const ids: string[] = []
+    const walk = (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      ids.push(node.id)
+      for (const child of node.children) {
+        if (child.type === 'folder') {
+          walk(child)
+        }
+      }
+    }
+    walk(rootNode)
+    return ids
+  }, [])
+
+  const applyExpandedValueForFolders = useCallback((folderIds: string[], expanded: boolean) => {
+    if (folderIds.length === 0) {
+      return
+    }
+    setExpandedNodes((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const folderId of folderIds) {
+        if (next[folderId] !== expanded) {
+          next[folderId] = expanded
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [])
+
+  const expandAllFolders = useCallback(() => {
+    const folderIds: string[] = []
+    const walk = (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      folderIds.push(node.id)
+      for (const child of node.children) {
+        walk(child)
+      }
+    }
+    for (const root of tree.rootNodes) {
+      walk(root)
+    }
+    applyExpandedValueForFolders(folderIds, true)
+  }, [applyExpandedValueForFolders, tree.rootNodes])
+
+  const collapseAllFolders = useCallback(() => {
+    const folderIds: string[] = []
+    const walk = (node: ExplorerNode) => {
+      if (node.type !== 'folder') {
+        return
+      }
+      folderIds.push(node.id)
+      for (const child of node.children) {
+        walk(child)
+      }
+    }
+    for (const root of tree.rootNodes) {
+      walk(root)
+    }
+    applyExpandedValueForFolders(folderIds, false)
+  }, [applyExpandedValueForFolders, tree.rootNodes])
+
+  const expandFolderSubtree = useCallback(
+    (node: ExplorerNode) => {
+      const folderIds = collectFolderNodeIds(node)
+      applyExpandedValueForFolders(folderIds, true)
+    },
+    [applyExpandedValueForFolders, collectFolderNodeIds]
+  )
+
+  const collapseFolderSubtree = useCallback(
+    (node: ExplorerNode) => {
+      const folderIds = collectFolderNodeIds(node)
+      applyExpandedValueForFolders(folderIds, false)
+    },
+    [applyExpandedValueForFolders, collectFolderNodeIds]
+  )
+
   const toggleExpand = useCallback((node: ExplorerNode) => {
     if (node.type !== 'folder') {
       return
     }
-    setExpandedNodes((prev) => ({ ...prev, [node.id]: !node.expanded }))
-  }, [])
+    if (node.expanded) {
+      collapseFolderSubtree(node)
+      return
+    }
+    setExpandedNodes((prev) => ({ ...prev, [node.id]: true }))
+  }, [collapseFolderSubtree])
 
   const onDragOver = useCallback(
     (event: ReactDragEvent<HTMLDivElement>, node: ExplorerNode) => {
@@ -850,10 +944,16 @@ export function ExplorerSidebar({
     event.preventDefault()
     event.stopPropagation()
     setSelectedNodeId(node.id)
-    setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id })
+    setContextMenu({ x: event.clientX, y: event.clientY, target: 'node', nodeId: node.id })
   }, [])
 
-  const contextNode = contextMenu ? tree.nodeById.get(contextMenu.nodeId) ?? null : null
+  const openTreeContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({ x: event.clientX, y: event.clientY, target: 'tree' })
+  }, [])
+
+  const contextNode = contextMenu?.target === 'node' ? tree.nodeById.get(contextMenu.nodeId) ?? null : null
   const iconPickerCurrentIconName = useMemo(() => {
     if (!iconPicker) {
       return ''
@@ -1160,6 +1260,16 @@ export function ExplorerSidebar({
           setDraggingNodeId(null)
           setDropIndicator(null)
         }}
+        onContextMenu={(event) => {
+          const target = event.target
+          if (!(target instanceof HTMLElement)) {
+            return
+          }
+          if (target.closest('.explorer-row')) {
+            return
+          }
+          openTreeContextMenuAt(event)
+        }}
       >
         {tree.visibleNodes.length === 0 ? <p className="empty-copy">Keine passenden Dateien oder Ordner.</p> : null}
         {tree.visibleNodes.map((entry) => {
@@ -1174,7 +1284,7 @@ export function ExplorerSidebar({
               {dividerBeforeNodeId === node.id ? <div className="explorer-fixed-divider" /> : null}
               <div
                 className={`explorer-row ${node.selected ? 'selected' : ''} ${options.compactMode ? 'compact' : ''} ${dropPos ? `drop-${dropPos}` : ''}`}
-                style={{ paddingLeft: `${8 + entry.depth * 14}px` }}
+                style={{ marginLeft: `${8 + entry.depth * 14}px` }}
                 draggable={canDrag}
                 onDragStart={(event) => {
                   setDraggingNodeId(node.id)
@@ -1185,7 +1295,13 @@ export function ExplorerSidebar({
                 onDrop={(event) => {
                   void onDrop(event, node)
                 }}
-                onClick={() => {
+                onClick={(event) => {
+                  const target = event.target
+                  if (target instanceof HTMLElement && target.closest('.row-pin-slot')) {
+                    setSelectedNodeId(null)
+                    clearPreviewClickTimer()
+                    return
+                  }
                   setSelectedNodeId(node.id)
                   if (node.type === 'file') {
                     clearPreviewClickTimer()
@@ -1205,7 +1321,14 @@ export function ExplorerSidebar({
                     void onOpenFile(node.path, node.name)
                   }
                 }}
-                onContextMenu={(event: ReactMouseEvent<HTMLDivElement>) => openContextMenuAt(event, node)}
+                onContextMenu={(event: ReactMouseEvent<HTMLDivElement>) => {
+                  const target = event.target
+                  if (target instanceof HTMLElement && target.closest('.row-pin-slot')) {
+                    openTreeContextMenuAt(event)
+                    return
+                  }
+                  openContextMenuAt(event, node)
+                }}
               >
                 <div className="row-content">
                   <span className={`row-pin-slot ${node.type === 'folder' && node.favorite ? 'active' : ''}`} aria-hidden="true">
@@ -1244,77 +1367,108 @@ export function ExplorerSidebar({
         })}
       </section>
 
-      {contextMenu && contextNode ? (
+      {contextMenu && (contextMenu.target === 'tree' || contextNode) ? (
         <div className="explorer-context-menu" style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}>
           <div className="explorer-context-panel" ref={contextPanelRef}>
-            {contextNode.type === 'file' ? (
-              <button className="context-menu-item" onClick={() => { void onOpenFile(contextNode.path, contextNode.name); setContextMenu(null) }}>
-                <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
-                <span>Datei oeffnen</span>
+            {contextMenu.target === 'tree' ? (
+              <>
+                <button className="context-menu-item" onClick={() => { expandAllFolders(); setContextMenu(null) }}>
+                  <LucideNamedIcon name="ChevronsDown" className="context-menu-icon" size={14} />
+                  <span>Alle erweitern</span>
+                </button>
+                <button className="context-menu-item" onClick={() => { collapseAllFolders(); setContextMenu(null) }}>
+                  <LucideNamedIcon name="ChevronsUp" className="context-menu-icon" size={14} />
+                  <span>Alle reduzieren</span>
+                </button>
+              </>
+            ) : null}
+            {contextMenu.target === 'node' && contextNode?.type === 'folder' ? (
+              <button className="context-menu-item" onClick={() => { expandFolderSubtree(contextNode); setContextMenu(null) }}>
+                <LucideNamedIcon name="ChevronsDown" className="context-menu-icon" size={14} />
+                <span>Alle erweitern</span>
               </button>
             ) : null}
-            {contextNode.type === 'folder' ? (
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  void createFileInFolderFromContext(contextNode)
-                }}
-              >
-                <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
-                <span>Neue Datei</span>
+            {contextMenu.target === 'node' && contextNode?.type === 'folder' ? (
+              <button className="context-menu-item" onClick={() => { collapseFolderSubtree(contextNode); setContextMenu(null) }}>
+                <LucideNamedIcon name="ChevronsUp" className="context-menu-icon" size={14} />
+                <span>Alle reduzieren</span>
               </button>
             ) : null}
-            {contextNode.type === 'folder' ? (
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  void createTaskInFolderFromContext(contextNode)
-                }}
-              >
-                <LucideNamedIcon name="CheckSquare" className="context-menu-icon" size={14} />
-                <span>Neue Task</span>
-              </button>
+            {contextMenu.target === 'node' && contextNode ? (
+              <div className="context-menu-divider" />
             ) : null}
-            {contextNode.type === 'folder' ? (
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  void createFolderInFolderFromContext(contextNode)
-                }}
-              >
-                <LucideNamedIcon name="FolderPlus" className="context-menu-icon" size={14} />
-                <span>Neuer Ordner</span>
-              </button>
+            {contextMenu.target === 'node' && contextNode ? (
+              <>
+                {contextNode.type === 'file' ? (
+                  <button className="context-menu-item" onClick={() => { void onOpenFile(contextNode.path, contextNode.name); setContextMenu(null) }}>
+                    <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
+                    <span>Datei oeffnen</span>
+                  </button>
+                ) : null}
+                {contextNode.type === 'folder' ? (
+                  <button
+                    className="context-menu-item"
+                    onClick={() => {
+                      void createFileInFolderFromContext(contextNode)
+                    }}
+                  >
+                    <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
+                    <span>Neue Datei</span>
+                  </button>
+                ) : null}
+                {contextNode.type === 'folder' ? (
+                  <button
+                    className="context-menu-item"
+                    onClick={() => {
+                      void createTaskInFolderFromContext(contextNode)
+                    }}
+                  >
+                    <LucideNamedIcon name="CheckSquare" className="context-menu-icon" size={14} />
+                    <span>Neue Task</span>
+                  </button>
+                ) : null}
+                {contextNode.type === 'folder' ? (
+                  <button
+                    className="context-menu-item"
+                    onClick={() => {
+                      void createFolderInFolderFromContext(contextNode)
+                    }}
+                  >
+                    <LucideNamedIcon name="FolderPlus" className="context-menu-icon" size={14} />
+                    <span>Neuer Ordner</span>
+                  </button>
+                ) : null}
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    void renameNodeFromContext(contextNode)
+                  }}
+                >
+                  <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
+                  <span>Umbenennen</span>
+                </button>
+                <button className="context-menu-item" onClick={() => { openIconPicker(contextNode) }}>
+                  <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
+                  <span>Icon festlegen</span>
+                </button>
+                {contextNode.type === 'folder' ? (
+                  <button className="context-menu-item" disabled={isPinnedRoot(contextNode.path) && contextNode.favorite} onClick={() => { if (!(isPinnedRoot(contextNode.path) && contextNode.favorite)) { void onToggleFavoriteFolder(normalizeGroupKey(contextNode.path)) }; setContextMenu(null) }}>
+                    <LucideNamedIcon name={contextNode.favorite ? 'PinOff' : 'Pin'} className="context-menu-icon" size={14} />
+                    <span>{isPinnedRoot(contextNode.path) && contextNode.favorite ? 'Fixierung aktiv (nicht aufhebbar)' : contextNode.favorite ? 'Fixierung aufheben' : 'Ordner fixieren'}</span>
+                  </button>
+                ) : null}
+                <button
+                  className="context-menu-item danger"
+                  disabled={contextNode.type === 'folder' && contextNode.canDelete === false}
+                  onClick={() => {
+                    void deleteNodeFromContext(contextNode)
+                  }}
+                >
+                  <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
+                  <span>Loeschen</span>
+                </button>
+              </>
             ) : null}
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                void renameNodeFromContext(contextNode)
-              }}
-            >
-              <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
-              <span>Umbenennen</span>
-            </button>
-            <button className="context-menu-item" onClick={() => { openIconPicker(contextNode) }}>
-              <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
-              <span>Icon festlegen</span>
-            </button>
-            {contextNode.type === 'folder' ? (
-              <button className="context-menu-item" disabled={isPinnedRoot(contextNode.path) && contextNode.favorite} onClick={() => { if (!(isPinnedRoot(contextNode.path) && contextNode.favorite)) { void onToggleFavoriteFolder(normalizeGroupKey(contextNode.path)) }; setContextMenu(null) }}>
-                <LucideNamedIcon name={contextNode.favorite ? 'PinOff' : 'Pin'} className="context-menu-icon" size={14} />
-                <span>{isPinnedRoot(contextNode.path) && contextNode.favorite ? 'Fixierung aktiv (nicht aufhebbar)' : contextNode.favorite ? 'Fixierung aufheben' : 'Ordner fixieren'}</span>
-              </button>
-            ) : null}
-            <button
-              className="context-menu-item danger"
-              disabled={contextNode.type === 'folder' && contextNode.canDelete === false}
-              onClick={() => {
-                void deleteNodeFromContext(contextNode)
-              }}
-            >
-              <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
-              <span>Loeschen</span>
-            </button>
           </div>
         </div>
       ) : null}
