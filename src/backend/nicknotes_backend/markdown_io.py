@@ -20,8 +20,7 @@ def dump_markdown(frontmatter: dict[str, Any], body: str) -> str:
     return "\n".join(lines)
 
 
-def parse_markdown(path: Path) -> tuple[dict[str, Any], str]:
-    text = path.read_text(encoding="utf-8")
+def parse_markdown_text(text: str) -> tuple[dict[str, Any], str]:
     if not text.startswith("---\n"):
         return {}, text
 
@@ -57,3 +56,7 @@ def parse_markdown(path: Path) -> tuple[dict[str, Any], str]:
     body = "\n".join(lines[end_idx + 1 :]).lstrip("\n")
     return frontmatter, body
 
+
+def parse_markdown(path: Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    return parse_markdown_text(text)

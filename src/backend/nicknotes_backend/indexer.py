@@ -444,12 +444,15 @@ class VaultIndexer:
         created_at = str(meta.get("created_at", fallback_created))
         updated_at = str(meta.get("updated_at", fallback_updated))
         note_type = str(meta.get("type", "note")).strip() or "note"
+        normalized_note_type = note_type.lower().replace("-", "_").replace(" ", "_")
 
-        if body.strip():
-            first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
-            title = first_line.lstrip("# ").strip()[:120] or file_path.stem
-        else:
-            title = file_path.stem or note_id
+        title = str(meta.get("title", "")).strip()
+        if not title:
+            if body.strip():
+                first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
+                title = first_line.lstrip("# ").strip()[:120] or file_path.stem
+            else:
+                title = file_path.stem or note_id
 
         self.upsert_note(
             note_id=note_id,
@@ -482,6 +485,24 @@ class VaultIndexer:
                     }
                 )
         self.set_note_tags(note_id, tags)
+
+        if normalized_note_type == "task":
+            task_id = str(meta.get("id", "")).strip() or note_id
+            parsed_task = ParsedTask(
+                title=title,
+                due_date=str(meta.get("due_date", "")).strip() or None,
+                priority=str(meta.get("priority", "M")).upper()[:1] or "M",
+                status=str(meta.get("status", "open")).strip().lower().replace("-", "_") or "open",
+                project_tag=str(meta.get("project_tag", "")).strip() or None,
+            )
+            self.add_or_update_task(
+                task_id=task_id,
+                note_id=note_id,
+                path=str(file_path),
+                parsed=parsed_task,
+                created_at=created_at,
+                updated_at=updated_at,
+            )
         return 1
 
     def _index_task_markdown(self, file_path: Path) -> int:
@@ -495,13 +516,15 @@ class VaultIndexer:
         fallback_created = datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds")
         fallback_updated = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
 
-        title = body.splitlines()[0].strip() if body.strip() else str(meta.get("title", file_path.stem or task_id))
+        title = str(meta.get("title", "")).strip()
+        if not title:
+            title = body.splitlines()[0].strip() if body.strip() else str(file_path.stem or task_id)
         inferred_status = "done" if "done" in {part.lower() for part in file_path.parts} else "open"
         parsed = ParsedTask(
             title=title,
             due_date=str(meta.get("due_date", "") or "") or None,
             priority=str(meta.get("priority", "M")).upper()[:1] or "M",
-            status=str(meta.get("status", inferred_status)).lower(),
+            status=str(meta.get("status", inferred_status)).lower().replace("-", "_"),
             project_tag=str(meta.get("project_tag", "") or "") or None,
         )
         created_at = str(meta.get("created_at", fallback_created))

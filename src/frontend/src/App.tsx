@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
+import {
+  parseCommaSeparated,
+  parseNoteDocument,
+  serializeNoteDocument,
+  toCommaSeparated,
+  type ParsedNoteDocument,
+  type TaskStatus,
+} from './editor/noteDocument'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
 import { LucideNamedIcon } from './icons/lucideCatalog'
@@ -172,6 +180,13 @@ const TAG_COLOR_PRESETS = [
   '#2ec4b6',
   '#94a3b8',
   '#f43f5e',
+]
+
+const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
+  { value: 'new_topic', label: 'New Topic' },
+  { value: 'open', label: 'Open' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'done', label: 'Done' },
 ]
 
 type UiSettingsPayload = {
@@ -1308,6 +1323,13 @@ function App() {
   }, [activeTab, openNoteTabs, splitPanePaths, splitView])
   const activeNoteDisplayTitle =
     activeTab && activeTab.kind === 'note' ? activeTab.title.replace(/\.md$/i, '') : ''
+  const activeNoteDocument = useMemo(
+    () =>
+      activeTab && activeTab.kind === 'note'
+        ? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
+        : null,
+    [activeTab]
+  )
 
   useEffect(() => {
     if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
@@ -1511,14 +1533,18 @@ function App() {
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
-    const liveContent =
-      activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current
-        ? activeEditorRef.current.getMarkdown()
-        : targetTab.content
+    const liveContent = (() => {
+      if (activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current) {
+        const liveBody = activeEditorRef.current.getMarkdown()
+        const parsed = parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
+        return serializeNoteDocument({ ...parsed, body: liveBody })
+      }
+      return targetTab.content
+    })()
 
     try {
       setError('')
-      const response = await apiRequest<{ counts: VaultCounts; tagGroups?: unknown }>(
+      const response = await apiRequest<{ counts: VaultCounts; path: string; title?: string; tagGroups?: unknown }>(
         backendUrl,
         '/notes/save',
         {
@@ -1530,15 +1556,25 @@ function App() {
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
+      const savedPath = (response.path || targetTab.path || '').trim()
+      if (savedPath && savedPath !== targetTab.path) {
+        remapOpenNotePaths(targetTab.path, savedPath)
+      }
       setOpenTabs((prev) =>
         prev.map((tab) => {
-          if (tab.path !== path) {
+          if (tab.path !== path && tab.path !== savedPath) {
             return tab
           }
-          return { ...tab, content: liveContent, dirty: false }
+          return {
+            ...tab,
+            path: savedPath || tab.path,
+            title: response.title || tab.title,
+            content: liveContent,
+            dirty: false,
+          }
         })
       )
-      setMessage(`Notiz gespeichert: ${targetTab.title}`)
+      setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`)
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview(), refreshNoteGroups()])
       return true
     } catch (caught) {
@@ -1750,13 +1786,16 @@ function App() {
 
     try {
       const content = await fetchNoteContent(path)
+      const parsed = parseNoteDocument(content, fallbackTitle)
+      const normalizedContent = serializeNoteDocument(parsed)
+      const nextTitle = parsed.frontmatter.title || fallbackTitle
       setOpenTabs((prev) =>
         prev.map((tab) =>
           tab.path === path
             ? {
                 ...tab,
-                title: fallbackTitle,
-                content,
+                title: nextTitle,
+                content: normalizedContent,
                 loading: false,
                 dirty: false,
               }
@@ -1857,22 +1896,108 @@ function App() {
     setTabContextMenu(null)
   }
 
-  const updateNoteContentByPath = (tabPath: string, nextContent: string) => {
+  const updateNoteDocumentByPath = (
+    tabPath: string,
+    updater: (document: ParsedNoteDocument) => ParsedNoteDocument
+  ) => {
     setOpenTabs((prev) =>
       prev.map((tab) => {
         if (tab.path !== tabPath || tab.kind !== 'note') {
           return tab
         }
-        return { ...tab, content: nextContent, dirty: true }
+        const parsed = parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
+        const nextDocument = updater(parsed)
+        const nextContent = serializeNoteDocument(nextDocument)
+        return {
+          ...tab,
+          title: nextDocument.frontmatter.title || tab.title,
+          content: nextContent,
+          dirty: true,
+        }
       })
     )
   }
 
-  const updateActiveNoteContent = (nextContent: string) => {
+  const updateNoteContentByPath = (tabPath: string, nextBody: string) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({ ...document, body: nextBody }))
+  }
+
+  const updateNoteTitleByPath = (tabPath: string, nextTitle: string) => {
+    const cleanTitle = normalizeLabel(nextTitle)
+    if (!cleanTitle) {
+      return
+    }
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        title: cleanTitle,
+      },
+    }))
+  }
+
+  const updateNoteTypeByPath = (tabPath: string, nextType: 'note' | 'task') => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        type: nextType,
+        status: nextType === 'task' ? document.frontmatter.status : 'open',
+      },
+    }))
+  }
+
+  const updateNoteStatusByPath = (tabPath: string, nextStatus: TaskStatus) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        status: nextStatus,
+      },
+    }))
+  }
+
+  const updateNoteTagsByPath = (tabPath: string, csv: string) => {
+    const tags = Array.from(new Set(parseCommaSeparated(csv)))
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        tags,
+      },
+    }))
+  }
+
+  const updateNoteRelatedByPath = (tabPath: string, csv: string) => {
+    const related = Array.from(new Set(parseCommaSeparated(csv).map((item) => item.replace(/\\/g, '/').replace(/\.md$/i, ''))))
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        related,
+      },
+    }))
+  }
+
+  const syncNotePathWithTitle = async (tabPath: string) => {
+    const tab = openTabs.find((entry) => entry.path === tabPath && entry.kind === 'note')
+    if (!tab || tab.loading) {
+      return
+    }
+    const document = parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
+    const targetTitle = normalizeLabel(document.frontmatter.title)
+    const currentStem = normalizeLabel(toNoteDisplayName(tab.path))
+    if (!targetTitle || currentStem.toLowerCase() === targetTitle.toLowerCase()) {
+      return
+    }
+    await renameExplorerFile(tab.path, targetTitle)
+  }
+
+  const updateActiveNoteContent = (nextBody: string) => {
     if (!activeTab || activeTab.kind !== 'note') {
       return
     }
-    updateNoteContentByPath(activeTab.path, nextContent)
+    updateNoteContentByPath(activeTab.path, nextBody)
   }
 
   const openWikiLinkPicker = () => {
@@ -2063,19 +2188,52 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ noteId: string; notePath: string; groups: NoteGroup[]; counts: VaultCounts }>(
+      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
         backendUrl,
         '/note-groups/add-note',
         {
           method: 'POST',
-          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle }),
+          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'note', status: 'open' }),
         }
       )
       setCounts(response.counts)
       setNoteGroups(response.groups)
       setMessage(`Notiz erstellt (${response.noteId}).`)
       await Promise.all([runSearch(searchQuery), refreshReview()])
-      await openNoteInTab(response.notePath, cleanTitle)
+      await openNoteInTab(response.notePath, response.title || cleanTitle)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const createExplorerTask = async (groupKey: string, title: string) => {
+    const cleanTitle = normalizeLabel(title)
+    if (!cleanTitle) {
+      return
+    }
+
+    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : ''
+    const targetGroup = noteGroupsByKey.get(effectiveGroupKey)
+    if (targetGroup?.canCreateNotes === false) {
+      setMessage('In diesem Ordner koennen keine neuen Tasks angelegt werden.')
+      return
+    }
+
+    try {
+      setError('')
+      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
+        backendUrl,
+        '/note-groups/add-note',
+        {
+          method: 'POST',
+          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'task', status: 'open' }),
+        }
+      )
+      setCounts(response.counts)
+      setNoteGroups(response.groups)
+      setMessage(`Task erstellt (${response.noteId}).`)
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await openNoteInTab(response.notePath, response.title || cleanTitle)
     } catch (caught) {
       setError(String(caught))
     }
@@ -3090,6 +3248,7 @@ function App() {
         onOpenFile={openNoteInTab}
         onPreviewFile={openNoteInCurrentEditor}
         onCreateFile={createExplorerFile}
+        onCreateTask={createExplorerTask}
         onCreateFolder={createExplorerFolder}
         onRenameFile={renameExplorerFile}
         onRenameFolder={renameExplorerFolder}
@@ -3118,38 +3277,46 @@ function App() {
 
   if (!vaultLoaded) {
     return (
-      <div className="launch-shell">
-        <div className="launch-card">
-          <h1>Hallo {displayName}</h1>
-          <p>Waehle eine NoteBase aus und wir laden sie direkt automatisch.</p>
+      <div className="window-frame">
+        <div className="window-titlebar" aria-hidden="true" />
+        <div className="window-content">
+          <div className="launch-shell">
+            <div className="launch-card">
+              <h1>Hallo {displayName}</h1>
+              <p>Waehle eine NoteBase aus und wir laden sie direkt automatisch.</p>
 
-          <label htmlFor="launch-display-name" className="field-label">
-            Anrede
-          </label>
-          <input
-            id="launch-display-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
-            placeholder="Dein Name"
-          />
+              <label htmlFor="launch-display-name" className="field-label">
+                Anrede
+              </label>
+              <input
+                id="launch-display-name"
+                value={displayName}
+                onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
+                placeholder="Dein Name"
+              />
 
-          <div className="launch-actions">
-            <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
-            <button onClick={() => void createVault()}>NoteBase anlegen</button>
-            <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
-              {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
-            </button>
+              <div className="launch-actions">
+                <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
+                <button onClick={() => void createVault()}>NoteBase anlegen</button>
+                <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
+                  {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+                </button>
+              </div>
+
+              {message ? <p className="launch-message">{message}</p> : null}
+              {error ? <p className="launch-error">{error}</p> : null}
+            </div>
           </div>
-
-          {message ? <p className="launch-message">{message}</p> : null}
-          {error ? <p className="launch-error">{error}</p> : null}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="workbench-shell">
+    <div className="window-frame">
+      <div className="window-titlebar" aria-hidden="true" />
+      <div className="window-content">
+        <div className="workbench-shell">
       <aside className="activity-rail">
         <div className="rail-brand">
           <span className="rail-logo">NN</span>
@@ -3358,9 +3525,108 @@ function App() {
                 >
                   {activeTab?.kind === 'note' && !activeTab.loading ? (
                     <div className="note-editor-shell">
+                      {activeNoteDocument ? (
+                        <section className="note-properties-panel">
+                          <div className="note-title-row">
+                            <input
+                              className="note-title-input"
+                              value={activeNoteDocument.frontmatter.title}
+                              onChange={(event) => {
+                                updateNoteTitleByPath(activeTab.path, event.target.value)
+                              }}
+                              onBlur={() => {
+                                void syncNotePathWithTitle(activeTab.path)
+                              }}
+                              placeholder="Titel"
+                            />
+                          </div>
+                          <div className="note-properties-grid">
+                            <span className="property-key">Type</span>
+                            <select
+                              value={activeNoteDocument.frontmatter.type}
+                              onChange={(event) => {
+                                updateNoteTypeByPath(activeTab.path, event.target.value === 'task' ? 'task' : 'note')
+                              }}
+                            >
+                              <option value="note">Note</option>
+                              <option value="task">Task</option>
+                            </select>
+
+                            {activeNoteDocument.frontmatter.type === 'task' ? (
+                              <>
+                                <span className="property-key">Status</span>
+                                <select
+                                  value={activeNoteDocument.frontmatter.status}
+                                  onChange={(event) => {
+                                    const value = event.target.value as TaskStatus
+                                    if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                                      updateNoteStatusByPath(activeTab.path, value)
+                                    }
+                                  }}
+                                >
+                                  {TASK_STATUS_OPTIONS.map((entry) => (
+                                    <option key={entry.value} value={entry.value}>
+                                      {entry.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            ) : null}
+
+                            <span className="property-key">Tags</span>
+                            <div className="property-value-stack">
+                              <input
+                                value={toCommaSeparated(activeNoteDocument.frontmatter.tags)}
+                                onChange={(event) => {
+                                  updateNoteTagsByPath(activeTab.path, event.target.value)
+                                }}
+                                placeholder="topic:planung, project:alpha"
+                              />
+                              {activeNoteDocument.frontmatter.tags_auto.length > 0 ? (
+                                <div className="property-chip-row">
+                                  {activeNoteDocument.frontmatter.tags_auto.map((item) => (
+                                    <span key={item} className="property-chip auto">
+                                      {item}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <span className="property-key">Created</span>
+                            <span className="property-value-static">{toGermanTimestamp(activeNoteDocument.frontmatter.created_at)}</span>
+
+                            <span className="property-key">Updated</span>
+                            <span className="property-value-static">{toGermanTimestamp(activeNoteDocument.frontmatter.updated_at)}</span>
+
+                            <span className="property-key">Node ID</span>
+                            <span className="property-value-static">{activeNoteDocument.frontmatter.node_id}</span>
+
+                            <span className="property-key">Related</span>
+                            <div className="property-value-stack">
+                              <input
+                                value={toCommaSeparated(activeNoteDocument.frontmatter.related)}
+                                onChange={(event) => {
+                                  updateNoteRelatedByPath(activeTab.path, event.target.value)
+                                }}
+                                placeholder="projects/roadmap, wiki/thema"
+                              />
+                              {activeNoteDocument.frontmatter.related_auto.length > 0 ? (
+                                <div className="property-chip-row">
+                                  {activeNoteDocument.frontmatter.related_auto.map((item) => (
+                                    <span key={item} className="property-chip auto">
+                                      {item}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </section>
+                      ) : null}
                       <CodeMirrorMarkdownEditor
                         key={`editor-${activeTab.path}`}
-                        value={activeTab.content}
+                        value={activeNoteDocument?.body ?? ''}
                         theme={theme}
                         tagGroups={mergedTagGroups}
                         searchHighlightQuery={explorerFilterQuery}
@@ -3546,36 +3812,86 @@ function App() {
                 </article>
 
                 {splitView && activeTab?.kind === 'note'
-                  ? splitPaneTabs.map((paneTab) => (
-                      <article
-                        key={`split-pane-${paneTab.path}`}
-                        className="editor-pane split-editor-pane"
-                        onDragOver={(event) => {
-                          event.preventDefault()
-                          setViewerDropActive(true)
-                        }}
-                        onDrop={(event) => {
-                          event.stopPropagation()
-                          handleDropOnSplitPane(event, paneTab.path)
-                        }}
-                      >
-                        {paneTab.loading ? (
-                          <p className="empty-copy">Lade Notiz ...</p>
-                        ) : (
-                          <div className="note-editor-shell split-note-editor-shell">
-                            <CodeMirrorMarkdownEditor
-                              key={`editor-split-${paneTab.path}`}
-                              value={paneTab.content}
-                              theme={theme}
-                              tagGroups={mergedTagGroups}
-                              searchHighlightQuery={explorerFilterQuery}
-                              onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
-                              editorApiRef={secondaryEditorRef}
-                            />
-                          </div>
-                        )}
-                      </article>
-                    ))
+                  ? splitPaneTabs.map((paneTab) => {
+                      const paneDocument = parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
+                      return (
+                        <article
+                          key={`split-pane-${paneTab.path}`}
+                          className="editor-pane split-editor-pane"
+                          onDragOver={(event) => {
+                            event.preventDefault()
+                            setViewerDropActive(true)
+                          }}
+                          onDrop={(event) => {
+                            event.stopPropagation()
+                            handleDropOnSplitPane(event, paneTab.path)
+                          }}
+                        >
+                          {paneTab.loading ? (
+                            <p className="empty-copy">Lade Notiz ...</p>
+                          ) : (
+                            <div className="note-editor-shell split-note-editor-shell">
+                              <section className="note-properties-panel split-note-properties-panel">
+                                <div className="note-title-row">
+                                  <input
+                                    className="note-title-input"
+                                    value={paneDocument.frontmatter.title}
+                                    onChange={(event) => {
+                                      updateNoteTitleByPath(paneTab.path, event.target.value)
+                                    }}
+                                    onBlur={() => {
+                                      void syncNotePathWithTitle(paneTab.path)
+                                    }}
+                                    placeholder="Titel"
+                                  />
+                                </div>
+                                <div className="note-properties-grid compact">
+                                  <span className="property-key">Type</span>
+                                  <select
+                                    value={paneDocument.frontmatter.type}
+                                    onChange={(event) => {
+                                      updateNoteTypeByPath(paneTab.path, event.target.value === 'task' ? 'task' : 'note')
+                                    }}
+                                  >
+                                    <option value="note">Note</option>
+                                    <option value="task">Task</option>
+                                  </select>
+                                  {paneDocument.frontmatter.type === 'task' ? (
+                                    <>
+                                      <span className="property-key">Status</span>
+                                      <select
+                                        value={paneDocument.frontmatter.status}
+                                        onChange={(event) => {
+                                          const value = event.target.value as TaskStatus
+                                          if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                                            updateNoteStatusByPath(paneTab.path, value)
+                                          }
+                                        }}
+                                      >
+                                        {TASK_STATUS_OPTIONS.map((entry) => (
+                                          <option key={entry.value} value={entry.value}>
+                                            {entry.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </section>
+                              <CodeMirrorMarkdownEditor
+                                key={`editor-split-${paneTab.path}`}
+                                value={paneDocument.body}
+                                theme={theme}
+                                tagGroups={mergedTagGroups}
+                                searchHighlightQuery={explorerFilterQuery}
+                                onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
+                                editorApiRef={secondaryEditorRef}
+                              />
+                            </div>
+                          )}
+                        </article>
+                      )
+                    })
                   : null}
 
                 {draggingTabPath ? (
@@ -4076,6 +4392,8 @@ function App() {
         </div>
       ) : null}
 
+        </div>
+      </div>
     </div>
   )
 }

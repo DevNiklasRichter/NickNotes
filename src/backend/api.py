@@ -136,6 +136,8 @@ class NoteGroupCreateRequest(BaseModel):
 class NoteCreateRequest(BaseModel):
     group_key: str = Field(alias="groupKey")
     title: str = ""
+    note_type: str = Field(default="note", alias="noteType")
+    status: str = "open"
 
 
 class NoteGroupRenameRequest(BaseModel):
@@ -385,22 +387,30 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
     meta, body = parse_markdown(src)
     meta["status"] = "done"
     meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    done_path = src.parents[1] / "done" / src.name
+    done_path = src
+    if src.parent.name.lower() == "open":
+        done_dir = src.parent.parent / "done"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        done_path = done_dir / src.name
+        suffix = 2
+        while done_path.exists() and done_path != src:
+            done_path = done_dir / f"{src.stem}_{suffix}{src.suffix}"
+            suffix += 1
     done_path.write_text(dump_markdown(meta, body), encoding="utf-8")
     if src != done_path and src.exists():
         src.unlink()
 
     parsed = ParsedTask(
-        title=str(row["title"]),
-        due_date=row.get("due_date"),
-        priority=str(row.get("priority", "M")),
+        title=str(meta.get("title", row["title"])),
+        due_date=str(meta.get("due_date", "")).strip() or row.get("due_date"),
+        priority=str(meta.get("priority", row.get("priority", "M"))).upper()[:1] or "M",
         status="done",
-        project_tag=row.get("project_tag"),
+        project_tag=str(meta.get("project_tag", "")).strip() or row.get("project_tag"),
         tags=[],
     )
     indexer.add_or_update_task(
         task_id=str(task_id),
-        note_id=None,
+        note_id=str(meta.get("note_id", "")).strip() or None,
         path=str(done_path),
         parsed=parsed,
         created_at=str(meta.get("created_at", meta["updated_at"])),
@@ -518,13 +528,12 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
 
-    file_path.write_text(req.content, encoding="utf-8")
-    indexed = indexer.reindex_vault(vault_root)
+    result = vault.save_note_document(req.path, req.content, indexer)
     tag_groups = vault.sync_tag_groups_with_index(indexer)
     return {
         "saved": True,
-        "path": str(file_path),
-        "indexed": indexed,
+        "path": str(result["path"]),
+        "title": str(result["title"]),
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
     }
@@ -750,13 +759,21 @@ def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
 def add_note(req: NoteCreateRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
-        created = vault.create_note_in_group(req.group_key, req.title, indexer)
+        created = vault.create_note_in_group(
+            group_key=req.group_key,
+            title=req.title,
+            indexer=indexer,
+            note_type=req.note_type,
+            status=req.status,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
         "noteId": created["note_id"],
         "notePath": str(created["note_path"]),
+        "title": str(created.get("title", "")),
+        "noteType": req.note_type,
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
     }
@@ -793,6 +810,19 @@ def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"movedPath": str(moved_path), "counts": _counts(indexer)}
+
+
+@app.post("/notes/migrate-templates")
+def migrate_note_templates() -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    result = vault.migrate_note_templates(indexer)
+    tag_groups = vault.sync_tag_groups_with_index(indexer)
+    return {
+        "updated": int(result.get("updated", 0)),
+        "paths": result.get("paths", []),
+        "counts": _counts(indexer),
+        "tagGroups": tag_groups,
+    }
 
 
 @app.on_event("shutdown")

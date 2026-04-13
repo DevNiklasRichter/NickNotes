@@ -15,9 +15,18 @@ let mainWindow = null
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
   const backgroundColor = isDark ? '#1f252f' : '#eef1f5'
+  const titleBarColor = isDark ? '#1f252f' : '#eceef2'
+  const titleBarSymbolColor = isDark ? '#a7afbd' : '#6a727f'
   nativeTheme.themeSource = isDark ? 'dark' : 'light'
 
   win.setBackgroundColor(backgroundColor)
+  if (typeof win.setTitleBarOverlay === 'function') {
+    win.setTitleBarOverlay({
+      color: titleBarColor,
+      symbolColor: titleBarSymbolColor,
+      height: 34,
+    })
+  }
 }
 
 function resolvePythonBinary() {
@@ -74,6 +83,12 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 740,
     autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#eceef2',
+      symbolColor: '#6a727f',
+      height: 34,
+    },
     backgroundColor: '#1f252f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

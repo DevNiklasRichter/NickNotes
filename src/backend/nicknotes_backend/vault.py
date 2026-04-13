@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .indexer import VaultIndexer
-from .markdown_io import dump_markdown, parse_markdown
+from .markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .models import ParsedTask, TagSuggestion
 from .parser import make_note_id, make_task_id, slugify
 
@@ -22,6 +22,11 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
 
 
 DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
+TASK_STATUSES = ("new_topic", "open", "in_progress", "done")
+INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
+HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
+WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
+TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
 
 
 def _normalize_tag_id(value: str) -> str:
@@ -49,6 +54,92 @@ def _normalize_tag_key(raw: str) -> str:
     if not group_slug or not tag_slug:
         return ""
     return f"{group_slug}:{tag_slug}"
+
+
+def _ensure_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = [str(item) for item in value]
+    else:
+        items = []
+    return [item.strip() for item in items if item and str(item).strip()]
+
+
+def _normalize_note_type(raw: str) -> str:
+    clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    return "task" if clean == "task" else "note"
+
+
+def _normalize_task_status(raw: str) -> str:
+    clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    return clean if clean in TASK_STATUSES else "open"
+
+
+def _extract_title_from_body(body: str) -> str:
+    for line in body.splitlines():
+        match = TITLE_HEADING_PATTERN.match(line)
+        if match:
+            return _normalize_label(match.group(1))
+        stripped = line.strip()
+        if stripped:
+            return _normalize_label(stripped[:120])
+    return ""
+
+
+def _strip_matching_title_heading(body: str, title: str) -> str:
+    lines = body.splitlines()
+    if not lines:
+        return body
+    match = TITLE_HEADING_PATTERN.match(lines[0])
+    if not match:
+        return body
+    heading_title = _normalize_label(match.group(1))
+    if heading_title.lower() != _normalize_label(title).lower():
+        return body
+    trimmed = "\n".join(lines[1:]).lstrip("\n")
+    return trimmed
+
+
+def _extract_auto_tags(body: str) -> list[str]:
+    found: set[str] = set()
+
+    for match in INLINE_TAG_PATTERN.finditer(body):
+        key = _normalize_tag_key(f"{match.group(1)}:{match.group(2)}")
+        if key:
+            found.add(key)
+
+    for match in HASHTAG_PATTERN.finditer(body):
+        raw = match.group(1).strip().strip("/")
+        if not raw:
+            continue
+        if "/" in raw:
+            left, right = raw.split("/", 1)
+            key = _normalize_tag_key(f"{left}:{right}")
+            if key:
+                found.add(key)
+            continue
+        slug = slugify(raw)
+        if slug:
+            found.add(f"topic:{slug}")
+
+    return sorted(found, key=lambda item: item.lower())
+
+
+def _extract_related_links(body: str) -> list[str]:
+    related: set[str] = set()
+    for match in WIKILINK_PATTERN.finditer(body):
+        raw = match.group(1).strip()
+        if not raw:
+            continue
+        target = raw.split("|", 1)[0].strip()
+        if not target:
+            continue
+        clean = target.split("#", 1)[0].strip().replace("\\", "/")
+        clean = clean[:-3] if clean.lower().endswith(".md") else clean
+        if clean:
+            related.add(clean)
+    return sorted(related, key=lambda item: item.lower())
 
 
 class VaultManager:
@@ -205,62 +296,65 @@ class VaultManager:
         if self._is_tag_path(parent_path):
             raise ValueError("In Tag-Notes koennen keine neuen Gruppen angelegt werden.")
 
-        siblings = [child for child in parent_path.iterdir() if child.is_dir()]
-        for sibling in siblings:
-            sibling_token = self._safe_group_dir_token(self._label_from_group_dir(sibling.name))
-            if sibling_token.lower() == token.lower():
-                raise ValueError("Ordner bereits vorhanden")
+        candidate = token
+        suffix = 2
+        while True:
+            target_path = parent_path / candidate
+            file_collision = any(
+                sibling_file.is_file() and sibling_file.stem.lower() == candidate.lower() for sibling_file in parent_path.iterdir()
+            )
+            if not target_path.exists() and not file_collision:
+                break
+            candidate = f"{token}_{suffix}"
+            suffix += 1
 
-        for sibling_file in parent_path.iterdir():
-            if not sibling_file.is_file():
-                continue
-            if slugify(sibling_file.stem).lower() == token.lower():
-                raise ValueError("Ordner bereits vorhanden")
-
-        target_path = parent_path / token
-        if target_path.exists():
-            raise ValueError("Ordner bereits vorhanden")
         target_path.mkdir(parents=True, exist_ok=True)
         return self._group_payload(target_path, set(self._read_favorite_folders()))
 
-    def create_note_in_group(self, group_key: str, title: str, indexer: VaultIndexer) -> dict[str, Any]:
+    def create_note_in_group(
+        self,
+        group_key: str,
+        title: str,
+        indexer: VaultIndexer,
+        note_type: str = "note",
+        status: str = "open",
+    ) -> dict[str, Any]:
         clean_key = group_key.replace("\\", "/").strip().strip("/")
         root_dir = self._resolve_group_path(clean_key)
         if self._is_tag_path(root_dir):
             raise ValueError("In Tag-Notes koennen keine neuen Notizen angelegt werden.")
 
+        kind = _normalize_note_type(note_type)
         now = datetime.now()
-        created_at = now.isoformat(timespec="seconds")
-        note_id = make_note_id(now)
-        clean_title = _normalize_label(title) or "Neue Notiz"
-        title_slug = slugify(clean_title) or note_id
+        clean_title = _normalize_label(title) or ("New Task" if kind == "task" else "New Note")
+        note_id = make_task_id(now) if kind == "task" else make_note_id(now)
+        safe_stem = self._safe_entry_name(clean_title) or note_id
 
         note_dir = root_dir / "notes" if self._is_daily_group_key(clean_key) else root_dir
         note_dir.mkdir(parents=True, exist_ok=True)
-
-        for sibling_dir in note_dir.iterdir():
-            if not sibling_dir.is_dir():
-                continue
-            sibling_token = self._safe_group_dir_token(self._label_from_group_dir(sibling_dir.name))
-            if sibling_token.lower() == title_slug.lower():
-                raise ValueError("Datei bereits vorhanden")
-
-        note_path = note_dir / f"{title_slug}.md"
-        if note_path.exists():
-            raise ValueError("Datei bereits vorhanden")
-
-        frontmatter = {
-            "id": note_id,
-            "type": "daily_note" if self._is_daily_path(note_dir) else "note",
-            "created_at": created_at,
-            "updated_at": created_at,
-            "tags": [],
-        }
-        body = f"# {clean_title}\n\n"
-        note_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        note_path = self._next_available_note_path(note_dir, safe_stem)
+        normalized_status = _normalize_task_status(status)
+        note_content = self._build_note_document(
+            body="",
+            title=clean_title,
+            note_type=kind,
+            note_id=note_id,
+            node_id=note_id,
+            created_at=now.isoformat(timespec="seconds"),
+            updated_at=now.isoformat(timespec="seconds"),
+            status=normalized_status,
+            manual_tags=[],
+            manual_related=[],
+            auto_tags=[],
+            auto_related=[],
+        )
+        note_path.write_text(note_content, encoding="utf-8")
 
         indexer.reindex_vault(self.vault_path)
-        return {"note_id": note_id, "note_path": note_path}
+        return {"note_id": note_id, "note_path": note_path, "title": clean_title}
+
+    def create_task_in_group(self, group_key: str, title: str, indexer: VaultIndexer, status: str = "open") -> dict[str, Any]:
+        return self.create_note_in_group(group_key=group_key, title=title, indexer=indexer, note_type="task", status=status)
 
     def rename_note_group(self, group_key: str, new_name: str, indexer: VaultIndexer) -> dict[str, Any]:
         target = self._resolve_group_path(group_key)
@@ -349,7 +443,18 @@ class VaultManager:
 
         if destination != file_path:
             file_path.rename(destination)
-            indexer.reindex_vault(self.vault_path)
+
+        original = destination.read_text(encoding="utf-8")
+        normalized, _meta = self.normalize_note_markdown_text(
+            text=original,
+            path=destination,
+            force_title=clean_name,
+            touch_updated=True,
+        )
+        if normalized != original:
+            destination.write_text(normalized, encoding="utf-8")
+
+        indexer.reindex_vault(self.vault_path)
         return destination
 
     def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
@@ -381,6 +486,168 @@ class VaultManager:
         file_path = self._resolve_note_file(note_path)
         file_path.unlink(missing_ok=False)
         indexer.reindex_vault(self.vault_path)
+
+    def normalize_note_markdown_text(
+        self,
+        text: str,
+        path: Path,
+        force_title: str = "",
+        touch_updated: bool = True,
+    ) -> tuple[str, dict[str, Any]]:
+        frontmatter, raw_body = parse_markdown_text(text)
+        now_iso = datetime.now().isoformat(timespec="seconds")
+
+        try:
+            stat = path.stat()
+            fallback_created = datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds")
+            fallback_updated = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            fallback_created = now_iso
+            fallback_updated = now_iso
+
+        note_type = _normalize_note_type(str(frontmatter.get("type", "note")))
+        detected_title = _extract_title_from_body(raw_body)
+        title = _normalize_label(force_title) or _normalize_label(str(frontmatter.get("title", "")))
+        if not title:
+            title = detected_title or self._label_from_group_dir(path.stem)
+        body = _strip_matching_title_heading(raw_body, title)
+
+        manual_tags: list[str] = []
+        for raw_tag in _ensure_string_list(frontmatter.get("tags", [])):
+            normalized = _normalize_tag_key(raw_tag)
+            if normalized:
+                manual_tags.append(normalized)
+                continue
+            slug = slugify(raw_tag.lstrip("#"))
+            if slug:
+                manual_tags.append(f"topic:{slug}")
+        manual_tags = _dedupe_sorted(manual_tags)
+
+        manual_related: list[str] = []
+        for raw_related in _ensure_string_list(frontmatter.get("related", [])):
+            clean = raw_related.replace("\\", "/").strip()
+            clean = clean[:-3] if clean.lower().endswith(".md") else clean
+            if clean:
+                manual_related.append(clean)
+        manual_related = _dedupe_sorted(manual_related)
+
+        auto_tags = _extract_auto_tags(body)
+        auto_related = _extract_related_links(body)
+
+        note_id = str(frontmatter.get("id", "")).strip()
+        if not note_id:
+            note_id = make_task_id() if note_type == "task" else make_note_id()
+        node_id = str(frontmatter.get("node_id", "")).strip() or note_id
+
+        created_at = str(frontmatter.get("created_at", "")).strip() or fallback_created
+        previous_updated = str(frontmatter.get("updated_at", "")).strip() or fallback_updated
+        updated_at = now_iso if touch_updated else previous_updated
+        status = _normalize_task_status(str(frontmatter.get("status", "open"))) if note_type == "task" else ""
+
+        known_keys = {
+            "id",
+            "node_id",
+            "title",
+            "type",
+            "status",
+            "created_at",
+            "updated_at",
+            "tags",
+            "tags_auto",
+            "related",
+            "related_auto",
+        }
+        extra: dict[str, Any] = {}
+        for key, value in frontmatter.items():
+            if key in known_keys:
+                continue
+            extra[key] = value
+
+        normalized = self._build_note_document(
+            body=body,
+            title=title,
+            note_type=note_type,
+            note_id=note_id,
+            node_id=node_id,
+            created_at=created_at,
+            updated_at=updated_at,
+            status=status,
+            manual_tags=manual_tags,
+            manual_related=manual_related,
+            auto_tags=auto_tags,
+            auto_related=auto_related,
+            extra=extra,
+        )
+        meta = {
+            "id": note_id,
+            "node_id": node_id,
+            "title": title,
+            "type": note_type,
+            "status": status,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "tags": manual_tags,
+            "tags_auto": auto_tags,
+            "related": manual_related,
+            "related_auto": auto_related,
+        }
+        return normalized, meta
+
+    def normalize_note_file(
+        self,
+        note_path: Path,
+        touch_updated: bool = True,
+        rename_by_title: bool = False,
+        force_title: str = "",
+    ) -> tuple[Path, dict[str, Any], bool]:
+        original = note_path.read_text(encoding="utf-8")
+        normalized, meta = self.normalize_note_markdown_text(
+            text=original,
+            path=note_path,
+            force_title=force_title,
+            touch_updated=touch_updated,
+        )
+        changed = normalized != original
+        if changed:
+            note_path.write_text(normalized, encoding="utf-8")
+
+        destination = note_path
+        if rename_by_title:
+            safe_stem = self._safe_entry_name(meta.get("title", "")) or note_path.stem
+            preferred = note_path.with_name(f"{safe_stem}{note_path.suffix or '.md'}")
+            destination = self._next_available_note_path(note_path.parent, safe_stem, preferred_current=note_path)
+            if destination != note_path:
+                note_path.rename(destination)
+                changed = True
+
+        return destination, meta, changed
+
+    def save_note_document(self, note_path: str, content: str, indexer: VaultIndexer) -> dict[str, Any]:
+        file_path = self._resolve_note_file(note_path)
+        file_path.write_text(content, encoding="utf-8")
+        final_path, meta, _changed = self.normalize_note_file(
+            note_path=file_path,
+            touch_updated=True,
+            rename_by_title=True,
+        )
+        indexer.reindex_vault(self.vault_path)
+        return {
+            "path": final_path,
+            "title": str(meta.get("title", final_path.stem)),
+            "meta": meta,
+        }
+
+    def migrate_note_templates(self, indexer: VaultIndexer) -> dict[str, Any]:
+        touched_paths: list[str] = []
+        for file_path in self._iter_markdown_files_for_tag_updates():
+            if self._is_system_path(file_path.parent) or self._is_tag_path(file_path.parent):
+                continue
+            _final_path, _meta, changed = self.normalize_note_file(file_path, touch_updated=False, rename_by_title=False)
+            if changed:
+                touched_paths.append(file_path.as_posix())
+
+        indexer.reindex_vault(self.vault_path)
+        return {"updated": len(touched_paths), "paths": touched_paths}
 
     def add_favorite_folder(self, group_key: str) -> list[str]:
         folder = self._resolve_group_path(group_key)
@@ -812,10 +1079,15 @@ class VaultManager:
         tag_keys = sorted({tag.key for tag in selected_tags})
         frontmatter = {
             "id": note_id,
+            "node_id": note_id,
+            "title": text.strip().splitlines()[0][:120] if text.strip() else note_id,
             "type": "capture",
             "created_at": created_at,
             "updated_at": created_at,
             "tags": tag_keys,
+            "tags_auto": [],
+            "related": [],
+            "related_auto": [],
         }
         note_path.write_text(dump_markdown(frontmatter, text), encoding="utf-8")
 
@@ -873,6 +1145,8 @@ class VaultManager:
 
         frontmatter = {
             "id": task_id,
+            "node_id": task_id,
+            "title": task.title,
             "type": "task",
             "note_id": note_id,
             "created_at": ts,
@@ -882,6 +1156,9 @@ class VaultManager:
             "due_date": task.due_date or "",
             "project_tag": task.project_tag or "",
             "tags": task.tags,
+            "tags_auto": [],
+            "related": [],
+            "related_auto": [],
         }
         body = task.title
         task_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
@@ -1229,6 +1506,51 @@ class VaultManager:
 
     def _safe_entry_name(self, value: str) -> str:
         return self._safe_group_dir_token(value)
+
+    def _next_available_note_path(self, directory: Path, safe_stem: str, preferred_current: Path | None = None) -> Path:
+        suffix = ".md"
+        candidate = directory / f"{safe_stem}{suffix}"
+        counter = 2
+        while candidate.exists() and candidate != preferred_current:
+            candidate = directory / f"{safe_stem}_{counter}{suffix}"
+            counter += 1
+        return candidate
+
+    def _build_note_document(
+        self,
+        body: str,
+        title: str,
+        note_type: str,
+        note_id: str,
+        node_id: str,
+        created_at: str,
+        updated_at: str,
+        status: str,
+        manual_tags: list[str],
+        manual_related: list[str],
+        auto_tags: list[str],
+        auto_related: list[str],
+        extra: dict[str, Any] | None = None,
+    ) -> str:
+        frontmatter: dict[str, Any] = {
+            "id": note_id,
+            "node_id": node_id,
+            "title": title,
+            "type": note_type,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "tags": _dedupe_sorted(manual_tags),
+            "tags_auto": _dedupe_sorted(auto_tags),
+            "related": _dedupe_sorted(manual_related),
+            "related_auto": _dedupe_sorted(auto_related),
+        }
+        if note_type == "task":
+            frontmatter["status"] = _normalize_task_status(status)
+        if extra:
+            for key, value in extra.items():
+                if key not in frontmatter:
+                    frontmatter[key] = value
+        return dump_markdown(frontmatter, body)
 
     def _sorted_dirs(self, directory: Path) -> list[Path]:
         try:
