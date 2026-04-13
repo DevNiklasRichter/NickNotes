@@ -28,6 +28,7 @@ export type ExplorerNode = {
   name: string
   path: string
   type: ExplorerNodeType
+  noteType?: string
   children: ExplorerNode[]
   expanded: boolean
   selected: boolean

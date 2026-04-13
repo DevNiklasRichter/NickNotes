@@ -270,6 +270,9 @@ function defaultIconNameForNode(node: ExplorerNode): string {
   if (node.type === 'folder') {
     return 'Folder'
   }
+  if (String(node.noteType ?? '').trim().toLowerCase() === 'task') {
+    return 'CheckSquare'
+  }
   return toFileExtension(node.name) === 'md' ? 'FileText' : 'File'
 }
 

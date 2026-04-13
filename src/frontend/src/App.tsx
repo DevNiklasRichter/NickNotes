@@ -104,6 +104,7 @@ type NoteTab = {
   content: string
   loading: boolean
   dirty: boolean
+  noteType?: 'note' | 'task'
 }
 
 type EditorTabContextMenuState = {
@@ -172,6 +173,14 @@ const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
   foldersFirst: true,
   showIcons: true,
   compactMode: true,
+}
+
+const DEFAULT_EXPLORER_VIEW_STATE: ExplorerViewState = {
+  expandedNodes: {},
+  selectedNodeId: null,
+  filterQuery: '',
+  folderOrder: {},
+  iconOverrides: { folders: {}, files: {} },
 }
 
 const TAG_COLOR_PRESETS = [
@@ -287,6 +296,18 @@ function getPathTail(path: string): string {
 
 function toNoteDisplayName(path: string): string {
   return getFileName(path).replace(/\.md$/i, '')
+}
+
+function normalizeFilePathKey(path: string): string {
+  return path.replace(/\\/g, '/').trim().toLowerCase()
+}
+
+function normalizeNoteTypeValue(raw: unknown): 'note' | 'task' {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase() === 'task'
+    ? 'task'
+    : 'note'
 }
 
 function normalizeLabel(value: string): string {
@@ -548,13 +569,7 @@ function toExpandedTagGroups(value: unknown): Record<string, boolean> {
 }
 
 function toExplorerViewStateFromSettings(value: unknown): ExplorerViewState {
-  const fallback: ExplorerViewState = {
-    expandedNodes: {},
-    selectedNodeId: null,
-    filterQuery: '',
-    folderOrder: {},
-    iconOverrides: { folders: {}, files: {} },
-  }
+  const fallback: ExplorerViewState = { ...DEFAULT_EXPLORER_VIEW_STATE }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return fallback
   }
@@ -664,6 +679,7 @@ function App() {
     tags: true,
     other: true,
   })
+  const [explorerViewState, setExplorerViewState] = useState<ExplorerViewState>({ ...DEFAULT_EXPLORER_VIEW_STATE })
   const [explorerViewSeed, setExplorerViewSeed] = useState<ExplorerViewState | null>(null)
   const [explorerViewSeedId, setExplorerViewSeedId] = useState(0)
   const [explorerRevealPath, setExplorerRevealPath] = useState('')
@@ -1034,6 +1050,7 @@ function App() {
     setExpandedFolders(nextExpandedGroups)
 
     const nextExplorerViewState = toExplorerViewStateFromSettings(settings.explorer)
+    setExplorerViewState(nextExplorerViewState)
     setExplorerViewSeed(nextExplorerViewState)
     setExplorerViewSeedId((prev) => prev + 1)
     uiSettingsReadyRef.current = true
@@ -1085,6 +1102,7 @@ function App() {
       if (!state.vaultLoaded) {
         uiSettingsReadyRef.current = false
         setVaultLoaded(false)
+        setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
         setExplorerViewSeed(null)
         setExplorerViewSeedId((prev) => prev + 1)
         const rememberedPath = getStoredLastNoteBasePath()
@@ -1235,6 +1253,14 @@ function App() {
   }, [allNotes, sortedNotes])
 
   const explorerRows = useMemo(() => {
+    const liveNoteTypeByPath = new Map<string, 'note' | 'task'>()
+    for (const tab of openTabs) {
+      if (tab.kind !== 'note' || !tab.noteType) {
+        continue
+      }
+      liveNoteTypeByPath.set(normalizeFilePathKey(tab.path), normalizeNoteTypeValue(tab.noteType))
+    }
+
     const deduped = new Map<string, SearchRow>()
     for (const row of linkIndexRows) {
       deduped.set(row.path, row)
@@ -1244,8 +1270,17 @@ function App() {
         deduped.set(row.path, row)
       }
     }
-    return Array.from(deduped.values())
-  }, [explorerFiles, linkIndexRows])
+    return Array.from(deduped.values()).map((row) => {
+      const liveType = liveNoteTypeByPath.get(normalizeFilePathKey(row.path))
+      if (!liveType) {
+        return row
+      }
+      return {
+        ...row,
+        note_type: liveType,
+      }
+    })
+  }, [explorerFiles, linkIndexRows, openTabs])
 
   useEffect(() => {
     if (!vaultLoaded) {
@@ -1321,6 +1356,27 @@ function App() {
     return map
   }, [mergedTagGroups])
 
+  const explorerFileIconOverrides = useMemo(() => {
+    const map = new Map<string, string>()
+    const source = explorerViewState.iconOverrides.files
+    for (const [rawPath, rawIcon] of Object.entries(source)) {
+      const iconName = typeof rawIcon === 'string' ? rawIcon.trim() : ''
+      if (!iconName) {
+        continue
+      }
+      map.set(normalizeFilePathKey(rawPath), iconName)
+    }
+    return map
+  }, [explorerViewState.iconOverrides.files])
+
+  const explorerNoteTypeByPath = useMemo(() => {
+    const map = new Map<string, 'note' | 'task'>()
+    for (const row of explorerRows) {
+      map.set(normalizeFilePathKey(row.path), normalizeNoteTypeValue(row.note_type))
+    }
+    return map
+  }, [explorerRows])
+
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
   const dirtyFilePaths = useMemo(
@@ -1369,6 +1425,24 @@ function App() {
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
   const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.path === tabContextMenu.path) ?? null : null
+  const resolveNoteTabIconName = (tab: NoteTab): string => {
+    if (tab.kind !== 'note') {
+      return 'Settings'
+    }
+    const pathKey = normalizeFilePathKey(tab.path)
+    const customIcon = explorerFileIconOverrides.get(pathKey)
+    if (customIcon) {
+      return customIcon
+    }
+
+    const knownType = tab.noteType ?? explorerNoteTypeByPath.get(pathKey)
+    if (knownType) {
+      return knownType === 'task' ? 'CheckSquare' : 'FileText'
+    }
+
+    const parsedType = normalizeNoteTypeValue(parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path)).frontmatter.type)
+    return parsedType === 'task' ? 'CheckSquare' : 'FileText'
+  }
   const dueTodayCount = useMemo(() => {
     const today = toLocalIsoDate()
     return tasks.filter((task) => task.status !== 'done' && task.due_date === today).length
@@ -1652,6 +1726,7 @@ function App() {
       setSplitPanePaths([])
       setCustomTagGroups([])
       setNoteGroups([])
+      setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
       setExplorerViewSeed(null)
       setExplorerViewSeedId((prev) => prev + 1)
       clearStoredLastNoteBasePath()
@@ -1744,11 +1819,32 @@ function App() {
     return response.content
   }
 
-  const openNoteInTab = async (path: string, suggestedTitle?: string, options?: { activate?: boolean }) => {
+  const openNoteInTab = async (
+    path: string,
+    suggestedTitle?: string,
+    options?: { activate?: boolean; replacePath?: string; initialNoteType?: 'note' | 'task' }
+  ) => {
     const shouldActivate = options?.activate !== false
+    const replacePath = (options?.replacePath ?? '').trim()
+    const initialNoteType = normalizeNoteTypeValue(options?.initialNoteType)
     const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
     const existing = openTabs.find((tab) => tab.path === path)
     if (existing) {
+      if (existing.kind === 'note' && !existing.noteType) {
+        setOpenTabs((prev) =>
+          prev.map((tab) =>
+            tab.path === path && tab.kind === 'note'
+              ? {
+                  ...tab,
+                  noteType: initialNoteType,
+                }
+              : tab
+          )
+        )
+      }
+      if (replacePath && replacePath !== path) {
+        setOpenTabs((prev) => prev.filter((tab) => tab.path !== replacePath))
+      }
       setEditorPanelOpen(true)
       if (shouldActivate) {
         setActiveNotePath(path)
@@ -1756,17 +1852,27 @@ function App() {
       return
     }
 
-    setOpenTabs((prev) => [
-      ...prev,
-      {
-        kind: 'note',
-        path,
-        title: fallbackTitle,
-        content: '',
-        loading: true,
-        dirty: false,
-      },
-    ])
+    const loadingTab: NoteTab = {
+      kind: 'note',
+      path,
+      title: fallbackTitle,
+      content: '',
+      loading: true,
+      dirty: false,
+      noteType: initialNoteType,
+    }
+
+    setOpenTabs((prev) => {
+      if (replacePath && replacePath !== path) {
+        const replaceIndex = prev.findIndex((tab) => tab.path === replacePath)
+        if (replaceIndex >= 0) {
+          const next = [...prev]
+          next[replaceIndex] = loadingTab
+          return next.filter((tab, index) => index === replaceIndex || tab.path !== path)
+        }
+      }
+      return [...prev.filter((tab) => tab.path !== path), loadingTab]
+    })
     setEditorPanelOpen(true)
     if (shouldActivate) {
       setActiveNotePath(path)
@@ -1786,6 +1892,7 @@ function App() {
                 content: normalizedContent,
                 loading: false,
                 dirty: false,
+                noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
               }
             : tab
         )
@@ -1846,12 +1953,7 @@ function App() {
         return
       }
     }
-    await openNoteInTab(path, suggestedTitle)
-    if (currentPath && currentPath !== path) {
-      window.setTimeout(() => {
-        setOpenTabs((prev) => prev.filter((tab) => tab.path !== currentPath))
-      }, 0)
-    }
+    await openNoteInTab(path, suggestedTitle, currentPath && currentPath !== path ? { replacePath: currentPath } : undefined)
     setSplitView(false)
     setSplitPanePaths([])
   }
@@ -1901,6 +2003,7 @@ function App() {
           title: nextDocument.frontmatter.title || tab.title,
           content: nextContent,
           dirty: true,
+          noteType: normalizeNoteTypeValue(nextDocument.frontmatter.type),
         }
       })
     )
@@ -2117,6 +2220,7 @@ function App() {
             placeholder="Untitled"
           />
         </div>
+        <h2 className="note-properties-heading">Properties</h2>
 
         <div className={`note-properties-grid ${compact ? 'compact' : ''}`}>
           <span className="property-key">Type</span>
@@ -2412,6 +2516,7 @@ function App() {
   }
 
   const handleExplorerViewStateChange = (nextState: ExplorerViewState) => {
+    setExplorerViewState(nextState)
     if (!vaultLoaded || !uiSettingsReadyRef.current) {
       return
     }
@@ -2554,7 +2659,7 @@ function App() {
       setNoteGroups(response.groups)
       setMessage(`Notiz erstellt (${response.noteId}).`)
       await Promise.all([runSearch(searchQuery), refreshReview()])
-      await openNoteInTab(response.notePath, response.title || cleanTitle)
+      await openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'note' })
     } catch (caught) {
       setError(String(caught))
     }
@@ -2611,7 +2716,7 @@ function App() {
       setNoteGroups(response.groups)
       setMessage(`Task erstellt (${response.noteId}).`)
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
-      await openNoteInTab(response.notePath, response.title || cleanTitle)
+      await openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'task' })
     } catch (caught) {
       setError(String(caught))
     }
@@ -2766,6 +2871,7 @@ function App() {
               content: normalized,
               dirty: false,
               loading: false,
+              noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
             }
           })
         )
@@ -3805,6 +3911,7 @@ function App() {
                 <div className="editor-tab-list">
                   {openTabs.map((tab) => {
                     const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
+                    const tabIconName = resolveNoteTabIconName(tab)
                     return (
                       <div
                         key={`editor-tab-${tab.path}`}
@@ -3838,6 +3945,9 @@ function App() {
                           }}
                           title={displayTitle}
                         >
+                          <span className="tab-kind-icon" aria-hidden="true">
+                            <LucideNamedIcon name={tabIconName} size={13} />
+                          </span>
                           <span>{displayTitle}</span>
                           {tab.dirty ? (
                             <span className="tab-dirty-dot">

@@ -401,6 +401,7 @@ export function buildExplorerTree({
       name: fileName,
       path: file.path,
       type: 'file',
+      noteType: file.note_type,
       children: [],
       expanded: false,
       selected: false,
