@@ -22,7 +22,7 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
 
 
 DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
-TASK_STATUSES = ("new_topic", "open", "in_progress", "done")
+TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")

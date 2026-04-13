@@ -450,11 +450,78 @@
   display: flex;
   justify-content: space-between;
   gap: 0.4rem;
+  align-items: flex-start;
 }
 
 .task-item p {
   margin: 0;
   color: var(--muted);
+}
+
+.task-meta-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.task-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.08rem 0.48rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  font-size: 0.7rem;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.status-badge.status-new-topic {
+  color: color-mix(in srgb, var(--text) 68%, var(--muted));
+  background: color-mix(in srgb, var(--surface-strong) 88%, transparent);
+  border-color: color-mix(in srgb, var(--line) 86%, transparent);
+}
+
+.status-badge.status-open {
+  color: #8f2a2a;
+  background: color-mix(in srgb, #e47171 17%, transparent);
+  border-color: color-mix(in srgb, #e47171 34%, transparent);
+}
+
+.status-badge.status-in-progress {
+  color: #8a6410;
+  background: color-mix(in srgb, #f0c24f 24%, transparent);
+  border-color: color-mix(in srgb, #f0c24f 38%, transparent);
+}
+
+.status-badge.status-on-hold {
+  color: #54515f;
+  background: color-mix(in srgb, #8d8fa0 22%, transparent);
+  border-color: color-mix(in srgb, #8d8fa0 38%, transparent);
+}
+
+.status-badge.status-done {
+  color: #1f6d42;
+  background: color-mix(in srgb, #47b57a 20%, transparent);
+  border-color: color-mix(in srgb, #47b57a 36%, transparent);
 }
 
 .review-card {
@@ -1077,17 +1144,25 @@ button.wiki-link-pill:hover {
 }
 
 .code-editor-host .cm-md-inline-tag-chip {
-  display: inline;
-  border: 0;
-  border-radius: 2px;
-  background: transparent;
-  color: color-mix(in srgb, var(--cm-md-tag-color) 82%, var(--text));
-  font-size: 0.92em;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--cm-md-tag-color) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cm-md-tag-color) 14%, transparent);
+  color: color-mix(in srgb, var(--cm-md-tag-color) 74%, var(--text));
+  font-size: 0.84em;
   font-weight: 600;
   letter-spacing: 0.005em;
-  line-height: inherit;
-  padding: 0;
-  transition: color 0.16s ease;
+  line-height: 1.25;
+  padding: 0.02rem 0.42rem;
+  margin-inline: 0.03rem;
+  vertical-align: baseline;
+  transition: filter 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.code-editor-host .cm-md-inline-tag-chip:hover {
+  filter: saturate(1.05);
+  background: color-mix(in srgb, var(--cm-md-tag-color) 19%, transparent);
 }
 
 .code-editor-host .cm-md-inline-tag-source {

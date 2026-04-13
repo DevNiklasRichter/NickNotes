@@ -1,5 +1,5 @@
 export type NoteType = 'note' | 'task'
-export type TaskStatus = 'new_topic' | 'open' | 'in_progress' | 'done'
+export type TaskStatus = 'new_topic' | 'open' | 'in_progress' | 'on_hold' | 'done'
 
 export type NoteFrontmatter = {
   id: string
@@ -26,7 +26,7 @@ const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za
 const HASHTAG_PATTERN = /(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const TITLE_HEADING_PATTERN = /^\s{0,3}#\s+(.+?)\s*$/
-const TASK_STATUS_VALUES: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'done']
+const TASK_STATUS_VALUES: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'on_hold', 'done']
 const KNOWN_KEYS = new Set([
   'id',
   'node_id',

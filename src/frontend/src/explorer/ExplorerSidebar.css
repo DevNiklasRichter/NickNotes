@@ -777,9 +777,13 @@
 }
 
 .tag-colored-label {
-  color: color-mix(in srgb, var(--tag-accent) 78%, var(--text));
+  color: color-mix(in srgb, var(--tag-accent) 76%, var(--text));
   font-weight: 620;
-  text-shadow: 0 0 0.1px color-mix(in srgb, var(--tag-accent) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-accent) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-accent) 14%, transparent);
+  padding: 0.02rem 0.42rem;
+  text-shadow: none;
 }
 
 .tag-entry-row {

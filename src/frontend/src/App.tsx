@@ -186,8 +186,16 @@ const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
   { value: 'new_topic', label: 'New Topic' },
   { value: 'open', label: 'Open' },
   { value: 'in_progress', label: 'In Progress' },
+  { value: 'on_hold', label: 'On Hold' },
   { value: 'done', label: 'Done' },
 ]
+const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  new_topic: 'New Topic',
+  open: 'Open',
+  in_progress: 'In Progress',
+  on_hold: 'On Hold',
+  done: 'Done',
+}
 
 type UiSettingsPayload = {
   updated_at?: string
@@ -397,6 +405,20 @@ function toNoteDisplayName(path: string): string {
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
+}
+
+function normalizeTaskStatusValue(raw: string): TaskStatus {
+  const clean = raw.trim().toLowerCase().replace(/[- ]+/g, '_') as TaskStatus
+  return TASK_STATUS_OPTIONS.some((entry) => entry.value === clean) ? clean : 'open'
+}
+
+function taskStatusLabel(raw: string): string {
+  return TASK_STATUS_LABELS[normalizeTaskStatusValue(raw)]
+}
+
+function taskStatusClassName(raw: string): string {
+  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
+  return `status-badge status-${normalized}`
 }
 
 function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
@@ -3168,12 +3190,12 @@ function App() {
               <article key={task.id} className="task-item">
                 <header>
                   <strong>{task.title}</strong>
-                  <span>{task.priority}</span>
+                  <div className="task-meta-badges">
+                    <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
+                    <span className="task-priority-badge">{task.priority}</span>
+                  </div>
                 </header>
-                <p>
-                  {task.status}
-                  {task.due_date ? ` | due ${task.due_date}` : ''}
-                </p>
+                <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
                 <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
                 <button onClick={() => void markTaskDone(task.id)} disabled={task.status === 'done'}>
                   Done
@@ -3582,21 +3604,26 @@ function App() {
                             {activeNoteDocument.frontmatter.type === 'task' ? (
                               <>
                                 <span className="property-key">Status</span>
-                                <select
-                                  value={activeNoteDocument.frontmatter.status}
-                                  onChange={(event) => {
-                                    const value = event.target.value as TaskStatus
-                                    if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                                      updateNoteStatusByPath(activeTab.path, value)
-                                    }
-                                  }}
-                                >
-                                  {TASK_STATUS_OPTIONS.map((entry) => (
-                                    <option key={entry.value} value={entry.value}>
-                                      {entry.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                <div className="property-value-stack">
+                                  <select
+                                    value={activeNoteDocument.frontmatter.status}
+                                    onChange={(event) => {
+                                      const value = event.target.value as TaskStatus
+                                      if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                                        updateNoteStatusByPath(activeTab.path, value)
+                                      }
+                                    }}
+                                  >
+                                    {TASK_STATUS_OPTIONS.map((entry) => (
+                                      <option key={entry.value} value={entry.value}>
+                                        {entry.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <span className={taskStatusClassName(activeNoteDocument.frontmatter.status)}>
+                                    {taskStatusLabel(activeNoteDocument.frontmatter.status)}
+                                  </span>
+                                </div>
                               </>
                             ) : null}
 
@@ -3886,21 +3913,26 @@ function App() {
                                   {paneDocument.frontmatter.type === 'task' ? (
                                     <>
                                       <span className="property-key">Status</span>
-                                      <select
-                                        value={paneDocument.frontmatter.status}
-                                        onChange={(event) => {
-                                          const value = event.target.value as TaskStatus
-                                          if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                                            updateNoteStatusByPath(paneTab.path, value)
-                                          }
-                                        }}
-                                      >
-                                        {TASK_STATUS_OPTIONS.map((entry) => (
-                                          <option key={entry.value} value={entry.value}>
-                                            {entry.label}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      <div className="property-value-stack">
+                                        <select
+                                          value={paneDocument.frontmatter.status}
+                                          onChange={(event) => {
+                                            const value = event.target.value as TaskStatus
+                                            if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                                              updateNoteStatusByPath(paneTab.path, value)
+                                            }
+                                          }}
+                                        >
+                                          {TASK_STATUS_OPTIONS.map((entry) => (
+                                            <option key={entry.value} value={entry.value}>
+                                              {entry.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <span className={taskStatusClassName(paneDocument.frontmatter.status)}>
+                                          {taskStatusLabel(paneDocument.frontmatter.status)}
+                                        </span>
+                                      </div>
                                     </>
                                   ) : null}
                                 </div>
