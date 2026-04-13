@@ -469,6 +469,7 @@
 .task-priority-badge {
   display: inline-flex;
   align-items: center;
+  gap: 0.28rem;
   justify-content: center;
   min-width: 1.5rem;
   padding: 0.08rem 0.38rem;
@@ -495,9 +496,9 @@
 }
 
 .status-badge.status-new-topic {
-  color: color-mix(in srgb, var(--text) 68%, var(--muted));
-  background: color-mix(in srgb, var(--surface-strong) 88%, transparent);
-  border-color: color-mix(in srgb, var(--line) 86%, transparent);
+  color: #2452a9;
+  background: color-mix(in srgb, #4f8cff 20%, transparent);
+  border-color: color-mix(in srgb, #4f8cff 38%, transparent);
 }
 
 .status-badge.status-open {
@@ -936,36 +937,6 @@
   display: flex;
 }
 
-.wiki-links-strip {
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-  padding: 0.35rem 0.55rem;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.wiki-link-pill {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-contrast);
-  color: var(--text);
-  padding: 0.14rem 0.5rem;
-  font-size: 0.76rem;
-  line-height: 1.2;
-}
-
-button.wiki-link-pill:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.wiki-link-pill.unresolved {
-  color: var(--muted);
-  border-style: dashed;
-}
-
 .code-editor-host {
   height: 100%;
   width: 100%;
@@ -1322,24 +1293,6 @@ button.wiki-link-pill:hover {
 .markdown-wikilink.unresolved {
   color: var(--muted);
   text-decoration-style: dashed;
-}
-
-.link-picker-modal {
-  width: min(760px, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 0.85rem;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
-  gap: 0.65rem;
-}
-
-.wikilink-candidate {
-  border-color: var(--line);
-  background: var(--surface-contrast);
 }
 
 .markdown-preview {
@@ -2270,12 +2223,6 @@ textarea:focus-visible {
   display: none;
 }
 
-.wiki-links-strip.workspace-wide {
-  border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  width: 100%;
-}
-
 .workspace-grid.with-capture-column {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 8px minmax(120px, var(--capture-inline-height, 220px));
@@ -2398,6 +2345,11 @@ textarea:focus-visible {
   padding-top: 0;
 }
 
+.split-note-properties-panel .note-title-input {
+  font-size: 1.62rem;
+  line-height: 1.18;
+}
+
 .note-title-row {
   display: flex;
   align-items: center;
@@ -2405,10 +2357,10 @@ textarea:focus-visible {
 
 .note-title-input {
   width: 100%;
-  font-size: clamp(1.74rem, 1.24rem + 1.12vw, 2.2rem);
+  font-size: 1.92rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  line-height: 1.17;
+  line-height: 1.14;
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 0;
@@ -2455,28 +2407,118 @@ textarea:focus-visible {
   padding-top: 0.15rem;
 }
 
-.property-type-select {
-  width: auto !important;
-  min-width: 98px;
-  font-size: 0.76rem !important;
-  padding: 0.2rem 0.6rem 0.2rem 0.4rem !important;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
+.property-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
 }
 
-.status-badge-select {
-  width: auto !important;
-  min-width: 0 !important;
+.property-toggle-badge {
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.14rem 0.62rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
   cursor: pointer;
+}
+
+.property-toggle-badge.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface-strong) 46%);
+}
+
+.property-picker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  border-radius: 999px;
+  padding: 0.12rem 0.56rem;
+  min-height: 1.68rem;
+}
+
+.property-picker-select {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.77rem;
+  line-height: 1.26;
+  padding: 0;
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 1rem !important;
+  cursor: pointer;
+  min-width: 102px;
 }
 
-.status-badge-select:focus {
+.property-picker-select-status {
+  min-width: 126px;
+}
+
+.property-picker-select-priority {
+  min-width: 102px;
+}
+
+.property-picker-select:focus {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+
+.status-dot,
+.priority-dot {
+  width: 0.56rem;
+  height: 0.56rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.status-dot.status-new-topic {
+  background: #4f8cff;
+}
+
+.status-dot.status-open {
+  background: #cf5d5d;
+}
+
+.status-dot.status-in-progress {
+  background: #d3a33a;
+}
+
+.status-dot.status-on-hold {
+  background: #8a8da1;
+}
+
+.status-dot.status-done {
+  background: #43a36f;
+}
+
+.priority-dot.priority-low {
+  background: #59a477;
+}
+
+.priority-dot.priority-medium {
+  background: #cea73d;
+}
+
+.priority-dot.priority-high {
+  background: #cf5d5d;
+}
+
+.property-date-input {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.75rem;
+  padding: 0.18rem 0.42rem;
+}
+
+.property-date-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
 }
 
 .property-token-line {
@@ -2509,6 +2551,12 @@ textarea:focus-visible {
 
 .property-chip.auto {
   color: var(--muted);
+}
+
+.property-chip.tag-chip {
+  border-color: color-mix(in srgb, var(--tag-chip-color, var(--line)) 34%, transparent);
+  background: color-mix(in srgb, var(--tag-chip-color, var(--surface-strong)) 16%, transparent);
+  color: color-mix(in srgb, var(--tag-chip-color, var(--text)) 76%, var(--text));
 }
 
 .property-chip.manual.interactive {

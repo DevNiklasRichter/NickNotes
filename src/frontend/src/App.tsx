@@ -6,6 +6,7 @@ import {
   parseNoteDocument,
   serializeNoteDocument,
   type ParsedNoteDocument,
+  type TaskPriority,
   type TaskStatus,
 } from './editor/noteDocument'
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
@@ -187,12 +188,22 @@ const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
   { value: 'on_hold', label: 'On Hold' },
   { value: 'done', label: 'Done' },
 ]
+const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+]
 const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   new_topic: 'New Topic',
   open: 'Open',
   in_progress: 'In Progress',
   on_hold: 'On Hold',
   done: 'Done',
+}
+const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
 }
 
 type UiSettingsPayload = {
@@ -210,140 +221,8 @@ type NoteGroup = {
   canDelete?: boolean
 }
 
-function parseWikiLinkInner(rawInner: string): { target: string; alias: string | null } | null {
-  const inner = rawInner.trim()
-  if (!inner) {
-    return null
-  }
-
-  const pipeIndex = inner.indexOf('|')
-  const targetRaw = (pipeIndex >= 0 ? inner.slice(0, pipeIndex) : inner).trim()
-  const aliasRaw = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() : ''
-  const target = targetRaw.replace(/\\/g, '/').replace(/\.md$/i, '')
-  if (!target) {
-    return null
-  }
-
-  return { target, alias: aliasRaw || null }
-}
-
-function extractWikiLinks(content: string): Array<{ raw: string; target: string; alias: string | null }> {
-  const matches: Array<{ raw: string; target: string; alias: string | null }> = []
-  const pattern = /\[\[([^[\]\n]+)\]\]/g
-  let current: RegExpExecArray | null = pattern.exec(content)
-
-  while (current) {
-    const raw = current[0]
-    const parsed = parseWikiLinkInner(current[1] ?? '')
-    if (parsed) {
-      matches.push({ raw, target: parsed.target, alias: parsed.alias })
-    }
-    current = pattern.exec(content)
-  }
-
-  return matches
-}
-
 function normalizeWikiLookup(value: string): string {
   return value.trim().replace(/\\/g, '/').replace(/\.md$/i, '').replace(/\s+/g, ' ').toLowerCase()
-}
-
-function normalizeWikiPath(value: string): string {
-  const normalized = value.replace(/\\/g, '/')
-  const segments: string[] = []
-  for (const part of normalized.split('/')) {
-    const chunk = part.trim()
-    if (!chunk || chunk === '.') {
-      continue
-    }
-    if (chunk === '..') {
-      segments.pop()
-      continue
-    }
-    segments.push(chunk)
-  }
-  return segments.join('/').replace(/\.md$/i, '').toLowerCase()
-}
-
-function chooseShortestPathRow(rows: SearchRow[], noteBasePath: string): SearchRow | null {
-  if (rows.length === 0) {
-    return null
-  }
-  return [...rows].sort(
-    (left, right) =>
-      getRelativeVaultPath(left.path, noteBasePath).length - getRelativeVaultPath(right.path, noteBasePath).length
-  )[0]
-}
-
-function resolveWikiLinkTarget(
-  target: string,
-  rows: SearchRow[],
-  noteBasePath: string,
-  currentPath?: string
-): SearchRow | null {
-  const cleanTarget = target.split('#')[0]?.trim() ?? ''
-  if (!cleanTarget) {
-    return null
-  }
-
-  const normalizedTarget = normalizeWikiLookup(cleanTarget)
-  if (!normalizedTarget) {
-    return null
-  }
-
-  let relativeTarget = ''
-  if (currentPath) {
-    const currentRelative = getRelativeVaultPath(currentPath, noteBasePath).replace(/\\/g, '/')
-    const currentDir = currentRelative.includes('/') ? currentRelative.slice(0, currentRelative.lastIndexOf('/')) : ''
-    relativeTarget = normalizeWikiPath(currentDir ? `${currentDir}/${cleanTarget}` : cleanTarget)
-  }
-
-  const exact: SearchRow[] = []
-  const relative: SearchRow[] = []
-  const fuzzy: SearchRow[] = []
-  const seen = new Set<string>()
-
-  for (const row of rows) {
-    if (seen.has(row.path)) {
-      continue
-    }
-    seen.add(row.path)
-
-    const displayName = toNoteDisplayName(row.path)
-    const normalizedName = normalizeWikiLookup(displayName)
-    const normalizedTitle = normalizeWikiLookup(row.title || displayName)
-    const relativeNoExt = getRelativeVaultPath(row.path, noteBasePath).replace(/\.md$/i, '')
-    const normalizedRelative = normalizeWikiPath(relativeNoExt)
-
-    if (relativeTarget && normalizedRelative === relativeTarget) {
-      relative.push(row)
-      continue
-    }
-
-    if (
-      normalizedName === normalizedTarget ||
-      normalizedTitle === normalizedTarget ||
-      normalizedRelative === normalizedTarget ||
-      normalizedRelative.endsWith(`/${normalizedTarget}`)
-    ) {
-      exact.push(row)
-      continue
-    }
-
-    if (
-      normalizedName.includes(normalizedTarget) ||
-      normalizedTitle.includes(normalizedTarget) ||
-      normalizedRelative.includes(normalizedTarget)
-    ) {
-      fuzzy.push(row)
-    }
-  }
-
-  return (
-    chooseShortestPathRow(relative, noteBasePath) ||
-    chooseShortestPathRow(exact, noteBasePath) ||
-    chooseShortestPathRow(fuzzy, noteBasePath)
-  )
 }
 
 function getPreferredTheme(): ThemeMode {
@@ -454,6 +333,53 @@ function taskStatusLabel(raw: string): string {
 function taskStatusClassName(raw: string): string {
   const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
   return `status-badge status-${normalized}`
+}
+
+function taskStatusDotClassName(raw: string): string {
+  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
+  return `status-dot status-${normalized}`
+}
+
+function taskStatusOptionLabel(value: TaskStatus): string {
+  const icon: Record<TaskStatus, string> = {
+    new_topic: '🔵',
+    open: '🔴',
+    in_progress: '🟡',
+    on_hold: '⚪',
+    done: '🟢',
+  }
+  return `${icon[value]} ${TASK_STATUS_LABELS[value]}`
+}
+
+function normalizeTaskPriorityValue(raw: string): TaskPriority {
+  const clean = raw.trim().toLowerCase()
+  if (clean === 'h') {
+    return 'high'
+  }
+  if (clean === 'l') {
+    return 'low'
+  }
+  if (clean === 'm') {
+    return 'medium'
+  }
+  return TASK_PRIORITY_OPTIONS.some((entry) => entry.value === (clean as TaskPriority)) ? (clean as TaskPriority) : 'medium'
+}
+
+function taskPriorityLabel(raw: string): string {
+  return TASK_PRIORITY_LABELS[normalizeTaskPriorityValue(raw)]
+}
+
+function taskPriorityDotClassName(raw: string): string {
+  return `priority-dot priority-${normalizeTaskPriorityValue(raw)}`
+}
+
+function taskPriorityOptionLabel(value: TaskPriority): string {
+  const icon: Record<TaskPriority, string> = {
+    low: '🟢',
+    medium: '🟡',
+    high: '🔴',
+  }
+  return `${icon[value]} ${TASK_PRIORITY_LABELS[value]}`
 }
 
 function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
@@ -732,8 +658,6 @@ function App() {
   const [draggingTabPath, setDraggingTabPath] = useState('')
   const [splitDropActive, setSplitDropActive] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
-  const [linkPickerOpen, setLinkPickerOpen] = useState(false)
-  const [linkPickerQuery, setLinkPickerQuery] = useState('')
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
   const tagActionDialogRef = useRef<TagActionDialogState>(null)
   const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({})
@@ -1184,8 +1108,6 @@ function App() {
     if (!vaultLoaded) {
       setAllNotes([])
       setExplorerFiles([])
-      setLinkPickerOpen(false)
-      setLinkPickerQuery('')
       setTabContextMenu(null)
     }
   }, [vaultLoaded])
@@ -1357,6 +1279,19 @@ function App() {
     }
     return Array.from(new Set(items)).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
   }, [mergedTagGroups])
+  const tagVisualByKey = useMemo(() => {
+    const map = new Map<string, { label: string; color: string }>()
+    for (const group of mergedTagGroups) {
+      const color = normalizeTagColor(group.color || '')
+      for (const tag of group.tags) {
+        map.set(`${group.id}:${tag.id}`.toLowerCase(), {
+          label: tag.displayName || tag.id,
+          color,
+        })
+      }
+    }
+    return map
+  }, [mergedTagGroups])
   const mergedTagGroupsById = useMemo(() => {
     const map = new Map<string, TagGroupDefinition>()
     for (const group of mergedTagGroups) {
@@ -1391,8 +1326,6 @@ function App() {
     }
     return next
   }, [activeTab, openNoteTabs, splitPanePaths, splitView])
-  const activeNoteDisplayTitle =
-    activeTab && activeTab.kind === 'note' ? activeTab.title.replace(/\.md$/i, '') : ''
   const activeNoteDocument = useMemo(
     () =>
       activeTab && activeTab.kind === 'note'
@@ -1419,8 +1352,6 @@ function App() {
     const today = toLocalIsoDate()
     return tasks.filter((task) => task.status !== 'done' && task.due_date === today).length
   }, [tasks])
-  const resolveWikiLink = (target: string, currentPath?: string): SearchRow | null =>
-    resolveWikiLinkTarget(target, linkIndexRows, vaultPath, currentPath)
 
   const toWikiTargetForRow = (row: SearchRow): string => {
     const noteName = toNoteDisplayName(row.path)
@@ -1440,50 +1371,6 @@ function App() {
     }
     return Array.from(values).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
   }, [linkIndexRows, toWikiTargetForRow])
-
-  const activeWikiLinks = useMemo(() => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return [] as Array<{
-        raw: string
-        target: string
-        alias: string | null
-        resolved: SearchRow | null
-      }>
-    }
-
-    const unique = new Map<string, { raw: string; target: string; alias: string | null; resolved: SearchRow | null }>()
-    for (const link of extractWikiLinks(activeTab.content)) {
-      const key = normalizeWikiLookup(link.target)
-      if (unique.has(key)) {
-        continue
-      }
-      unique.set(key, {
-        ...link,
-        resolved: resolveWikiLinkTarget(link.target, linkIndexRows, vaultPath, activeTab.path),
-      })
-    }
-    return Array.from(unique.values())
-  }, [activeTab, linkIndexRows, vaultPath])
-
-  const linkPickerCandidates = useMemo(() => {
-    const query = normalizeWikiLookup(linkPickerQuery)
-    const rows = linkIndexRows.filter((row) => (activeTab?.kind === 'note' ? row.path !== activeTab.path : true))
-    if (!query) {
-      return rows.slice(0, 60)
-    }
-
-    return rows
-      .filter((row) => {
-        const noteName = normalizeWikiLookup(toNoteDisplayName(row.path))
-        const relative = normalizeWikiLookup(getRelativeVaultPath(row.path, vaultPath))
-        return noteName.includes(query) || relative.includes(query)
-      })
-      .slice(0, 60)
-  }, [activeTab, linkIndexRows, linkPickerQuery, vaultPath])
-  const normalizedLinkPickerQuery = normalizeWikiLookup(linkPickerQuery)
-  const linkPickerHasExactMatch = linkPickerCandidates.some(
-    (row) => normalizeWikiLookup(toWikiTargetForRow(row)) === normalizedLinkPickerQuery
-  )
 
   const pickDirectory = async (): Promise<string | null> => {
     if (!window.nicknotes?.selectDirectory) {
@@ -2022,7 +1909,9 @@ function App() {
       frontmatter: {
         ...document.frontmatter,
         type: nextType,
-        status: nextType === 'task' ? document.frontmatter.status : 'open',
+        status: nextType === 'task' ? normalizeTaskStatusValue(document.frontmatter.status) : 'open',
+        priority: nextType === 'task' ? normalizeTaskPriorityValue(document.frontmatter.priority) : 'medium',
+        due_date: nextType === 'task' ? document.frontmatter.due_date : '',
       },
     }))
   }
@@ -2033,6 +1922,28 @@ function App() {
       frontmatter: {
         ...document.frontmatter,
         status: nextStatus,
+      },
+    }))
+  }
+
+  const updateNotePriorityByPath = (tabPath: string, nextPriority: TaskPriority) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        priority: nextPriority,
+      },
+    }))
+  }
+
+  const updateNoteDueDateByPath = (tabPath: string, nextDueDate: string) => {
+    const clean = normalizeLabel(nextDueDate)
+    const normalized = clean && /^\d{4}-\d{2}-\d{2}$/.test(clean) ? clean : ''
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        due_date: normalized,
       },
     }))
   }
@@ -2138,6 +2049,15 @@ function App() {
     const relatedOptionsForPath = propertyRelatedOptions.filter(
       (item) => normalizeWikiLookup(item) !== normalizeWikiLookup(toNoteDisplayName(tabPath))
     )
+    const toTagChipVisual = (rawTag: string): { label: string; color: string } => {
+      const normalized = rawTag.trim().toLowerCase()
+      const mapped = tagVisualByKey.get(normalized)
+      if (mapped) {
+        return mapped
+      }
+      const tagPart = rawTag.includes(':') ? rawTag.split(':', 2)[1] || rawTag : rawTag
+      return { label: tagPart, color: '#94a3b8' }
+    }
 
     const onTagInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
       if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
@@ -2181,48 +2101,113 @@ function App() {
 
         <div className={`note-properties-grid ${compact ? 'compact' : ''}`}>
           <span className="property-key">Type</span>
-          <div className="property-value-inline">
-            <select
-              className="property-type-select"
-              value={document.frontmatter.type}
-              onChange={(event) => {
-                updateNoteTypeByPath(tabPath, event.target.value === 'task' ? 'task' : 'note')
+          <div className="property-toggle-group">
+            <button
+              type="button"
+              className={`property-toggle-badge ${document.frontmatter.type === 'note' ? 'active' : ''}`}
+              onClick={() => {
+                updateNoteTypeByPath(tabPath, 'note')
               }}
             >
-              <option value="note">Note</option>
-              <option value="task">Task</option>
-            </select>
+              Note
+            </button>
+            <button
+              type="button"
+              className={`property-toggle-badge ${document.frontmatter.type === 'task' ? 'active' : ''}`}
+              onClick={() => {
+                updateNoteTypeByPath(tabPath, 'task')
+              }}
+            >
+              Task
+            </button>
           </div>
 
           {document.frontmatter.type === 'task' ? (
             <>
               <span className="property-key">Status</span>
               <div className="property-value-inline">
-                <select
-                  className={`${taskStatusClassName(document.frontmatter.status)} status-badge-select`}
-                  value={document.frontmatter.status}
+                <label className="property-picker-badge">
+                  <span className={taskStatusDotClassName(document.frontmatter.status)} aria-hidden="true" />
+                  <select
+                    className="property-picker-select property-picker-select-status"
+                    value={document.frontmatter.status}
+                    onChange={(event) => {
+                      const value = event.target.value as TaskStatus
+                      if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                        updateNoteStatusByPath(tabPath, value)
+                      }
+                    }}
+                  >
+                    {TASK_STATUS_OPTIONS.map((entry) => (
+                      <option key={entry.value} value={entry.value}>
+                        {taskStatusOptionLabel(entry.value)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <span className="property-key">Priority</span>
+              <div className="property-value-inline">
+                <label className="property-picker-badge">
+                  <span className={taskPriorityDotClassName(document.frontmatter.priority)} aria-hidden="true" />
+                  <select
+                    className="property-picker-select property-picker-select-priority"
+                    value={document.frontmatter.priority}
+                    onChange={(event) => {
+                      const value = event.target.value as TaskPriority
+                      if (TASK_PRIORITY_OPTIONS.some((entry) => entry.value === value)) {
+                        updateNotePriorityByPath(tabPath, value)
+                      }
+                    }}
+                  >
+                    {TASK_PRIORITY_OPTIONS.map((entry) => (
+                      <option key={entry.value} value={entry.value}>
+                        {taskPriorityOptionLabel(entry.value)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <span className="property-key">Due Date</span>
+              <div className="property-value-inline">
+                <input
+                  className="property-date-input"
+                  type="date"
+                  value={document.frontmatter.due_date}
                   onChange={(event) => {
-                    const value = event.target.value as TaskStatus
-                    if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                      updateNoteStatusByPath(tabPath, value)
-                    }
+                    updateNoteDueDateByPath(tabPath, event.target.value)
                   }}
-                >
-                  {TASK_STATUS_OPTIONS.map((entry) => (
-                    <option key={entry.value} value={entry.value}>
-                      {entry.label}
-                    </option>
-                  ))}
-                </select>
+                />
+                {document.frontmatter.due_date ? (
+                  <button
+                    type="button"
+                    className="property-chip add"
+                    onClick={() => {
+                      updateNoteDueDateByPath(tabPath, '')
+                    }}
+                    title="Fälligkeitsdatum entfernen"
+                  >
+                    x
+                  </button>
+                ) : null}
               </div>
             </>
           ) : null}
 
           <span className="property-key">Tags</span>
           <div className="property-token-line">
-            {manualTags.map((item) => (
-              <span key={`tag-manual-${item}`} className="property-chip manual interactive">
-                <span>{item}</span>
+            {manualTags.map((item) => {
+              const visual = toTagChipVisual(item)
+              return (
+              <span
+                key={`tag-manual-${item}`}
+                className="property-chip tag-chip manual interactive"
+                style={{ '--tag-chip-color': visual.color } as CSSProperties}
+                title={item}
+              >
+                <span>{visual.label}</span>
                 <button
                   type="button"
                   className="property-chip-remove"
@@ -2234,12 +2219,21 @@ function App() {
                   x
                 </button>
               </span>
-            ))}
-            {autoTags.map((item) => (
-              <span key={`tag-auto-${item}`} className="property-chip auto" title="Automatisch erkannt">
-                {item}
+              )
+            })}
+            {autoTags.map((item) => {
+              const visual = toTagChipVisual(item)
+              return (
+              <span
+                key={`tag-auto-${item}`}
+                className="property-chip tag-chip auto"
+                style={{ '--tag-chip-color': visual.color } as CSSProperties}
+                title={`Automatisch erkannt • ${item}`}
+              >
+                {visual.label}
               </span>
-            ))}
+              )
+            })}
             {tagInputOpen ? (
               <>
                 <input
@@ -2361,55 +2355,6 @@ function App() {
       return
     }
     updateNoteContentByPath(activeTab.path, nextBody)
-  }
-
-  const openWikiLinkPicker = () => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return
-    }
-    setLinkPickerQuery('')
-    setLinkPickerOpen(true)
-  }
-
-  const insertWikiLink = (target: string) => {
-    const editor = activeEditorRef.current
-    const cleanTarget = normalizeLabel(target)
-    if (!editor || !cleanTarget) {
-      return
-    }
-
-    editor.insertText(`[[${cleanTarget}]]`)
-    editor.focus()
-    setMessage(`Wikilink eingefuegt: [[${cleanTarget}]]`)
-    setLinkPickerOpen(false)
-    setLinkPickerQuery('')
-  }
-
-  const insertWikiLinkForRow = (row: SearchRow) => {
-    insertWikiLink(toWikiTargetForRow(row))
-  }
-
-  const followSelectedWikiLink = () => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return
-    }
-
-    const selected = normalizeLabel(activeEditorRef.current?.getSelectedText() || '')
-    if (!selected) {
-      setMessage('Bitte erst einen Wikilink oder Notiznamen markieren.')
-      return
-    }
-
-    const bracketMatch = selected.match(/^\[\[([^[\]]+)\]\]$/)
-    const selectedTarget = bracketMatch ? bracketMatch[1] : selected
-    const parsed = parseWikiLinkInner(selectedTarget)
-    const resolved = resolveWikiLink(parsed?.target ?? selectedTarget, activeTab.path)
-    if (!resolved) {
-      setMessage(`Kein Ziel fuer "${selectedTarget}" gefunden.`)
-      return
-    }
-
-    void openNoteInTab(resolved.path, toNoteDisplayName(resolved.path))
   }
 
   const toggleFolder = (folderKey: string) => {
@@ -3456,24 +3401,6 @@ function App() {
           return
         }
         void saveTab(activeTab.path)
-        return
-      }
-
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        if (activeTab?.kind !== 'note') {
-          return
-        }
-        event.preventDefault()
-        openWikiLinkPicker()
-        return
-      }
-
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        if (activeTab?.kind !== 'note') {
-          return
-        }
-        event.preventDefault()
-        followSelectedWikiLink()
       }
     }
 
@@ -3481,7 +3408,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onGlobalKeyDown)
     }
-  }, [activeTab, followSelectedWikiLink, openWikiLinkPicker, saveTab])
+  }, [activeTab, saveTab])
 
   const renderSidebarContent = () => {
     if (sidebarView === 'vault') {
@@ -3533,7 +3460,10 @@ function App() {
                   <strong>{task.title}</strong>
                   <div className="task-meta-badges">
                     <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
-                    <span className="task-priority-badge">{task.priority}</span>
+                    <span className="task-priority-badge">
+                      <span className={taskPriorityDotClassName(task.priority)} aria-hidden="true" />
+                      {taskPriorityLabel(task.priority)}
+                    </span>
                   </div>
                 </header>
                 <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
@@ -4172,35 +4102,6 @@ function App() {
                 ) : null}
               </div>
 
-              {activeTab?.kind === 'note' ? (
-                <div className="wiki-links-strip workspace-wide">
-                  <span className="muted-label">Wikilinks • {activeNoteDisplayTitle || toNoteDisplayName(activeTab.path)}</span>
-                  {activeWikiLinks.length === 0 ? <span className="empty-copy">Keine Links in dieser Notiz.</span> : null}
-                  {activeWikiLinks.map((link) => {
-                    if (link.resolved) {
-                      const resolvedPath = link.resolved.path
-                      return (
-                        <button
-                          key={`wiki-link-${link.target}`}
-                          className="wiki-link-pill"
-                          onClick={() => void openNoteInTab(resolvedPath, toNoteDisplayName(resolvedPath))}
-                        >
-                          {link.alias || toNoteDisplayName(resolvedPath)}
-                        </button>
-                      )
-                    }
-
-                    return (
-                      <span key={`wiki-link-${link.target}`} className="wiki-link-pill unresolved">
-                        {link.alias || link.target}
-                      </span>
-                    )
-                  })}
-                  <button className="wiki-link-pill" onClick={openWikiLinkPicker}>
-                    + Link
-                  </button>
-                </div>
-              ) : null}
             </article>
           ) : null}
 
@@ -4298,59 +4199,6 @@ function App() {
           {statusBarPrefs.showNoteBaseName ? <span className="status-item">NoteBase: {noteBaseName}</span> : null}
         </div>
       </footer>
-
-      {linkPickerOpen ? (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setLinkPickerOpen(false)
-          }}
-        >
-          <aside
-            className="link-picker-modal"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-          >
-            <header className="sidebar-header-row">
-              <h3>Wikilink einfuegen</h3>
-              <button onClick={() => setLinkPickerOpen(false)}>Schliessen</button>
-            </header>
-
-            <label className="field-label" htmlFor="wikilink-search">
-              Notiz suchen
-            </label>
-            <input
-              id="wikilink-search"
-              value={linkPickerQuery}
-              onChange={(event) => setLinkPickerQuery(event.target.value)}
-              placeholder="Titel oder Pfad, z. B. Daily/Projekt X"
-              autoFocus
-            />
-
-            <section className="tree-scroll">
-              {linkPickerCandidates.length === 0 ? <p className="empty-copy">Keine passenden Notizen gefunden.</p> : null}
-              {linkPickerCandidates.map((row) => {
-                const target = toWikiTargetForRow(row)
-                return (
-                  <button
-                    key={`link-candidate-${row.path}`}
-                    className="tree-item wikilink-candidate"
-                    onClick={() => insertWikiLinkForRow(row)}
-                  >
-                    <strong>{target}</strong>
-                    <span>{getRelativeVaultPath(row.path, vaultPath)}</span>
-                  </button>
-                )
-              })}
-            </section>
-
-            {normalizedLinkPickerQuery && !linkPickerHasExactMatch ? (
-              <button onClick={() => insertWikiLink(linkPickerQuery)}>Neuen Wikilink [[{linkPickerQuery.trim()}]] einfuegen</button>
-            ) : null}
-          </aside>
-        </div>
-      ) : null}
 
       {tagActionDialog ? (
         <div

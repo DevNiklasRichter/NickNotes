@@ -1,5 +1,6 @@
 export type NoteType = 'note' | 'task'
 export type TaskStatus = 'new_topic' | 'open' | 'in_progress' | 'on_hold' | 'done'
+export type TaskPriority = 'low' | 'medium' | 'high'
 
 export type NoteFrontmatter = {
   id: string
@@ -7,6 +8,8 @@ export type NoteFrontmatter = {
   title: string
   type: NoteType
   status: TaskStatus
+  priority: TaskPriority
+  due_date: string
   created_at: string
   updated_at: string
   tags: string[]
@@ -27,12 +30,15 @@ const HASHTAG_PATTERN = /(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const TITLE_HEADING_PATTERN = /^\s{0,3}#\s+(.+?)\s*$/
 const TASK_STATUS_VALUES: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'on_hold', 'done']
+const TASK_PRIORITY_VALUES: TaskPriority[] = ['low', 'medium', 'high']
 const KNOWN_KEYS = new Set([
   'id',
   'node_id',
   'title',
   'type',
   'status',
+  'priority',
+  'due_date',
   'created_at',
   'updated_at',
   'tags',
@@ -112,6 +118,31 @@ function normalizeStatus(raw: unknown): TaskStatus {
     .toLowerCase()
     .replace(/[- ]+/g, '_') as TaskStatus
   return TASK_STATUS_VALUES.includes(clean) ? clean : 'open'
+}
+
+function normalizePriority(raw: unknown): TaskPriority {
+  const clean = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[- ]+/g, '_')
+  if (clean === 'h' || clean === 'high') {
+    return 'high'
+  }
+  if (clean === 'l' || clean === 'low') {
+    return 'low'
+  }
+  if (clean === 'm' || clean === 'medium') {
+    return 'medium'
+  }
+  return TASK_PRIORITY_VALUES.includes(clean as TaskPriority) ? (clean as TaskPriority) : 'medium'
+}
+
+function normalizeDueDate(raw: unknown): string {
+  const clean = String(raw ?? '').trim()
+  if (!clean) {
+    return ''
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(clean) ? clean : ''
 }
 
 function extractTitleFromBody(body: string): string {
@@ -282,6 +313,8 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
   const id = String(rawFrontmatter.id || '').trim() || createNodeId(noteType)
   const nodeId = String(rawFrontmatter.node_id || '').trim() || id
   const status = noteType === 'task' ? normalizeStatus(rawFrontmatter.status) : 'open'
+  const priority = noteType === 'task' ? normalizePriority(rawFrontmatter.priority) : 'medium'
+  const dueDate = noteType === 'task' ? normalizeDueDate(rawFrontmatter.due_date) : ''
   const tags = Array.from(new Set(ensureListOfStrings(rawFrontmatter.tags).map(normalizeTagKey).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
   )
@@ -311,6 +344,8 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
       title: nextTitle,
       type: noteType,
       status,
+      priority,
+      due_date: dueDate,
       created_at: createdAt,
       updated_at: String(rawFrontmatter.updated_at || '').trim() || createdAt,
       tags,
@@ -338,6 +373,8 @@ export function serializeNoteDocument(document: ParsedNoteDocument): string {
 
   if (document.frontmatter.type === 'task') {
     frontmatter.status = document.frontmatter.status
+    frontmatter.priority = document.frontmatter.priority
+    frontmatter.due_date = document.frontmatter.due_date
   }
   for (const [key, value] of Object.entries(document.frontmatter.extra || {})) {
     if (!KNOWN_KEYS.has(key)) {
