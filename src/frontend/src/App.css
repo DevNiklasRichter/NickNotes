@@ -2323,6 +2323,20 @@ textarea:focus-visible {
 .note-editor-shell {
   padding: 0;
   background: transparent;
+  overflow: auto;
+}
+
+.note-flow-content {
+  width: min(980px, calc(100% - 1.4rem));
+  margin: 0 auto;
+  padding: 1.14rem 0 2.2rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.split-note-flow-content {
+  width: min(760px, calc(100% - 1rem));
+  padding-top: 0.86rem;
 }
 
 .code-editor-host {
@@ -2337,6 +2351,35 @@ textarea:focus-visible {
   box-shadow: none;
 }
 
+.code-editor-shell.embedded-scroll {
+  min-height: 0;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.code-editor-host.embedded-scroll {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.code-editor-host.embedded-scroll .cm-editor,
+.code-editor-host.embedded-scroll .cm-scroller {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.note-body-editor .cm-content {
+  min-height: clamp(360px, 46vh, 860px);
+  padding-bottom: 24vh;
+}
+
+.split-note-body-editor .cm-content {
+  min-height: clamp(260px, 34vh, 560px);
+  padding-bottom: 16vh;
+}
+
 .editor-tab-actions .icon-button.compact {
   display: inline-flex;
   align-items: center;
@@ -2345,15 +2388,14 @@ textarea:focus-visible {
 }
 
 .note-properties-panel {
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  background: color-mix(in srgb, var(--surface-contrast) 92%, transparent);
-  padding: 0.58rem 0.62rem;
+  background: transparent;
+  padding: 0.08rem 0 0.52rem;
   display: grid;
-  gap: 0.48rem;
+  gap: 0.5rem;
 }
 
 .split-note-properties-panel {
-  padding: 0.42rem 0.46rem;
+  padding-top: 0;
 }
 
 .note-title-row {
@@ -2363,13 +2405,15 @@ textarea:focus-visible {
 
 .note-title-input {
   width: 100%;
-  font-size: 1.18rem;
-  font-weight: 650;
+  font-size: clamp(1.74rem, 1.24rem + 1.12vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.17;
   border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   border-radius: 0;
   background: transparent;
-  padding: 0.2rem 0.05rem 0.28rem;
+  padding: 0.08rem 0.05rem 0.42rem;
 }
 
 .note-title-input:focus {
@@ -2379,65 +2423,136 @@ textarea:focus-visible {
 
 .note-properties-grid {
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
+  grid-template-columns: 86px minmax(0, 1fr);
   align-items: start;
-  gap: 0.35rem 0.5rem;
+  gap: 0.34rem 0.56rem;
 }
 
 .note-properties-grid.compact {
-  grid-template-columns: 70px minmax(0, 1fr);
+  grid-template-columns: 68px minmax(0, 1fr);
   gap: 0.28rem 0.44rem;
 }
 
 .property-key {
-  font-size: 0.73rem;
-  letter-spacing: 0.06em;
+  font-size: 0.71rem;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
-  padding-top: 0.24rem;
+  padding-top: 0.18rem;
 }
 
-.property-value-stack {
-  display: grid;
-  gap: 0.28rem;
+.property-value-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  flex-wrap: wrap;
+  min-height: 1.8rem;
 }
 
 .property-value-static {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--text);
-  padding-top: 0.2rem;
+  padding-top: 0.15rem;
 }
 
-.note-properties-grid input,
-.note-properties-grid select {
-  width: 100%;
-  min-width: 0;
-  font-size: 0.82rem;
-  padding: 0.28rem 0.38rem;
+.property-type-select {
+  width: auto !important;
+  min-width: 98px;
+  font-size: 0.76rem !important;
+  padding: 0.2rem 0.6rem 0.2rem 0.4rem !important;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
   background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
-.property-chip-row {
+.status-badge-select {
+  width: auto !important;
+  min-width: 0 !important;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1rem !important;
+}
+
+.status-badge-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+
+.property-token-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
+  align-items: center;
+  gap: 0.32rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  min-height: 1.9rem;
+  padding: 0.03rem 0 0.08rem;
+  scrollbar-width: none;
+}
+
+.property-token-line::-webkit-scrollbar {
+  height: 0;
 }
 
 .property-chip {
   display: inline-flex;
   align-items: center;
+  gap: 0.26rem;
   border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   border-radius: 999px;
-  padding: 0.12rem 0.48rem;
+  padding: 0.08rem 0.46rem;
   font-size: 0.72rem;
   color: var(--text);
   background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  white-space: nowrap;
 }
 
 .property-chip.auto {
   color: var(--muted);
+}
+
+.property-chip.manual.interactive {
+  padding-right: 0.12rem;
+}
+
+.property-chip.add {
+  cursor: pointer;
+  min-width: 1.5rem;
+  justify-content: center;
+}
+
+.property-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1;
+  padding: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.property-chip-remove:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+}
+
+.property-chip-input {
+  min-width: 120px;
+  width: 152px;
+  max-width: 220px;
+  font-size: 0.74rem;
+  padding: 0.1rem 0.42rem;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.property-chip-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
 }
 
 /* Visual cohesion adjustments (titlebar + side panels) */

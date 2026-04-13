@@ -89,6 +89,8 @@ type CodeMirrorMarkdownEditorProps = {
   theme: 'light' | 'dark'
   tagGroups: TagGroupDefinition[]
   searchHighlightQuery?: string
+  className?: string
+  embeddedInScroll?: boolean
   onChange: (nextValue: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
@@ -262,6 +264,8 @@ export function CodeMirrorMarkdownEditor({
   theme,
   tagGroups,
   searchHighlightQuery = '',
+  className = '',
+  embeddedInScroll = false,
   onChange,
   editorApiRef,
 }: CodeMirrorMarkdownEditorProps) {
@@ -903,8 +907,8 @@ export function CodeMirrorMarkdownEditor({
   const showSearchInput = paletteState ? paletteState.mode !== 'slash' : false
 
   return (
-    <div className="code-editor-shell" ref={shellRef}>
-      <div className="code-editor-host" ref={hostRef} />
+    <div className={`code-editor-shell ${embeddedInScroll ? 'embedded-scroll' : ''} ${className}`.trim()} ref={shellRef}>
+      <div className={`code-editor-host ${embeddedInScroll ? 'embedded-scroll' : ''}`.trim()} ref={hostRef} />
 
       {paletteState ? (
         <div

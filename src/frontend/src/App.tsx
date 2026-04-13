@@ -3,10 +3,8 @@ import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
 import {
-  parseCommaSeparated,
   parseNoteDocument,
   serializeNoteDocument,
-  toCommaSeparated,
   type ParsedNoteDocument,
   type TaskStatus,
 } from './editor/noteDocument'
@@ -407,6 +405,43 @@ function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
 }
 
+function normalizeTagCandidate(raw: string): string {
+  const cleanRaw = normalizeLabel(raw).replace(/^\{tag:/i, '').replace(/\}$/g, '').replace(/^#+/, '')
+  if (!cleanRaw) {
+    return ''
+  }
+  const delimiter = cleanRaw.includes(':') ? ':' : cleanRaw.includes('/') ? '/' : ''
+  if (delimiter) {
+    const [groupRaw, tagRaw] = cleanRaw.split(delimiter, 2)
+    const group = normalizeTagId(groupRaw)
+    const tag = normalizeTagId(tagRaw)
+    if (!group || !tag) {
+      return ''
+    }
+    return `${group}:${tag}`
+  }
+  const topic = normalizeTagId(cleanRaw)
+  return topic ? `topic:${topic}` : ''
+}
+
+function normalizeRelatedCandidate(raw: string): string {
+  let clean = normalizeLabel(raw)
+  if (!clean) {
+    return ''
+  }
+  if (clean.startsWith('[[') && clean.endsWith(']]')) {
+    clean = clean.slice(2, -2).trim()
+  }
+  if (clean.includes('|')) {
+    clean = clean.split('|', 1)[0]?.trim() || ''
+  }
+  if (clean.includes('#')) {
+    clean = clean.split('#', 1)[0]?.trim() || ''
+  }
+  clean = clean.replace(/\\/g, '/').replace(/\.md$/i, '')
+  return clean
+}
+
 function normalizeTaskStatusValue(raw: string): TaskStatus {
   const clean = raw.trim().toLowerCase().replace(/[- ]+/g, '_') as TaskStatus
   return TASK_STATUS_OPTIONS.some((entry) => entry.value === clean) ? clean : 'open'
@@ -701,6 +736,10 @@ function App() {
   const [linkPickerQuery, setLinkPickerQuery] = useState('')
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
   const tagActionDialogRef = useRef<TagActionDialogState>(null)
+  const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({})
+  const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
+  const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
+  const [propertyRelatedDraftByPath, setPropertyRelatedDraftByPath] = useState<Record<string, string>>({})
   const activeEditorRef = useRef<MarkdownEditorApi | null>(null)
   const secondaryEditorRef = useRef<MarkdownEditorApi | null>(null)
 
@@ -1309,6 +1348,15 @@ function App() {
   }, [noteGroups])
 
   const mergedTagGroups = useMemo(() => toStorageTagGroups({ tagGroups: customTagGroups }), [customTagGroups])
+  const propertyTagOptions = useMemo(() => {
+    const items: string[] = []
+    for (const group of mergedTagGroups) {
+      for (const tag of group.tags) {
+        items.push(`${group.id}:${tag.id}`)
+      }
+    }
+    return Array.from(new Set(items)).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
+  }, [mergedTagGroups])
   const mergedTagGroupsById = useMemo(() => {
     const map = new Map<string, TagGroupDefinition>()
     for (const group of mergedTagGroups) {
@@ -1382,6 +1430,16 @@ function App() {
     }
     return getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
   }
+  const propertyRelatedOptions = useMemo(() => {
+    const values = new Set<string>()
+    for (const row of linkIndexRows) {
+      const target = normalizeRelatedCandidate(toWikiTargetForRow(row))
+      if (target) {
+        values.add(target)
+      }
+    }
+    return Array.from(values).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
+  }, [linkIndexRows, toWikiTargetForRow])
 
   const activeWikiLinks = useMemo(() => {
     if (!activeTab || activeTab.kind !== 'note') {
@@ -1979,26 +2037,309 @@ function App() {
     }))
   }
 
-  const updateNoteTagsByPath = (tabPath: string, csv: string) => {
-    const tags = Array.from(new Set(parseCommaSeparated(csv)))
+  const addNoteTagByPath = (tabPath: string, rawTag: string) => {
+    const normalized = normalizeTagCandidate(rawTag)
+    if (!normalized) {
+      return
+    }
     updateNoteDocumentByPath(tabPath, (document) => ({
       ...document,
       frontmatter: {
         ...document.frontmatter,
-        tags,
+        tags: Array.from(new Set([...document.frontmatter.tags, normalized])).sort((left, right) =>
+          left.localeCompare(right, 'de', { sensitivity: 'base' })
+        ),
+      },
+    }))
+  }
+  const removeNoteTagByPath = (tabPath: string, tag: string) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        tags: document.frontmatter.tags.filter((item) => item !== tag),
       },
     }))
   }
 
-  const updateNoteRelatedByPath = (tabPath: string, csv: string) => {
-    const related = Array.from(new Set(parseCommaSeparated(csv).map((item) => item.replace(/\\/g, '/').replace(/\.md$/i, ''))))
+  const addNoteRelatedByPath = (tabPath: string, rawRelated: string) => {
+    const normalized = normalizeRelatedCandidate(rawRelated)
+    if (!normalized) {
+      return
+    }
     updateNoteDocumentByPath(tabPath, (document) => ({
       ...document,
       frontmatter: {
         ...document.frontmatter,
-        related,
+        related: Array.from(new Set([...document.frontmatter.related, normalized])).sort((left, right) =>
+          left.localeCompare(right, 'de', { sensitivity: 'base' })
+        ),
       },
     }))
+  }
+  const removeNoteRelatedByPath = (tabPath: string, related: string) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        related: document.frontmatter.related.filter((item) => item !== related),
+      },
+    }))
+  }
+
+  const openPropertyTagInput = (tabPath: string) => {
+    setPropertyTagInputOpenByPath((prev) => ({ ...prev, [tabPath]: true }))
+  }
+  const closePropertyTagInput = (tabPath: string) => {
+    setPropertyTagInputOpenByPath((prev) => ({ ...prev, [tabPath]: false }))
+    setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: '' }))
+  }
+  const commitPropertyTagInput = (tabPath: string) => {
+    const draft = propertyTagDraftByPath[tabPath] || ''
+    if (!normalizeLabel(draft)) {
+      closePropertyTagInput(tabPath)
+      return
+    }
+    addNoteTagByPath(tabPath, draft)
+    closePropertyTagInput(tabPath)
+  }
+
+  const openPropertyRelatedInput = (tabPath: string) => {
+    setPropertyRelatedInputOpenByPath((prev) => ({ ...prev, [tabPath]: true }))
+  }
+  const closePropertyRelatedInput = (tabPath: string) => {
+    setPropertyRelatedInputOpenByPath((prev) => ({ ...prev, [tabPath]: false }))
+    setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: '' }))
+  }
+  const commitPropertyRelatedInput = (tabPath: string) => {
+    const draft = propertyRelatedDraftByPath[tabPath] || ''
+    if (!normalizeLabel(draft)) {
+      closePropertyRelatedInput(tabPath)
+      return
+    }
+    addNoteRelatedByPath(tabPath, draft)
+    closePropertyRelatedInput(tabPath)
+  }
+
+  const renderNoteProperties = (tabPath: string, document: ParsedNoteDocument, compact = false) => {
+    const manualTags = document.frontmatter.tags
+    const manualTagSet = new Set(manualTags)
+    const autoTags = document.frontmatter.tags_auto.filter((item) => !manualTagSet.has(item))
+    const manualRelated = document.frontmatter.related
+    const manualRelatedSet = new Set(manualRelated)
+    const autoRelated = document.frontmatter.related_auto.filter((item) => !manualRelatedSet.has(item))
+    const tagDraft = propertyTagDraftByPath[tabPath] ?? ''
+    const relatedDraft = propertyRelatedDraftByPath[tabPath] ?? ''
+    const tagInputOpen = propertyTagInputOpenByPath[tabPath] ?? false
+    const relatedInputOpen = propertyRelatedInputOpenByPath[tabPath] ?? false
+    const listToken = tabPath.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
+    const tagDatalistId = `property-tags-${listToken}`
+    const relatedDatalistId = `property-related-${listToken}`
+    const relatedOptionsForPath = propertyRelatedOptions.filter(
+      (item) => normalizeWikiLookup(item) !== normalizeWikiLookup(toNoteDisplayName(tabPath))
+    )
+
+    const onTagInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
+        event.preventDefault()
+        commitPropertyTagInput(tabPath)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closePropertyTagInput(tabPath)
+      }
+    }
+
+    const onRelatedInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
+        event.preventDefault()
+        commitPropertyRelatedInput(tabPath)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closePropertyRelatedInput(tabPath)
+      }
+    }
+
+    return (
+      <section className={`note-properties-panel ${compact ? 'split-note-properties-panel' : ''}`}>
+        <div className="note-title-row">
+          <input
+            className="note-title-input"
+            value={document.frontmatter.title}
+            onChange={(event) => {
+              updateNoteTitleByPath(tabPath, event.target.value)
+            }}
+            onBlur={() => {
+              void syncNotePathWithTitle(tabPath)
+            }}
+            placeholder="Titel"
+          />
+        </div>
+
+        <div className={`note-properties-grid ${compact ? 'compact' : ''}`}>
+          <span className="property-key">Type</span>
+          <div className="property-value-inline">
+            <select
+              className="property-type-select"
+              value={document.frontmatter.type}
+              onChange={(event) => {
+                updateNoteTypeByPath(tabPath, event.target.value === 'task' ? 'task' : 'note')
+              }}
+            >
+              <option value="note">Note</option>
+              <option value="task">Task</option>
+            </select>
+          </div>
+
+          {document.frontmatter.type === 'task' ? (
+            <>
+              <span className="property-key">Status</span>
+              <div className="property-value-inline">
+                <select
+                  className={`${taskStatusClassName(document.frontmatter.status)} status-badge-select`}
+                  value={document.frontmatter.status}
+                  onChange={(event) => {
+                    const value = event.target.value as TaskStatus
+                    if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
+                      updateNoteStatusByPath(tabPath, value)
+                    }
+                  }}
+                >
+                  {TASK_STATUS_OPTIONS.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          ) : null}
+
+          <span className="property-key">Tags</span>
+          <div className="property-token-line">
+            {manualTags.map((item) => (
+              <span key={`tag-manual-${item}`} className="property-chip manual interactive">
+                <span>{item}</span>
+                <button
+                  type="button"
+                  className="property-chip-remove"
+                  onClick={() => {
+                    removeNoteTagByPath(tabPath, item)
+                  }}
+                  title="Tag entfernen"
+                >
+                  x
+                </button>
+              </span>
+            ))}
+            {autoTags.map((item) => (
+              <span key={`tag-auto-${item}`} className="property-chip auto" title="Automatisch erkannt">
+                {item}
+              </span>
+            ))}
+            {tagInputOpen ? (
+              <>
+                <input
+                  className="property-chip-input"
+                  list={tagDatalistId}
+                  value={tagDraft}
+                  onChange={(event) => {
+                    setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: event.target.value }))
+                  }}
+                  onKeyDown={onTagInputKeyDown}
+                  onBlur={() => {
+                    commitPropertyTagInput(tabPath)
+                  }}
+                  placeholder="tag..."
+                  autoFocus
+                />
+                <datalist id={tagDatalistId}>
+                  {propertyTagOptions.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              </>
+            ) : null}
+            <button
+              type="button"
+              className="property-chip add"
+              onClick={() => {
+                openPropertyTagInput(tabPath)
+              }}
+              title="Tag hinzufügen"
+            >
+              +
+            </button>
+          </div>
+
+          <span className="property-key">Related</span>
+          <div className="property-token-line">
+            {manualRelated.map((item) => (
+              <span key={`related-manual-${item}`} className="property-chip manual interactive">
+                <span>{item}</span>
+                <button
+                  type="button"
+                  className="property-chip-remove"
+                  onClick={() => {
+                    removeNoteRelatedByPath(tabPath, item)
+                  }}
+                  title="Link entfernen"
+                >
+                  x
+                </button>
+              </span>
+            ))}
+            {autoRelated.map((item) => (
+              <span key={`related-auto-${item}`} className="property-chip auto" title="Automatisch erkannt">
+                {item}
+              </span>
+            ))}
+            {relatedInputOpen ? (
+              <>
+                <input
+                  className="property-chip-input"
+                  list={relatedDatalistId}
+                  value={relatedDraft}
+                  onChange={(event) => {
+                    setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: event.target.value }))
+                  }}
+                  onKeyDown={onRelatedInputKeyDown}
+                  onBlur={() => {
+                    commitPropertyRelatedInput(tabPath)
+                  }}
+                  placeholder="note/link..."
+                  autoFocus
+                />
+                <datalist id={relatedDatalistId}>
+                  {relatedOptionsForPath.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
+              </>
+            ) : null}
+            <button
+              type="button"
+              className="property-chip add"
+              onClick={() => {
+                openPropertyRelatedInput(tabPath)
+              }}
+              title="Verknüpfung hinzufügen"
+            >
+              +
+            </button>
+          </div>
+
+          <span className="property-key">Created</span>
+          <span className="property-value-static">{toGermanTimestamp(document.frontmatter.created_at)}</span>
+
+          <span className="property-key">Updated</span>
+          <span className="property-value-static">{toGermanTimestamp(document.frontmatter.updated_at)}</span>
+        </div>
+      </section>
+    )
   }
 
   const syncNotePathWithTitle = async (tabPath: string) => {
@@ -3575,118 +3916,21 @@ function App() {
                   {activeTab?.kind === 'note' && !activeTab.loading ? (
                     <div className="note-editor-shell">
                       {activeNoteDocument ? (
-                        <section className="note-properties-panel">
-                          <div className="note-title-row">
-                            <input
-                              className="note-title-input"
-                              value={activeNoteDocument.frontmatter.title}
-                              onChange={(event) => {
-                                updateNoteTitleByPath(activeTab.path, event.target.value)
-                              }}
-                              onBlur={() => {
-                                void syncNotePathWithTitle(activeTab.path)
-                              }}
-                              placeholder="Titel"
-                            />
-                          </div>
-                          <div className="note-properties-grid">
-                            <span className="property-key">Type</span>
-                            <select
-                              value={activeNoteDocument.frontmatter.type}
-                              onChange={(event) => {
-                                updateNoteTypeByPath(activeTab.path, event.target.value === 'task' ? 'task' : 'note')
-                              }}
-                            >
-                              <option value="note">Note</option>
-                              <option value="task">Task</option>
-                            </select>
-
-                            {activeNoteDocument.frontmatter.type === 'task' ? (
-                              <>
-                                <span className="property-key">Status</span>
-                                <div className="property-value-stack">
-                                  <select
-                                    value={activeNoteDocument.frontmatter.status}
-                                    onChange={(event) => {
-                                      const value = event.target.value as TaskStatus
-                                      if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                                        updateNoteStatusByPath(activeTab.path, value)
-                                      }
-                                    }}
-                                  >
-                                    {TASK_STATUS_OPTIONS.map((entry) => (
-                                      <option key={entry.value} value={entry.value}>
-                                        {entry.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <span className={taskStatusClassName(activeNoteDocument.frontmatter.status)}>
-                                    {taskStatusLabel(activeNoteDocument.frontmatter.status)}
-                                  </span>
-                                </div>
-                              </>
-                            ) : null}
-
-                            <span className="property-key">Tags</span>
-                            <div className="property-value-stack">
-                              <input
-                                value={toCommaSeparated(activeNoteDocument.frontmatter.tags)}
-                                onChange={(event) => {
-                                  updateNoteTagsByPath(activeTab.path, event.target.value)
-                                }}
-                                placeholder="topic:planung, project:alpha"
-                              />
-                              {activeNoteDocument.frontmatter.tags_auto.length > 0 ? (
-                                <div className="property-chip-row">
-                                  {activeNoteDocument.frontmatter.tags_auto.map((item) => (
-                                    <span key={item} className="property-chip auto">
-                                      {item}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-
-                            <span className="property-key">Created</span>
-                            <span className="property-value-static">{toGermanTimestamp(activeNoteDocument.frontmatter.created_at)}</span>
-
-                            <span className="property-key">Updated</span>
-                            <span className="property-value-static">{toGermanTimestamp(activeNoteDocument.frontmatter.updated_at)}</span>
-
-                            <span className="property-key">Node ID</span>
-                            <span className="property-value-static">{activeNoteDocument.frontmatter.node_id}</span>
-
-                            <span className="property-key">Related</span>
-                            <div className="property-value-stack">
-                              <input
-                                value={toCommaSeparated(activeNoteDocument.frontmatter.related)}
-                                onChange={(event) => {
-                                  updateNoteRelatedByPath(activeTab.path, event.target.value)
-                                }}
-                                placeholder="projects/roadmap, wiki/thema"
-                              />
-                              {activeNoteDocument.frontmatter.related_auto.length > 0 ? (
-                                <div className="property-chip-row">
-                                  {activeNoteDocument.frontmatter.related_auto.map((item) => (
-                                    <span key={item} className="property-chip auto">
-                                      {item}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </section>
+                        <div className="note-flow-content">
+                          {renderNoteProperties(activeTab.path, activeNoteDocument)}
+                          <CodeMirrorMarkdownEditor
+                            key={`editor-${activeTab.path}`}
+                            className="note-body-editor"
+                            embeddedInScroll
+                            value={activeNoteDocument.body}
+                            theme={theme}
+                            tagGroups={mergedTagGroups}
+                            searchHighlightQuery={explorerFilterQuery}
+                            onChange={updateActiveNoteContent}
+                            editorApiRef={activeEditorRef}
+                          />
+                        </div>
                       ) : null}
-                      <CodeMirrorMarkdownEditor
-                        key={`editor-${activeTab.path}`}
-                        value={activeNoteDocument?.body ?? ''}
-                        theme={theme}
-                        tagGroups={mergedTagGroups}
-                        searchHighlightQuery={explorerFilterQuery}
-                        onChange={updateActiveNoteContent}
-                        editorApiRef={activeEditorRef}
-                      />
                     </div>
                   ) : null}
 
@@ -3885,67 +4129,20 @@ function App() {
                             <p className="empty-copy">Lade Notiz ...</p>
                           ) : (
                             <div className="note-editor-shell split-note-editor-shell">
-                              <section className="note-properties-panel split-note-properties-panel">
-                                <div className="note-title-row">
-                                  <input
-                                    className="note-title-input"
-                                    value={paneDocument.frontmatter.title}
-                                    onChange={(event) => {
-                                      updateNoteTitleByPath(paneTab.path, event.target.value)
-                                    }}
-                                    onBlur={() => {
-                                      void syncNotePathWithTitle(paneTab.path)
-                                    }}
-                                    placeholder="Titel"
-                                  />
-                                </div>
-                                <div className="note-properties-grid compact">
-                                  <span className="property-key">Type</span>
-                                  <select
-                                    value={paneDocument.frontmatter.type}
-                                    onChange={(event) => {
-                                      updateNoteTypeByPath(paneTab.path, event.target.value === 'task' ? 'task' : 'note')
-                                    }}
-                                  >
-                                    <option value="note">Note</option>
-                                    <option value="task">Task</option>
-                                  </select>
-                                  {paneDocument.frontmatter.type === 'task' ? (
-                                    <>
-                                      <span className="property-key">Status</span>
-                                      <div className="property-value-stack">
-                                        <select
-                                          value={paneDocument.frontmatter.status}
-                                          onChange={(event) => {
-                                            const value = event.target.value as TaskStatus
-                                            if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                                              updateNoteStatusByPath(paneTab.path, value)
-                                            }
-                                          }}
-                                        >
-                                          {TASK_STATUS_OPTIONS.map((entry) => (
-                                            <option key={entry.value} value={entry.value}>
-                                              {entry.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        <span className={taskStatusClassName(paneDocument.frontmatter.status)}>
-                                          {taskStatusLabel(paneDocument.frontmatter.status)}
-                                        </span>
-                                      </div>
-                                    </>
-                                  ) : null}
-                                </div>
-                              </section>
-                              <CodeMirrorMarkdownEditor
-                                key={`editor-split-${paneTab.path}`}
-                                value={paneDocument.body}
-                                theme={theme}
-                                tagGroups={mergedTagGroups}
-                                searchHighlightQuery={explorerFilterQuery}
-                                onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
-                                editorApiRef={secondaryEditorRef}
-                              />
+                              <div className="note-flow-content split-note-flow-content">
+                                {renderNoteProperties(paneTab.path, paneDocument, true)}
+                                <CodeMirrorMarkdownEditor
+                                  key={`editor-split-${paneTab.path}`}
+                                  className="note-body-editor split-note-body-editor"
+                                  embeddedInScroll
+                                  value={paneDocument.body}
+                                  theme={theme}
+                                  tagGroups={mergedTagGroups}
+                                  searchHighlightQuery={explorerFilterQuery}
+                                  onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
+                                  editorApiRef={secondaryEditorRef}
+                                />
+                              </div>
                             </div>
                           )}
                         </article>
