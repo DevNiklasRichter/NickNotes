@@ -98,7 +98,7 @@ import type {
   NoteGroup,
 } from './app/AppShared'
 
-const MAX_SPLIT_PANE_COUNT = 3
+const MAX_SPLIT_PANE_COUNT = 2
 const MAX_SECONDARY_SPLIT_PANES = MAX_SPLIT_PANE_COUNT - 1
 
 function App() {
@@ -946,17 +946,6 @@ function App() {
     return activeTab.parsedDocument ?? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
   }, [activeTab])
 
-  useEffect(() => {
-    if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
-      return
-    }
-    const candidate = openNoteTabs.find((tab) => tab.path !== activeTab.path)
-    if (!candidate) {
-      return
-    }
-    setSplitPanePaths([candidate.path])
-  }, [activeTab, openNoteTabs, splitPanePaths.length, splitView])
-
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
   const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.id === tabContextMenu.tabId) ?? null : null
@@ -1424,10 +1413,22 @@ function App() {
     options?: { activate?: boolean; replacePath?: string; initialNoteType?: 'note' | 'task' }
   ) => {
     const shouldActivate = options?.activate !== false
-    const replacePath = (options?.replacePath ?? '').trim()
+    const requestedReplacePath = (options?.replacePath ?? '').trim()
+    const autoReplacePath =
+      !requestedReplacePath && shouldActivate && splitView && activeTab?.kind === 'note' ? activeTab.path : ''
+    const replacePath = (requestedReplacePath || autoReplacePath).trim()
     const initialNoteType = normalizeNoteTypeValue(options?.initialNoteType)
     const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
-    const existing = openTabs.find((tab) => tab.path === path)
+    if (replacePath && replacePath !== path) {
+      const replaceTab = openTabsRef.current.find((tab) => tab.path === replacePath)
+      if (replaceTab?.kind === 'note' && replaceTab.dirty) {
+        const canReplace = await confirmCloseTab(replaceTab.id)
+        if (!canReplace) {
+          return
+        }
+      }
+    }
+    const existing = openTabsRef.current.find((tab) => tab.path === path)
     if (existing) {
       if (existing.kind === 'note' && !existing.noteType) {
         setOpenTabs((prev) =>
@@ -2913,12 +2914,15 @@ function App() {
     if (!payload) {
       return
     }
+    const payloadPath = normalizePath(payload.path)
+    const currentPanePathKey = normalizePath(currentPanePath)
+    if (payloadPath === currentPanePathKey) {
+      return
+    }
 
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: false })
       setSplitView(true)
-      const payloadPath = normalizePath(payload.path)
-      const currentPanePathKey = normalizePath(currentPanePath)
       const activePathKey = normalizePath(activeNotePathRef.current)
       const originPanePath = normalizePath(payload.originPanePath || '')
       const nextActivePath = payloadPath === activePathKey ? currentPanePath : activeNotePathRef.current
@@ -3266,6 +3270,11 @@ function App() {
               >
                 <article
                   className="editor-pane"
+                  onPointerDown={() => {
+                    if (activeTab?.kind === 'note' && activeNotePath !== activeTab.path) {
+                      setActiveNotePath(activeTab.path)
+                    }
+                  }}
                   onDragOver={(event) => {
                     event.preventDefault()
                     setViewerDropActive(true)
@@ -3340,6 +3349,11 @@ function App() {
                         <article
                           key={`split-pane-${paneTab.id}`}
                           className="editor-pane split-editor-pane"
+                          onPointerDown={() => {
+                            if (activeNotePath !== paneTab.path) {
+                              setActiveNotePath(paneTab.path)
+                            }
+                          }}
                           onDragOver={(event) => {
                             event.preventDefault()
                             setViewerDropActive(true)
