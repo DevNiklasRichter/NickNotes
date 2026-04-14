@@ -996,6 +996,16 @@ function App() {
     )
     return parsedType === 'task' ? 'CheckSquare' : 'FileText'
   }
+  const getTabTooltip = (tab: NoteTab): string => {
+    if (tab.kind !== 'note') {
+      return tab.title
+    }
+    const relativePath = getRelativeVaultPath(tab.path, vaultPath).replace(/\.md$/i, '')
+    if (relativePath) {
+      return relativePath
+    }
+    return tab.title.replace(/\.md$/i, '')
+  }
   const dueTodayCount = useMemo(() => {
     const today = toLocalIsoDate()
     return tasks.filter((task) => task.status !== 'done' && task.due_date === today).length
@@ -3235,6 +3245,7 @@ function App() {
               }}
               renderPaneContent={renderWorkspacePaneContent}
               resolveTabIconName={resolveNoteTabIconName}
+              getTabTooltip={getTabTooltip}
             />
           ) : null}
 

@@ -531,7 +531,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       toPane.tabIds = [...toPane.tabIds.filter((tabId) => tabId !== action.tabId), action.tabId]
       toPane.activeTabId = action.tabId
 
-      return {
+      const movedState: WorkspaceState = {
         ...state,
         panes: {
           ...state.panes,
@@ -541,6 +541,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         lastFocusedPane: action.toPaneId,
         lastFocusedTabId: action.tabId,
       }
+
+      if (nextFromPane.tabIds.length === 0 && toPane.tabIds.length > 0) {
+        return mergePanesToSingle(movedState)
+      }
+
+      return movedState
     }
 
     case 'INITIALIZE_SPLIT_LAYOUT': {

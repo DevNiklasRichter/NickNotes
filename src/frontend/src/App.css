@@ -2885,12 +2885,14 @@ textarea:focus-visible {
   overflow: hidden;
   gap: 0.3rem;
   padding: 0.32rem 0.4rem;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+  min-height: 42px;
+  box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  background: transparent;
 }
 
 .pane-tab-bar.drop-active {
-  background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface-strong) 26%);
+  background: color-mix(in srgb, var(--accent-soft) 22%, transparent);
 }
 
 .pane-tab-list {
@@ -2899,13 +2901,14 @@ textarea:focus-visible {
   gap: 0.28rem;
   min-width: 0;
   flex: 1;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: hidden;
 }
 
-.pane-tab-list::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+.pane-tab-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex: 0 0 auto;
 }
 
 .pane-tab {
@@ -2914,6 +2917,7 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-contrast);
+  flex: 0 0 auto;
 }
 
 .pane-tab.active {
@@ -2933,9 +2937,112 @@ textarea:focus-visible {
   opacity: 0.56;
 }
 
-.pane-tab.drop-target {
-  border-color: color-mix(in srgb, var(--accent) 78%, var(--line));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 65%, transparent);
+.pane-tab .tab-open {
+  width: 110px;
+  min-width: 110px;
+  max-width: 110px;
+}
+
+.pane-tab .tab-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.pane-tab .tab-kind-icon,
+.pane-tab .tab-dirty-dot {
+  flex: 0 0 auto;
+}
+
+.pane-tab-insert-marker {
+  width: 2px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 82%, var(--accent-strong));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 62%, transparent);
+  flex: 0 0 2px;
+}
+
+.pane-tab-insert-marker-tail {
+  margin-left: 0.06rem;
+}
+
+.pane-tab-overflow {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pane-tab-overflow-toggle {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pane-tab-overflow-toggle:hover,
+.pane-tab-overflow-toggle.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface-strong) 58%);
+}
+
+.pane-tab-overflow-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.22rem);
+  min-width: 220px;
+  max-width: min(340px, 46vw);
+  max-height: min(360px, 56vh);
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  box-shadow: var(--shadow);
+  padding: 0.24rem;
+  display: grid;
+  gap: 0.14rem;
+  z-index: 40;
+}
+
+.pane-tab-overflow-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  text-align: left;
+  padding: 0.26rem 0.4rem;
+}
+
+.pane-tab-overflow-item:hover {
+  border-color: color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+}
+
+.pane-tab-overflow-item.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 36%, transparent);
+}
+
+.pane-tab-overflow-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
 }
 
 .workspace-pane.drop-active .workspace-pane-content {
