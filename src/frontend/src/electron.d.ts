@@ -6,6 +6,9 @@ declare global {
       selectDirectory?: () => Promise<string | null>
       getBackendUrl?: () => Promise<string>
       setWindowTheme?: (theme: 'light' | 'dark') => Promise<{ ok: boolean }>
+      setUnsavedChanges?: (hasUnsavedChanges: boolean) => void
+      onRequestSaveBeforeClose?: (handler: () => void) => (() => void) | void
+      respondSaveBeforeClose?: (ok: boolean) => void
     }
   }
 }

@@ -98,6 +98,9 @@ import type {
   NoteGroup,
 } from './app/AppShared'
 
+const MAX_SPLIT_PANE_COUNT = 3
+const MAX_SECONDARY_SPLIT_PANES = MAX_SPLIT_PANE_COUNT - 1
+
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -160,7 +163,10 @@ function App() {
   const [viewerDropActive, setViewerDropActive] = useState(false)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
+  const openTabsRef = useRef<NoteTab[]>([])
   const [activeNotePath, setActiveNotePath] = useState('')
+  const activeNotePathRef = useRef('')
+  const tabIdCounterRef = useRef(0)
   const [splitView, setSplitView] = useState(false)
   const [splitPanePaths, setSplitPanePaths] = useState<string[]>([])
   const [draggingTabPath, setDraggingTabPath] = useState('')
@@ -181,6 +187,14 @@ function App() {
   useEffect(() => {
     explorerViewStateRef.current = explorerViewState
   }, [explorerViewState])
+
+  openTabsRef.current = openTabs
+  activeNotePathRef.current = activeNotePath
+
+  const createTabId = () => {
+    tabIdCounterRef.current += 1
+    return `tab-${Date.now()}-${tabIdCounterRef.current}`
+  }
 
   useEffect(() => {
     if (!captureResizing) {
@@ -301,6 +315,11 @@ function App() {
       statusBarPrefs,
       theme,
     ]
+  )
+
+  const hasUnsavedChanges = useMemo(
+    () => settingsDirty || openTabs.some((tab) => tab.kind === 'note' && tab.dirty),
+    [openTabs, settingsDirty]
   )
 
   const refreshTasks = async (force = false) => {
@@ -531,6 +550,7 @@ function App() {
     setExplorerViewState(nextExplorerViewState)
     setExplorerViewSeed(nextExplorerViewState)
     setExplorerViewSeedId((prev) => prev + 1)
+    setExplorerFilterQuery('')
     uiSettingsReadyRef.current = true
   }
 
@@ -690,6 +710,9 @@ function App() {
         }
         seen.add(path)
         next.push(path)
+        if (next.length >= MAX_SECONDARY_SPLIT_PANES) {
+          break
+        }
       }
       return next.length === prev.length && next.every((path, index) => path === prev[index]) ? prev : next
     })
@@ -936,7 +959,7 @@ function App() {
 
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
-  const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.path === tabContextMenu.path) ?? null : null
+  const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.id === tabContextMenu.tabId) ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
       return 'Settings'
@@ -956,6 +979,62 @@ function App() {
       (tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))).frontmatter.type
     )
     return parsedType === 'task' ? 'CheckSquare' : 'FileText'
+  }
+  const showPaneTabs = splitView && activeTab?.kind === 'note'
+  const renderEditorTab = (tab: NoteTab, options?: { pane?: boolean }) => {
+    const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
+    const tabIconName = resolveNoteTabIconName(tab)
+    const pane = options?.pane ?? false
+    const isActiveTab = pane || activeTab?.id === tab.id
+    return (
+      <div
+        key={`${pane ? 'editor-pane-tab' : 'editor-tab'}-${tab.id}`}
+        className={`editor-tab ${isActiveTab ? 'active' : ''} ${pane ? 'editor-pane-tab' : ''}`}
+        draggable={tab.kind === 'note'}
+        onDragStart={(event) => {
+          if (tab.kind !== 'note') {
+            event.preventDefault()
+            return
+          }
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('application/x-open-tab-path', tab.path)
+          event.dataTransfer.setData('application/x-open-tab-title', tab.title)
+          event.dataTransfer.setData('application/x-open-tab-origin-pane', pane ? tab.path : '')
+          event.dataTransfer.setData('text/plain', tab.path)
+          setDraggingTabPath(tab.path)
+        }}
+        onDragEnd={() => {
+          setDraggingTabPath('')
+          setSplitDropActive(false)
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          setTabContextMenu({ x: event.clientX, y: event.clientY, tabId: tab.id })
+        }}
+      >
+        <button
+          className="tab-open"
+          onClick={() => {
+            setActiveNotePath(tab.path)
+            setEditorPanelOpen(true)
+          }}
+          title={displayTitle}
+        >
+          <span className="tab-kind-icon" aria-hidden="true">
+            <LucideNamedIcon name={tabIconName} size={13} />
+          </span>
+          <span>{displayTitle}</span>
+          {tab.dirty ? (
+            <span className="tab-dirty-dot">
+              <LucideNamedIcon name="Circle" size={8} />
+            </span>
+          ) : null}
+        </button>
+        <button className="tab-close" onClick={() => void closeEditorTab(tab.id)} title="Tab schliessen">
+          <LucideNamedIcon name="X" size={14} />
+        </button>
+      </div>
+    )
   }
   const dueTodayCount = useMemo(() => {
     const today = toLocalIsoDate()
@@ -1092,6 +1171,7 @@ function App() {
     setOpenTabs((prev) => [
       ...prev,
       {
+        id: createTabId(),
         kind: 'settings',
         path: SETTINGS_TAB_PATH,
         title: 'Einstellungen',
@@ -1105,13 +1185,13 @@ function App() {
   }
 
   const saveNoteTab = async (path: string): Promise<boolean> => {
-    const targetTab = openTabs.find((tab) => tab.path === path)
+    const targetTab = openTabsRef.current.find((tab) => tab.path === path)
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
     const baseDocument = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
     const nextDocument =
-      activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current
+      activeNotePathRef.current === path && activeEditorRef.current
         ? { ...baseDocument, body: activeEditorRef.current.getMarkdown() }
         : baseDocument
     const liveContent = serializeNoteDocument(nextDocument)
@@ -1165,7 +1245,7 @@ function App() {
   }
 
   const saveTab = async (path: string): Promise<boolean> => {
-    const targetTab = openTabs.find((tab) => tab.path === path)
+    const targetTab = openTabsRef.current.find((tab) => tab.path === path)
     if (!targetTab) {
       return true
     }
@@ -1372,6 +1452,7 @@ function App() {
     }
 
     const loadingTab: NoteTab = {
+      id: createTabId(),
       kind: 'note',
       path,
       title: fallbackTitle,
@@ -1423,8 +1504,8 @@ function App() {
     }
   }
 
-  const confirmCloseTab = async (path: string): Promise<boolean> => {
-    const tab = openTabs.find((candidate) => candidate.path === path)
+  const confirmCloseTab = async (tabId: string): Promise<boolean> => {
+    const tab = openTabsRef.current.find((candidate) => candidate.id === tabId)
     if (!tab) {
       return true
     }
@@ -1445,7 +1526,7 @@ function App() {
     }
 
     if (decision === 'save') {
-      return await saveTab(path)
+      return await saveTab(tab.path)
     }
     if (decision === 'discard') {
       return true
@@ -1453,22 +1534,26 @@ function App() {
     return false
   }
 
-  const closeEditorTab = async (path: string) => {
-    const canClose = await confirmCloseTab(path)
+  const closeEditorTab = async (tabId: string) => {
+    const targetTab = openTabsRef.current.find((tab) => tab.id === tabId)
+    const targetPath = targetTab?.path ?? ''
+    const canClose = await confirmCloseTab(tabId)
     if (!canClose) {
       return
     }
-    window.setTimeout(() => {
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
-      setSplitPanePaths((prev) => prev.filter((entry) => entry !== path))
-      setTabContextMenu(null)
-    }, 0)
+    setOpenTabs((prev) => prev.filter((tab) => tab.id !== tabId))
+    if (targetPath) {
+      const targetPathKey = normalizePath(targetPath)
+      setSplitPanePaths((prev) => prev.filter((entry) => normalizePath(entry) !== targetPathKey))
+    }
+    setTabContextMenu(null)
   }
 
   const openNoteInCurrentEditor = async (path: string, suggestedTitle?: string) => {
-    const currentPath = activeTab?.kind === 'note' ? activeTab.path : ''
-    if (currentPath && currentPath !== path) {
-      const canCloseCurrent = await confirmCloseTab(currentPath)
+    const currentTab = activeTab?.kind === 'note' ? activeTab : null
+    const currentPath = currentTab?.path ?? ''
+    if (currentTab && currentPath !== path) {
+      const canCloseCurrent = await confirmCloseTab(currentTab.id)
       if (!canCloseCurrent) {
         return
       }
@@ -1511,26 +1596,31 @@ function App() {
     updater: (document: ParsedNoteDocument) => ParsedNoteDocument
   ) => {
     setOpenTabs((prev) => {
-      let changed = false
-      const next = prev.map((tab) => {
-        if (tab.path !== tabPath || tab.kind !== 'note') {
-          return tab
-        }
-        const parsed = tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
-        const nextDocument = updater(parsed)
-        if (nextDocument === parsed) {
-          return tab
-        }
-        changed = true
-        return {
-          ...tab,
-          title: nextDocument.frontmatter.title || tab.title,
-          dirty: true,
-          noteType: normalizeNoteTypeValue(nextDocument.frontmatter.type),
-          parsedDocument: nextDocument,
-        }
-      })
-      return changed ? next : prev
+      const targetIndex = prev.findIndex((tab) => tab.path === tabPath && tab.kind === 'note')
+      if (targetIndex < 0) {
+        return prev
+      }
+
+      const targetTab = prev[targetIndex]
+      if (!targetTab || targetTab.kind !== 'note') {
+        return prev
+      }
+
+      const parsed = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
+      const nextDocument = updater(parsed)
+      if (nextDocument === parsed) {
+        return prev
+      }
+
+      const next = prev.slice()
+      next[targetIndex] = {
+        ...targetTab,
+        title: nextDocument.frontmatter.title || targetTab.title,
+        dirty: true,
+        noteType: normalizeNoteTypeValue(nextDocument.frontmatter.type),
+        parsedDocument: nextDocument,
+      }
+      return next
     })
   }
 
@@ -1539,14 +1629,19 @@ function App() {
   }
 
   const updateNoteTitleByPath = (tabPath: string, nextTitle: string) => {
-    const cleanTitle = normalizeLabel(nextTitle)
-    updateNoteDocumentByPath(tabPath, (document) => ({
-      ...document,
-      frontmatter: {
-        ...document.frontmatter,
-        title: cleanTitle,
-      },
-    }))
+    const sanitizedTitle = nextTitle.replace(/[\r\n]+/g, ' ')
+    updateNoteDocumentByPath(tabPath, (document) => {
+      if (document.frontmatter.title === sanitizedTitle) {
+        return document
+      }
+      return {
+        ...document,
+        frontmatter: {
+          ...document.frontmatter,
+          title: sanitizedTitle,
+        },
+      }
+    })
   }
 
   const updateNoteTypeByPath = (tabPath: string, nextType: 'note' | 'task') => {
@@ -1763,7 +1858,7 @@ function App() {
   }
 
   const syncNotePathWithTitle = async (tabPath: string, rawTitleOverride?: string) => {
-    const tab = openTabs.find((entry) => entry.path === tabPath && entry.kind === 'note')
+    const tab = openTabsRef.current.find((entry) => entry.path === tabPath && entry.kind === 'note')
     if (!tab || tab.loading) {
       return
     }
@@ -1849,6 +1944,7 @@ function App() {
     const noteTitle =
       event.dataTransfer.getData('application/x-note-title') ||
       event.dataTransfer.getData('application/x-open-tab-title')
+    const originPanePath = event.dataTransfer.getData('application/x-open-tab-origin-pane')
 
     const cleanPath = normalizeLabel(notePath)
     if (!cleanPath) {
@@ -1858,6 +1954,7 @@ function App() {
     return {
       path: cleanPath,
       title: normalizeLabel(noteTitle) || undefined,
+      originPanePath: normalizeLabel(originPanePath) || '',
     }
   }
 
@@ -1873,6 +1970,9 @@ function App() {
       }
       seen.add(cleanPath)
       next.push(cleanPath)
+      if (next.length >= MAX_SECONDARY_SPLIT_PANES) {
+        break
+      }
     }
     return next
   }
@@ -2166,30 +2266,6 @@ function App() {
       })
       setCounts(response.counts)
       remapOpenNotePaths(path, response.renamedPath)
-      try {
-        const refreshed = await fetchNoteContent(response.renamedPath)
-        const parsed = parseNoteDocument(refreshed, toNoteDisplayName(response.renamedPath))
-        const normalized = serializeNoteDocument(parsed)
-        const renamedPathLower = normalizePath(response.renamedPath).toLowerCase()
-        setOpenTabs((prev) =>
-          prev.map((tab) => {
-            if (tab.kind !== 'note' || normalizePath(tab.path).toLowerCase() !== renamedPathLower) {
-              return tab
-            }
-            return {
-              ...tab,
-              title: parsed.frontmatter.title || toNoteDisplayName(response.renamedPath),
-              content: normalized,
-              dirty: false,
-              loading: false,
-              noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
-              parsedDocument: parsed,
-            }
-          })
-        )
-      } catch {
-        // Best effort refresh of canonical title/content after rename.
-      }
       setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
     } catch (caught) {
@@ -2286,6 +2362,49 @@ function App() {
     }
     return result.actionId
   }
+
+  const requestSaveBeforeAppClose = useCallback(async (): Promise<boolean> => {
+    if (settingsDirty) {
+      const settingsSaved = await saveSettings()
+      if (!settingsSaved) {
+        return false
+      }
+    }
+
+    const dirtyTabs = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty)
+    for (const tab of dirtyTabs) {
+      const saved = await saveTab(tab.path)
+      if (!saved) {
+        return false
+      }
+    }
+    return true
+  }, [saveSettings, saveTab, settingsDirty])
+
+  useEffect(() => {
+    window.nicknotes?.setUnsavedChanges?.(hasUnsavedChanges)
+  }, [hasUnsavedChanges])
+
+  useEffect(() => {
+    const register = window.nicknotes?.onRequestSaveBeforeClose
+    if (!register) {
+      return
+    }
+    const cleanup = register(() => {
+      void requestSaveBeforeAppClose()
+        .then((ok) => {
+          window.nicknotes?.respondSaveBeforeClose?.(ok)
+        })
+        .catch(() => {
+          window.nicknotes?.respondSaveBeforeClose?.(false)
+        })
+    })
+    return () => {
+      if (typeof cleanup === 'function') {
+        cleanup()
+      }
+    }
+  }, [requestSaveBeforeAppClose])
 
   const openTagGroupFormDialog = async (config: {
     title: string
@@ -2775,7 +2894,15 @@ function App() {
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: true })
       setActiveNotePath(payload.path)
-      setSplitPanePaths((prev) => sanitizeSplitPanePaths(prev.filter((path) => normalizePath(path) !== normalizePath(payload.path)), payload.path))
+      setSplitPanePaths((prev) => {
+        const payloadPath = normalizePath(payload.path)
+        const originPanePath = normalizePath(payload.originPanePath || '')
+        const next = prev.filter((path) => {
+          const normalized = normalizePath(path)
+          return normalized !== payloadPath && normalized !== originPanePath
+        })
+        return sanitizeSplitPanePaths(next, payload.path)
+      })
     })()
   }
 
@@ -2790,11 +2917,34 @@ function App() {
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: false })
       setSplitView(true)
+      const payloadPath = normalizePath(payload.path)
+      const currentPanePathKey = normalizePath(currentPanePath)
+      const activePathKey = normalizePath(activeNotePathRef.current)
+      const originPanePath = normalizePath(payload.originPanePath || '')
+      const nextActivePath = payloadPath === activePathKey ? currentPanePath : activeNotePathRef.current
+      if (payloadPath === activePathKey) {
+        setActiveNotePath(currentPanePath)
+      }
       setSplitPanePaths((prev) => {
-        const replaced = prev.map((path) =>
-          normalizePath(path) === normalizePath(currentPanePath) ? normalizePath(payload.path) : normalizePath(path)
-        )
-        return sanitizeSplitPanePaths(replaced)
+        const normalized = prev.map((path) => normalizePath(path))
+        const targetIndex = normalized.findIndex((path) => path === currentPanePathKey)
+        if (targetIndex < 0) {
+          return prev
+        }
+
+        const sourceIndex = normalized.findIndex((path) => path === originPanePath)
+        if (sourceIndex >= 0 && sourceIndex !== targetIndex) {
+          const moved = [...normalized]
+          moved[targetIndex] = payloadPath
+          const sourceIndexAfterReplace = moved.findIndex((path, index) => index !== targetIndex && path === originPanePath)
+          if (sourceIndexAfterReplace >= 0) {
+            moved.splice(sourceIndexAfterReplace, 1)
+          }
+          return sanitizeSplitPanePaths(moved, nextActivePath)
+        }
+
+        const replaced = normalized.map((path, index) => (index === targetIndex ? payloadPath : path))
+        return sanitizeSplitPanePaths(replaced, nextActivePath)
       })
     })()
   }
@@ -2810,6 +2960,10 @@ function App() {
 
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: false })
+      if (splitPanePaths.length >= MAX_SECONDARY_SPLIT_PANES) {
+        setMessage(`Maximal ${MAX_SPLIT_PANE_COUNT} Split-Screens moeglich.`)
+        return
+      }
       setSplitView(true)
       setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, normalizePath(payload.path)]))
     })()
@@ -3060,58 +3214,7 @@ function App() {
             <article className="workspace-panel editor-workspace-panel">
               <div className="editor-tabs">
                 <div className="editor-tab-list">
-                  {openTabs.map((tab) => {
-                    const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
-                    const tabIconName = resolveNoteTabIconName(tab)
-                    return (
-                      <div
-                        key={`editor-tab-${tab.path}`}
-                        className={`editor-tab ${activeTab?.path === tab.path ? 'active' : ''}`}
-                        draggable={tab.kind === 'note'}
-                        onDragStart={(event) => {
-                          if (tab.kind !== 'note') {
-                            event.preventDefault()
-                            return
-                          }
-                          event.dataTransfer.effectAllowed = 'move'
-                          event.dataTransfer.setData('application/x-open-tab-path', tab.path)
-                          event.dataTransfer.setData('application/x-open-tab-title', tab.title)
-                          event.dataTransfer.setData('text/plain', tab.path)
-                          setDraggingTabPath(tab.path)
-                        }}
-                        onDragEnd={() => {
-                          setDraggingTabPath('')
-                          setSplitDropActive(false)
-                        }}
-                        onContextMenu={(event) => {
-                          event.preventDefault()
-                          setTabContextMenu({ x: event.clientX, y: event.clientY, path: tab.path })
-                        }}
-                      >
-                        <button
-                          className="tab-open"
-                          onClick={() => {
-                            setActiveNotePath(tab.path)
-                            setEditorPanelOpen(true)
-                          }}
-                          title={displayTitle}
-                        >
-                          <span className="tab-kind-icon" aria-hidden="true">
-                            <LucideNamedIcon name={tabIconName} size={13} />
-                          </span>
-                          <span>{displayTitle}</span>
-                          {tab.dirty ? (
-                            <span className="tab-dirty-dot">
-                              <LucideNamedIcon name="Circle" size={8} />
-                            </span>
-                          ) : null}
-                        </button>
-                        <button className="tab-close" onClick={() => void closeEditorTab(tab.path)} title="Tab schliessen">
-                          <LucideNamedIcon name="X" size={14} />
-                        </button>
-                      </div>
-                    )
-                  })}
+                  {showPaneTabs ? null : openTabs.map((tab) => renderEditorTab(tab))}
                 </div>
 
                 <div className="editor-tab-actions">
@@ -3172,13 +3275,14 @@ function App() {
                     handleDropOnPrimaryPane(event)
                   }}
                 >
+                  {showPaneTabs && activeTab ? <div className="editor-pane-tabs">{renderEditorTab(activeTab, { pane: true })}</div> : null}
                   {activeTab?.kind === 'note' && !activeTab.loading ? (
                     <div className="note-editor-shell">
                       {activeNoteDocument ? (
                         <div className="note-flow-content">
                           {renderNoteProperties(activeTab.path, activeNoteDocument)}
                           <CodeMirrorMarkdownEditor
-                            key={`editor-${activeTab.path}`}
+                            key={`editor-${activeTab.id}`}
                             className="note-body-editor"
                             embeddedInScroll
                             value={activeNoteDocument.body}
@@ -3234,7 +3338,7 @@ function App() {
                         paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
                       return (
                         <article
-                          key={`split-pane-${paneTab.path}`}
+                          key={`split-pane-${paneTab.id}`}
                           className="editor-pane split-editor-pane"
                           onDragOver={(event) => {
                             event.preventDefault()
@@ -3245,6 +3349,7 @@ function App() {
                             handleDropOnSplitPane(event, paneTab.path)
                           }}
                         >
+                          {showPaneTabs ? <div className="editor-pane-tabs">{renderEditorTab(paneTab, { pane: true })}</div> : null}
                           {paneTab.loading ? (
                             <p className="empty-copy">Lade Notiz ...</p>
                           ) : (
@@ -3252,7 +3357,7 @@ function App() {
                               <div className="note-flow-content split-note-flow-content">
                                 {renderNoteProperties(paneTab.path, paneDocument, true)}
                                 <CodeMirrorMarkdownEditor
-                                  key={`editor-split-${paneTab.path}`}
+                                  key={`editor-split-${paneTab.id}`}
                                   className="note-body-editor split-note-body-editor"
                                   embeddedInScroll
                                   value={paneDocument.body}
@@ -3273,7 +3378,7 @@ function App() {
                     })
                   : null}
 
-                {draggingTabPath ? (
+                {draggingTabPath && splitPanePaths.length < MAX_SECONDARY_SPLIT_PANES ? (
                   <aside
                     className={`editor-split-dropzone ${splitDropActive ? 'active' : ''}`}
                     onDragOver={(event) => {
@@ -3369,7 +3474,7 @@ function App() {
           <button
             className="muted"
             onClick={() => {
-              void closeEditorTab(tabContextTarget.path)
+              void closeEditorTab(tabContextTarget.id)
             }}
           >
             Registerkarte schliessen

@@ -103,6 +103,9 @@ type SlashMatch = {
   query: string
 }
 
+const LOCAL_ECHO_TTL_MS = 2000
+const LOCAL_ECHO_MAX_ITEMS = 12
+
 const codeLanguages = [
   LanguageDescription.of({
     name: 'TypeScript',
@@ -307,6 +310,7 @@ export function CodeMirrorMarkdownEditor({
   const syncingRef = useRef(false)
   const pendingDocRef = useRef<string | null>(null)
   const onChangeFrameRef = useRef<number | null>(null)
+  const localEchoValuesRef = useRef<Array<{ value: string; at: number }>>([])
   const themeCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
   const searchHighlightCompartmentRef = useRef(new Compartment())
@@ -400,6 +404,28 @@ export function CodeMirrorMarkdownEditor({
     onChangeRef.current = onChange
   }, [onChange])
 
+  const pruneLocalEchoValues = (now: number) => {
+    localEchoValuesRef.current = localEchoValuesRef.current.filter((entry) => now - entry.at <= LOCAL_ECHO_TTL_MS)
+    if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
+      localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
+    }
+  }
+
+  const rememberLocalEchoValue = (nextValue: string) => {
+    const now = Date.now()
+    pruneLocalEchoValues(now)
+    localEchoValuesRef.current.push({ value: nextValue, at: now })
+    if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
+      localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
+    }
+  }
+
+  const isRecentLocalEchoValue = (nextValue: string): boolean => {
+    const now = Date.now()
+    pruneLocalEchoValues(now)
+    return localEchoValuesRef.current.some((entry) => entry.value === nextValue)
+  }
+
   const flushQueuedOnChange = () => {
     if (onChangeFrameRef.current !== null) {
       window.cancelAnimationFrame(onChangeFrameRef.current)
@@ -408,6 +434,7 @@ export function CodeMirrorMarkdownEditor({
     const queued = pendingDocRef.current
     pendingDocRef.current = null
     if (queued !== null) {
+      rememberLocalEchoValue(queued)
       onChangeRef.current(queued)
     }
   }
@@ -423,6 +450,7 @@ export function CodeMirrorMarkdownEditor({
       const queued = pendingDocRef.current
       pendingDocRef.current = null
       if (queued !== null) {
+        rememberLocalEchoValue(queued)
         onChangeRef.current(queued)
       }
     })
@@ -880,6 +908,9 @@ export function CodeMirrorMarkdownEditor({
 
     const currentValue = instance.state.doc.toString()
     if (currentValue === value) {
+      return
+    }
+    if (isRecentLocalEchoValue(value)) {
       return
     }
 

@@ -80,6 +80,7 @@ export type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
 export type NoteTabKind = 'note' | 'settings'
 
 export type NoteTab = {
+  id: string
   kind: NoteTabKind
   path: string
   title: string
@@ -93,7 +94,7 @@ export type NoteTab = {
 export type EditorTabContextMenuState = {
   x: number
   y: number
-  path: string
+  tabId: string
 } | null
 
 export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
@@ -549,7 +550,8 @@ export function toExplorerViewStateFromSettings(value: unknown): ExplorerViewSta
   return {
     expandedNodes,
     selectedNodeId: typeof source.selectedNodeId === 'string' ? source.selectedNodeId : null,
-    filterQuery: typeof source.filterQuery === 'string' ? source.filterQuery : '',
+    // Do not restore persisted explorer search text across restarts.
+    filterQuery: '',
     folderOrder,
     iconOverrides: {
       folders: iconFolders,

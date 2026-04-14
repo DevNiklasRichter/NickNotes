@@ -332,6 +332,7 @@ export function ExplorerSidebar({
   const actionDialogRef = useRef<ExplorerActionDialogState | null>(null)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const lastAutoRevealPathRef = useRef('')
   const lastHandledRevealRequestRef = useRef<number | null>(null)
   const previewClickTimerRef = useRef<number | null>(null)
@@ -1237,11 +1238,31 @@ export function ExplorerSidebar({
           <div className="explorer-search-input-wrap">
             <LucideNamedIcon name="Search" className="explorer-search-icon" size={14} />
             <input
+              ref={searchInputRef}
               className="explorer-search-input"
               value={filterQuery}
               onChange={(event) => setFilterQuery(event.target.value)}
               placeholder="Search"
             />
+            {filterQuery ? (
+              <button
+                type="button"
+                className="explorer-search-clear"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setFilterQuery('')
+                  onFilterQueryChange?.('')
+                  window.requestAnimationFrame(() => {
+                    searchInputRef.current?.focus()
+                  })
+                }}
+                aria-label="Suche leeren"
+                title="Suche leeren"
+              >
+                <LucideNamedIcon name="X" size={12} />
+              </button>
+            ) : null}
           </div>
         </div>
       </header>

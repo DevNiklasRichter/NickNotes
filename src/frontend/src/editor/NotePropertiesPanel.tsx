@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
 
@@ -74,6 +75,12 @@ export function NotePropertiesPanel({
   onCommitRelatedInput,
   onCloseRelatedInput,
 }: NotePropertiesPanelProps) {
+  const [titleDraft, setTitleDraft] = useState(document.frontmatter.title)
+
+  useEffect(() => {
+    setTitleDraft(document.frontmatter.title)
+  }, [tabPath, document.frontmatter.title])
+
   const manualTags = document.frontmatter.tags
   const manualTagSet = new Set(manualTags)
   const autoTags = document.frontmatter.tags_auto.filter((item) => !manualTagSet.has(item))
@@ -123,12 +130,19 @@ export function NotePropertiesPanel({
       <div className="note-title-row">
         <input
           className="note-title-input"
-          value={document.frontmatter.title}
+          value={titleDraft}
           onChange={(event) => {
-            onTitleChange(event.target.value)
+            setTitleDraft(event.target.value)
           }}
           onBlur={(event) => {
+            onTitleChange(event.currentTarget.value)
             onTitleBlur(event.currentTarget.value)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              event.currentTarget.blur()
+            }
           }}
           placeholder="Untitled"
         />

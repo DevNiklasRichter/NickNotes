@@ -67,6 +67,35 @@
 .explorer-toolbar-search .explorer-search-input {
   width: 100%;
   padding-left: 1.7rem;
+  padding-right: 2.05rem;
+}
+
+.explorer-search-clear {
+  border: none;
+  outline: none;
+  padding: 0;
+  position: absolute;
+  right: 0.38rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.12rem;
+  height: 1.12rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #94a3b8;
+  cursor: pointer;
+  border-radius: 999px;
+  z-index: 2;
+}
+
+.explorer-search-clear:hover {
+  background: #8393a7;
+}
+
+.explorer-search-clear:active {
+  background: #76869a;
 }
 
 .explorer-sort-anchor {

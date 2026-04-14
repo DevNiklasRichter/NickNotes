@@ -11,6 +11,9 @@ const BACKEND_PORT = 8765
 
 let backendProcess = null
 let mainWindow = null
+const unsavedByWebContentsId = new Map()
+const pendingSaveBeforeCloseByWebContentsId = new Set()
+const allowCloseByWebContentsId = new Set()
 
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
@@ -97,7 +100,49 @@ function createWindow() {
   win.setMenuBarVisibility(false)
   applyWindowTheme(win, 'dark')
   mainWindow = win
+  const webContentsId = win.webContents.id
+  unsavedByWebContentsId.set(webContentsId, false)
+
+  win.on('close', (event) => {
+    if (allowCloseByWebContentsId.has(webContentsId)) {
+      allowCloseByWebContentsId.delete(webContentsId)
+      return
+    }
+    const hasUnsavedChanges = unsavedByWebContentsId.get(webContentsId) ?? false
+    if (!hasUnsavedChanges) {
+      return
+    }
+
+    event.preventDefault()
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Speichern', 'Nicht speichern', 'Abbrechen'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Ungespeicherte Aenderungen',
+      message: 'Es gibt ungespeicherte Aenderungen. Vor dem Schliessen speichern?',
+      noLink: true,
+    })
+
+    if (choice === 1) {
+      allowCloseByWebContentsId.add(webContentsId)
+      win.close()
+      return
+    }
+    if (choice !== 0) {
+      return
+    }
+    if (pendingSaveBeforeCloseByWebContentsId.has(webContentsId)) {
+      return
+    }
+    pendingSaveBeforeCloseByWebContentsId.add(webContentsId)
+    win.webContents.send('app:request-save-before-close')
+  })
+
   win.on('closed', () => {
+    unsavedByWebContentsId.delete(webContentsId)
+    pendingSaveBeforeCloseByWebContentsId.delete(webContentsId)
+    allowCloseByWebContentsId.delete(webContentsId)
     if (mainWindow === win) {
       mainWindow = null
     }
@@ -115,6 +160,28 @@ function createWindow() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   startBackend()
+
+  ipcMain.on('app:set-unsaved', (event, payload) => {
+    unsavedByWebContentsId.set(event.sender.id, Boolean(payload))
+  })
+
+  ipcMain.on('app:save-before-close-result', (event, payload) => {
+    const webContentsId = event.sender.id
+    if (!pendingSaveBeforeCloseByWebContentsId.has(webContentsId)) {
+      return
+    }
+    pendingSaveBeforeCloseByWebContentsId.delete(webContentsId)
+
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow || targetWindow.isDestroyed()) {
+      return
+    }
+    if (!payload || payload.ok !== true) {
+      return
+    }
+    allowCloseByWebContentsId.add(webContentsId)
+    targetWindow.close()
+  })
 
   ipcMain.handle('dialog:selectDirectory', async () => {
     const result = await dialog.showOpenDialog({
