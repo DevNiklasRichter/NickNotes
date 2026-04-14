@@ -2820,3 +2820,181 @@ textarea:focus-visible {
 .window-content .left-sidebar .context-menu-item {
   border-radius: 3px !important;
 }
+
+/* Workspace V2 */
+.workspace-toolbar {
+  justify-content: space-between;
+}
+
+.workspace-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.editor-workspace-single,
+.editor-workspace-split {
+  min-height: 0;
+  flex: 1;
+}
+
+.editor-workspace-single {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.editor-workspace-split {
+  display: grid;
+  overflow: hidden;
+}
+
+.workspace-pane {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-contrast) 95%, transparent), var(--surface));
+}
+
+.workspace-pane.focused {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.workspace-pane-content {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-pane .note-editor-shell {
+  min-height: 0;
+  height: 100%;
+}
+
+.pane-tab-bar {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  gap: 0.3rem;
+  padding: 0.32rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+}
+
+.pane-tab-bar.drop-active {
+  background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface-strong) 26%);
+}
+
+.pane-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pane-tab-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-contrast);
+}
+
+.pane-tab.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.pane-tab[draggable='true'] {
+  cursor: grab;
+}
+
+.pane-tab[draggable='true']:active {
+  cursor: grabbing;
+}
+
+.pane-tab.dragging {
+  opacity: 0.56;
+}
+
+.pane-tab.drop-target {
+  border-color: color-mix(in srgb, var(--accent) 78%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 65%, transparent);
+}
+
+.workspace-pane.drop-active .workspace-pane-content {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.editor-pane-empty {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  padding: 0.9rem;
+}
+
+.editor-pane-empty p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.editor-pane-empty-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-contrast) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+}
+
+.editor-split-resize-handle {
+  position: relative;
+  min-height: 0;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.editor-split-resize-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 14%;
+  bottom: 14%;
+  width: 1px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--line) 86%, transparent);
+  transition: background-color 0.16s ease, width 0.16s ease;
+}
+
+.editor-split-resize-handle:hover::before,
+.editor-split-resize-handle.active::before {
+  width: 2px;
+  background: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+
+.workspace-split-resizing {
+  cursor: col-resize;
+  user-select: none;
+}

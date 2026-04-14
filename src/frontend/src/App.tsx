@@ -1,5 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import type { CSSProperties, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
 import { NotePropertiesPanel } from './editor/NotePropertiesPanel'
@@ -15,6 +15,15 @@ import { ActivityRail } from './layout/ActivityRail'
 import { StatusBar } from './layout/StatusBar'
 import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent'
 import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
+import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
+import {
+  createInitialWorkspaceState,
+  findPaneByTabId,
+  findOpenTabByNoteId,
+  getActiveTabIdForPane,
+  type PaneId,
+  workspaceReducer,
+} from './workspace/workspaceState'
 import type { ExplorerOptions, ExplorerViewState } from './explorer/types'
 import {
   normalizeTagColor,
@@ -98,9 +107,6 @@ import type {
   NoteGroup,
 } from './app/AppShared'
 
-const MAX_SPLIT_PANE_COUNT = 2
-const MAX_SECONDARY_SPLIT_PANES = MAX_SPLIT_PANE_COUNT - 1
-
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -160,18 +166,12 @@ function App() {
   const [explorerRevealRequestId, setExplorerRevealRequestId] = useState(0)
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupDefinition[]>([])
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
-  const [viewerDropActive, setViewerDropActive] = useState(false)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
   const openTabsRef = useRef<NoteTab[]>([])
-  const [activeNotePath, setActiveNotePath] = useState('')
-  const activeNotePathRef = useRef('')
-  const [splitTargetPath, setSplitTargetPath] = useState('')
+  const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState)
+  const workspaceStateRef = useRef(workspaceState)
   const tabIdCounterRef = useRef(0)
-  const [splitView, setSplitView] = useState(false)
-  const [splitPanePaths, setSplitPanePaths] = useState<string[]>([])
-  const [draggingTabPath, setDraggingTabPath] = useState('')
-  const [splitDropActive, setSplitDropActive] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null)
   const tagActionDialogRef = useRef<TagActionDialogState | null>(null)
@@ -179,8 +179,8 @@ function App() {
   const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
   const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
   const [propertyRelatedDraftByPath, setPropertyRelatedDraftByPath] = useState<Record<string, string>>({})
-  const activeEditorRef = useRef<MarkdownEditorApi | null>(null)
-  const secondaryEditorRef = useRef<MarkdownEditorApi | null>(null)
+  const leftEditorRef = useRef<MarkdownEditorApi | null>(null)
+  const rightEditorRef = useRef<MarkdownEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -190,11 +190,24 @@ function App() {
   }, [explorerViewState])
 
   openTabsRef.current = openTabs
-  activeNotePathRef.current = activeNotePath
+  workspaceStateRef.current = workspaceState
 
   const createTabId = () => {
     tabIdCounterRef.current += 1
     return `tab-${Date.now()}-${tabIdCounterRef.current}`
+  }
+
+  const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
+  const toNoteId = (path: string): string => normalizePath(path).toLowerCase()
+
+  const findTabByPath = (path: string, tabs: NoteTab[] = openTabsRef.current): NoteTab | null => {
+    const targetKey = toNoteId(path)
+    for (const tab of tabs) {
+      if (toNoteId(tab.path) === targetKey) {
+        return tab
+      }
+    }
+    return null
   }
 
   useEffect(() => {
@@ -295,7 +308,17 @@ function App() {
         appLayoutSaveTimerRef.current = null
       }
     }
-  }, [backendUrl, capturePanelOpen, capturePinned, editorPanelOpen, expandedFolders, explorerWidth, vaultLoaded])
+  }, [
+    backendUrl,
+    capturePanelOpen,
+    capturePinned,
+    editorPanelOpen,
+    expandedFolders,
+    explorerWidth,
+    vaultLoaded,
+    workspaceState.layoutMode,
+    workspaceState.splitRatio,
+  ])
 
   const settingsDirty = useMemo(
     () =>
@@ -322,6 +345,54 @@ function App() {
     () => settingsDirty || openTabs.some((tab) => tab.kind === 'note' && tab.dirty),
     [openTabs, settingsDirty]
   )
+
+  const tabsById = useMemo<Record<string, NoteTab>>(() => {
+    const map: Record<string, NoteTab> = {}
+    for (const tab of openTabs) {
+      map[tab.id] = tab
+    }
+    return map
+  }, [openTabs])
+
+  const tabRegistryKey = useMemo(
+    () =>
+      openTabs
+        .map((tab) => `${tab.id}\u0000${toNoteId(tab.path)}`)
+        .sort((left, right) => left.localeCompare(right))
+        .join('\n'),
+    [openTabs]
+  )
+
+  useEffect(() => {
+    const registry = openTabs.map((tab) => ({
+      id: tab.id,
+      noteId: toNoteId(tab.path),
+    }))
+    dispatchWorkspace({ type: 'REGISTER_TABS', tabs: registry })
+    // tabRegistryKey intentionally excludes content/title-only updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabRegistryKey])
+
+  const paneTabs = useMemo<Record<PaneId, NoteTab[]>>(() => {
+    const leftTabs = workspaceState.panes.left.tabIds.map((tabId) => tabsById[tabId]).filter(Boolean) as NoteTab[]
+    const rightTabs = workspaceState.panes.right.tabIds.map((tabId) => tabsById[tabId]).filter(Boolean) as NoteTab[]
+    return {
+      left: leftTabs,
+      right: rightTabs,
+    }
+  }, [tabsById, workspaceState.panes.left.tabIds, workspaceState.panes.right.tabIds])
+
+  const paneActiveTabs = useMemo<Record<PaneId, NoteTab | null>>(() => {
+    const leftActiveId = getActiveTabIdForPane(workspaceState, 'left')
+    const rightActiveId = getActiveTabIdForPane(workspaceState, 'right')
+    return {
+      left: leftActiveId ? tabsById[leftActiveId] ?? null : null,
+      right: rightActiveId ? tabsById[rightActiveId] ?? null : null,
+    }
+  }, [tabsById, workspaceState])
+
+  const activePaneId = workspaceState.lastFocusedPane
+  const activeTab = paneActiveTabs[activePaneId] ?? paneActiveTabs.left ?? paneActiveTabs.right ?? null
 
   const refreshTasks = async (force = false) => {
     if (!vaultLoaded && !force) {
@@ -507,6 +578,8 @@ function App() {
     capturePanelOpen,
     capturePinned,
     tagExpandedGroups: expandedFolders,
+    workspaceLayoutMode: workspaceState.layoutMode,
+    workspaceSplitRatio: workspaceState.splitRatio,
   })
 
   const buildLayoutUiSettings = (): Record<string, unknown> => ({
@@ -515,6 +588,8 @@ function App() {
     capturePanelOpen,
     capturePinned,
     tagExpandedGroups: expandedFolders,
+    workspaceLayoutMode: workspaceState.layoutMode,
+    workspaceSplitRatio: workspaceState.splitRatio,
   })
 
   const applyUiSettings = (settings: UiSettingsPayload) => {
@@ -530,6 +605,8 @@ function App() {
     const nextCapturePanelOpen = toBoolean(appSettings.capturePanelOpen, true)
     const nextCapturePinned = toBoolean(appSettings.capturePinned, true)
     const nextExpandedGroups = toExpandedTagGroups(appSettings.tagExpandedGroups)
+    const nextWorkspaceLayoutMode = appSettings.workspaceLayoutMode === 'split' ? 'split' : 'single'
+    const nextWorkspaceSplitRatio = toBoundedNumber(appSettings.workspaceSplitRatio, 0.5, 0.15, 0.85)
 
     setTheme(nextTheme)
     setDisplayName(nextDisplayName)
@@ -546,6 +623,14 @@ function App() {
     setCapturePanelOpen(nextCapturePanelOpen)
     setCapturePinned(nextCapturePinned)
     setExpandedFolders(nextExpandedGroups)
+    dispatchWorkspace({
+      type: 'TOGGLE_SPLIT_MODE',
+      enabled: nextWorkspaceLayoutMode === 'split',
+    })
+    dispatchWorkspace({
+      type: 'SET_SPLIT_RATIO',
+      splitRatio: nextWorkspaceSplitRatio,
+    })
 
     const nextExplorerViewState = toExplorerViewStateFromSettings(settings.explorer)
     setExplorerViewState(nextExplorerViewState)
@@ -601,6 +686,8 @@ function App() {
       if (!state.vaultLoaded) {
         uiSettingsReadyRef.current = false
         setVaultLoaded(false)
+        setOpenTabs([])
+        dispatchWorkspace({ type: 'RESET' })
         setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
         setExplorerViewSeed(null)
         setExplorerViewSeedId((prev) => prev + 1)
@@ -644,6 +731,8 @@ function App() {
 
   useEffect(() => {
     if (!vaultLoaded) {
+      setOpenTabs([])
+      dispatchWorkspace({ type: 'RESET' })
       setAllNotes([])
       setExplorerFiles([])
       setTabContextMenu(null)
@@ -688,56 +777,6 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captureText, vaultLoaded])
-
-  useEffect(() => {
-    if (openTabs.length === 0) {
-      setActiveNotePath('')
-      setSplitTargetPath('')
-      setSplitPanePaths([])
-      setSplitView(false)
-      return
-    }
-
-    if (!openTabs.some((tab) => tab.path === activeNotePath)) {
-      setActiveNotePath(openTabs[openTabs.length - 1].path)
-    }
-
-    const openNotePathSet = new Set(openTabs.filter((tab) => tab.kind === 'note').map((tab) => tab.path))
-    setSplitPanePaths((prev) => {
-      const seen = new Set<string>()
-      const next: string[] = []
-      for (const path of prev) {
-        if (!path || path === activeNotePath || !openNotePathSet.has(path) || seen.has(path)) {
-          continue
-        }
-        seen.add(path)
-        next.push(path)
-        if (next.length >= MAX_SECONDARY_SPLIT_PANES) {
-          break
-        }
-      }
-      return next.length === prev.length && next.every((path, index) => path === prev[index]) ? prev : next
-    })
-
-    if (openTabs.filter((tab) => tab.kind === 'note').length < 2 && splitView) {
-      setSplitView(false)
-      setSplitPanePaths([])
-    }
-  }, [activeNotePath, openTabs, splitView])
-
-  useEffect(() => {
-    if (!splitView) {
-      if (splitTargetPath !== activeNotePath) {
-        setSplitTargetPath(activeNotePath)
-      }
-      return
-    }
-
-    const validTargets = new Set<string>([activeNotePath, ...splitPanePaths].map((path) => normalizePath(path)))
-    if (!validTargets.has(normalizePath(splitTargetPath || ''))) {
-      setSplitTargetPath(activeNotePath)
-    }
-  }, [activeNotePath, splitPanePaths, splitTargetPath, splitView])
 
   useEffect(() => {
     setOpenTabs((prev) =>
@@ -914,8 +953,6 @@ function App() {
     return map
   }, [explorerRows])
 
-  const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
-  const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
   const dirtyPathKey = useMemo(() => {
     return openTabs
       .filter((tab) => tab.kind === 'note' && tab.dirty)
@@ -935,48 +972,10 @@ function App() {
     }
     return next
   }, [dirtyPathKey])
-  const splitPaneTabs = useMemo(() => {
-    if (!splitView || activeTab?.kind !== 'note') {
-      return [] as NoteTab[]
-    }
-    const byPath = new Map(openNoteTabs.map((tab) => [tab.path, tab]))
-    const seen = new Set<string>()
-    const next: NoteTab[] = []
-    for (const path of splitPanePaths) {
-      if (!path || path === activeTab.path || seen.has(path)) {
-        continue
-      }
-      const tab = byPath.get(path)
-      if (!tab) {
-        continue
-      }
-      seen.add(path)
-      next.push(tab)
-    }
-    return next
-  }, [activeTab, openNoteTabs, splitPanePaths, splitView])
-  const activeNoteDocument = useMemo(() => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return null
-    }
-    return activeTab.parsedDocument ?? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
-  }, [activeTab])
-
-  useEffect(() => {
-    if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
-      return
-    }
-    const candidate = openNoteTabs.find((tab) => normalizePath(tab.path) !== normalizePath(activeTab.path))
-    if (!candidate) {
-      return
-    }
-    setSplitPanePaths([candidate.path])
-    setSplitTargetPath(activeTab.path)
-  }, [activeTab, openNoteTabs, splitPanePaths.length, splitView])
 
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
-  const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.id === tabContextMenu.tabId) ?? null : null
+  const tabContextTarget = tabContextMenu ? tabsById[tabContextMenu.tabId] ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
       return 'Settings'
@@ -996,67 +995,6 @@ function App() {
       (tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))).frontmatter.type
     )
     return parsedType === 'task' ? 'CheckSquare' : 'FileText'
-  }
-  const showPaneTabs = splitView && activeTab?.kind === 'note'
-  const renderEditorTab = (tab: NoteTab, options?: { pane?: boolean }) => {
-    const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
-    const tabIconName = resolveNoteTabIconName(tab)
-    const pane = options?.pane ?? false
-    const isActiveTab = pane || activeTab?.id === tab.id
-    return (
-      <div
-        key={`${pane ? 'editor-pane-tab' : 'editor-tab'}-${tab.id}`}
-        className={`editor-tab ${isActiveTab ? 'active' : ''} ${pane ? 'editor-pane-tab' : ''}`}
-        draggable={tab.kind === 'note'}
-        onDragStart={(event) => {
-          if (tab.kind !== 'note') {
-            event.preventDefault()
-            return
-          }
-          event.dataTransfer.effectAllowed = 'move'
-          event.dataTransfer.setData('application/x-open-tab-path', tab.path)
-          event.dataTransfer.setData('application/x-open-tab-title', tab.title)
-          event.dataTransfer.setData('application/x-open-tab-origin-pane', pane ? tab.path : '')
-          event.dataTransfer.setData('text/plain', tab.path)
-          setDraggingTabPath(tab.path)
-        }}
-        onDragEnd={() => {
-          setDraggingTabPath('')
-          setSplitDropActive(false)
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setTabContextMenu({ x: event.clientX, y: event.clientY, tabId: tab.id })
-        }}
-      >
-        <button
-          className="tab-open"
-          onClick={() => {
-            if (pane && splitView) {
-              setSplitTargetPath(tab.path)
-            } else {
-              setActiveNotePath(tab.path)
-              setSplitTargetPath(tab.path)
-            }
-            setEditorPanelOpen(true)
-          }}
-          title={displayTitle}
-        >
-          <span className="tab-kind-icon" aria-hidden="true">
-            <LucideNamedIcon name={tabIconName} size={13} />
-          </span>
-          <span>{displayTitle}</span>
-          {tab.dirty ? (
-            <span className="tab-dirty-dot">
-              <LucideNamedIcon name="Circle" size={8} />
-            </span>
-          ) : null}
-        </button>
-        <button className="tab-close" onClick={() => void closeEditorTab(tab.id)} title="Tab schliessen">
-          <LucideNamedIcon name="X" size={14} />
-        </button>
-      </div>
-    )
   }
   const dueTodayCount = useMemo(() => {
     const today = toLocalIsoDate()
@@ -1183,17 +1121,24 @@ function App() {
   }
 
   const openSettingsTab = () => {
-    const existing = openTabs.find((tab) => tab.path === SETTINGS_TAB_PATH)
+    const existing = findTabByPath(SETTINGS_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
     if (existing) {
       setEditorPanelOpen(true)
-      setActiveNotePath(SETTINGS_TAB_PATH)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
       return
     }
 
+    const nextTabId = createTabId()
     setOpenTabs((prev) => [
       ...prev,
       {
-        id: createTabId(),
+        id: nextTabId,
         kind: 'settings',
         path: SETTINGS_TAB_PATH,
         title: 'Einstellungen',
@@ -1203,19 +1148,35 @@ function App() {
       },
     ])
     setEditorPanelOpen(true)
-    setActiveNotePath(SETTINGS_TAB_PATH)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
+  const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
+    const paneId = findPaneByTabId(workspaceStateRef.current, tab.id)
+    if (!paneId) {
+      return null
+    }
+    const activeTabId = getActiveTabIdForPane(workspaceStateRef.current, paneId)
+    if (activeTabId !== tab.id) {
+      return null
+    }
+    const editorApi = paneId === 'left' ? leftEditorRef.current : rightEditorRef.current
+    return editorApi?.getMarkdown() ?? null
   }
 
   const saveNoteTab = async (path: string): Promise<boolean> => {
-    const targetTab = openTabsRef.current.find((tab) => tab.path === path)
+    const targetTab = findTabByPath(path)
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
     const baseDocument = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
-    const nextDocument =
-      activeNotePathRef.current === path && activeEditorRef.current
-        ? { ...baseDocument, body: activeEditorRef.current.getMarkdown() }
-        : baseDocument
+    const liveBody = getLiveMarkdownForTab(targetTab)
+    const nextDocument = liveBody !== null ? { ...baseDocument, body: liveBody } : baseDocument
     const liveContent = serializeNoteDocument(nextDocument)
 
     try {
@@ -1267,7 +1228,7 @@ function App() {
   }
 
   const saveTab = async (path: string): Promise<boolean> => {
-    const targetTab = openTabsRef.current.find((tab) => tab.path === path)
+    const targetTab = findTabByPath(path)
     if (!targetTab) {
       return true
     }
@@ -1300,9 +1261,7 @@ function App() {
       setVaultLoaded(true)
       setCounts(response.counts)
       setOpenTabs([])
-      setActiveNotePath('')
-      setSplitView(false)
-      setSplitPanePaths([])
+      dispatchWorkspace({ type: 'RESET' })
       storeLastNoteBasePath(loadedPath)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
@@ -1342,9 +1301,7 @@ function App() {
       setSelectedTagKeys([])
       setParsedTasks([])
       setOpenTabs([])
-      setActiveNotePath('')
-      setSplitView(false)
-      setSplitPanePaths([])
+      dispatchWorkspace({ type: 'RESET' })
       setCustomTagGroups([])
       setNoteGroups([])
       setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
@@ -1443,18 +1400,23 @@ function App() {
   const openNoteInTab = async (
     path: string,
     suggestedTitle?: string,
-    options?: { activate?: boolean; replacePath?: string; initialNoteType?: 'note' | 'task' }
+    options?: { activate?: boolean; replacePath?: string; initialNoteType?: 'note' | 'task'; targetPane?: PaneId }
   ) => {
+    const cleanPath = normalizeLabel(path)
+    if (!cleanPath) {
+      return
+    }
+
     const shouldActivate = options?.activate !== false
-    const requestedReplacePath = (options?.replacePath ?? '').trim()
-    const splitReplaceTarget = splitView ? normalizeLabel(splitTargetPath || activeNotePathRef.current) : ''
-    const autoReplacePath =
-      !requestedReplacePath && shouldActivate && splitReplaceTarget ? splitReplaceTarget : ''
-    const replacePath = (requestedReplacePath || autoReplacePath).trim()
     const initialNoteType = normalizeNoteTypeValue(options?.initialNoteType)
-    const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
-    if (replacePath && replacePath !== path) {
-      const replaceTab = openTabsRef.current.find((tab) => tab.path === replacePath)
+    const fallbackTitle = suggestedTitle?.trim() || getFileName(cleanPath)
+    const targetPane = options?.targetPane ?? workspaceStateRef.current.lastFocusedPane
+    const explicitTargetPane = Boolean(options?.targetPane)
+    const replacePath = normalizeLabel(options?.replacePath ?? '')
+    const replaceIsDifferent = replacePath && toNoteId(replacePath) !== toNoteId(cleanPath)
+
+    if (replaceIsDifferent) {
+      const replaceTab = findTabByPath(replacePath)
       if (replaceTab?.kind === 'note' && replaceTab.dirty) {
         const canReplace = await confirmCloseTab(replaceTab.id)
         if (!canReplace) {
@@ -1462,12 +1424,15 @@ function App() {
         }
       }
     }
-    const existing = openTabsRef.current.find((tab) => tab.path === path)
+
+    const existingOpenRef = findOpenTabByNoteId(workspaceStateRef.current, toNoteId(cleanPath))
+    const existing =
+      (existingOpenRef ? openTabsRef.current.find((tab) => tab.id === existingOpenRef.id) ?? null : null) ?? findTabByPath(cleanPath)
     if (existing) {
       if (existing.kind === 'note' && !existing.noteType) {
         setOpenTabs((prev) =>
           prev.map((tab) =>
-            tab.path === path && tab.kind === 'note'
+            tab.id === existing.id && tab.kind === 'note'
               ? {
                   ...tab,
                   noteType: initialNoteType,
@@ -1476,25 +1441,55 @@ function App() {
           )
         )
       }
-      if (replacePath && replacePath !== path) {
-        setOpenTabs((prev) => prev.filter((tab) => tab.path !== replacePath))
+
+      if (replaceIsDifferent) {
+        const replaceTab = findTabByPath(replacePath)
+        if (replaceTab && replaceTab.id !== existing.id) {
+          setOpenTabs((prev) => prev.filter((tab) => tab.id !== replaceTab.id))
+          dispatchWorkspace({ type: 'CLOSE_TAB', tabId: replaceTab.id })
+        }
       }
+
       setEditorPanelOpen(true)
       if (shouldActivate) {
-        if (splitView && replacePath && normalizePath(replacePath) !== normalizePath(activeNotePathRef.current)) {
-          setSplitTargetPath(path)
+        if (explicitTargetPane) {
+          dispatchWorkspace({
+            type: 'OPEN_TAB',
+            paneId: targetPane,
+            tabId: existing.id,
+            activate: true,
+          })
         } else {
-          setActiveNotePath(path)
-          setSplitTargetPath(path)
+          const existingPane = findPaneByTabId(workspaceStateRef.current, existing.id)
+          if (existingPane) {
+            dispatchWorkspace({
+              type: 'ACTIVATE_TAB',
+              paneId: existingPane,
+              tabId: existing.id,
+            })
+          } else {
+            dispatchWorkspace({
+              type: 'OPEN_TAB',
+              paneId: targetPane,
+              tabId: existing.id,
+              activate: true,
+            })
+          }
         }
       }
       return
     }
 
+    let nextTabId = createTabId()
+    const replaceTab = replaceIsDifferent ? findTabByPath(replacePath) : null
+    if (replaceTab?.kind === 'note') {
+      nextTabId = replaceTab.id
+    }
+
     const loadingTab: NoteTab = {
-      id: createTabId(),
+      id: nextTabId,
       kind: 'note',
-      path,
+      path: cleanPath,
       title: fallbackTitle,
       content: '',
       loading: true,
@@ -1503,37 +1498,47 @@ function App() {
     }
 
     setOpenTabs((prev) => {
-      if (replacePath && replacePath !== path) {
-        const replaceIndex = prev.findIndex((tab) => tab.path === replacePath)
+      const withoutPathDuplicates = prev.filter((tab) => toNoteId(tab.path) !== toNoteId(cleanPath))
+      if (replaceTab) {
+        const replaceIndex = withoutPathDuplicates.findIndex((tab) => tab.id === replaceTab.id)
         if (replaceIndex >= 0) {
-          const next = [...prev]
-          next[replaceIndex] = loadingTab
-          return next.filter((tab, index) => index === replaceIndex || tab.path !== path)
+          const next = [...withoutPathDuplicates]
+          next.splice(replaceIndex, 1, loadingTab)
+          return next
         }
       }
-      return [...prev.filter((tab) => tab.path !== path), loadingTab]
+      return [...withoutPathDuplicates, loadingTab]
     })
+
     setEditorPanelOpen(true)
     if (shouldActivate) {
-      if (splitView && replacePath && normalizePath(replacePath) !== normalizePath(activeNotePathRef.current)) {
-        setSplitTargetPath(path)
-      } else {
-        setActiveNotePath(path)
-        setSplitTargetPath(path)
-      }
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: nextTabId,
+        activate: true,
+      })
+    } else if (!findPaneByTabId(workspaceStateRef.current, nextTabId)) {
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: nextTabId,
+        activate: false,
+      })
     }
 
     try {
-      const content = await fetchNoteContent(path)
+      const content = await fetchNoteContent(cleanPath)
       const parsed = parseNoteDocument(content, fallbackTitle)
       const normalizedContent = serializeNoteDocument(parsed)
       const nextTitle = parsed.frontmatter.title || fallbackTitle
       setOpenTabs((prev) =>
         prev.map((tab) =>
-          tab.path === path
+          tab.id === nextTabId
             ? {
                 ...tab,
                 title: nextTitle,
+                path: cleanPath,
                 content: normalizedContent,
                 loading: false,
                 dirty: false,
@@ -1544,7 +1549,8 @@ function App() {
         )
       )
     } catch (caught) {
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
+      setOpenTabs((prev) => prev.filter((tab) => tab.id !== nextTabId))
+      dispatchWorkspace({ type: 'CLOSE_TAB', tabId: nextTabId })
       setError(String(caught))
     }
   }
@@ -1580,33 +1586,31 @@ function App() {
   }
 
   const closeEditorTab = async (tabId: string) => {
-    const targetTab = openTabsRef.current.find((tab) => tab.id === tabId)
-    const targetPath = targetTab?.path ?? ''
     const canClose = await confirmCloseTab(tabId)
     if (!canClose) {
       return
     }
     setOpenTabs((prev) => prev.filter((tab) => tab.id !== tabId))
-    if (targetPath) {
-      const targetPathKey = normalizePath(targetPath)
-      setSplitPanePaths((prev) => prev.filter((entry) => normalizePath(entry) !== targetPathKey))
-    }
+    dispatchWorkspace({ type: 'CLOSE_TAB', tabId })
     setTabContextMenu(null)
   }
 
   const openNoteInCurrentEditor = async (path: string, suggestedTitle?: string) => {
-    const currentTab = activeTab?.kind === 'note' ? activeTab : null
-    const currentPath = currentTab?.path ?? ''
-    if (currentTab && currentPath !== path) {
-      const canCloseCurrent = await confirmCloseTab(currentTab.id)
+    const focusedPane = workspaceStateRef.current.lastFocusedPane
+    const focusedTabId = getActiveTabIdForPane(workspaceStateRef.current, focusedPane)
+    const currentTab = focusedTabId ? openTabsRef.current.find((tab) => tab.id === focusedTabId) ?? null : null
+    const currentNoteTab = currentTab?.kind === 'note' ? currentTab : null
+    const currentPath = currentNoteTab?.path ?? ''
+    if (currentNoteTab && toNoteId(currentPath) !== toNoteId(path)) {
+      const canCloseCurrent = await confirmCloseTab(currentNoteTab.id)
       if (!canCloseCurrent) {
         return
       }
     }
-    await openNoteInTab(path, suggestedTitle, currentPath && currentPath !== path ? { replacePath: currentPath } : undefined)
-    setSplitView(false)
-    setSplitPanePaths([])
-    setSplitTargetPath(path)
+    await openNoteInTab(path, suggestedTitle, {
+      targetPane: focusedPane,
+      replacePath: currentPath && toNoteId(currentPath) !== toNoteId(path) ? currentPath : '',
+    })
   }
 
   const revealActiveNoteInExplorer = () => {
@@ -1620,16 +1624,19 @@ function App() {
   }
 
   const showNoteInSplitView = (path: string) => {
-    if (openNoteTabs.length < 2) {
+    const tab = findTabByPath(path)
+    if (!tab) {
       return
     }
-    const targetPath = path === activeNotePath ? openNoteTabs.find((tab) => tab.path !== path)?.path ?? '' : path
-    if (!targetPath) {
-      return
-    }
-    setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, targetPath], activeNotePath))
-    setSplitView(true)
-    setSplitTargetPath(targetPath)
+    const sourcePane = findPaneByTabId(workspaceStateRef.current, tab.id) ?? 'left'
+    const targetPane: PaneId = sourcePane === 'left' ? 'right' : 'left'
+    dispatchWorkspace({ type: 'INITIALIZE_SPLIT_LAYOUT' })
+    dispatchWorkspace({
+      type: 'MOVE_TAB_TO_OTHER_PANE',
+      fromPaneId: sourcePane,
+      toPaneId: targetPane,
+      tabId: tab.id,
+    })
     setTabContextMenu(null)
   }
 
@@ -1917,13 +1924,6 @@ function App() {
     await renameExplorerFile(tab.path, targetTitle)
   }
 
-  const updateActiveNoteContent = (nextBody: string) => {
-    if (!activeTab || activeTab.kind !== 'note') {
-      return
-    }
-    updateNoteContentByPath(activeTab.path, nextBody)
-  }
-
   const uploadImageForNote = async (notePath: string, file: File): Promise<string | null> => {
     if (!notePath || !file) {
       return null
@@ -1978,47 +1978,6 @@ function App() {
     [saveUiSettingsPatch, vaultLoaded]
   )
 
-  const getDraggedNoteData = (event: DragEvent<HTMLElement>) => {
-    const notePath =
-      event.dataTransfer.getData('application/x-note-path') ||
-      event.dataTransfer.getData('application/x-open-tab-path') ||
-      event.dataTransfer.getData('text/plain')
-    const noteTitle =
-      event.dataTransfer.getData('application/x-note-title') ||
-      event.dataTransfer.getData('application/x-open-tab-title')
-    const originPanePath = event.dataTransfer.getData('application/x-open-tab-origin-pane')
-
-    const cleanPath = normalizeLabel(notePath)
-    if (!cleanPath) {
-      return null
-    }
-
-    return {
-      path: cleanPath,
-      title: normalizeLabel(noteTitle) || undefined,
-      originPanePath: normalizeLabel(originPanePath) || '',
-    }
-  }
-
-  const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
-
-  const sanitizeSplitPanePaths = (paths: string[], nextActivePath: string = activeNotePath): string[] => {
-    const seen = new Set<string>()
-    const next: string[] = []
-    for (const rawPath of paths) {
-      const cleanPath = normalizePath(rawPath)
-      if (!cleanPath || cleanPath === normalizePath(nextActivePath) || seen.has(cleanPath)) {
-        continue
-      }
-      seen.add(cleanPath)
-      next.push(cleanPath)
-      if (next.length >= MAX_SECONDARY_SPLIT_PANES) {
-        break
-      }
-    }
-    return next
-  }
-
   const remapOpenNotePaths = (fromPrefix: string, toPrefix: string) => {
     const cleanFrom = normalizePath(fromPrefix)
     const cleanTo = normalizePath(toPrefix)
@@ -2055,8 +2014,6 @@ function App() {
         }
       })
     )
-    setActiveNotePath((prev) => rewritePath(prev))
-    setSplitPanePaths((prev) => sanitizeSplitPanePaths(prev.map((path) => rewritePath(path))))
   }
 
   const createExplorerFolder = async (parentGroupKey: string, groupName: string) => {
@@ -2914,137 +2871,49 @@ function App() {
     }
   }
 
-  const handleViewerDrop = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault()
-    setViewerDropActive(false)
-    setSplitDropActive(false)
-    setDraggingTabPath('')
-    const payload = getDraggedNoteData(event)
-    if (!payload) {
-      return
-    }
-    void openNoteInTab(payload.path, payload.title)
+  const handleWorkspaceExternalDrop = (paneId: PaneId, payload: ExternalNoteDropPayload) => {
+    void openNoteInTab(payload.path, payload.title, {
+      targetPane: paneId,
+    })
   }
 
-  const handleDropOnPrimaryPane = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault()
-    setViewerDropActive(false)
-    setSplitDropActive(false)
-    setDraggingTabPath('')
-    const payload = getDraggedNoteData(event)
-    if (!payload) {
-      return
-    }
-
-    void (async () => {
-      await openNoteInTab(payload.path, payload.title, { activate: true })
-      setActiveNotePath(payload.path)
-      setSplitTargetPath(payload.path)
-      setSplitPanePaths((prev) => {
-        const payloadPath = normalizePath(payload.path)
-        const originPanePath = normalizePath(payload.originPanePath || '')
-        const next = prev.filter((path) => {
-          const normalized = normalizePath(path)
-          return normalized !== payloadPath && normalized !== originPanePath
-        })
-        return sanitizeSplitPanePaths(next, payload.path)
-      })
-      if (payload.originPanePath) {
-        setSplitView(false)
-      }
-    })()
+  const handleActivatePaneTab = (paneId: PaneId, tabId: string) => {
+    dispatchWorkspace({
+      type: 'ACTIVATE_TAB',
+      paneId,
+      tabId,
+    })
+    setEditorPanelOpen(true)
   }
 
-  const handleDropOnSplitPane = (event: DragEvent<HTMLElement>, currentPanePath: string) => {
-    event.preventDefault()
-    setViewerDropActive(false)
-    setSplitDropActive(false)
-    setDraggingTabPath('')
-    const payload = getDraggedNoteData(event)
-    if (!payload) {
-      return
-    }
-    const payloadPath = normalizePath(payload.path)
-    const currentPanePathKey = normalizePath(currentPanePath)
-    if (payloadPath === currentPanePathKey) {
-      return
-    }
-
-    void (async () => {
-      await openNoteInTab(payload.path, payload.title, { activate: false })
-      setSplitView(true)
-      setSplitTargetPath(currentPanePath)
-      const activePathKey = normalizePath(activeNotePathRef.current)
-      const originPanePath = normalizePath(payload.originPanePath || '')
-      const nextActivePath = payloadPath === activePathKey ? currentPanePath : activeNotePathRef.current
-      if (payloadPath === activePathKey) {
-        setActiveNotePath(currentPanePath)
-      }
-      setSplitPanePaths((prev) => {
-        const normalized = prev.map((path) => normalizePath(path))
-        const targetIndex = normalized.findIndex((path) => path === currentPanePathKey)
-        if (targetIndex < 0) {
-          return prev
-        }
-
-        const sourceIndex = normalized.findIndex((path) => path === originPanePath)
-        if (sourceIndex >= 0 && sourceIndex !== targetIndex) {
-          const moved = [...normalized]
-          moved[targetIndex] = payloadPath
-          const sourceIndexAfterReplace = moved.findIndex((path, index) => index !== targetIndex && path === originPanePath)
-          if (sourceIndexAfterReplace >= 0) {
-            moved.splice(sourceIndexAfterReplace, 1)
-          }
-          return sanitizeSplitPanePaths(moved, nextActivePath)
-        }
-
-        const replaced = normalized.map((path, index) => (index === targetIndex ? payloadPath : path))
-        return sanitizeSplitPanePaths(replaced, nextActivePath)
-      })
-    })()
+  const handleFocusPane = (paneId: PaneId, tabId?: string | null) => {
+    dispatchWorkspace({
+      type: 'SET_LAST_FOCUSED_PANE',
+      paneId,
+      tabId: tabId ?? null,
+    })
   }
 
-  const handleDropToNewSplitPane = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault()
-    setSplitDropActive(false)
-    setViewerDropActive(false)
-    setDraggingTabPath('')
-    const payload = getDraggedNoteData(event)
-    if (!payload) {
-      return
-    }
+  const handleMoveTabWithinPane = (paneId: PaneId, fromIndex: number, toIndex: number) => {
+    dispatchWorkspace({
+      type: 'MOVE_TAB_WITHIN_PANE',
+      paneId,
+      fromIndex,
+      toIndex,
+    })
+  }
 
-    void (async () => {
-      await openNoteInTab(payload.path, payload.title, { activate: false })
-      if (splitPanePaths.length >= MAX_SECONDARY_SPLIT_PANES) {
-        setMessage(`Maximal ${MAX_SPLIT_PANE_COUNT} Split-Screens moeglich.`)
-        return
-      }
-      setSplitView(true)
-      setSplitTargetPath(payload.path)
-      setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, normalizePath(payload.path)]))
-    })()
+  const handleMoveTabToOtherPane = (fromPaneId: PaneId, toPaneId: PaneId, tabId: string) => {
+    dispatchWorkspace({
+      type: 'MOVE_TAB_TO_OTHER_PANE',
+      fromPaneId,
+      toPaneId,
+      tabId,
+    })
   }
 
   const toggleSplitView = () => {
-    if (activeTab?.kind !== 'note' || openNoteTabs.length < 2) {
-      return
-    }
-
-    setSplitView((previous) => {
-      if (!previous && splitPanePaths.length === 0) {
-        const candidate = openNoteTabs.find((tab) => tab.path !== activeNotePath)
-        if (candidate) {
-          setSplitPanePaths(sanitizeSplitPanePaths([candidate.path]))
-        }
-        setSplitTargetPath(activeNotePath)
-      }
-      if (previous) {
-        setSplitPanePaths([])
-        setSplitTargetPath(activeNotePath)
-      }
-      return !previous
-    })
+    dispatchWorkspace({ type: 'TOGGLE_SPLIT_MODE' })
   }
 
   const toggleEditorPanel = () => {
@@ -3108,6 +2977,68 @@ function App() {
       window.removeEventListener('keydown', onGlobalKeyDown)
     }
   }, [activeTab, saveTab])
+
+  const renderWorkspacePaneContent = (paneId: PaneId, paneTab: NoteTab | null) => {
+    if (!paneTab) {
+      return null
+    }
+
+    if (paneTab.loading) {
+      return <p className="empty-copy">Lade Notiz ...</p>
+    }
+
+    if (paneTab.kind === 'settings') {
+      return (
+        <SettingsEditorPanel
+          displayName={displayName}
+          theme={theme}
+          sidebarOpen={sidebarOpen}
+          explorerOptions={explorerOptions}
+          statusBarPrefs={statusBarPrefs}
+          settingsDirty={settingsDirty}
+          setSidebarOpen={setSidebarOpen}
+          setExplorerOptions={setExplorerOptions}
+          setStatusBarPrefs={setStatusBarPrefs}
+          onDisplayNameChange={(nextRawValue) => setDisplayName(normalizeLabel(nextRawValue) || 'Max')}
+          onThemeChange={setThemeMode}
+          onSave={() => {
+            void saveSettings()
+          }}
+          onDiscard={discardSettings}
+        />
+      )
+    }
+
+    const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
+    return (
+      <div className="note-editor-shell">
+        <div className={`note-flow-content ${workspaceState.layoutMode === 'split' ? 'split-note-flow-content' : ''}`}>
+          {renderNoteProperties(paneTab.path, document, workspaceState.layoutMode === 'split')}
+          <CodeMirrorMarkdownEditor
+            key={`editor-${paneId}-${paneTab.id}`}
+            className={`note-body-editor ${workspaceState.layoutMode === 'split' ? 'split-note-body-editor' : ''}`}
+            embeddedInScroll
+            value={document.body}
+            theme={theme}
+            notePath={paneTab.path}
+            backendUrl={backendUrl}
+            tagGroups={mergedTagGroups}
+            searchHighlightQuery={explorerFilterQuery}
+            onChange={(nextContent) => {
+              dispatchWorkspace({
+                type: 'SET_LAST_FOCUSED_PANE',
+                paneId,
+                tabId: paneTab.id,
+              })
+              updateNoteContentByPath(paneTab.path, nextContent)
+            }}
+            onInsertImageAsset={(file) => uploadImageForNote(paneTab.path, file)}
+            editorApiRef={paneId === 'left' ? leftEditorRef : rightEditorRef}
+          />
+        </div>
+      </div>
+    )
+  }
 
   const showCaptureInline = capturePanelOpen && capturePinned
 
@@ -3270,204 +3201,41 @@ function App() {
           }
         >
           {editorPanelOpen ? (
-            <article className="workspace-panel editor-workspace-panel">
-              <div className="editor-tabs">
-                <div className="editor-tab-list">
-                  {showPaneTabs ? null : openTabs.map((tab) => renderEditorTab(tab))}
-                </div>
-
-                <div className="editor-tab-actions">
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => (activeTab ? void saveTab(activeTab.path) : undefined)}
-                    disabled={!activeTab || !activeTab.dirty}
-                    title="Speichern"
-                  >
-                    <LucideNamedIcon name="Save" size={14} />
-                  </button>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={revealActiveNoteInExplorer}
-                    disabled={activeTab?.kind !== 'note'}
-                    title="Im Explorer anzeigen"
-                  >
-                    <LucideNamedIcon name="FolderSearch" size={14} />
-                  </button>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={toggleSplitView}
-                    disabled={activeTab?.kind !== 'note' || openNoteTabs.length < 2}
-                    title={splitView ? 'Split aus' : 'Split an'}
-                  >
-                    <LucideNamedIcon name="Columns2" size={14} />
-                  </button>
-                  <button className="icon-button compact muted" onClick={toggleEditorPanel} title="Editor schliessen">
-                    <LucideNamedIcon name="X" size={14} />
-                  </button>
-                </div>
-              </div>
-
-              <div
-                className={`editor-grid ${splitView && splitPaneTabs.length > 0 ? 'split' : ''} ${
-                  viewerDropActive ? 'drop-active' : ''
-                }`}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  setViewerDropActive(true)
-                }}
-                onDragLeave={() => setViewerDropActive(false)}
-                onDrop={handleViewerDrop}
-                style={
-                  splitView && activeTab?.kind === 'note' && splitPaneTabs.length > 0
-                    ? { gridTemplateColumns: `repeat(${1 + splitPaneTabs.length}, minmax(0, 1fr))` }
-                    : undefined
+            <EditorWorkspaceLayout
+              workspace={workspaceState}
+              paneTabs={paneTabs}
+              paneActiveTabs={paneActiveTabs}
+              activePaneId={activePaneId}
+              disableSave={!activeTab || !activeTab.dirty}
+              disableReveal={activeTab?.kind !== 'note'}
+              onSaveActive={() => {
+                if (activeTab) {
+                  void saveTab(activeTab.path)
                 }
-              >
-                <article
-                  className="editor-pane"
-                  onPointerDown={() => {
-                    if (activeTab?.kind === 'note') {
-                      setSplitTargetPath(activeTab.path)
-                    }
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault()
-                    setViewerDropActive(true)
-                  }}
-                  onDrop={(event) => {
-                    event.stopPropagation()
-                    handleDropOnPrimaryPane(event)
-                  }}
-                >
-                  {showPaneTabs && activeTab ? <div className="editor-pane-tabs">{renderEditorTab(activeTab, { pane: true })}</div> : null}
-                  {activeTab?.kind === 'note' && !activeTab.loading ? (
-                    <div className="note-editor-shell">
-                      {activeNoteDocument ? (
-                        <div className="note-flow-content">
-                          {renderNoteProperties(activeTab.path, activeNoteDocument)}
-                          <CodeMirrorMarkdownEditor
-                            key={`editor-${activeTab.id}`}
-                            className="note-body-editor"
-                            embeddedInScroll
-                            value={activeNoteDocument.body}
-                            theme={theme}
-                            notePath={activeTab.path}
-                            backendUrl={backendUrl}
-                            tagGroups={mergedTagGroups}
-                            searchHighlightQuery={explorerFilterQuery}
-                            onChange={updateActiveNoteContent}
-                            onInsertImageAsset={(file) => uploadImageForNote(activeTab.path, file)}
-                            editorApiRef={activeEditorRef}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {activeTab ? (
-                    activeTab.loading ? (
-                      <p className="empty-copy">Lade Notiz ...</p>
-                    ) : activeTab.kind === 'settings' ? (
-                      <SettingsEditorPanel
-                        displayName={displayName}
-                        theme={theme}
-                        sidebarOpen={sidebarOpen}
-                        explorerOptions={explorerOptions}
-                        statusBarPrefs={statusBarPrefs}
-                        settingsDirty={settingsDirty}
-                        setSidebarOpen={setSidebarOpen}
-                        setExplorerOptions={setExplorerOptions}
-                        setStatusBarPrefs={setStatusBarPrefs}
-                        onDisplayNameChange={(nextRawValue) => setDisplayName(normalizeLabel(nextRawValue) || 'Max')}
-                        onThemeChange={setThemeMode}
-                        onSave={() => {
-                          void saveSettings()
-                        }}
-                        onDiscard={discardSettings}
-                      />
-                    ) : null
-                  ) : (
-                    <div className="main-empty-state">
-                      <p className="main-empty-glyph">
-                        <LucideNamedIcon name="FileText" size={20} />
-                      </p>
-                      <p className="empty-copy">Noch keine Notiz geoeffnet.</p>
-                    </div>
-                  )}
-                </article>
-
-                {splitView && activeTab?.kind === 'note'
-                  ? splitPaneTabs.map((paneTab) => {
-                      const paneDocument =
-                        paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
-                      return (
-                        <article
-                          key={`split-pane-${paneTab.id}`}
-                          className="editor-pane split-editor-pane"
-                          onPointerDown={() => {
-                            setSplitTargetPath(paneTab.path)
-                          }}
-                          onDragOver={(event) => {
-                            event.preventDefault()
-                            setViewerDropActive(true)
-                          }}
-                          onDrop={(event) => {
-                            event.stopPropagation()
-                            handleDropOnSplitPane(event, paneTab.path)
-                          }}
-                        >
-                          {showPaneTabs ? <div className="editor-pane-tabs">{renderEditorTab(paneTab, { pane: true })}</div> : null}
-                          {paneTab.loading ? (
-                            <p className="empty-copy">Lade Notiz ...</p>
-                          ) : (
-                            <div className="note-editor-shell split-note-editor-shell">
-                              <div className="note-flow-content split-note-flow-content">
-                                {renderNoteProperties(paneTab.path, paneDocument, true)}
-                                <CodeMirrorMarkdownEditor
-                                  key={`editor-split-${paneTab.id}`}
-                                  className="note-body-editor split-note-body-editor"
-                                  embeddedInScroll
-                                  value={paneDocument.body}
-                                  theme={theme}
-                                  notePath={paneTab.path}
-                                  backendUrl={backendUrl}
-                                  tagGroups={mergedTagGroups}
-                                  searchHighlightQuery={explorerFilterQuery}
-                                  onChange={(nextContent) => updateNoteContentByPath(paneTab.path, nextContent)}
-                                  onInsertImageAsset={(file) => uploadImageForNote(paneTab.path, file)}
-                                  editorApiRef={secondaryEditorRef}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </article>
-                      )
-                    })
-                  : null}
-
-                {draggingTabPath && splitPanePaths.length < MAX_SECONDARY_SPLIT_PANES ? (
-                  <aside
-                    className={`editor-split-dropzone ${splitDropActive ? 'active' : ''}`}
-                    onDragOver={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      setSplitDropActive(true)
-                    }}
-                    onDragLeave={() => {
-                      setSplitDropActive(false)
-                    }}
-                    onDrop={(event) => {
-                      event.stopPropagation()
-                      handleDropToNewSplitPane(event)
-                    }}
-                    title="Als neues Split-Fenster oeffnen"
-                  >
-                    <LucideNamedIcon name="Plus" size={18} />
-                  </aside>
-                ) : null}
-              </div>
-
-            </article>
+              }}
+              onRevealActive={revealActiveNoteInExplorer}
+              onToggleSplitMode={toggleSplitView}
+              onCloseEditorPanel={toggleEditorPanel}
+              onSetSplitRatio={(nextRatio) => {
+                dispatchWorkspace({
+                  type: 'SET_SPLIT_RATIO',
+                  splitRatio: nextRatio,
+                })
+              }}
+              onActivateTab={handleActivatePaneTab}
+              onCloseTab={(tabId) => {
+                void closeEditorTab(tabId)
+              }}
+              onFocusPane={handleFocusPane}
+              onMoveTabWithinPane={handleMoveTabWithinPane}
+              onMoveTabToPane={handleMoveTabToOtherPane}
+              onDropExternalNote={handleWorkspaceExternalDrop}
+              onTabContextMenu={(tabId, x, y) => {
+                setTabContextMenu({ x, y, tabId })
+              }}
+              renderPaneContent={renderWorkspacePaneContent}
+              resolveTabIconName={resolveNoteTabIconName}
+            />
           ) : null}
 
           {showCaptureInline ? (
@@ -3534,9 +3302,8 @@ function App() {
             onClick={() => {
               showNoteInSplitView(tabContextTarget.path)
             }}
-            disabled={openNoteTabs.length < 2}
           >
-            In separater Registerkarte anzeigen
+            In anderen Bereich verschieben
           </button>
           <button
             className="muted"
