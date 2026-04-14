@@ -166,6 +166,7 @@ function App() {
   const openTabsRef = useRef<NoteTab[]>([])
   const [activeNotePath, setActiveNotePath] = useState('')
   const activeNotePathRef = useRef('')
+  const [splitTargetPath, setSplitTargetPath] = useState('')
   const tabIdCounterRef = useRef(0)
   const [splitView, setSplitView] = useState(false)
   const [splitPanePaths, setSplitPanePaths] = useState<string[]>([])
@@ -691,6 +692,7 @@ function App() {
   useEffect(() => {
     if (openTabs.length === 0) {
       setActiveNotePath('')
+      setSplitTargetPath('')
       setSplitPanePaths([])
       setSplitView(false)
       return
@@ -722,6 +724,20 @@ function App() {
       setSplitPanePaths([])
     }
   }, [activeNotePath, openTabs, splitView])
+
+  useEffect(() => {
+    if (!splitView) {
+      if (splitTargetPath !== activeNotePath) {
+        setSplitTargetPath(activeNotePath)
+      }
+      return
+    }
+
+    const validTargets = new Set<string>([activeNotePath, ...splitPanePaths].map((path) => normalizePath(path)))
+    if (!validTargets.has(normalizePath(splitTargetPath || ''))) {
+      setSplitTargetPath(activeNotePath)
+    }
+  }, [activeNotePath, splitPanePaths, splitTargetPath, splitView])
 
   useEffect(() => {
     setOpenTabs((prev) =>
@@ -946,6 +962,18 @@ function App() {
     return activeTab.parsedDocument ?? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
   }, [activeTab])
 
+  useEffect(() => {
+    if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
+      return
+    }
+    const candidate = openNoteTabs.find((tab) => normalizePath(tab.path) !== normalizePath(activeTab.path))
+    if (!candidate) {
+      return
+    }
+    setSplitPanePaths([candidate.path])
+    setSplitTargetPath(activeTab.path)
+  }, [activeTab, openNoteTabs, splitPanePaths.length, splitView])
+
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
   const tabContextTarget = tabContextMenu ? openTabs.find((tab) => tab.id === tabContextMenu.tabId) ?? null : null
@@ -1004,7 +1032,12 @@ function App() {
         <button
           className="tab-open"
           onClick={() => {
-            setActiveNotePath(tab.path)
+            if (pane && splitView) {
+              setSplitTargetPath(tab.path)
+            } else {
+              setActiveNotePath(tab.path)
+              setSplitTargetPath(tab.path)
+            }
             setEditorPanelOpen(true)
           }}
           title={displayTitle}
@@ -1414,8 +1447,9 @@ function App() {
   ) => {
     const shouldActivate = options?.activate !== false
     const requestedReplacePath = (options?.replacePath ?? '').trim()
+    const splitReplaceTarget = splitView ? normalizeLabel(splitTargetPath || activeNotePathRef.current) : ''
     const autoReplacePath =
-      !requestedReplacePath && shouldActivate && splitView && activeTab?.kind === 'note' ? activeTab.path : ''
+      !requestedReplacePath && shouldActivate && splitReplaceTarget ? splitReplaceTarget : ''
     const replacePath = (requestedReplacePath || autoReplacePath).trim()
     const initialNoteType = normalizeNoteTypeValue(options?.initialNoteType)
     const fallbackTitle = suggestedTitle?.trim() || getFileName(path)
@@ -1447,7 +1481,12 @@ function App() {
       }
       setEditorPanelOpen(true)
       if (shouldActivate) {
-        setActiveNotePath(path)
+        if (splitView && replacePath && normalizePath(replacePath) !== normalizePath(activeNotePathRef.current)) {
+          setSplitTargetPath(path)
+        } else {
+          setActiveNotePath(path)
+          setSplitTargetPath(path)
+        }
       }
       return
     }
@@ -1476,7 +1515,12 @@ function App() {
     })
     setEditorPanelOpen(true)
     if (shouldActivate) {
-      setActiveNotePath(path)
+      if (splitView && replacePath && normalizePath(replacePath) !== normalizePath(activeNotePathRef.current)) {
+        setSplitTargetPath(path)
+      } else {
+        setActiveNotePath(path)
+        setSplitTargetPath(path)
+      }
     }
 
     try {
@@ -1562,6 +1606,7 @@ function App() {
     await openNoteInTab(path, suggestedTitle, currentPath && currentPath !== path ? { replacePath: currentPath } : undefined)
     setSplitView(false)
     setSplitPanePaths([])
+    setSplitTargetPath(path)
   }
 
   const revealActiveNoteInExplorer = () => {
@@ -1582,13 +1627,9 @@ function App() {
     if (!targetPath) {
       return
     }
-    setSplitPanePaths((prev) => {
-      if (prev.includes(targetPath) || targetPath === activeNotePath) {
-        return prev
-      }
-      return [...prev, targetPath]
-    })
+    setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, targetPath], activeNotePath))
     setSplitView(true)
+    setSplitTargetPath(targetPath)
     setTabContextMenu(null)
   }
 
@@ -2877,6 +2918,7 @@ function App() {
     event.preventDefault()
     setViewerDropActive(false)
     setSplitDropActive(false)
+    setDraggingTabPath('')
     const payload = getDraggedNoteData(event)
     if (!payload) {
       return
@@ -2887,6 +2929,8 @@ function App() {
   const handleDropOnPrimaryPane = (event: DragEvent<HTMLElement>) => {
     event.preventDefault()
     setViewerDropActive(false)
+    setSplitDropActive(false)
+    setDraggingTabPath('')
     const payload = getDraggedNoteData(event)
     if (!payload) {
       return
@@ -2895,6 +2939,7 @@ function App() {
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: true })
       setActiveNotePath(payload.path)
+      setSplitTargetPath(payload.path)
       setSplitPanePaths((prev) => {
         const payloadPath = normalizePath(payload.path)
         const originPanePath = normalizePath(payload.originPanePath || '')
@@ -2904,12 +2949,17 @@ function App() {
         })
         return sanitizeSplitPanePaths(next, payload.path)
       })
+      if (payload.originPanePath) {
+        setSplitView(false)
+      }
     })()
   }
 
   const handleDropOnSplitPane = (event: DragEvent<HTMLElement>, currentPanePath: string) => {
     event.preventDefault()
     setViewerDropActive(false)
+    setSplitDropActive(false)
+    setDraggingTabPath('')
     const payload = getDraggedNoteData(event)
     if (!payload) {
       return
@@ -2923,6 +2973,7 @@ function App() {
     void (async () => {
       await openNoteInTab(payload.path, payload.title, { activate: false })
       setSplitView(true)
+      setSplitTargetPath(currentPanePath)
       const activePathKey = normalizePath(activeNotePathRef.current)
       const originPanePath = normalizePath(payload.originPanePath || '')
       const nextActivePath = payloadPath === activePathKey ? currentPanePath : activeNotePathRef.current
@@ -2957,6 +3008,7 @@ function App() {
     event.preventDefault()
     setSplitDropActive(false)
     setViewerDropActive(false)
+    setDraggingTabPath('')
     const payload = getDraggedNoteData(event)
     if (!payload) {
       return
@@ -2969,6 +3021,7 @@ function App() {
         return
       }
       setSplitView(true)
+      setSplitTargetPath(payload.path)
       setSplitPanePaths((prev) => sanitizeSplitPanePaths([...prev, normalizePath(payload.path)]))
     })()
   }
@@ -2984,9 +3037,11 @@ function App() {
         if (candidate) {
           setSplitPanePaths(sanitizeSplitPanePaths([candidate.path]))
         }
+        setSplitTargetPath(activeNotePath)
       }
       if (previous) {
         setSplitPanePaths([])
+        setSplitTargetPath(activeNotePath)
       }
       return !previous
     })
@@ -3271,8 +3326,8 @@ function App() {
                 <article
                   className="editor-pane"
                   onPointerDown={() => {
-                    if (activeTab?.kind === 'note' && activeNotePath !== activeTab.path) {
-                      setActiveNotePath(activeTab.path)
+                    if (activeTab?.kind === 'note') {
+                      setSplitTargetPath(activeTab.path)
                     }
                   }}
                   onDragOver={(event) => {
@@ -3350,9 +3405,7 @@ function App() {
                           key={`split-pane-${paneTab.id}`}
                           className="editor-pane split-editor-pane"
                           onPointerDown={() => {
-                            if (activeNotePath !== paneTab.path) {
-                              setActiveNotePath(paneTab.path)
-                            }
+                            setSplitTargetPath(paneTab.path)
                           }}
                           onDragOver={(event) => {
                             event.preventDefault()
