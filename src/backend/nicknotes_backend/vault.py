@@ -556,6 +556,53 @@ class VaultManager:
         indexer.reindex_vault(self.vault_path)
         return destination
 
+    def move_note_files(self, note_paths: list[str], target_group_key: str, indexer: VaultIndexer) -> list[dict[str, str]]:
+        if not note_paths:
+            return []
+
+        target_group = self._resolve_group_path(target_group_key)
+        if self._is_tag_path(target_group):
+            raise ValueError("Notizen koennen nicht in den Tag-Bereich verschoben werden.")
+        if self._is_system_path(target_group):
+            raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
+
+        clean_target_key = target_group_key.replace("\\", "/").strip().strip("/")
+        target_dir = target_group / "notes" if self._is_daily_group_key(clean_target_key) else target_group
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        resolved_sources: list[Path] = []
+        seen_sources: set[str] = set()
+        for raw_path in note_paths:
+            file_path = self._resolve_note_file(raw_path)
+            source_key = str(file_path.resolve()).lower()
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            resolved_sources.append(file_path)
+
+        moved_entries: list[dict[str, str]] = []
+        changed = False
+        for file_path in resolved_sources:
+            destination = target_dir / file_path.name
+            if destination != file_path:
+                suffix = 2
+                while destination.exists() and destination != file_path:
+                    destination = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
+                    suffix += 1
+                file_path.rename(destination)
+                changed = True
+
+            moved_entries.append(
+                {
+                    "fromPath": str(file_path),
+                    "movedPath": str(destination),
+                }
+            )
+
+        if changed:
+            indexer.reindex_vault(self.vault_path)
+        return moved_entries
+
     def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
         file_path = self._resolve_note_file(note_path)
         file_path.unlink(missing_ok=False)

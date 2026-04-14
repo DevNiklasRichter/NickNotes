@@ -178,6 +178,11 @@ class NoteFileMoveRequest(BaseModel):
     target_group_key: str = Field(alias="targetGroupKey")
 
 
+class NoteFileMoveBatchRequest(BaseModel):
+    paths: list[str] = Field(default_factory=list)
+    target_group_key: str = Field(alias="targetGroupKey")
+
+
 class FavoriteFolderRequest(BaseModel):
     group_key: str = Field(alias="groupKey")
 
@@ -855,6 +860,17 @@ def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"movedPath": str(moved_path), "counts": _counts(indexer)}
+
+
+@app.post("/notes/move-batch")
+def move_notes_batch(req: NoteFileMoveBatchRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        moved_paths = vault.move_note_files(req.paths, req.target_group_key, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"movedPaths": moved_paths, "counts": _counts(indexer)}
 
 
 @app.post("/notes/migrate-templates")

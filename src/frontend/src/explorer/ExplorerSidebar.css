@@ -10,6 +10,12 @@
   border-left: 1px solid rgba(255, 255, 255, 0.02);
   overflow: visible;
 }
+.explorer-shell:focus,
+.explorer-shell:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 
 .explorer-toolbar {
   display: grid;

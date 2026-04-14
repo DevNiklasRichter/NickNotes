@@ -77,6 +77,7 @@ type WorkbenchSidebarContentProps = {
   onDeleteExplorerFile: (path: string) => Promise<void>
   onDeleteExplorerFolder: (groupKey: string) => Promise<void>
   onMoveExplorerFile: (path: string, targetGroupKey: string) => Promise<void>
+  onMoveExplorerFiles: (paths: string[], targetGroupKey: string) => Promise<void>
   onMoveExplorerFolder: (groupKey: string, targetParentKey: string) => Promise<void>
   onToggleFavoriteFolder: (groupKey: string) => Promise<void>
   explorerOptions: ExplorerOptions
@@ -138,6 +139,7 @@ export function WorkbenchSidebarContent({
   onDeleteExplorerFile,
   onDeleteExplorerFolder,
   onMoveExplorerFile,
+  onMoveExplorerFiles,
   onMoveExplorerFolder,
   onToggleFavoriteFolder,
   explorerOptions,
@@ -301,6 +303,7 @@ export function WorkbenchSidebarContent({
       onDeleteFile={onDeleteExplorerFile}
       onDeleteFolder={onDeleteExplorerFolder}
       onMoveFile={onMoveExplorerFile}
+      onMoveFiles={onMoveExplorerFiles}
       onMoveFolder={onMoveExplorerFolder}
       onToggleFavoriteFolder={onToggleFavoriteFolder}
       options={explorerOptions}
@@ -316,4 +319,3 @@ export function WorkbenchSidebarContent({
     />
   )
 }
-

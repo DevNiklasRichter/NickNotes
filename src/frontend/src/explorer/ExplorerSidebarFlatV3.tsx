@@ -31,6 +31,7 @@ type ExplorerSidebarProps = {
   onDeleteFile: (path: string) => Promise<void>
   onDeleteFolder: (groupKey: string) => Promise<void>
   onMoveFile: (path: string, targetGroupKey: string) => Promise<void>
+  onMoveFiles: (paths: string[], targetGroupKey: string) => Promise<void>
   onMoveFolder: (groupKey: string, targetParentKey: string) => Promise<void>
   onToggleFavoriteFolder: (groupKey: string) => Promise<void>
   options: ExplorerOptions
@@ -345,6 +346,7 @@ export function ExplorerSidebar({
   onDeleteFile,
   onDeleteFolder,
   onMoveFile,
+  onMoveFiles,
   onMoveFolder,
   onToggleFavoriteFolder,
   options,
@@ -1073,6 +1075,7 @@ export function ExplorerSidebar({
 
       if (orderedDraggedFileNodeIds.length > 0) {
         const targetKey = resolveFileDropTargetKey(node, position)
+        const pathsToMove: string[] = []
         for (const fileNodeId of orderedDraggedFileNodeIds) {
           const sourceNode = tree.nodeById.get(fileNodeId)
           if (!sourceNode || sourceNode.type !== 'file') {
@@ -1084,7 +1087,10 @@ export function ExplorerSidebar({
           if (sourceKey === targetKey) {
             continue
           }
-          await onMoveFile(sourceNode.path, targetKey)
+          pathsToMove.push(sourceNode.path)
+        }
+        if (pathsToMove.length > 0) {
+          await onMoveFiles(pathsToMove, targetKey)
         }
       } else if (draggingNodeId) {
         const source = tree.nodeById.get(draggingNodeId)
@@ -1098,7 +1104,7 @@ export function ExplorerSidebar({
       setDraggingFileNodeIds(() => new Set())
       setDropIndicator(null)
     },
-    [doDrop, draggingNodeId, onMoveFile, orderedDraggedFileNodeIds, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
+    [doDrop, draggingNodeId, onMoveFiles, orderedDraggedFileNodeIds, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
   )
 
   const openContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>, node: ExplorerNode) => {

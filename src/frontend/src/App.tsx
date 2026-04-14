@@ -2282,20 +2282,101 @@ function App() {
     }
   }
 
-  const moveExplorerFile = async (path: string, targetGroupKey: string) => {
+  const moveExplorerFiles = async (paths: string[], targetGroupKey: string) => {
+    const uniquePaths = Array.from(new Set(paths.map((item) => String(item ?? '').trim()).filter(Boolean)))
+    if (uniquePaths.length === 0) {
+      return
+    }
+
+    const applyMoveResult = (
+      movedEntries: { fromPath: string; movedPath: string }[],
+      counts: VaultCounts,
+      fallbackUsed = false
+    ) => {
+      setCounts(counts)
+
+      const moveMap = new Map<string, string>()
+      const changedTargets: string[] = []
+      for (const entry of movedEntries) {
+        const fromPath = normalizePath(String(entry?.fromPath ?? ''))
+        const movedPath = normalizePath(String(entry?.movedPath ?? ''))
+        if (!fromPath || !movedPath) {
+          continue
+        }
+        moveMap.set(fromPath.toLowerCase(), movedPath)
+        if (fromPath.toLowerCase() !== movedPath.toLowerCase()) {
+          changedTargets.push(movedPath)
+        }
+      }
+
+      if (moveMap.size > 0) {
+        setOpenTabs((prev) =>
+          prev.map((tab) => {
+            if (tab.kind !== 'note') {
+              return tab
+            }
+            const key = normalizePath(tab.path).toLowerCase()
+            const nextPath = moveMap.get(key)
+            if (!nextPath || nextPath === tab.path) {
+              return tab
+            }
+            return {
+              ...tab,
+              path: nextPath,
+              title: toNoteDisplayName(nextPath),
+            }
+          })
+        )
+      }
+
+      if (changedTargets.length === 1) {
+        setMessage(`Datei verschoben: ${toNoteDisplayName(changedTargets[0])}`)
+      } else if (changedTargets.length > 1) {
+        setMessage(`Dateien verschoben: ${changedTargets.length}${fallbackUsed ? ' (Fallback)' : ''}`)
+      } else {
+        setMessage('Keine Dateien verschoben.')
+      }
+    }
+
     try {
       setError('')
-      const response = await apiRequest<{ movedPath: string; counts: VaultCounts }>(backendUrl, '/notes/move', {
+      const response = await apiRequest<
+        { movedPaths: { fromPath: string; movedPath: string }[]; counts: VaultCounts }
+      >(backendUrl, '/notes/move-batch', {
         method: 'POST',
-        body: JSON.stringify({ path, targetGroupKey }),
+        body: JSON.stringify({ paths: uniquePaths, targetGroupKey }),
       })
-      setCounts(response.counts)
-      remapOpenNotePaths(path, response.movedPath)
-      setMessage(`Datei verschoben: ${toNoteDisplayName(response.movedPath)}`)
+      applyMoveResult(Array.isArray(response.movedPaths) ? response.movedPaths : [], response.counts)
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
+    } catch {
+      try {
+        const movedEntries: { fromPath: string; movedPath: string }[] = []
+        let latestCounts: VaultCounts | null = null
+
+        for (const path of uniquePaths) {
+          const response = await apiRequest<{ movedPath: string; counts: VaultCounts }>(backendUrl, '/notes/move', {
+            method: 'POST',
+            body: JSON.stringify({ path, targetGroupKey }),
+          })
+          latestCounts = response.counts
+          movedEntries.push({
+            fromPath: path,
+            movedPath: response.movedPath,
+          })
+        }
+
+        if (latestCounts) {
+          applyMoveResult(movedEntries, latestCounts, true)
+        }
+        await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      } catch (caughtFallback) {
+        setError(String(caughtFallback))
+      }
     }
+  }
+
+  const moveExplorerFile = async (path: string, targetGroupKey: string) => {
+    await moveExplorerFiles([path], targetGroupKey)
   }
 
   const deleteExplorerFile = async (path: string) => {
@@ -3177,10 +3258,11 @@ function App() {
             onCreateExplorerFolder={createExplorerFolder}
             onRenameExplorerFile={renameExplorerFile}
             onRenameExplorerFolder={renameExplorerFolder}
-            onDeleteExplorerFile={deleteExplorerFile}
-            onDeleteExplorerFolder={deleteExplorerFolder}
-            onMoveExplorerFile={moveExplorerFile}
-            onMoveExplorerFolder={moveExplorerFolder}
+        onDeleteExplorerFile={deleteExplorerFile}
+        onDeleteExplorerFolder={deleteExplorerFolder}
+        onMoveExplorerFile={moveExplorerFile}
+        onMoveExplorerFiles={moveExplorerFiles}
+        onMoveExplorerFolder={moveExplorerFolder}
             onToggleFavoriteFolder={toggleFavoriteFolder}
             explorerOptions={explorerOptions}
             explorerContentMatchPathKeys={explorerContentMatchPathKeys}
