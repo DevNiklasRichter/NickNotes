@@ -122,7 +122,7 @@ export function EditorWorkspaceLayout({
   getTabTooltip,
 }: EditorWorkspaceLayoutProps) {
   const OVERFLOW_BUTTON_WIDTH_PX = 30
-  const FALLBACK_TAB_WIDTH_PX = 148
+  const FALLBACK_TAB_WIDTH_PX = 140
   const TAB_GAP_PX = 4
   const splitRootRef = useRef<HTMLDivElement | null>(null)
   const paneTabListRefs = useRef<Record<PaneId, HTMLDivElement | null>>({
@@ -219,7 +219,10 @@ export function EditorWorkspaceLayout({
       return []
     }
 
-    const widths = tabs.map((tab) => paneTabItemRefs.current[paneId][tab.id]?.offsetWidth ?? FALLBACK_TAB_WIDTH_PX)
+    const measuredFallback =
+      tabs.map((tab) => paneTabItemRefs.current[paneId][tab.id]?.offsetWidth ?? 0).find((width) => width > 0) ??
+      FALLBACK_TAB_WIDTH_PX
+    const widths = tabs.map((tab) => paneTabItemRefs.current[paneId][tab.id]?.offsetWidth ?? measuredFallback)
     const tabBarStyle = window.getComputedStyle(tabBar)
     const horizontalPadding =
       (Number.parseFloat(tabBarStyle.paddingLeft || '0') || 0) + (Number.parseFloat(tabBarStyle.paddingRight || '0') || 0)
@@ -277,7 +280,9 @@ export function EditorWorkspaceLayout({
       })
     }
 
-    recalc()
+    const frameId = window.requestAnimationFrame(() => {
+      recalc()
+    })
 
     const observer = new ResizeObserver(() => {
       recalc()
@@ -293,10 +298,11 @@ export function EditorWorkspaceLayout({
 
     window.addEventListener('resize', recalc)
     return () => {
+      window.cancelAnimationFrame(frameId)
       observer.disconnect()
       window.removeEventListener('resize', recalc)
     }
-  }, [paneTabs])
+  }, [paneTabs, workspace.layoutMode, workspace.splitRatio])
 
   useEffect(() => {
     if (!overflowMenuPaneId) {
