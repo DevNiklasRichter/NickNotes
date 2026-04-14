@@ -330,6 +330,7 @@ export function ExplorerSidebar({
   const [actionDialog, setActionDialog] = useState<ExplorerActionDialogState | null>(null)
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const actionDialogRef = useRef<ExplorerActionDialogState | null>(null)
+  const onViewStateChangeRef = useRef(onViewStateChange)
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const lastAutoRevealPathRef = useRef('')
   const lastHandledRevealRequestRef = useRef<number | null>(null)
@@ -361,6 +362,10 @@ export function ExplorerSidebar({
   useEffect(() => {
     actionDialogRef.current = actionDialog
   }, [actionDialog])
+
+  useEffect(() => {
+    onViewStateChangeRef.current = onViewStateChange
+  }, [onViewStateChange])
 
   useEffect(() => {
     if (!sortMenuOpen) {
@@ -399,17 +404,18 @@ export function ExplorerSidebar({
   }, [viewStateSeed, viewStateSeedId])
 
   useEffect(() => {
-    if (!onViewStateChange) {
+    const notify = onViewStateChangeRef.current
+    if (!notify) {
       return
     }
-    onViewStateChange({
+    notify({
       expandedNodes,
       selectedNodeId,
       filterQuery,
       folderOrder,
       iconOverrides,
     })
-  }, [expandedNodes, filterQuery, folderOrder, iconOverrides, onViewStateChange, selectedNodeId])
+  }, [expandedNodes, filterQuery, folderOrder, iconOverrides, selectedNodeId])
 
   useEffect(() => {
     onFilterQueryChange?.(filterQuery)

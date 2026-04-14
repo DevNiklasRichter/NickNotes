@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
@@ -10,628 +10,93 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from './editor/noteDocument'
-import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
-import { TagSidebar } from './explorer/TagSidebarV2'
 import { LucideNamedIcon } from './icons/lucideCatalog'
 import { ActivityRail } from './layout/ActivityRail'
 import { StatusBar } from './layout/StatusBar'
+import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent'
 import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
 import type { ExplorerOptions, ExplorerViewState } from './explorer/types'
 import {
   normalizeTagColor,
-  normalizeTagGroups,
   normalizeTagId,
   type TagGroupDefinition,
 } from './tags/tagTypes'
+import {
+  TagActionDialogModal,
+  type TagActionDialogAction,
+  type TagActionDialogResult,
+  type TagActionDialogState,
+  type TagFormValues,
+  type TagGroupFormValues,
+} from './tags/TagActionDialogModal'
 import './App.css'
-
-type VaultCounts = {
-  notes: number
-  openTasks: number
-  doneTasks: number
-}
-
-type Suggestion = {
-  key: string
-  category: string
-  slug: string
-  displayName: string
-  confidence: number
-  source: string
-  autoApply: boolean
-}
-
-type ParsedTask = {
-  title: string
-  dueDate: string | null
-  priority: string
-  status: string
-  projectTag: string | null
-  tags: string[]
-}
-
-type TaskRow = {
-  id: string
-  title: string
-  status: string
-  priority: string
-  due_date: string | null
-  project_tag: string | null
-  updated_at: string
-  path: string | null
-}
-
-type SearchRow = {
-  id: string
-  title: string
-  note_type: string
-  updated_at: string
-  path: string
-}
-
-type MediaUploadResponse = {
-  mediaPath: string
-  markdownPath: string
-  fileName: string
-}
-
-type ReviewDaily = {
-  date: string
-  new_notes: number
-  open_tasks: number
-  done_today: number
-}
-
-type ReviewWeekly = {
-  from: string
-  to: string
-  notes_total: number
-  tasks_open: number
-  tasks_done: number
-}
-
-type BackendState = {
-  vaultLoaded: boolean
-  vaultPath?: string
-  noteBasePath?: string
-  counts?: VaultCounts
-}
-
-type ThemeMode = 'light' | 'dark'
-type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
-type NoteTabKind = 'note' | 'settings'
-
-type NoteTab = {
-  kind: NoteTabKind
-  path: string
-  title: string
-  content: string
-  loading: boolean
-  dirty: boolean
-  noteType?: 'note' | 'task'
-  parsedDocument?: ParsedNoteDocument
-}
-
-type EditorTabContextMenuState = {
-  x: number
-  y: number
-  path: string
-} | null
-
-type TagActionDialogTone = 'default' | 'primary' | 'danger'
-type TagActionDialogAction = {
-  id: string
-  label: string
-  tone?: TagActionDialogTone
-}
-type TagGroupFormValues = {
-  id: string
-  displayName: string
-  color: string
-}
-type TagFormValues = {
-  id: string
-  displayName: string
-}
-type TagActionDialogResult = {
-  actionId: string
-  value: string
-  groupValues?: TagGroupFormValues
-  tagValues?: TagFormValues
-}
-type TagActionDialogState = {
-  kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form'
-  title: string
-  message?: string
-  placeholder?: string
-  value: string
-  groupValues?: TagGroupFormValues
-  tagValues?: TagFormValues
-  actions: TagActionDialogAction[]
-  resolve: (result: TagActionDialogResult) => void
-} | null
-
-const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
-const SETTINGS_TAB_PATH = '__nicknotes_settings__'
-
-type StatusBarPrefs = {
-  showNoteBaseName: boolean
-  showOpenTasks: boolean
-  showDueToday: boolean
-  showTotalNotes: boolean
-  showStateMessage: boolean
-}
-
-const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefs = {
-  showNoteBaseName: true,
-  showOpenTasks: true,
-  showDueToday: false,
-  showTotalNotes: false,
-  showStateMessage: true,
-}
-
-const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
-  showHiddenFiles: false,
-  showFileExtensions: true,
-  sortMode: 'manual',
-  sortDirection: 'asc',
-  foldersFirst: true,
-  showIcons: true,
-  compactMode: true,
-}
-
-const DEFAULT_EXPLORER_VIEW_STATE: ExplorerViewState = {
-  expandedNodes: {},
-  selectedNodeId: null,
-  filterQuery: '',
-  folderOrder: {},
-  iconOverrides: { folders: {}, files: {} },
-}
-
-const TAG_COLOR_PRESETS = [
-  '#4f8cff',
-  '#2fba7a',
-  '#ff8a4f',
-  '#d26cf5',
-  '#ff5a6f',
-  '#6c7dff',
-  '#f0a202',
-  '#2ec4b6',
-  '#94a3b8',
-  '#f43f5e',
-]
-
-const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: 'new_topic', label: 'New Topic' },
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'on_hold', label: 'On Hold' },
-  { value: 'done', label: 'Done' },
-]
-const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
-const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  new_topic: 'New Topic',
-  open: 'Open',
-  in_progress: 'In Progress',
-  on_hold: 'On Hold',
-  done: 'Done',
-}
-const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-}
-
-type UiSettingsPayload = {
-  updated_at?: string
-  app?: Record<string, unknown>
-  explorer?: Record<string, unknown>
-}
-type NoteGroup = {
-  key: string
-  label: string
-  path: string
-  favorite: boolean
-  canCreateNotes: boolean
-  canCreateGroups?: boolean
-  canDelete?: boolean
-}
-
-function normalizeWikiLookup(value: string): string {
-  return value.trim().replace(/\\/g, '/').replace(/\.md$/i, '').replace(/\s+/g, ' ').toLowerCase()
-}
-
-function getPreferredTheme(): ThemeMode {
-  if (typeof window === 'undefined') {
-    return 'light'
-  }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-async function apiRequest<T>(baseUrl: string, endpoint: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers ?? {})
-  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData
-  if (!isFormData && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json')
-  }
-
-  const response = await fetch(`${baseUrl}${endpoint}`, {
-    ...init,
-    headers,
-  })
-
-  if (!response.ok) {
-    const payload = await response.text()
-    throw new Error(payload || `HTTP ${response.status}`)
-  }
-
-  return (await response.json()) as T
-}
-
-function toGermanTimestamp(value: string): string {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-
-  return parsed.toLocaleString('de-DE', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function getFileName(path: string): string {
-  const normalized = path.replace(/\\/g, '/')
-  const parts = normalized.split('/')
-  return parts[parts.length - 1] || path
-}
-
-function getPathTail(path: string): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
-  const parts = normalized.split('/')
-  return parts[parts.length - 1] || path
-}
-
-function toNoteDisplayName(path: string): string {
-  return getFileName(path).replace(/\.md$/i, '')
-}
-
-function normalizeFilePathKey(path: string): string {
-  return path.replace(/\\/g, '/').trim().toLowerCase()
-}
-
-function normalizeNoteTypeValue(raw: unknown): 'note' | 'task' {
-  return String(raw ?? '')
-    .trim()
-    .toLowerCase() === 'task'
-    ? 'task'
-    : 'note'
-}
-
-function normalizeLabel(value: string): string {
-  return value.trim().replace(/\s+/g, ' ')
-}
-
-function normalizeTagCandidate(raw: string): string {
-  const cleanRaw = normalizeLabel(raw).replace(/^\{tag:/i, '').replace(/\}$/g, '').replace(/^#+/, '')
-  if (!cleanRaw) {
-    return ''
-  }
-  const delimiter = cleanRaw.includes(':') ? ':' : cleanRaw.includes('/') ? '/' : ''
-  if (delimiter) {
-    const [groupRaw, tagRaw] = cleanRaw.split(delimiter, 2)
-    const group = normalizeTagId(groupRaw)
-    const tag = normalizeTagId(tagRaw)
-    if (!group || !tag) {
-      return ''
-    }
-    return `${group}:${tag}`
-  }
-  const topic = normalizeTagId(cleanRaw)
-  return topic ? `topic:${topic}` : ''
-}
-
-function normalizeRelatedCandidate(raw: string): string {
-  let clean = normalizeLabel(raw)
-  if (!clean) {
-    return ''
-  }
-  if (clean.startsWith('[[') && clean.endsWith(']]')) {
-    clean = clean.slice(2, -2).trim()
-  }
-  if (clean.includes('|')) {
-    clean = clean.split('|', 1)[0]?.trim() || ''
-  }
-  if (clean.includes('#')) {
-    clean = clean.split('#', 1)[0]?.trim() || ''
-  }
-  clean = clean.replace(/\\/g, '/').replace(/\.md$/i, '')
-  return clean
-}
-
-function deriveImageAltText(fileName: string): string {
-  const base = fileName.replace(/\.[^.]+$/, '')
-  const label = normalizeLabel(base.replace(/[_-]+/g, ' '))
-  return label || 'Image'
-}
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('Bild konnte nicht gelesen werden.'))
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : ''
-      const marker = 'base64,'
-      const markerIndex = result.indexOf(marker)
-      if (markerIndex < 0) {
-        reject(new Error('Ungueltiges Bildformat.'))
-        return
-      }
-      resolve(result.slice(markerIndex + marker.length))
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
-function normalizeTaskStatusValue(raw: string): TaskStatus {
-  const clean = raw.trim().toLowerCase().replace(/[- ]+/g, '_') as TaskStatus
-  return TASK_STATUS_OPTIONS.some((entry) => entry.value === clean) ? clean : 'open'
-}
-
-function taskStatusLabel(raw: string): string {
-  return TASK_STATUS_LABELS[normalizeTaskStatusValue(raw)]
-}
-
-function taskStatusClassName(raw: string): string {
-  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
-  return `status-badge status-${normalized}`
-}
-
-function taskStatusDotClassName(raw: string): string {
-  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
-  return `status-dot status-${normalized}`
-}
-
-function taskStatusOptionLabel(value: TaskStatus): string {
-  return TASK_STATUS_LABELS[value]
-}
-
-function normalizeTaskPriorityValue(raw: string): TaskPriority {
-  const clean = raw.trim().toLowerCase()
-  if (clean === 'h') {
-    return 'high'
-  }
-  if (clean === 'l') {
-    return 'low'
-  }
-  if (clean === 'm') {
-    return 'medium'
-  }
-  return TASK_PRIORITY_OPTIONS.some((entry) => entry.value === (clean as TaskPriority)) ? (clean as TaskPriority) : 'medium'
-}
-
-function taskPriorityLabel(raw: string): string {
-  return TASK_PRIORITY_LABELS[normalizeTaskPriorityValue(raw)]
-}
-
-function taskPriorityDotClassName(raw: string): string {
-  return `priority-dot priority-${normalizeTaskPriorityValue(raw)}`
-}
-
-function taskPriorityOptionLabel(value: TaskPriority): string {
-  return TASK_PRIORITY_LABELS[value]
-}
-
-function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
-  const clean = groupKey.replace(/\\/g, '/').trim().replace(/^\/+|\/+$/g, '')
-  if (!clean || clean.includes('/')) {
-    return false
-  }
-  const token = clean.toLowerCase().replace(/^\d+_/, '')
-  return token === 'daily' || token === 'tags' || token === 'tasks'
-}
-
-function toStorageTagGroups(value: unknown): TagGroupDefinition[] {
-  return normalizeTagGroups(value)
-}
-
-function getStoredLastNoteBasePath(): string {
-  if (typeof window === 'undefined') {
-    return ''
-  }
-
-  try {
-    return normalizeLabel(window.localStorage.getItem(LAST_NOTEBASE_STORAGE_KEY) || '')
-  } catch {
-    return ''
-  }
-}
-
-function storeLastNoteBasePath(path: string): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-  const cleanPath = normalizeLabel(path)
-  if (!cleanPath) {
-    return
-  }
-  try {
-    window.localStorage.setItem(LAST_NOTEBASE_STORAGE_KEY, cleanPath)
-  } catch {
-    // Best effort.
-  }
-}
-
-function clearStoredLastNoteBasePath(): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-  try {
-    window.localStorage.removeItem(LAST_NOTEBASE_STORAGE_KEY)
-  } catch {
-    // Best effort.
-  }
-}
-
-function areStatusBarPrefsEqual(left: StatusBarPrefs, right: StatusBarPrefs): boolean {
-  return (
-    left.showNoteBaseName === right.showNoteBaseName &&
-    left.showOpenTasks === right.showOpenTasks &&
-    left.showDueToday === right.showDueToday &&
-    left.showTotalNotes === right.showTotalNotes &&
-    left.showStateMessage === right.showStateMessage
-  )
-}
-
-function areExplorerOptionsEqual(left: ExplorerOptions, right: ExplorerOptions): boolean {
-  return (
-    left.showHiddenFiles === right.showHiddenFiles &&
-    left.showFileExtensions === right.showFileExtensions &&
-    left.sortMode === right.sortMode &&
-    left.sortDirection === right.sortDirection &&
-    left.foldersFirst === right.foldersFirst &&
-    left.showIcons === right.showIcons &&
-    left.compactMode === right.compactMode
-  )
-}
-
-function toBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback
-}
-
-function toBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return fallback
-  }
-  return Math.max(min, Math.min(max, Math.round(value)))
-}
-
-function toThemeMode(value: unknown, fallback: ThemeMode): ThemeMode {
-  return value === 'light' || value === 'dark' ? value : fallback
-}
-
-function toStatusBarPrefsFromSettings(value: unknown): StatusBarPrefs {
-  if (!value || typeof value !== 'object') {
-    return { ...DEFAULT_STATUS_BAR_PREFS }
-  }
-  const source = value as Partial<StatusBarPrefs>
-  return {
-    showNoteBaseName: source.showNoteBaseName ?? DEFAULT_STATUS_BAR_PREFS.showNoteBaseName,
-    showOpenTasks: source.showOpenTasks ?? DEFAULT_STATUS_BAR_PREFS.showOpenTasks,
-    showDueToday: source.showDueToday ?? DEFAULT_STATUS_BAR_PREFS.showDueToday,
-    showTotalNotes: source.showTotalNotes ?? DEFAULT_STATUS_BAR_PREFS.showTotalNotes,
-    showStateMessage: source.showStateMessage ?? DEFAULT_STATUS_BAR_PREFS.showStateMessage,
-  }
-}
-
-function toExplorerOptionsFromSettings(value: unknown): ExplorerOptions {
-  if (!value || typeof value !== 'object') {
-    return { ...DEFAULT_EXPLORER_OPTIONS }
-  }
-  const source = value as Partial<ExplorerOptions>
-  return {
-    showHiddenFiles: source.showHiddenFiles ?? DEFAULT_EXPLORER_OPTIONS.showHiddenFiles,
-    showFileExtensions: source.showFileExtensions ?? DEFAULT_EXPLORER_OPTIONS.showFileExtensions,
-    sortMode:
-      source.sortMode === 'manual' ||
-      source.sortMode === 'modified' ||
-      source.sortMode === 'noteCount' ||
-      source.sortMode === 'name'
-        ? source.sortMode
-        : DEFAULT_EXPLORER_OPTIONS.sortMode,
-    sortDirection: source.sortDirection === 'desc' || source.sortDirection === 'asc' ? source.sortDirection : DEFAULT_EXPLORER_OPTIONS.sortDirection,
-    foldersFirst: source.foldersFirst ?? DEFAULT_EXPLORER_OPTIONS.foldersFirst,
-    showIcons: source.showIcons ?? DEFAULT_EXPLORER_OPTIONS.showIcons,
-    compactMode: source.compactMode ?? DEFAULT_EXPLORER_OPTIONS.compactMode,
-  }
-}
-
-function toExpandedTagGroups(value: unknown): Record<string, boolean> {
-  const fallback = {
-    daily: true,
-    tags: true,
-    other: true,
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return fallback
-  }
-  const source = value as Record<string, unknown>
-  const next: Record<string, boolean> = {}
-  for (const [key, raw] of Object.entries(source)) {
-    if (!key) {
-      continue
-    }
-    next[key] = Boolean(raw)
-  }
-  return { ...fallback, ...next }
-}
-
-function toExplorerViewStateFromSettings(value: unknown): ExplorerViewState {
-  const fallback: ExplorerViewState = { ...DEFAULT_EXPLORER_VIEW_STATE }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return fallback
-  }
-  const source = value as Record<string, unknown>
-  const expandedNodes =
-    source.expandedNodes && typeof source.expandedNodes === 'object' && !Array.isArray(source.expandedNodes)
-      ? (source.expandedNodes as Record<string, boolean>)
-      : {}
-  const folderOrder =
-    source.folderOrder && typeof source.folderOrder === 'object' && !Array.isArray(source.folderOrder)
-      ? (source.folderOrder as Record<string, string[]>)
-      : {}
-  const iconOverridesRaw =
-    source.iconOverrides && typeof source.iconOverrides === 'object' && !Array.isArray(source.iconOverrides)
-      ? (source.iconOverrides as Record<string, unknown>)
-      : {}
-
-  const iconFolders =
-    iconOverridesRaw.folders && typeof iconOverridesRaw.folders === 'object' && !Array.isArray(iconOverridesRaw.folders)
-      ? (iconOverridesRaw.folders as Record<string, string>)
-      : {}
-  const iconFiles =
-    iconOverridesRaw.files && typeof iconOverridesRaw.files === 'object' && !Array.isArray(iconOverridesRaw.files)
-      ? (iconOverridesRaw.files as Record<string, string>)
-      : {}
-
-  return {
-    expandedNodes,
-    selectedNodeId: typeof source.selectedNodeId === 'string' ? source.selectedNodeId : null,
-    filterQuery: typeof source.filterQuery === 'string' ? source.filterQuery : '',
-    folderOrder,
-    iconOverrides: {
-      folders: iconFolders,
-      files: iconFiles,
-    },
-  }
-}
-
-function toLocalIsoDate(): string {
-  const now = new Date()
-  const offsetMinutes = now.getTimezoneOffset()
-  const local = new Date(now.getTime() - offsetMinutes * 60 * 1000)
-  return local.toISOString().slice(0, 10)
-}
-
-function getRelativeVaultPath(path: string, noteBasePath: string): string {
-  const normalizedPath = path.replace(/\\/g, '/')
-  const normalizedBase = noteBasePath.replace(/\\/g, '/').replace(/\/+$/, '')
-  if (!normalizedBase) {
-    return normalizedPath
-  }
-
-  if (normalizedPath.toLowerCase().startsWith(`${normalizedBase.toLowerCase()}/`)) {
-    return normalizedPath.slice(normalizedBase.length + 1)
-  }
-  return normalizedPath
-}
+import {
+  SETTINGS_TAB_PATH,
+  DEFAULT_STATUS_BAR_PREFS,
+  DEFAULT_EXPLORER_OPTIONS,
+  DEFAULT_EXPLORER_VIEW_STATE,
+  TAG_COLOR_PRESETS,
+  TASK_STATUS_OPTIONS,
+  TASK_PRIORITY_OPTIONS,
+  normalizeWikiLookup,
+  getPreferredTheme,
+  apiRequest,
+  toGermanTimestamp,
+  getFileName,
+  getPathTail,
+  toNoteDisplayName,
+  normalizeFilePathKey,
+  normalizeNoteTypeValue,
+  normalizeLabel,
+  normalizeTagCandidate,
+  normalizeRelatedCandidate,
+  deriveImageAltText,
+  readFileAsBase64,
+  normalizeTaskStatusValue,
+  taskStatusLabel,
+  taskStatusClassName,
+  taskStatusDotClassName,
+  taskStatusOptionLabel,
+  normalizeTaskPriorityValue,
+  taskPriorityLabel,
+  taskPriorityDotClassName,
+  taskPriorityOptionLabel,
+  isPermanentPinnedRootGroupKey,
+  toStorageTagGroups,
+  getStoredLastNoteBasePath,
+  storeLastNoteBasePath,
+  clearStoredLastNoteBasePath,
+  areStatusBarPrefsEqual,
+  areExplorerOptionsEqual,
+  toBoolean,
+  toBoundedNumber,
+  toThemeMode,
+  toStatusBarPrefsFromSettings,
+  toExplorerOptionsFromSettings,
+  toExpandedTagGroups,
+  toExplorerViewStateFromSettings,
+  areExplorerViewStatesEqual,
+  toLocalIsoDate,
+  getRelativeVaultPath,
+} from './app/AppShared'
+import type {
+  VaultCounts,
+  Suggestion,
+  ParsedTask,
+  TaskRow,
+  SearchRow,
+  MediaUploadResponse,
+  ReviewDaily,
+  ReviewWeekly,
+  BackendState,
+  ThemeMode,
+  SidebarView,
+  NoteTab,
+  EditorTabContextMenuState,
+  StatusBarPrefs,
+  UiSettingsPayload,
+  NoteGroup,
+} from './app/AppShared'
 
 function App() {
   const autoOpenTriedRef = useRef(false)
@@ -685,6 +150,7 @@ function App() {
     other: true,
   })
   const [explorerViewState, setExplorerViewState] = useState<ExplorerViewState>({ ...DEFAULT_EXPLORER_VIEW_STATE })
+  const explorerViewStateRef = useRef<ExplorerViewState>({ ...DEFAULT_EXPLORER_VIEW_STATE })
   const [explorerViewSeed, setExplorerViewSeed] = useState<ExplorerViewState | null>(null)
   const [explorerViewSeedId, setExplorerViewSeedId] = useState(0)
   const [explorerRevealPath, setExplorerRevealPath] = useState('')
@@ -700,8 +166,8 @@ function App() {
   const [draggingTabPath, setDraggingTabPath] = useState('')
   const [splitDropActive, setSplitDropActive] = useState(false)
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
-  const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState>(null)
-  const tagActionDialogRef = useRef<TagActionDialogState>(null)
+  const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null)
+  const tagActionDialogRef = useRef<TagActionDialogState | null>(null)
   const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({})
   const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
   const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
@@ -711,6 +177,10 @@ function App() {
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    explorerViewStateRef.current = explorerViewState
+  }, [explorerViewState])
 
   useEffect(() => {
     if (!captureResizing) {
@@ -996,12 +466,15 @@ function App() {
     ])
   }
 
-  const saveUiSettingsPatch = async (patch: { app?: Record<string, unknown>; explorer?: ExplorerViewState }) => {
-    await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings', {
-      method: 'POST',
-      body: JSON.stringify(patch),
-    })
-  }
+  const saveUiSettingsPatch = useCallback(
+    async (patch: { app?: Record<string, unknown>; explorer?: ExplorerViewState }) => {
+      await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings', {
+        method: 'POST',
+        body: JSON.stringify(patch),
+      })
+    },
+    [backendUrl]
+  )
 
   const buildFullAppUiSettings = (): Record<string, unknown> => ({
     theme,
@@ -2037,8 +1510,9 @@ function App() {
     tabPath: string,
     updater: (document: ParsedNoteDocument) => ParsedNoteDocument
   ) => {
-    setOpenTabs((prev) =>
-      prev.map((tab) => {
+    setOpenTabs((prev) => {
+      let changed = false
+      const next = prev.map((tab) => {
         if (tab.path !== tabPath || tab.kind !== 'note') {
           return tab
         }
@@ -2047,6 +1521,7 @@ function App() {
         if (nextDocument === parsed) {
           return tab
         }
+        changed = true
         return {
           ...tab,
           title: nextDocument.frontmatter.title || tab.title,
@@ -2055,7 +1530,8 @@ function App() {
           parsedDocument: nextDocument,
         }
       })
-    )
+      return changed ? next : prev
+    })
   }
 
   const updateNoteContentByPath = (tabPath: string, nextBody: string) => {
@@ -2342,20 +1818,28 @@ function App() {
     setExpandedFolders((prev) => ({ ...prev, [folderKey]: true }))
   }
 
-  const handleExplorerViewStateChange = (nextState: ExplorerViewState) => {
-    setExplorerViewState(nextState)
-    if (!vaultLoaded || !uiSettingsReadyRef.current) {
-      return
-    }
-    if (explorerViewSaveTimerRef.current) {
-      window.clearTimeout(explorerViewSaveTimerRef.current)
-    }
-    explorerViewSaveTimerRef.current = window.setTimeout(() => {
-      void saveUiSettingsPatch({ explorer: nextState }).catch(() => {
-        // Best effort.
-      })
-    }, 250)
-  }
+  const handleExplorerViewStateChange = useCallback(
+    (nextState: ExplorerViewState) => {
+      if (areExplorerViewStatesEqual(explorerViewStateRef.current, nextState)) {
+        return
+      }
+
+      explorerViewStateRef.current = nextState
+      setExplorerViewState(nextState)
+      if (!vaultLoaded || !uiSettingsReadyRef.current) {
+        return
+      }
+      if (explorerViewSaveTimerRef.current) {
+        window.clearTimeout(explorerViewSaveTimerRef.current)
+      }
+      explorerViewSaveTimerRef.current = window.setTimeout(() => {
+        void saveUiSettingsPatch({ explorer: nextState }).catch(() => {
+          // Best effort.
+        })
+      }, 250)
+    },
+    [saveUiSettingsPatch, vaultLoaded]
+  )
 
   const getDraggedNoteData = (event: DragEvent<HTMLElement>) => {
     const notePath =
@@ -3412,189 +2896,6 @@ function App() {
     }
   }, [activeTab, saveTab])
 
-  const renderSidebarContent = () => {
-    if (sidebarView === 'vault') {
-      return (
-        <div className="sidebar-content">
-          <h3>Board</h3>
-          <p className="muted-label">Aktive NoteBase</p>
-          <div className="active-notebase-row">
-            <strong>{noteBaseName || 'Keine NoteBase'}</strong>
-            <div className="hover-menu-anchor">
-              <button className="icon-button compact muted" title="NoteBase-Menue">
-                <LucideNamedIcon name="MoreHorizontal" size={14} />
-              </button>
-              <div className="hover-menu">
-                <button onClick={() => void renameNoteBase()}>NoteBase umbenennen</button>
-                <button className="danger" onClick={() => void deleteNoteBase()}>
-                  NoteBase loeschen
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="stacked-actions">
-            <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
-            <button onClick={() => void createVault()}>NoteBase anlegen</button>
-            <button onClick={() => void migrateExistingNotesToTemplate()} disabled={!vaultLoaded}>
-              Templates migrieren
-            </button>
-          </div>
-        </div>
-      )
-    }
-
-    if (sidebarView === 'tasks') {
-      return (
-        <div className="sidebar-content">
-          <div className="sidebar-header-row">
-            <h3>Tasks</h3>
-            <button onClick={() => void refreshTasks()} disabled={!vaultLoaded}>
-              Aktualisieren
-            </button>
-          </div>
-
-          <div className="task-list">
-            {tasks.length === 0 ? <p className="empty-copy">Keine offenen Tasks.</p> : null}
-            {tasks.map((task) => (
-              <article key={task.id} className="task-item">
-                <header>
-                  <strong>{task.title}</strong>
-                  <div className="task-meta-badges">
-                    <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
-                    <span className="task-priority-badge">
-                      <span className={taskPriorityDotClassName(task.priority)} aria-hidden="true" />
-                      {taskPriorityLabel(task.priority)}
-                    </span>
-                  </div>
-                </header>
-                <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
-                <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
-                <button onClick={() => void markTaskDone(task.id)} disabled={task.status === 'done'}>
-                  Done
-                </button>
-              </article>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (sidebarView === 'review') {
-      return (
-        <div className="sidebar-content">
-          <div className="sidebar-header-row">
-            <h3>Review</h3>
-            <button onClick={() => void refreshReview()} disabled={!vaultLoaded}>
-              Aktualisieren
-            </button>
-          </div>
-
-          <section className="review-card">
-            <h4>Daily</h4>
-            {daily ? (
-              <>
-                <p>Datum: {daily.date}</p>
-                <p>Neue Notizen: {daily.new_notes}</p>
-                <p>Offene Tasks: {daily.open_tasks}</p>
-                <p>Heute erledigt: {daily.done_today}</p>
-              </>
-            ) : (
-              <p className="empty-copy">Keine Daily-Daten.</p>
-            )}
-          </section>
-
-          <section className="review-card">
-            <h4>Weekly</h4>
-            {weekly ? (
-              <>
-                <p>
-                  Zeitraum: {weekly.from} bis {weekly.to}
-                </p>
-                <p>Notizen gesamt: {weekly.notes_total}</p>
-                <p>Tasks offen: {weekly.tasks_open}</p>
-                <p>Tasks erledigt: {weekly.tasks_done}</p>
-              </>
-            ) : (
-              <p className="empty-copy">Keine Weekly-Daten.</p>
-            )}
-          </section>
-        </div>
-      )
-    }
-
-    if (sidebarView === 'tags') {
-      return (
-        <TagSidebar
-          vaultLoaded={vaultLoaded}
-          width={explorerWidth}
-          onWidthChange={setExplorerWidth}
-          groups={mergedTagGroups}
-          expandedGroups={expandedFolders}
-          onToggleGroup={toggleFolder}
-          onCreateGroup={() => {
-            void createTagGroup()
-          }}
-          onCreateTag={(groupName) => {
-            void createTagInExistingGroup(groupName)
-          }}
-          onRenameGroup={(groupName) => {
-            void renameTagGroup(groupName)
-          }}
-          onSetGroupColor={(groupName) => {
-            void setTagGroupColor(groupName)
-          }}
-          onDeleteGroup={(groupName) => {
-            void deleteTagGroup(groupName)
-          }}
-          onRenameTag={(groupName, tagName) => {
-            void renameTag(groupName, tagName)
-          }}
-          onDeleteTag={(groupName, tagName) => {
-            void deleteTag(groupName, tagName)
-          }}
-        />
-      )
-    }
-
-    return (
-      <ExplorerSidebar
-        vaultLoaded={vaultLoaded}
-        vaultPath={vaultPath}
-        groups={noteGroups}
-        files={explorerRows}
-        activeFilePath={activeTab?.kind === 'note' ? activeTab.path : ''}
-        dirtyFilePaths={dirtyFilePaths}
-        width={explorerWidth}
-        onWidthChange={setExplorerWidth}
-        onOpenFile={openNoteInTab}
-        onPreviewFile={openNoteInCurrentEditor}
-        onCreateFile={createExplorerFile}
-        onCreateTask={createExplorerTask}
-        onCreateFolder={createExplorerFolder}
-        onRenameFile={renameExplorerFile}
-        onRenameFolder={renameExplorerFolder}
-        onDeleteFile={deleteExplorerFile}
-        onDeleteFolder={deleteExplorerFolder}
-        onMoveFile={moveExplorerFile}
-        onMoveFolder={moveExplorerFolder}
-        onToggleFavoriteFolder={toggleFavoriteFolder}
-        options={explorerOptions}
-        contentMatchFilePathKeys={explorerContentMatchPathKeys}
-        onFilterQueryChange={setExplorerFilterQuery}
-        onOptionsChange={setExplorerOptions}
-        revealFilePath={explorerRevealPath}
-        revealRequestId={explorerRevealRequestId}
-        viewStateSeed={explorerViewSeed}
-        viewStateSeedId={explorerViewSeedId}
-        onViewStateChange={handleExplorerViewStateChange}
-        onRefresh={() => {
-          void refreshExplorerSidebarData()
-        }}
-      />
-    )
-  }
-
   const showCaptureInline = capturePanelOpen && capturePinned
 
   if (!vaultLoaded) {
@@ -3648,7 +2949,98 @@ function App() {
 
       {sidebarOpen ? (
         <aside className="left-sidebar" style={{ width: `${explorerWidth}px` }}>
-          {renderSidebarContent()}
+          <WorkbenchSidebarContent
+            sidebarView={sidebarView}
+            noteBaseName={noteBaseName}
+            vaultLoaded={vaultLoaded}
+            explorerWidth={explorerWidth}
+            onExplorerWidthChange={setExplorerWidth}
+            onRenameNoteBase={() => {
+              void renameNoteBase()
+            }}
+            onDeleteNoteBase={() => {
+              void deleteNoteBase()
+            }}
+            onPickAndOpenVault={() => {
+              void pickAndOpenVault()
+            }}
+            onCreateVault={() => {
+              void createVault()
+            }}
+            onMigrateExistingNotesToTemplate={() => {
+              void migrateExistingNotesToTemplate()
+            }}
+            tasks={tasks}
+            onRefreshTasks={() => {
+              void refreshTasks()
+            }}
+            onMarkTaskDone={(id) => {
+              void markTaskDone(id)
+            }}
+            taskStatusClassName={taskStatusClassName}
+            taskStatusLabel={taskStatusLabel}
+            taskPriorityDotClassName={taskPriorityDotClassName}
+            taskPriorityLabel={taskPriorityLabel}
+            toGermanTimestamp={toGermanTimestamp}
+            daily={daily}
+            weekly={weekly}
+            onRefreshReview={() => {
+              void refreshReview()
+            }}
+            mergedTagGroups={mergedTagGroups}
+            expandedFolders={expandedFolders}
+            onToggleFolder={toggleFolder}
+            onCreateTagGroup={() => {
+              void createTagGroup()
+            }}
+            onCreateTagInExistingGroup={(groupName) => {
+              void createTagInExistingGroup(groupName)
+            }}
+            onRenameTagGroup={(groupName) => {
+              void renameTagGroup(groupName)
+            }}
+            onSetTagGroupColor={(groupName) => {
+              void setTagGroupColor(groupName)
+            }}
+            onDeleteTagGroup={(groupName) => {
+              void deleteTagGroup(groupName)
+            }}
+            onRenameTag={(groupName, tagName) => {
+              void renameTag(groupName, tagName)
+            }}
+            onDeleteTag={(groupName, tagName) => {
+              void deleteTag(groupName, tagName)
+            }}
+            noteGroups={noteGroups}
+            explorerRows={explorerRows}
+            activeNotePath={activeTab?.kind === 'note' ? activeTab.path : ''}
+            dirtyFilePaths={dirtyFilePaths}
+            vaultPath={vaultPath}
+            onOpenNoteInTab={openNoteInTab}
+            onOpenNoteInCurrentEditor={openNoteInCurrentEditor}
+            onCreateExplorerFile={createExplorerFile}
+            onCreateExplorerTask={createExplorerTask}
+            onCreateExplorerFolder={createExplorerFolder}
+            onRenameExplorerFile={renameExplorerFile}
+            onRenameExplorerFolder={renameExplorerFolder}
+            onDeleteExplorerFile={deleteExplorerFile}
+            onDeleteExplorerFolder={deleteExplorerFolder}
+            onMoveExplorerFile={moveExplorerFile}
+            onMoveExplorerFolder={moveExplorerFolder}
+            onToggleFavoriteFolder={toggleFavoriteFolder}
+            explorerOptions={explorerOptions}
+            explorerContentMatchPathKeys={explorerContentMatchPathKeys}
+            onExplorerFilterQueryChange={setExplorerFilterQuery}
+            onExplorerOptionsChange={setExplorerOptions}
+            explorerRevealPath={explorerRevealPath}
+            explorerRevealRequestId={explorerRevealRequestId}
+            explorerViewSeed={explorerViewSeed}
+            explorerViewSeedId={explorerViewSeedId}
+            onExplorerViewStateChange={handleExplorerViewStateChange}
+            onRefreshExplorerSidebarData={() => {
+              void refreshExplorerSidebarData()
+            }}
+          />
         </aside>
       ) : null}
 
@@ -3994,301 +3386,12 @@ function App() {
         dueTodayCount={dueTodayCount}
       />
 
-      {tagActionDialog ? (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            closeTagActionDialog('cancel')
-          }}
-        >
-          <aside
-            className="tag-action-modal"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                closeTagActionDialog('cancel')
-                return
-              }
-              if (event.key === 'Enter') {
-                const target = event.target
-                if (target instanceof HTMLTextAreaElement) {
-                  return
-                }
-                event.preventDefault()
-                closeTagActionDialog('confirm')
-              }
-            }}
-          >
-            <header className="sidebar-header-row">
-              <h3>{tagActionDialog.title}</h3>
-            </header>
-
-            {tagActionDialog.message ? <p className="muted-copy">{tagActionDialog.message}</p> : null}
-
-            {tagActionDialog.kind === 'input' ? (
-              <input
-                value={tagActionDialog.value}
-                placeholder={tagActionDialog.placeholder}
-                autoFocus
-                onChange={(event) => {
-                  const nextValue = event.target.value
-                  setTagActionDialog((current) => (current ? { ...current, value: nextValue } : current))
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    closeTagActionDialog('confirm')
-                  }
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    closeTagActionDialog('cancel')
-                  }
-                }}
-              />
-            ) : null}
-
-            {tagActionDialog.kind === 'group-form' ? (
-              <div className="tag-form-grid">
-                <label className="tag-form-label" htmlFor="tag-group-id">
-                  Gruppen-ID
-                </label>
-                <input
-                  id="tag-group-id"
-                  autoFocus
-                  value={tagActionDialog.groupValues?.id ?? ''}
-                  placeholder="z. B. projekt"
-                  onChange={(event) => {
-                    const nextValue = event.target.value
-                    setTagActionDialog((current) =>
-                      current && current.kind === 'group-form'
-                        ? {
-                            ...current,
-                            groupValues: {
-                              id: nextValue,
-                              displayName: current.groupValues?.displayName ?? '',
-                              color: current.groupValues?.color ?? TAG_COLOR_PRESETS[0],
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                />
-
-                <label className="tag-form-label" htmlFor="tag-group-display-name">
-                  Anzeigename
-                </label>
-                <input
-                  id="tag-group-display-name"
-                  value={tagActionDialog.groupValues?.displayName ?? ''}
-                  placeholder="z. B. Projekte"
-                  onChange={(event) => {
-                    const nextValue = event.target.value
-                    setTagActionDialog((current) =>
-                      current && current.kind === 'group-form'
-                        ? {
-                            ...current,
-                            groupValues: {
-                              id: current.groupValues?.id ?? '',
-                              displayName: nextValue,
-                              color: current.groupValues?.color ?? TAG_COLOR_PRESETS[0],
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                />
-
-                <label className="tag-form-label">Farbe</label>
-                <div className="tag-color-picker-stack">
-                  <div className="tag-color-presets">
-                    {TAG_COLOR_PRESETS.map((preset) => {
-                      const isActive = normalizeTagColor(tagActionDialog.groupValues?.color ?? '') === normalizeTagColor(preset)
-                      return (
-                        <button
-                          key={`tag-color-${preset}`}
-                          type="button"
-                          className={`tag-color-swatch ${isActive ? 'active' : ''}`}
-                          style={{ backgroundColor: preset }}
-                          onClick={() => {
-                            setTagActionDialog((current) =>
-                              current && current.kind === 'group-form'
-                                ? {
-                                    ...current,
-                                    groupValues: {
-                                      id: current.groupValues?.id ?? '',
-                                      displayName: current.groupValues?.displayName ?? '',
-                                      color: preset,
-                                    },
-                                  }
-                                : current
-                            )
-                          }}
-                          title={preset}
-                          aria-label={`Farbe ${preset}`}
-                        />
-                      )
-                    })}
-                  </div>
-                  <div className="tag-color-custom-row">
-                    <input
-                      type="color"
-                      value={normalizeTagColor(tagActionDialog.groupValues?.color ?? TAG_COLOR_PRESETS[0])}
-                      onChange={(event) => {
-                        const nextColor = normalizeTagColor(event.target.value)
-                        setTagActionDialog((current) =>
-                          current && current.kind === 'group-form'
-                            ? {
-                                ...current,
-                                groupValues: {
-                                  id: current.groupValues?.id ?? '',
-                                  displayName: current.groupValues?.displayName ?? '',
-                                  color: nextColor,
-                                },
-                              }
-                            : current
-                        )
-                      }}
-                      aria-label="Benutzerdefinierte Farbe"
-                    />
-                    <span className="muted-copy">Eigene Farbe waehlen</span>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {tagActionDialog.kind === 'tag-form' ? (
-              <div className="tag-form-grid">
-                <label className="tag-form-label" htmlFor="tag-id">
-                  Tag-ID
-                </label>
-                <input
-                  id="tag-id"
-                  autoFocus
-                  value={tagActionDialog.tagValues?.id ?? ''}
-                  placeholder="z. B. projekt-a"
-                  onChange={(event) => {
-                    const nextValue = event.target.value
-                    setTagActionDialog((current) =>
-                      current && current.kind === 'tag-form'
-                        ? {
-                            ...current,
-                            tagValues: {
-                              id: nextValue,
-                              displayName: current.tagValues?.displayName ?? '',
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                />
-
-                <label className="tag-form-label" htmlFor="tag-display-name">
-                  Anzeigename
-                </label>
-                <input
-                  id="tag-display-name"
-                  value={tagActionDialog.tagValues?.displayName ?? ''}
-                  placeholder="z. B. Projekt A"
-                  onChange={(event) => {
-                    const nextValue = event.target.value
-                    setTagActionDialog((current) =>
-                      current && current.kind === 'tag-form'
-                        ? {
-                            ...current,
-                            tagValues: {
-                              id: current.tagValues?.id ?? '',
-                              displayName: nextValue,
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                />
-              </div>
-            ) : null}
-
-            {tagActionDialog.kind === 'color-form' ? (
-              <div className="tag-form-grid">
-                <label className="tag-form-label">Farbe</label>
-                <div className="tag-color-picker-stack">
-                  <div className="tag-color-presets">
-                    {TAG_COLOR_PRESETS.map((preset) => {
-                      const isActive = normalizeTagColor(tagActionDialog.groupValues?.color ?? '') === normalizeTagColor(preset)
-                      return (
-                        <button
-                          key={`group-color-only-${preset}`}
-                          type="button"
-                          className={`tag-color-swatch ${isActive ? 'active' : ''}`}
-                          style={{ backgroundColor: preset }}
-                          onClick={() => {
-                            setTagActionDialog((current) =>
-                              current && current.kind === 'color-form'
-                                ? {
-                                    ...current,
-                                    groupValues: {
-                                      id: current.groupValues?.id ?? '',
-                                      displayName: current.groupValues?.displayName ?? '',
-                                      color: preset,
-                                    },
-                                  }
-                                : current
-                            )
-                          }}
-                          title={preset}
-                          aria-label={`Farbe ${preset}`}
-                        />
-                      )
-                    })}
-                  </div>
-                  <div className="tag-color-custom-row">
-                    <input
-                      type="color"
-                      autoFocus
-                      value={normalizeTagColor(tagActionDialog.groupValues?.color ?? TAG_COLOR_PRESETS[0])}
-                      onChange={(event) => {
-                        const nextColor = normalizeTagColor(event.target.value)
-                        setTagActionDialog((current) =>
-                          current && current.kind === 'color-form'
-                            ? {
-                                ...current,
-                                groupValues: {
-                                  id: current.groupValues?.id ?? '',
-                                  displayName: current.groupValues?.displayName ?? '',
-                                  color: nextColor,
-                                },
-                              }
-                            : current
-                        )
-                      }}
-                      aria-label="Benutzerdefinierte Farbe"
-                    />
-                    <span className="muted-copy">Eigene Farbe waehlen</span>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="tag-action-modal-actions">
-              {tagActionDialog.actions.map((action) => (
-                <button
-                  key={`tag-action-${action.id}`}
-                  className={`tag-action-button ${action.tone === 'danger' ? 'danger' : ''} ${
-                    action.tone === 'primary' ? 'primary' : ''
-                  }`}
-                  onClick={() => {
-                    closeTagActionDialog(action.id)
-                  }}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          </aside>
-        </div>
-      ) : null}
+      <TagActionDialogModal
+        dialog={tagActionDialog}
+        colorPresets={TAG_COLOR_PRESETS}
+        setDialog={setTagActionDialog}
+        onClose={closeTagActionDialog}
+      />
 
         </div>
       </div>
@@ -4297,6 +3400,7 @@ function App() {
 }
 
 export default App
+
 
 
 
