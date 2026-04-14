@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from 'react'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
@@ -132,26 +132,38 @@ function normalizeSearchTerm(value: string): string {
   return value.trim().toLowerCase()
 }
 
-function buildSearchTermDecorations(state: EditorState, query: string): DecorationSet {
+function buildSearchTermDecorations(view: EditorView, query: string): DecorationSet {
   const cleanQuery = normalizeSearchTerm(query)
   if (!cleanQuery) {
     return Decoration.none
   }
 
   const ranges: ReturnType<typeof explorerSearchHitDeco.range>[] = []
-  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
-    const line = state.doc.line(lineNumber)
-    const haystack = line.text.toLowerCase()
-    let fromIndex = 0
-    while (fromIndex <= haystack.length - cleanQuery.length) {
-      const at = haystack.indexOf(cleanQuery, fromIndex)
-      if (at < 0) {
+  const seenLines = new Set<number>()
+  for (const visibleRange of view.visibleRanges) {
+    const end = Math.max(visibleRange.from, visibleRange.to - 1)
+    let line = view.state.doc.lineAt(visibleRange.from)
+    const endLine = view.state.doc.lineAt(end).number
+    while (true) {
+      if (!seenLines.has(line.number)) {
+        const haystack = line.text.toLowerCase()
+        let fromIndex = 0
+        while (fromIndex <= haystack.length - cleanQuery.length) {
+          const at = haystack.indexOf(cleanQuery, fromIndex)
+          if (at < 0) {
+            break
+          }
+          const from = line.from + at
+          const to = from + cleanQuery.length
+          ranges.push(explorerSearchHitDeco.range(from, to))
+          fromIndex = at + Math.max(1, cleanQuery.length)
+        }
+        seenLines.add(line.number)
+      }
+      if (line.number >= endLine) {
         break
       }
-      const from = line.from + at
-      const to = from + cleanQuery.length
-      ranges.push(explorerSearchHitDeco.range(from, to))
-      fromIndex = at + Math.max(1, cleanQuery.length)
+      line = view.state.doc.line(line.number + 1)
     }
   }
 
@@ -169,12 +181,12 @@ function buildExplorerSearchHighlightExtension(query: string): Extension {
       decorations: DecorationSet
 
       constructor(view: EditorView) {
-        this.decorations = buildSearchTermDecorations(view.state, cleanQuery)
+        this.decorations = buildSearchTermDecorations(view, cleanQuery)
       }
 
       update(update: ViewUpdate): void {
-        if (update.docChanged) {
-          this.decorations = buildSearchTermDecorations(update.state, cleanQuery)
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildSearchTermDecorations(update.view, cleanQuery)
         }
       }
     },
@@ -293,6 +305,8 @@ export function CodeMirrorMarkdownEditor({
   const onChangeRef = useRef(onChange)
   const onInsertImageAssetRef = useRef(onInsertImageAsset)
   const syncingRef = useRef(false)
+  const pendingDocRef = useRef<string | null>(null)
+  const onChangeFrameRef = useRef<number | null>(null)
   const themeCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
   const searchHighlightCompartmentRef = useRef(new Compartment())
@@ -385,6 +399,34 @@ export function CodeMirrorMarkdownEditor({
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  const flushQueuedOnChange = () => {
+    if (onChangeFrameRef.current !== null) {
+      window.cancelAnimationFrame(onChangeFrameRef.current)
+      onChangeFrameRef.current = null
+    }
+    const queued = pendingDocRef.current
+    pendingDocRef.current = null
+    if (queued !== null) {
+      onChangeRef.current(queued)
+    }
+  }
+
+  const scheduleOnChange = (nextValue: string) => {
+    pendingDocRef.current = nextValue
+    if (onChangeFrameRef.current !== null) {
+      return
+    }
+
+    onChangeFrameRef.current = window.requestAnimationFrame(() => {
+      onChangeFrameRef.current = null
+      const queued = pendingDocRef.current
+      pendingDocRef.current = null
+      if (queued !== null) {
+        onChangeRef.current(queued)
+      }
+    })
+  }
 
   useEffect(() => {
     onInsertImageAssetRef.current = onInsertImageAsset
@@ -739,7 +781,7 @@ export function CodeMirrorMarkdownEditor({
           themeCompartmentRef.current.of(buildCodeMirrorTheme(initialThemeRef.current)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged && !syncingRef.current) {
-              onChangeRef.current(update.state.doc.toString())
+              scheduleOnChange(update.state.doc.toString())
             }
 
             if (update.docChanged || update.selectionSet || update.viewportChanged) {
@@ -774,6 +816,7 @@ export function CodeMirrorMarkdownEditor({
     }
 
     return () => {
+      flushQueuedOnChange()
       editorApiRef.current = null
       instance.destroy()
       editorRef.current = null

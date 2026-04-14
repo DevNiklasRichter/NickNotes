@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
+import { NotePropertiesPanel } from './editor/NotePropertiesPanel'
 import {
   parseNoteDocument,
   serializeNoteDocument,
@@ -12,6 +13,9 @@ import {
 import { ExplorerSidebar } from './explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from './explorer/TagSidebarV2'
 import { LucideNamedIcon } from './icons/lucideCatalog'
+import { ActivityRail } from './layout/ActivityRail'
+import { StatusBar } from './layout/StatusBar'
+import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
 import type { ExplorerOptions, ExplorerViewState } from './explorer/types'
 import {
   normalizeTagColor,
@@ -105,6 +109,7 @@ type NoteTab = {
   loading: boolean
   dirty: boolean
   noteType?: 'note' | 'task'
+  parsedDocument?: ParsedNoteDocument
 }
 
 type EditorTabContextMenuState = {
@@ -1252,14 +1257,34 @@ function App() {
     return Array.from(deduped.values())
   }, [allNotes, sortedNotes])
 
-  const explorerRows = useMemo(() => {
-    const liveNoteTypeByPath = new Map<string, 'note' | 'task'>()
+  const liveNoteTypeKey = useMemo(() => {
+    const entries: string[] = []
     for (const tab of openTabs) {
       if (tab.kind !== 'note' || !tab.noteType) {
         continue
       }
-      liveNoteTypeByPath.set(normalizeFilePathKey(tab.path), normalizeNoteTypeValue(tab.noteType))
+      entries.push(`${normalizeFilePathKey(tab.path)}\u0000${normalizeNoteTypeValue(tab.noteType)}`)
     }
+    entries.sort((left, right) => left.localeCompare(right))
+    return entries.join('\n')
+  }, [openTabs])
+
+  const liveNoteTypeByPath = useMemo(() => {
+    const map = new Map<string, 'note' | 'task'>()
+    if (!liveNoteTypeKey) {
+      return map
+    }
+    for (const entry of liveNoteTypeKey.split('\n')) {
+      const [pathKey, noteTypeRaw] = entry.split('\u0000', 2)
+      if (!pathKey) {
+        continue
+      }
+      map.set(pathKey, normalizeNoteTypeValue(noteTypeRaw))
+    }
+    return map
+  }, [liveNoteTypeKey])
+
+  const explorerRows = useMemo(() => {
 
     const deduped = new Map<string, SearchRow>()
     for (const row of linkIndexRows) {
@@ -1280,7 +1305,7 @@ function App() {
         note_type: liveType,
       }
     })
-  }, [explorerFiles, linkIndexRows, openTabs])
+  }, [explorerFiles, linkIndexRows, liveNoteTypeByPath])
 
   useEffect(() => {
     if (!vaultLoaded) {
@@ -1379,10 +1404,25 @@ function App() {
 
   const activeTab = openTabs.find((tab) => tab.path === activeNotePath) ?? openTabs[0] ?? null
   const openNoteTabs = openTabs.filter((tab) => tab.kind === 'note')
-  const dirtyFilePaths = useMemo(
-    () => new Set(openNoteTabs.filter((tab) => tab.dirty).map((tab) => tab.path)),
-    [openNoteTabs]
-  )
+  const dirtyPathKey = useMemo(() => {
+    return openTabs
+      .filter((tab) => tab.kind === 'note' && tab.dirty)
+      .map((tab) => tab.path)
+      .sort((left, right) => left.localeCompare(right))
+      .join('\n')
+  }, [openTabs])
+  const dirtyFilePaths = useMemo(() => {
+    const next = new Set<string>()
+    if (!dirtyPathKey) {
+      return next
+    }
+    for (const path of dirtyPathKey.split('\n')) {
+      if (path) {
+        next.add(path)
+      }
+    }
+    return next
+  }, [dirtyPathKey])
   const splitPaneTabs = useMemo(() => {
     if (!splitView || activeTab?.kind !== 'note') {
       return [] as NoteTab[]
@@ -1403,13 +1443,12 @@ function App() {
     }
     return next
   }, [activeTab, openNoteTabs, splitPanePaths, splitView])
-  const activeNoteDocument = useMemo(
-    () =>
-      activeTab && activeTab.kind === 'note'
-        ? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
-        : null,
-    [activeTab]
-  )
+  const activeNoteDocument = useMemo(() => {
+    if (!activeTab || activeTab.kind !== 'note') {
+      return null
+    }
+    return activeTab.parsedDocument ?? parseNoteDocument(activeTab.content, activeTab.title || toNoteDisplayName(activeTab.path))
+  }, [activeTab])
 
   useEffect(() => {
     if (!splitView || activeTab?.kind !== 'note' || splitPanePaths.length > 0) {
@@ -1440,7 +1479,9 @@ function App() {
       return knownType === 'task' ? 'CheckSquare' : 'FileText'
     }
 
-    const parsedType = normalizeNoteTypeValue(parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path)).frontmatter.type)
+    const parsedType = normalizeNoteTypeValue(
+      (tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))).frontmatter.type
+    )
     return parsedType === 'task' ? 'CheckSquare' : 'FileText'
   }
   const dueTodayCount = useMemo(() => {
@@ -1595,14 +1636,12 @@ function App() {
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
-    const liveContent = (() => {
-      if (activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current) {
-        const liveBody = activeEditorRef.current.getMarkdown()
-        const parsed = parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
-        return serializeNoteDocument({ ...parsed, body: liveBody })
-      }
-      return targetTab.content
-    })()
+    const baseDocument = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
+    const nextDocument =
+      activeTab?.kind === 'note' && activeTab.path === path && activeEditorRef.current
+        ? { ...baseDocument, body: activeEditorRef.current.getMarkdown() }
+        : baseDocument
+    const liveContent = serializeNoteDocument(nextDocument)
 
     try {
       setError('')
@@ -1633,6 +1672,13 @@ function App() {
             title: response.title || tab.title,
             content: liveContent,
             dirty: false,
+            parsedDocument: {
+              ...nextDocument,
+              frontmatter: {
+                ...nextDocument.frontmatter,
+                title: response.title || nextDocument.frontmatter.title,
+              },
+            },
           }
         })
       )
@@ -1893,6 +1939,7 @@ function App() {
                 loading: false,
                 dirty: false,
                 noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
+                parsedDocument: parsed,
               }
             : tab
         )
@@ -1995,22 +2042,24 @@ function App() {
         if (tab.path !== tabPath || tab.kind !== 'note') {
           return tab
         }
-        const parsed = parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
+        const parsed = tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
         const nextDocument = updater(parsed)
-        const nextContent = serializeNoteDocument(nextDocument)
+        if (nextDocument === parsed) {
+          return tab
+        }
         return {
           ...tab,
           title: nextDocument.frontmatter.title || tab.title,
-          content: nextContent,
           dirty: true,
           noteType: normalizeNoteTypeValue(nextDocument.frontmatter.type),
+          parsedDocument: nextDocument,
         }
       })
     )
   }
 
   const updateNoteContentByPath = (tabPath: string, nextBody: string) => {
-    updateNoteDocumentByPath(tabPath, (document) => ({ ...document, body: nextBody }))
+    updateNoteDocumentByPath(tabPath, (document) => (document.body === nextBody ? document : { ...document, body: nextBody }))
   }
 
   const updateNoteTitleByPath = (tabPath: string, nextTitle: string) => {
@@ -2155,307 +2204,85 @@ function App() {
   }
 
   const renderNoteProperties = (tabPath: string, document: ParsedNoteDocument, compact = false) => {
-    const manualTags = document.frontmatter.tags
-    const manualTagSet = new Set(manualTags)
-    const autoTags = document.frontmatter.tags_auto.filter((item) => !manualTagSet.has(item))
-    const manualRelated = document.frontmatter.related
-    const manualRelatedSet = new Set(manualRelated)
-    const autoRelated = document.frontmatter.related_auto.filter((item) => !manualRelatedSet.has(item))
     const tagDraft = propertyTagDraftByPath[tabPath] ?? ''
     const relatedDraft = propertyRelatedDraftByPath[tabPath] ?? ''
     const tagInputOpen = propertyTagInputOpenByPath[tabPath] ?? false
     const relatedInputOpen = propertyRelatedInputOpenByPath[tabPath] ?? false
-    const listToken = tabPath.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
-    const tagDatalistId = `property-tags-${listToken}`
-    const relatedDatalistId = `property-related-${listToken}`
     const relatedOptionsForPath = propertyRelatedOptions.filter(
       (item) => normalizeWikiLookup(item) !== normalizeWikiLookup(toNoteDisplayName(tabPath))
     )
-    const toTagChipVisual = (rawTag: string): { label: string; color: string } => {
-      const normalized = rawTag.trim().toLowerCase()
-      const mapped = tagVisualByKey.get(normalized)
-      if (mapped) {
-        return mapped
-      }
-      const tagPart = rawTag.includes(':') ? rawTag.split(':', 2)[1] || rawTag : rawTag
-      return { label: tagPart, color: '#94a3b8' }
-    }
-
-    const onTagInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
-        event.preventDefault()
-        commitPropertyTagInput(tabPath)
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closePropertyTagInput(tabPath)
-      }
-    }
-
-    const onRelatedInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter' || event.key === ',' || event.key === 'Tab') {
-        event.preventDefault()
-        commitPropertyRelatedInput(tabPath)
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closePropertyRelatedInput(tabPath)
-      }
-    }
 
     return (
-      <section className={`note-properties-panel ${compact ? 'split-note-properties-panel' : ''}`}>
-        <div className="note-title-row">
-          <input
-            className="note-title-input"
-            value={document.frontmatter.title}
-            onChange={(event) => {
-              updateNoteTitleByPath(tabPath, event.target.value)
-            }}
-            onBlur={(event) => {
-              void syncNotePathWithTitle(tabPath, event.currentTarget.value)
-            }}
-            placeholder="Untitled"
-          />
-        </div>
-        <h2 className="note-properties-heading">Properties</h2>
-
-        <div className={`note-properties-grid ${compact ? 'compact' : ''}`}>
-          <span className="property-key">Type</span>
-          <div className="property-toggle-group">
-            <button
-              type="button"
-              className={`property-toggle-badge ${document.frontmatter.type === 'note' ? 'active' : ''}`}
-              onClick={() => {
-                updateNoteTypeByPath(tabPath, 'note')
-              }}
-            >
-              Note
-            </button>
-            <button
-              type="button"
-              className={`property-toggle-badge ${document.frontmatter.type === 'task' ? 'active' : ''}`}
-              onClick={() => {
-                updateNoteTypeByPath(tabPath, 'task')
-              }}
-            >
-              Task
-            </button>
-          </div>
-
-          {document.frontmatter.type === 'task' ? (
-            <>
-              <span className="property-key">Status</span>
-              <div className="property-value-inline">
-                <label className="property-picker-badge">
-                  <span className={taskStatusDotClassName(document.frontmatter.status)} aria-hidden="true" />
-                  <select
-                    className="property-picker-select property-picker-select-status"
-                    value={document.frontmatter.status}
-                    onChange={(event) => {
-                      const value = event.target.value as TaskStatus
-                      if (TASK_STATUS_OPTIONS.some((entry) => entry.value === value)) {
-                        updateNoteStatusByPath(tabPath, value)
-                      }
-                    }}
-                  >
-                    {TASK_STATUS_OPTIONS.map((entry) => (
-                      <option key={entry.value} value={entry.value}>
-                        {taskStatusOptionLabel(entry.value)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <span className="property-key">Priority</span>
-              <div className="property-value-inline">
-                <label className="property-picker-badge">
-                  <span className={taskPriorityDotClassName(document.frontmatter.priority)} aria-hidden="true" />
-                  <select
-                    className="property-picker-select property-picker-select-priority"
-                    value={document.frontmatter.priority}
-                    onChange={(event) => {
-                      const value = event.target.value as TaskPriority
-                      if (TASK_PRIORITY_OPTIONS.some((entry) => entry.value === value)) {
-                        updateNotePriorityByPath(tabPath, value)
-                      }
-                    }}
-                  >
-                    {TASK_PRIORITY_OPTIONS.map((entry) => (
-                      <option key={entry.value} value={entry.value}>
-                        {taskPriorityOptionLabel(entry.value)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <span className="property-key">Due Date</span>
-              <div className="property-value-inline">
-                <input
-                  className="property-date-input"
-                  type="date"
-                  value={document.frontmatter.due_date}
-                  onChange={(event) => {
-                    updateNoteDueDateByPath(tabPath, event.target.value)
-                  }}
-                />
-                {document.frontmatter.due_date ? (
-                  <button
-                    type="button"
-                    className="property-chip add"
-                    onClick={() => {
-                      updateNoteDueDateByPath(tabPath, '')
-                    }}
-                    title="Fälligkeitsdatum entfernen"
-                  >
-                    x
-                  </button>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-
-          <span className="property-key">Tags</span>
-          <div className="property-token-line">
-            {manualTags.map((item) => {
-              const visual = toTagChipVisual(item)
-              return (
-              <span
-                key={`tag-manual-${item}`}
-                className="property-chip tag-chip manual interactive"
-                style={{ '--tag-chip-color': visual.color } as CSSProperties}
-                title={item}
-              >
-                <span>{visual.label}</span>
-                <button
-                  type="button"
-                  className="property-chip-remove"
-                  onClick={() => {
-                    removeNoteTagByPath(tabPath, item)
-                  }}
-                  title="Tag entfernen"
-                >
-                  x
-                </button>
-              </span>
-              )
-            })}
-            {autoTags.map((item) => {
-              const visual = toTagChipVisual(item)
-              return (
-              <span
-                key={`tag-auto-${item}`}
-                className="property-chip tag-chip auto"
-                style={{ '--tag-chip-color': visual.color } as CSSProperties}
-                title={`Automatisch erkannt • ${item}`}
-              >
-                {visual.label}
-              </span>
-              )
-            })}
-            {tagInputOpen ? (
-              <>
-                <input
-                  className="property-chip-input"
-                  list={tagDatalistId}
-                  value={tagDraft}
-                  onChange={(event) => {
-                    setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: event.target.value }))
-                  }}
-                  onKeyDown={onTagInputKeyDown}
-                  onBlur={() => {
-                    commitPropertyTagInput(tabPath)
-                  }}
-                  placeholder="tag..."
-                  autoFocus
-                />
-                <datalist id={tagDatalistId}>
-                  {propertyTagOptions.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </>
-            ) : null}
-            <button
-              type="button"
-              className="property-chip add"
-              onClick={() => {
-                openPropertyTagInput(tabPath)
-              }}
-              title="Tag hinzufügen"
-            >
-              +
-            </button>
-          </div>
-
-          <span className="property-key">Related</span>
-          <div className="property-token-line">
-            {manualRelated.map((item) => (
-              <span key={`related-manual-${item}`} className="property-chip manual interactive">
-                <span>{item}</span>
-                <button
-                  type="button"
-                  className="property-chip-remove"
-                  onClick={() => {
-                    removeNoteRelatedByPath(tabPath, item)
-                  }}
-                  title="Link entfernen"
-                >
-                  x
-                </button>
-              </span>
-            ))}
-            {autoRelated.map((item) => (
-              <span key={`related-auto-${item}`} className="property-chip auto" title="Automatisch erkannt">
-                {item}
-              </span>
-            ))}
-            {relatedInputOpen ? (
-              <>
-                <input
-                  className="property-chip-input"
-                  list={relatedDatalistId}
-                  value={relatedDraft}
-                  onChange={(event) => {
-                    setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: event.target.value }))
-                  }}
-                  onKeyDown={onRelatedInputKeyDown}
-                  onBlur={() => {
-                    commitPropertyRelatedInput(tabPath)
-                  }}
-                  placeholder="note/link..."
-                  autoFocus
-                />
-                <datalist id={relatedDatalistId}>
-                  {relatedOptionsForPath.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
-              </>
-            ) : null}
-            <button
-              type="button"
-              className="property-chip add"
-              onClick={() => {
-                openPropertyRelatedInput(tabPath)
-              }}
-              title="Verknüpfung hinzufügen"
-            >
-              +
-            </button>
-          </div>
-
-          <span className="property-key">Created</span>
-          <span className="property-value-static">{toGermanTimestamp(document.frontmatter.created_at)}</span>
-
-          <span className="property-key">Updated</span>
-          <span className="property-value-static">{toGermanTimestamp(document.frontmatter.updated_at)}</span>
-        </div>
-      </section>
+      <NotePropertiesPanel
+        tabPath={tabPath}
+        document={document}
+        compact={compact}
+        taskStatusOptions={TASK_STATUS_OPTIONS}
+        taskPriorityOptions={TASK_PRIORITY_OPTIONS}
+        taskStatusDotClassName={taskStatusDotClassName}
+        taskPriorityDotClassName={taskPriorityDotClassName}
+        taskStatusOptionLabel={taskStatusOptionLabel}
+        taskPriorityOptionLabel={taskPriorityOptionLabel}
+        propertyTagOptions={propertyTagOptions}
+        relatedOptions={relatedOptionsForPath}
+        tagVisualByKey={tagVisualByKey}
+        tagInputOpen={tagInputOpen}
+        tagDraft={tagDraft}
+        relatedInputOpen={relatedInputOpen}
+        relatedDraft={relatedDraft}
+        formatTimestamp={toGermanTimestamp}
+        onTitleChange={(nextTitle) => {
+          updateNoteTitleByPath(tabPath, nextTitle)
+        }}
+        onTitleBlur={(nextTitle) => {
+          void syncNotePathWithTitle(tabPath, nextTitle)
+        }}
+        onTypeChange={(nextType) => {
+          updateNoteTypeByPath(tabPath, nextType)
+        }}
+        onStatusChange={(nextStatus) => {
+          updateNoteStatusByPath(tabPath, nextStatus)
+        }}
+        onPriorityChange={(nextPriority) => {
+          updateNotePriorityByPath(tabPath, nextPriority)
+        }}
+        onDueDateChange={(nextDueDate) => {
+          updateNoteDueDateByPath(tabPath, nextDueDate)
+        }}
+        onRemoveDueDate={() => {
+          updateNoteDueDateByPath(tabPath, '')
+        }}
+        onRemoveTag={(tag) => {
+          removeNoteTagByPath(tabPath, tag)
+        }}
+        onOpenTagInput={() => {
+          openPropertyTagInput(tabPath)
+        }}
+        onTagDraftChange={(value) => {
+          setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: value }))
+        }}
+        onCommitTagInput={() => {
+          commitPropertyTagInput(tabPath)
+        }}
+        onCloseTagInput={() => {
+          closePropertyTagInput(tabPath)
+        }}
+        onRemoveRelated={(related) => {
+          removeNoteRelatedByPath(tabPath, related)
+        }}
+        onOpenRelatedInput={() => {
+          openPropertyRelatedInput(tabPath)
+        }}
+        onRelatedDraftChange={(value) => {
+          setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: value }))
+        }}
+        onCommitRelatedInput={() => {
+          commitPropertyRelatedInput(tabPath)
+        }}
+        onCloseRelatedInput={() => {
+          closePropertyRelatedInput(tabPath)
+        }}
+      />
     )
   }
 
@@ -2464,7 +2291,7 @@ function App() {
     if (!tab || tab.loading) {
       return
     }
-    const document = parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
+    const document = tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path))
     const typedTitle = normalizeLabel(rawTitleOverride ?? document.frontmatter.title)
     const targetTitle = typedTitle || 'Untitled'
     if (!typedTitle) {
@@ -2872,6 +2699,7 @@ function App() {
               dirty: false,
               loading: false,
               noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
+              parsedDocument: parsed,
             }
           })
         )
@@ -3811,81 +3639,12 @@ function App() {
       <div className="window-titlebar" aria-hidden="true" />
       <div className="window-content">
         <div className="workbench-shell">
-      <aside className="activity-rail">
-        <div className="rail-brand">
-          <span className="rail-logo">NN</span>
-          <div className="rail-brand-copy">
-            <strong>NickNotes</strong>
-            <span>Workspace</span>
-          </div>
-        </div>
-
-        <div className="rail-menu">
-          <button
-            className={sidebarView === 'vault' ? 'active' : ''}
-            onClick={() => openSidebarView('vault')}
-            title="Board"
-          >
-            <span className="rail-glyph">
-              <LucideNamedIcon name="LayoutGrid" size={14} />
-            </span>
-            <span className="rail-label">Board</span>
-          </button>
-          <button
-            className={sidebarView === 'notes' ? 'active' : ''}
-            onClick={() => openSidebarView('notes')}
-            title="Notizen"
-          >
-            <span className="rail-glyph">
-              <LucideNamedIcon name="FileText" size={14} />
-            </span>
-            <span className="rail-label">Notizen</span>
-          </button>
-          <button
-            className={sidebarView === 'tasks' ? 'active' : ''}
-            onClick={() => openSidebarView('tasks')}
-            title="Tasks"
-          >
-            <span className="rail-glyph">
-              <LucideNamedIcon name="CheckSquare" size={14} />
-            </span>
-            <span className="rail-label">Tasks</span>
-          </button>
-          <button
-            className={sidebarView === 'tags' ? 'active' : ''}
-            onClick={() => openSidebarView('tags')}
-            title="Tagging"
-          >
-            <span className="rail-glyph">
-              <LucideNamedIcon name="Tag" size={14} />
-            </span>
-            <span className="rail-label">Tags</span>
-          </button>
-          <button
-            className={sidebarView === 'review' ? 'active' : ''}
-            onClick={() => openSidebarView('review')}
-            title="Review"
-          >
-            <span className="rail-glyph">
-              <LucideNamedIcon name="BarChart3" size={14} />
-            </span>
-            <span className="rail-label">Review</span>
-          </button>
-        </div>
-
-        <div className="rail-spacer" />
-
-        <button
-          className={settingsTabOpen ? 'active' : ''}
-          onClick={openSettingsTab}
-          title="Einstellungen"
-          aria-label="Einstellungen"
-        >
-          <span className="rail-glyph">
-            <LucideNamedIcon name="Settings" size={14} />
-          </span>
-        </button>
-      </aside>
+      <ActivityRail
+        sidebarView={sidebarView}
+        settingsTabOpen={settingsTabOpen}
+        onOpenSidebarView={openSidebarView}
+        onOpenSettings={openSettingsTab}
+      />
 
       {sidebarOpen ? (
         <aside className="left-sidebar" style={{ width: `${explorerWidth}px` }}>
@@ -4049,166 +3808,23 @@ function App() {
                     activeTab.loading ? (
                       <p className="empty-copy">Lade Notiz ...</p>
                     ) : activeTab.kind === 'settings' ? (
-                      <div className="settings-editor">
-                        <h3>Einstellungen</h3>
-
-                        <section className="settings-block">
-                          <h4>Profil</h4>
-                          <label htmlFor="settings-display-name">Anrede</label>
-                          <input
-                            id="settings-display-name"
-                            value={displayName}
-                            onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
-                            placeholder="Dein Name"
-                          />
-                        </section>
-
-                        <section className="settings-block">
-                          <h4>Theme</h4>
-                          <div className="theme-actions">
-                            <button className={theme === 'light' ? 'active' : ''} onClick={() => setThemeMode('light')}>
-                              Light
-                            </button>
-                            <button className={theme === 'dark' ? 'active' : ''} onClick={() => setThemeMode('dark')}>
-                              Dark
-                            </button>
-                          </div>
-                        </section>
-
-                        <section className="settings-block">
-                          <h4>Layout</h4>
-                          <label className="checkbox-row" htmlFor="settings-sidebar-open">
-                            <input
-                              id="settings-sidebar-open"
-                              type="checkbox"
-                              checked={sidebarOpen}
-                              onChange={(event) => setSidebarOpen(event.target.checked)}
-                            />
-                            Sidebar anzeigen
-                          </label>
-                        </section>
-
-                        <section className="settings-block">
-                          <h4>Note Explorer</h4>
-                          <label className="checkbox-row" htmlFor="settings-explorer-show-hidden">
-                            <input
-                              id="settings-explorer-show-hidden"
-                              type="checkbox"
-                              checked={explorerOptions.showHiddenFiles}
-                              onChange={(event) =>
-                                setExplorerOptions((prev) => ({ ...prev, showHiddenFiles: event.target.checked }))
-                              }
-                            />
-                            Nicht-Markdown-Dateien anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-explorer-folders-first">
-                            <input
-                              id="settings-explorer-folders-first"
-                              type="checkbox"
-                              checked={explorerOptions.foldersFirst}
-                              onChange={(event) =>
-                                setExplorerOptions((prev) => ({ ...prev, foldersFirst: event.target.checked }))
-                              }
-                            />
-                            Ordner zuerst anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-explorer-show-icons">
-                            <input
-                              id="settings-explorer-show-icons"
-                              type="checkbox"
-                              checked={explorerOptions.showIcons}
-                              onChange={(event) =>
-                                setExplorerOptions((prev) => ({ ...prev, showIcons: event.target.checked }))
-                              }
-                            />
-                            Dateisymbole anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-explorer-compact">
-                            <input
-                              id="settings-explorer-compact"
-                              type="checkbox"
-                              checked={explorerOptions.compactMode}
-                              onChange={(event) =>
-                                setExplorerOptions((prev) => ({ ...prev, compactMode: event.target.checked }))
-                              }
-                            />
-                            Kompakte Zeilen
-                          </label>
-                        </section>
-
-                        <section className="settings-block">
-                          <h4>Statusleiste</h4>
-                          <label className="checkbox-row" htmlFor="settings-status-notebase">
-                            <input
-                              id="settings-status-notebase"
-                              type="checkbox"
-                              checked={statusBarPrefs.showNoteBaseName}
-                              onChange={(event) =>
-                                setStatusBarPrefs((prev) => ({ ...prev, showNoteBaseName: event.target.checked }))
-                              }
-                            />
-                            NoteBase-Name anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-status-open-tasks">
-                            <input
-                              id="settings-status-open-tasks"
-                              type="checkbox"
-                              checked={statusBarPrefs.showOpenTasks}
-                              onChange={(event) =>
-                                setStatusBarPrefs((prev) => ({ ...prev, showOpenTasks: event.target.checked }))
-                              }
-                            />
-                            Offene Tasks anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-status-due-today">
-                            <input
-                              id="settings-status-due-today"
-                              type="checkbox"
-                              checked={statusBarPrefs.showDueToday}
-                              onChange={(event) =>
-                                setStatusBarPrefs((prev) => ({ ...prev, showDueToday: event.target.checked }))
-                              }
-                            />
-                            Heute faellige Tasks anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-status-total-notes">
-                            <input
-                              id="settings-status-total-notes"
-                              type="checkbox"
-                              checked={statusBarPrefs.showTotalNotes}
-                              onChange={(event) =>
-                                setStatusBarPrefs((prev) => ({ ...prev, showTotalNotes: event.target.checked }))
-                              }
-                            />
-                            Anzahl Notizen anzeigen
-                          </label>
-                          <label className="checkbox-row" htmlFor="settings-status-message">
-                            <input
-                              id="settings-status-message"
-                              type="checkbox"
-                              checked={statusBarPrefs.showStateMessage}
-                              onChange={(event) =>
-                                setStatusBarPrefs((prev) => ({ ...prev, showStateMessage: event.target.checked }))
-                              }
-                            />
-                            Statusmeldung anzeigen
-                          </label>
-                        </section>
-
-                        <div className="settings-editor-actions">
-                            <button
-                              onClick={() => {
-                                void saveSettings()
-                              }}
-                              disabled={!settingsDirty}
-                            >
-                              Speichern
-                            </button>
-                          <button onClick={discardSettings} disabled={!settingsDirty}>
-                            Verwerfen
-                          </button>
-                        </div>
-                      </div>
+                      <SettingsEditorPanel
+                        displayName={displayName}
+                        theme={theme}
+                        sidebarOpen={sidebarOpen}
+                        explorerOptions={explorerOptions}
+                        statusBarPrefs={statusBarPrefs}
+                        settingsDirty={settingsDirty}
+                        setSidebarOpen={setSidebarOpen}
+                        setExplorerOptions={setExplorerOptions}
+                        setStatusBarPrefs={setStatusBarPrefs}
+                        onDisplayNameChange={(nextRawValue) => setDisplayName(normalizeLabel(nextRawValue) || 'Max')}
+                        onThemeChange={setThemeMode}
+                        onSave={() => {
+                          void saveSettings()
+                        }}
+                        onDiscard={discardSettings}
+                      />
                     ) : null
                   ) : (
                     <div className="main-empty-state">
@@ -4222,7 +3838,8 @@ function App() {
 
                 {splitView && activeTab?.kind === 'note'
                   ? splitPaneTabs.map((paneTab) => {
-                      const paneDocument = parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
+                      const paneDocument =
+                        paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
                       return (
                         <article
                           key={`split-pane-${paneTab.path}`}
@@ -4368,21 +3985,14 @@ function App() {
         </div>
       ) : null}
 
-      <footer className="status-bar">
-        <div className="status-bar-left">
-          {statusBarPrefs.showStateMessage ? (
-            <span className={`status-item ${error ? 'error' : ''}`}>{error || message}</span>
-          ) : (
-            <span className="status-item">&nbsp;</span>
-          )}
-        </div>
-        <div className="status-bar-right">
-          {statusBarPrefs.showTotalNotes ? <span className="status-item">Notizen: {counts.notes}</span> : null}
-          {statusBarPrefs.showOpenTasks ? <span className="status-item">Tasks offen: {counts.openTasks}</span> : null}
-          {statusBarPrefs.showDueToday ? <span className="status-item">Heute faellig: {dueTodayCount}</span> : null}
-          {statusBarPrefs.showNoteBaseName ? <span className="status-item">NoteBase: {noteBaseName}</span> : null}
-        </div>
-      </footer>
+      <StatusBar
+        prefs={statusBarPrefs}
+        message={message}
+        error={error}
+        noteBaseName={noteBaseName}
+        counts={counts}
+        dueTodayCount={dueTodayCount}
+      />
 
       {tagActionDialog ? (
         <div
@@ -4687,5 +4297,6 @@ function App() {
 }
 
 export default App
+
 
 
