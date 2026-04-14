@@ -156,6 +156,12 @@
   box-shadow: none;
 }
 
+.explorer-shell .icon-button.compact.active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface-contrast) 42%);
+}
+
 .explorer-options-panel {
   border: 1px solid var(--line);
   border-radius: 8px;

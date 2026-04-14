@@ -1724,6 +1724,12 @@
   color: var(--muted);
 }
 
+.tag-form-hint {
+  margin: -0.24rem 0 0.08rem;
+  font-size: 0.74rem;
+  color: var(--error-text);
+}
+
 .tag-color-picker-stack {
   display: grid;
   gap: 0.55rem;

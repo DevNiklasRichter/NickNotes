@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { normalizeTagColor } from './tagTypes'
 
 export type TagActionDialogTone = 'default' | 'primary' | 'danger'
@@ -46,7 +46,26 @@ type TagActionDialogModalProps = {
   setDialog: Dispatch<SetStateAction<TagActionDialogState | null>>
 }
 
+const TAG_ID_INPUT_HINT =
+  'Erlaubt sind nur a-z, 0-9 und "-". Umlaute, Sonderzeichen und Leerzeichen sind fuer Tag-IDs nicht erlaubt.'
+
+function sanitizeTagIdInput(value: string): { cleanValue: string; rejectedInvalidChar: boolean } {
+  const rejectedInvalidChar = /[^A-Za-z0-9-]/.test(value)
+  return {
+    cleanValue: value.toLowerCase().replace(/[^a-z0-9-]/g, ''),
+    rejectedInvalidChar,
+  }
+}
+
 export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog }: TagActionDialogModalProps) {
+  const [groupIdHintVisible, setGroupIdHintVisible] = useState(false)
+  const [tagIdHintVisible, setTagIdHintVisible] = useState(false)
+
+  useEffect(() => {
+    setGroupIdHintVisible(false)
+    setTagIdHintVisible(false)
+  }, [dialog?.kind])
+
   if (!dialog) {
     return null
   }
@@ -118,13 +137,14 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
               value={dialog.groupValues?.id ?? ''}
               placeholder="z. B. projekt"
               onChange={(event) => {
-                const nextValue = event.target.value
+                const { cleanValue, rejectedInvalidChar } = sanitizeTagIdInput(event.target.value)
+                setGroupIdHintVisible(rejectedInvalidChar)
                 setDialog((current) =>
                   current && current.kind === 'group-form'
                     ? {
                         ...current,
                         groupValues: {
-                          id: nextValue,
+                          id: cleanValue,
                           displayName: current.groupValues?.displayName ?? '',
                           color: current.groupValues?.color ?? colorPresets[0],
                         },
@@ -133,6 +153,7 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
                 )
               }}
             />
+            {groupIdHintVisible ? <p className="tag-form-hint">{TAG_ID_INPUT_HINT}</p> : null}
 
             <label className="tag-form-label" htmlFor="tag-group-display-name">
               Anzeigename
@@ -227,13 +248,14 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
               value={dialog.tagValues?.id ?? ''}
               placeholder="z. B. projekt-a"
               onChange={(event) => {
-                const nextValue = event.target.value
+                const { cleanValue, rejectedInvalidChar } = sanitizeTagIdInput(event.target.value)
+                setTagIdHintVisible(rejectedInvalidChar)
                 setDialog((current) =>
                   current && current.kind === 'tag-form'
                     ? {
                         ...current,
                         tagValues: {
-                          id: nextValue,
+                          id: cleanValue,
                           displayName: current.tagValues?.displayName ?? '',
                         },
                       }
@@ -241,6 +263,7 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
                 )
               }}
             />
+            {tagIdHintVisible ? <p className="tag-form-hint">{TAG_ID_INPUT_HINT}</p> : null}
 
             <label className="tag-form-label" htmlFor="tag-display-name">
               Anzeigename
@@ -347,4 +370,3 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
     </div>
   )
 }
-
