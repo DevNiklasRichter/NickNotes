@@ -89,6 +89,7 @@ const ROOT_TOKENS = ['daily', 'tags', 'tasks'] as const
 const ROOT_TOKEN_SET = new Set<string>(ROOT_TOKENS)
 const MIN_WIDTH = 220
 const MAX_WIDTH = 520
+const EXPLORER_MULTI_DRAG_MIME = 'application/x-nicknotes-explorer-files'
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
@@ -110,6 +111,49 @@ function isInputEventTarget(target: EventTarget | null): boolean {
   }
   const tag = target.tagName.toLowerCase()
   return ['input', 'textarea', 'select'].includes(tag) || target.isContentEditable
+}
+
+function hasSelectionModifier(event: Pick<ReactMouseEvent<HTMLElement>, 'ctrlKey' | 'metaKey'>): boolean
+function hasSelectionModifier(event: Pick<ReactKeyboardEvent<HTMLDivElement>, 'ctrlKey' | 'metaKey'>): boolean
+function hasSelectionModifier(event: { ctrlKey: boolean; metaKey: boolean }): boolean {
+  return event.ctrlKey || event.metaKey
+}
+
+function collectVisibleFileNodeIdsInOrder(nodes: Array<{ node: ExplorerNode }>): string[] {
+  const ids: string[] = []
+  for (const entry of nodes) {
+    if (entry.node.type === 'file') {
+      ids.push(entry.node.id)
+    }
+  }
+  return ids
+}
+
+function collectFileRangeSelection(
+  visibleNodes: Array<{ node: ExplorerNode }>,
+  fromNodeId: string | null,
+  toNodeId: string
+): string[] {
+  const startIndex = fromNodeId ? visibleNodes.findIndex((entry) => entry.node.id === fromNodeId) : -1
+  const endIndex = visibleNodes.findIndex((entry) => entry.node.id === toNodeId)
+  if (endIndex < 0) {
+    return []
+  }
+  if (startIndex < 0) {
+    const targetNode = visibleNodes[endIndex]?.node ?? null
+    return targetNode?.type === 'file' ? [toNodeId] : []
+  }
+
+  const lower = Math.min(startIndex, endIndex)
+  const upper = Math.max(startIndex, endIndex)
+  const ids: string[] = []
+  for (let index = lower; index <= upper; index += 1) {
+    const node = visibleNodes[index]?.node
+    if (node?.type === 'file') {
+      ids.push(node.id)
+    }
+  }
+  return ids
 }
 
 function toSafeExpanded(value: unknown): Record<string, boolean> {
@@ -293,7 +337,6 @@ export function ExplorerSidebar({
   width,
   onWidthChange,
   onOpenFile,
-  onPreviewFile,
   onCreateFile,
   onCreateTask,
   onCreateFolder,
@@ -319,7 +362,10 @@ export function ExplorerSidebar({
   const contextPanelRef = useRef<HTMLDivElement | null>(null)
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({})
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [selectedFileNodeIds, setSelectedFileNodeIds] = useState<Set<string>>(() => new Set())
+  const [selectionAnchorNodeId, setSelectionAnchorNodeId] = useState<string | null>(null)
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
+  const [draggingFileNodeIds, setDraggingFileNodeIds] = useState<Set<string>>(() => new Set())
   const [dropIndicator, setDropIndicator] = useState<DropIndicator>(null)
   const [filterQuery, setFilterQuery] = useState('')
   const [folderOrder, setFolderOrder] = useState<Record<string, string[]>>({})
@@ -335,14 +381,6 @@ export function ExplorerSidebar({
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const lastAutoRevealPathRef = useRef('')
   const lastHandledRevealRequestRef = useRef<number | null>(null)
-  const previewClickTimerRef = useRef<number | null>(null)
-
-  const clearPreviewClickTimer = useCallback(() => {
-    if (previewClickTimerRef.current !== null) {
-      window.clearTimeout(previewClickTimerRef.current)
-      previewClickTimerRef.current = null
-    }
-  }, [])
 
   const fixedRootKeys = useMemo(() => {
     const byToken = new Map<string, string>()
@@ -382,12 +420,6 @@ export function ExplorerSidebar({
     window.addEventListener('pointerdown', onPointerDown)
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [sortMenuOpen])
-
-  useEffect(() => {
-    return () => {
-      clearPreviewClickTimer()
-    }
-  }, [clearPreviewClickTimer])
 
   useEffect(() => {
     const seed = viewStateSeed ?? {
@@ -466,6 +498,97 @@ export function ExplorerSidebar({
     ]
   )
 
+  const visibleFileNodeIds = useMemo(() => collectVisibleFileNodeIdsInOrder(tree.visibleNodes), [tree.visibleNodes])
+
+  const clearFileSelection = useCallback(() => {
+    setSelectedFileNodeIds((prev) => (prev.size === 0 ? prev : new Set()))
+    setSelectionAnchorNodeId(null)
+  }, [])
+
+  const selectSingleFile = useCallback((nodeId: string) => {
+    setSelectedFileNodeIds(() => new Set([nodeId]))
+    setSelectionAnchorNodeId(nodeId)
+  }, [])
+
+  const toggleFileSelection = useCallback((nodeId: string) => {
+    setSelectedFileNodeIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) {
+        next.delete(nodeId)
+      } else {
+        next.add(nodeId)
+      }
+      return next
+    })
+    setSelectionAnchorNodeId(nodeId)
+  }, [])
+
+  const extendSelectionToNode = useCallback(
+    (targetNodeId: string, appendToExisting: boolean) => {
+      const anchorNodeId = selectionAnchorNodeId ?? selectedNodeId ?? targetNodeId
+      const rangeIds = collectFileRangeSelection(tree.visibleNodes, anchorNodeId, targetNodeId)
+      if (rangeIds.length === 0) {
+        return
+      }
+      setSelectedFileNodeIds((prev) => {
+        const next = appendToExisting ? new Set(prev) : new Set<string>()
+        for (const id of rangeIds) {
+          next.add(id)
+        }
+        return next
+      })
+      if (!selectionAnchorNodeId) {
+        setSelectionAnchorNodeId(anchorNodeId)
+      }
+    },
+    [selectedNodeId, selectionAnchorNodeId, tree.visibleNodes]
+  )
+
+  const orderedDraggedFileNodeIds = useMemo(() => {
+    if (draggingFileNodeIds.size === 0) {
+      return []
+    }
+    const ids: string[] = []
+    for (const nodeId of visibleFileNodeIds) {
+      if (draggingFileNodeIds.has(nodeId)) {
+        ids.push(nodeId)
+      }
+    }
+    for (const nodeId of draggingFileNodeIds) {
+      if (!ids.includes(nodeId)) {
+        ids.push(nodeId)
+      }
+    }
+    return ids
+  }, [draggingFileNodeIds, visibleFileNodeIds])
+
+  useEffect(() => {
+    setSelectedFileNodeIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const nodeId of prev) {
+        const node = tree.nodeById.get(nodeId)
+        if (node?.type === 'file') {
+          next.add(nodeId)
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [tree.nodeById])
+
+  useEffect(() => {
+    if (!selectionAnchorNodeId) {
+      return
+    }
+    const node = tree.nodeById.get(selectionAnchorNodeId)
+    if (node?.type === 'file') {
+      return
+    }
+    setSelectionAnchorNodeId(null)
+  }, [selectionAnchorNodeId, tree.nodeById])
+
   const folderFileCounts = useMemo(() => {
     const counts = new Map<string, FolderFileCount>()
     const walk = (node: ExplorerNode): number => {
@@ -517,6 +640,7 @@ export function ExplorerSidebar({
         return false
       }
       setSelectedNodeId(activeId)
+      selectSingleFile(activeId)
       setExpandedNodes((prev) => {
         const next = { ...prev }
         let changed = false
@@ -532,7 +656,7 @@ export function ExplorerSidebar({
       })
       return true
     },
-    [tree.fileNodeIdByPath, tree.parentById]
+    [selectSingleFile, tree.fileNodeIdByPath, tree.parentById]
   )
 
   useEffect(() => {
@@ -860,13 +984,22 @@ export function ExplorerSidebar({
     setExpandedNodes((prev) => ({ ...prev, [node.id]: true }))
   }, [collapseFolderSubtree])
 
+  const resolveFileDropTargetKey = useCallback(
+    (target: ExplorerNode, position: DropPosition): string => {
+      const parentId = position === 'inside' ? target.id : tree.parentById.get(target.id) ?? null
+      const parentNode = parentId ? tree.nodeById.get(parentId) : null
+      return folderKey(parentNode)
+    },
+    [tree.nodeById, tree.parentById]
+  )
+
   const onDragOver = useCallback(
     (event: ReactDragEvent<HTMLDivElement>, node: ExplorerNode) => {
-      if (!draggingNodeId) {
+      if (!draggingNodeId && draggingFileNodeIds.size === 0) {
         return
       }
-      const source = tree.nodeById.get(draggingNodeId)
-      if (!source) {
+      const source = draggingNodeId ? tree.nodeById.get(draggingNodeId) : null
+      if (!source && draggingFileNodeIds.size === 0) {
         return
       }
       const position = toDropPosition(event, node)
@@ -877,15 +1010,13 @@ export function ExplorerSidebar({
       setDropIndicator({ nodeId: node.id, position })
       autoScrollForDrag(event.clientY)
     },
-    [autoScrollForDrag, draggingNodeId, tree.nodeById]
+    [autoScrollForDrag, draggingFileNodeIds.size, draggingNodeId, tree.nodeById]
   )
 
   const doDrop = useCallback(
     async (source: ExplorerNode, target: ExplorerNode, position: DropPosition) => {
       if (source.type === 'file') {
-        const parentId = position === 'inside' ? target.id : tree.parentById.get(target.id) ?? null
-        const parentNode = parentId ? tree.nodeById.get(parentId) : null
-        const targetKey = folderKey(parentNode)
+        const targetKey = resolveFileDropTargetKey(target, position)
         const sourceParentId = tree.parentById.get(source.id) ?? null
         const sourceParentNode = sourceParentId ? tree.nodeById.get(sourceParentId) : null
         const sourceKey = folderKey(sourceParentNode)
@@ -929,33 +1060,62 @@ export function ExplorerSidebar({
         })
       }
     },
-    [fixedRootKeys, groups, onMoveFile, onMoveFolder, tree.nodeById, tree.parentById]
+    [fixedRootKeys, groups, onMoveFile, onMoveFolder, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
   )
 
   const onDrop = useCallback(
     async (event: ReactDragEvent<HTMLDivElement>, node: ExplorerNode) => {
-      if (!draggingNodeId) {
+      if (!draggingNodeId && orderedDraggedFileNodeIds.length === 0) {
         return
       }
       event.preventDefault()
-      const source = tree.nodeById.get(draggingNodeId)
-      if (!source) {
-        return
-      }
       const position = toDropPosition(event, node)
-      await doDrop(source, node, position)
+
+      if (orderedDraggedFileNodeIds.length > 0) {
+        const targetKey = resolveFileDropTargetKey(node, position)
+        for (const fileNodeId of orderedDraggedFileNodeIds) {
+          const sourceNode = tree.nodeById.get(fileNodeId)
+          if (!sourceNode || sourceNode.type !== 'file') {
+            continue
+          }
+          const sourceParentId = tree.parentById.get(sourceNode.id) ?? null
+          const sourceParentNode = sourceParentId ? tree.nodeById.get(sourceParentId) : null
+          const sourceKey = folderKey(sourceParentNode)
+          if (sourceKey === targetKey) {
+            continue
+          }
+          await onMoveFile(sourceNode.path, targetKey)
+        }
+      } else if (draggingNodeId) {
+        const source = tree.nodeById.get(draggingNodeId)
+        if (!source) {
+          return
+        }
+        await doDrop(source, node, position)
+      }
+
       setDraggingNodeId(null)
+      setDraggingFileNodeIds(() => new Set())
       setDropIndicator(null)
     },
-    [doDrop, draggingNodeId, tree.nodeById]
+    [doDrop, draggingNodeId, onMoveFile, orderedDraggedFileNodeIds, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
   )
 
   const openContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>, node: ExplorerNode) => {
     event.preventDefault()
     event.stopPropagation()
+    if (node.type === 'file') {
+      const isAlreadySelected = selectedFileNodeIds.has(node.id)
+      if (!isAlreadySelected) {
+        setSelectedFileNodeIds(() => new Set([node.id]))
+        setSelectionAnchorNodeId(node.id)
+      }
+    } else {
+      clearFileSelection()
+    }
     setSelectedNodeId(node.id)
     setContextMenu({ x: event.clientX, y: event.clientY, target: 'node', nodeId: node.id })
-  }, [])
+  }, [clearFileSelection, selectedFileNodeIds])
 
   const openTreeContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
@@ -1135,16 +1295,52 @@ export function ExplorerSidebar({
         if (isInputEventTarget(event.target) || tree.visibleNodes.length === 0) {
           return
         }
-        const selectedIndex = tree.visibleNodes.findIndex((entry) => entry.node.selected)
+        const selectedIndex = selectedNodeId
+          ? tree.visibleNodes.findIndex((entry) => entry.node.id === selectedNodeId)
+          : tree.visibleNodes.findIndex((entry) => entry.node.selected)
         const index = selectedIndex >= 0 ? selectedIndex : -1
         if (event.key === 'ArrowDown') {
           event.preventDefault()
           const nextIndex = Math.min(tree.visibleNodes.length - 1, index + 1)
-          setSelectedNodeId(tree.visibleNodes[nextIndex].node.id)
+          const nextNode = tree.visibleNodes[nextIndex].node
+          setSelectedNodeId(nextNode.id)
+          if (nextNode.type === 'file') {
+            if (event.shiftKey) {
+              extendSelectionToNode(nextNode.id, hasSelectionModifier(event))
+            } else if (hasSelectionModifier(event)) {
+              setSelectedFileNodeIds((prev) => {
+                const next = new Set(prev)
+                next.add(nextNode.id)
+                return next
+              })
+              setSelectionAnchorNodeId((prev) => prev ?? nextNode.id)
+            } else {
+              selectSingleFile(nextNode.id)
+            }
+          } else if (!event.shiftKey && !hasSelectionModifier(event)) {
+            clearFileSelection()
+          }
         } else if (event.key === 'ArrowUp') {
           event.preventDefault()
           const nextIndex = index < 0 ? 0 : Math.max(0, index - 1)
-          setSelectedNodeId(tree.visibleNodes[nextIndex].node.id)
+          const nextNode = tree.visibleNodes[nextIndex].node
+          setSelectedNodeId(nextNode.id)
+          if (nextNode.type === 'file') {
+            if (event.shiftKey) {
+              extendSelectionToNode(nextNode.id, hasSelectionModifier(event))
+            } else if (hasSelectionModifier(event)) {
+              setSelectedFileNodeIds((prev) => {
+                const next = new Set(prev)
+                next.add(nextNode.id)
+                return next
+              })
+              setSelectionAnchorNodeId((prev) => prev ?? nextNode.id)
+            } else {
+              selectSingleFile(nextNode.id)
+            }
+          } else if (!event.shiftKey && !hasSelectionModifier(event)) {
+            clearFileSelection()
+          }
         }
       }}
     >
@@ -1279,15 +1475,17 @@ export function ExplorerSidebar({
             return
           }
           setSelectedNodeId(null)
+          clearFileSelection()
         }}
         onDragOver={(event) => {
-          if (draggingNodeId) {
+          if (draggingNodeId || draggingFileNodeIds.size > 0) {
             event.preventDefault()
             autoScrollForDrag(event.clientY)
           }
         }}
         onDrop={() => {
           setDraggingNodeId(null)
+          setDraggingFileNodeIds(() => new Set())
           setDropIndicator(null)
         }}
         onContextMenu={(event) => {
@@ -1306,6 +1504,8 @@ export function ExplorerSidebar({
           const node = entry.node
           const dropPos = dropIndicator?.nodeId === node.id ? dropIndicator.position : null
           const canDrag = node.type === 'file' || (node.canDelete !== false && !isPinnedRoot(node.path))
+          const isFileSelected = node.type === 'file' && selectedFileNodeIds.has(node.id)
+          const isRowSelected = node.type === 'file' ? isFileSelected : node.selected
           const countInfo = folderFileCounts.get(node.id)
           const folderCount = node.type === 'folder' ? (countInfo?.total ?? 0) : 0
 
@@ -1313,13 +1513,49 @@ export function ExplorerSidebar({
             <div key={node.id} className="explorer-row-wrap">
               {dividerBeforeNodeId === node.id ? <div className="explorer-fixed-divider" /> : null}
               <div
-                className={`explorer-row ${node.selected ? 'selected' : ''} ${options.compactMode ? 'compact' : ''} ${dropPos ? `drop-${dropPos}` : ''}`}
+                className={`explorer-row ${isRowSelected ? 'selected' : ''} ${options.compactMode ? 'compact' : ''} ${dropPos ? `drop-${dropPos}` : ''}`}
                 style={{ marginLeft: `${8 + entry.depth * 14}px` }}
                 draggable={canDrag}
                 onDragStart={(event) => {
+                  if (!canDrag) {
+                    event.preventDefault()
+                    return
+                  }
                   setDraggingNodeId(node.id)
+                  if (node.type === 'file') {
+                    const selectionSource = selectedFileNodeIds.has(node.id) ? selectedFileNodeIds : new Set([node.id])
+                    const draggedFileIds = Array.from(selectionSource).filter((nodeId) => {
+                      const selectedNode = tree.nodeById.get(nodeId)
+                      return selectedNode?.type === 'file'
+                    })
+                    if (draggedFileIds.length === 0) {
+                      draggedFileIds.push(node.id)
+                    }
+                    const dragSet = new Set(draggedFileIds)
+                    setDraggingFileNodeIds(dragSet)
+                    if (!selectedFileNodeIds.has(node.id)) {
+                      setSelectedFileNodeIds(() => new Set([node.id]))
+                      setSelectionAnchorNodeId(node.id)
+                    }
+                    const draggedPaths = draggedFileIds
+                      .map((nodeId) => {
+                        const selectedNode = tree.nodeById.get(nodeId)
+                        return selectedNode?.type === 'file' ? selectedNode.path : ''
+                      })
+                      .filter(Boolean)
+                    if (draggedPaths.length > 0) {
+                      event.dataTransfer.setData(EXPLORER_MULTI_DRAG_MIME, JSON.stringify(draggedPaths))
+                    }
+                  } else {
+                    setDraggingFileNodeIds(() => new Set())
+                  }
                   event.dataTransfer.effectAllowed = 'move'
                   event.dataTransfer.setData('text/plain', node.id)
+                }}
+                onDragEnd={() => {
+                  setDraggingNodeId(null)
+                  setDraggingFileNodeIds(() => new Set())
+                  setDropIndicator(null)
                 }}
                 onDragOver={(event) => onDragOver(event, node)}
                 onDrop={(event) => {
@@ -1329,25 +1565,29 @@ export function ExplorerSidebar({
                   const target = event.target
                   if (target instanceof HTMLElement && target.closest('.row-pin-slot')) {
                     setSelectedNodeId(null)
-                    clearPreviewClickTimer()
+                    clearFileSelection()
                     return
                   }
                   setSelectedNodeId(node.id)
                   if (node.type === 'file') {
-                    clearPreviewClickTimer()
-                    previewClickTimerRef.current = window.setTimeout(() => {
-                      previewClickTimerRef.current = null
-                      void onPreviewFile(node.path, node.name)
-                    }, 280)
+                    if (event.shiftKey) {
+                      extendSelectionToNode(node.id, hasSelectionModifier(event))
+                      return
+                    }
+                    if (hasSelectionModifier(event)) {
+                      toggleFileSelection(node.id)
+                      return
+                    }
+                    selectSingleFile(node.id)
                   } else {
-                    clearPreviewClickTimer()
+                    clearFileSelection()
                   }
                 }}
                 onDoubleClick={() => {
-                  clearPreviewClickTimer()
                   if (node.type === 'folder') {
                     toggleExpand(node)
                   } else {
+                    selectSingleFile(node.id)
                     void onOpenFile(node.path, node.name)
                   }
                 }}
