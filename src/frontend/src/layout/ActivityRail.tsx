@@ -1,6 +1,6 @@
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 
-type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
+type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
 
 type ActivityRailProps = {
   sidebarView: SidebarView
@@ -33,11 +33,23 @@ export function ActivityRail({ sidebarView, settingsTabOpen, onOpenSidebarView, 
           </span>
           <span className="rail-label">Notizen</span>
         </button>
+        <button className={sidebarView === 'todos' ? 'active' : ''} onClick={() => onOpenSidebarView('todos')} title="Todos">
+          <span className="rail-glyph">
+            <LucideNamedIcon name="ListTodo" size={14} />
+          </span>
+          <span className="rail-label">Todos</span>
+        </button>
         <button className={sidebarView === 'tasks' ? 'active' : ''} onClick={() => onOpenSidebarView('tasks')} title="Tasks">
           <span className="rail-glyph">
             <LucideNamedIcon name="CheckSquare" size={14} />
           </span>
           <span className="rail-label">Tasks</span>
+        </button>
+        <button className={sidebarView === 'focus' ? 'active' : ''} onClick={() => onOpenSidebarView('focus')} title="Focus">
+          <span className="rail-glyph">
+            <LucideNamedIcon name="Crosshair" size={14} />
+          </span>
+          <span className="rail-label">Focus</span>
         </button>
         <button className={sidebarView === 'tags' ? 'active' : ''} onClick={() => onOpenSidebarView('tags')} title="Tagging">
           <span className="rail-glyph">
@@ -63,4 +75,3 @@ export function ActivityRail({ sidebarView, settingsTabOpen, onOpenSidebarView, 
     </aside>
   )
 }
-

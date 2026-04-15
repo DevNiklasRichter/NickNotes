@@ -93,6 +93,7 @@ import type {
   Suggestion,
   ParsedTask,
   TaskRow,
+  TodoRow,
   SearchRow,
   MediaUploadResponse,
   ReviewDaily,
@@ -127,6 +128,7 @@ function App() {
   const [parsedTasks, setParsedTasks] = useState<ParsedTask[]>([])
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [todos, setTodos] = useState<TodoRow[]>([])
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
@@ -403,6 +405,15 @@ function App() {
     setTasks(response.items)
   }
 
+  const refreshTodos = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    const response = await apiRequest<{ items: TodoRow[] }>(backendUrl, '/todos')
+    setTodos(response.items)
+  }
+
   const refreshExplorerFiles = async (force = false) => {
     if (!vaultLoaded && !force) {
       return
@@ -550,6 +561,7 @@ function App() {
     }
     await Promise.allSettled([
       refreshTasks(force),
+      refreshTodos(force),
       runSearch(searchQuery, force),
       refreshReview(force),
       refreshTagGroups(force),
@@ -1229,7 +1241,7 @@ function App() {
         })
       )
       setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview(), refreshNoteGroups()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview(), refreshNoteGroups()])
       return true
     } catch (caught) {
       setError(String(caught))
@@ -1277,7 +1289,7 @@ function App() {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
       setMessage(`NoteBase umbenannt: ${previousName} -> ${getPathTail(loadedPath)}`)
-      await Promise.all([refreshTasks(true), runSearch(searchQuery, true), refreshReview(true), refreshNoteGroups(true)])
+      await Promise.all([refreshTasks(true), refreshTodos(true), runSearch(searchQuery, true), refreshReview(true), refreshNoteGroups(true)])
     } catch (caught) {
       setError(String(caught))
     }
@@ -1306,6 +1318,7 @@ function App() {
       setVaultPath('')
       setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
       setTasks([])
+      setTodos([])
       setSearchResults([])
       setSuggestions([])
       setSelectedTagKeys([])
@@ -1381,7 +1394,7 @@ function App() {
       setSelectedTagKeys([])
       setParsedTasks([])
       setMessage(`Capture gespeichert (${response.noteId}).`)
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
+      await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -1393,10 +1406,47 @@ function App() {
         method: 'POST',
       })
       setMessage(`Task ${taskId} als erledigt markiert.`)
-      await Promise.all([refreshTasks(), refreshReview(), runSearch(searchQuery)])
+      await Promise.all([refreshTasks(), refreshTodos(), refreshReview(), runSearch(searchQuery)])
     } catch (caught) {
       setError(String(caught))
     }
+  }
+
+  const toggleTodo = async (todoId: string) => {
+    try {
+      await apiRequest<{ todo?: TodoRow }>(backendUrl, `/todos/${encodeURIComponent(todoId)}/toggle`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+      setMessage(`Todo aktualisiert (${todoId}).`)
+      await Promise.all([refreshTodos(), runSearch(searchQuery)])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const promoteTodo = async (todoId: string) => {
+    try {
+      const response = await apiRequest<{ taskId: string; taskPath?: string; created?: boolean }>(
+        backendUrl,
+        `/todos/${encodeURIComponent(todoId)}/promote`,
+        {
+          method: 'POST',
+        }
+      )
+      const verb = response.created === false ? 'bereits verknuepft' : 'zu Task promoted'
+      setMessage(`Todo ${verb}: ${response.taskId}`)
+      await Promise.all([refreshTodos(), refreshTasks(), refreshReview(), runSearch(searchQuery)])
+      if (response.taskPath) {
+        await openNoteInTab(response.taskPath, undefined, { initialNoteType: 'task' })
+      }
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const openTodoOrigin = async (notePath: string, title?: string) => {
+    await openNoteInTab(notePath, title, { initialNoteType: 'note' })
   }
 
   const fetchNoteContent = async (path: string): Promise<string> => {
@@ -2103,7 +2153,7 @@ function App() {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
       setMessage(`Templates angewendet: ${response.updated} Dateien aktualisiert.`)
-      await Promise.all([refreshTasks(), runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
+      await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2135,7 +2185,7 @@ function App() {
       setCounts(response.counts)
       setNoteGroups(response.groups)
       setMessage(`Task erstellt (${response.noteId}).`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
       await openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'task' })
     } catch (caught) {
       setError(String(caught))
@@ -2163,7 +2213,7 @@ function App() {
       setCounts(response.counts)
       remapOpenNotePaths(group.path, response.group.path)
       setMessage(`Ordner umbenannt: ${response.group.label}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2195,7 +2245,7 @@ function App() {
       setCounts(response.counts)
       remapOpenNotePaths(sourceGroup.path, response.group.path)
       setMessage(`Ordner verschoben: ${response.group.label}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2231,7 +2281,7 @@ function App() {
         })
       )
       setMessage(`Ordner geloescht: ${group.label}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2276,7 +2326,7 @@ function App() {
       setCounts(response.counts)
       remapOpenNotePaths(path, response.renamedPath)
       setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -2347,7 +2397,7 @@ function App() {
         body: JSON.stringify({ paths: uniquePaths, targetGroupKey }),
       })
       applyMoveResult(Array.isArray(response.movedPaths) ? response.movedPaths : [], response.counts)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch {
       try {
         const movedEntries: { fromPath: string; movedPath: string }[] = []
@@ -2368,7 +2418,7 @@ function App() {
         if (latestCounts) {
           applyMoveResult(movedEntries, latestCounts, true)
         }
-        await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+        await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
       } catch (caughtFallback) {
         setError(String(caughtFallback))
       }
@@ -2389,7 +2439,7 @@ function App() {
       setCounts(response.counts)
       setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
       setMessage(`Datei geloescht: ${toNoteDisplayName(path)}`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshReview()])
+      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -3206,11 +3256,30 @@ function App() {
               void migrateExistingNotesToTemplate()
             }}
             tasks={tasks}
+            todos={todos}
             onRefreshTasks={() => {
               void refreshTasks()
             }}
+            onRefreshTodos={() => {
+              void refreshTodos()
+            }}
             onMarkTaskDone={(id) => {
               void markTaskDone(id)
+            }}
+            onToggleTodo={(id) => {
+              void toggleTodo(id)
+            }}
+            onPromoteTodo={(id) => {
+              void promoteTodo(id)
+            }}
+            onOpenTodoOrigin={(path, title) => {
+              void openTodoOrigin(path, title)
+            }}
+            onOpenTaskPath={(path, title) => {
+              if (!path) {
+                return
+              }
+              void openNoteInTab(path, title, { initialNoteType: 'task' })
             }}
             taskStatusClassName={taskStatusClassName}
             taskStatusLabel={taskStatusLabel}
@@ -3432,6 +3501,7 @@ function App() {
 }
 
 export default App
+
 
 
 

@@ -39,6 +39,23 @@ export type TaskRow = {
   path: string | null
 }
 
+export type TodoRow = {
+  id: string
+  note_id: string
+  note_title: string
+  note_path: string
+  line_no: number
+  block_ref: string | null
+  checked: boolean
+  raw_text: string
+  explicit_tags: string[]
+  inherited_tags: string[]
+  links: string[]
+  promoted: boolean
+  promoted_task_id: string | null
+  updated_at: string
+}
+
 export type SearchRow = {
   id: string
   title: string
@@ -76,7 +93,7 @@ export type BackendState = {
 }
 
 export type ThemeMode = 'light' | 'dark'
-export type SidebarView = 'vault' | 'notes' | 'tags' | 'tasks' | 'review'
+export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
 export type NoteTabKind = 'note' | 'settings'
 
 export type NoteTab = {

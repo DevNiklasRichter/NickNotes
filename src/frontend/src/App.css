@@ -525,6 +525,97 @@
   border-color: color-mix(in srgb, #47b57a 36%, transparent);
 }
 
+.dashboard-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.34rem;
+}
+
+.dashboard-filter-grid label {
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.dashboard-filter-grid select {
+  width: 100%;
+}
+
+.task-filter-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-section {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.dashboard-section h4 {
+  margin: 0;
+  font-size: 0.73rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dashboard-item-list {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.task-actions-row,
+.todo-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.26rem;
+}
+
+.todo-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
+  padding: 0.48rem 0.52rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.todo-item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.todo-item p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.task-item.compact,
+.todo-item.compact {
+  padding: 0.4rem 0.45rem;
+}
+
+.item-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 999px;
+  padding: 0.06rem 0.42rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+}
+
+.item-kind-pill.todo {
+  color: #1f6d42;
+  border-color: color-mix(in srgb, #47b57a 44%, transparent);
+  background: color-mix(in srgb, #47b57a 16%, transparent);
+}
+
 .review-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2165,7 +2256,7 @@ textarea:focus-visible {
   }
 
   .rail-menu {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .rail-spacer {

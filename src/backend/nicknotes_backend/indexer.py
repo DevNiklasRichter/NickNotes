@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 from datetime import date, datetime, timedelta
@@ -10,6 +11,7 @@ from typing import Any
 from .markdown_io import parse_markdown
 from .models import ParsedTask, TagRef
 from .parser import slugify
+from .todos import ExtractedTodo, extract_todos_from_body
 
 
 class VaultIndexer:
@@ -91,6 +93,29 @@ class VaultIndexer:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS todos (
+                  id TEXT PRIMARY KEY,
+                  note_id TEXT NOT NULL,
+                  note_path TEXT NOT NULL,
+                  line_no INTEGER NOT NULL,
+                  block_ref TEXT,
+                  checked INTEGER NOT NULL,
+                  raw_text TEXT NOT NULL,
+                  explicit_tags_json TEXT NOT NULL,
+                  inherited_tags_json TEXT NOT NULL,
+                  links_json TEXT NOT NULL,
+                  promoted INTEGER NOT NULL DEFAULT 0,
+                  promoted_task_id TEXT,
+                  updated_at TEXT NOT NULL,
+                  FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_note ON todos(note_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_checked ON todos(checked);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_promoted ON todos(promoted);")
+            cur.execute(
+                """
                 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
                 USING fts5(note_id UNINDEXED, title, body);
                 """
@@ -102,6 +127,7 @@ class VaultIndexer:
             cur = self.conn.cursor()
             cur.execute("DELETE FROM note_tags;")
             cur.execute("DELETE FROM tasks;")
+            cur.execute("DELETE FROM todos;")
             cur.execute("DELETE FROM tags;")
             cur.execute("DELETE FROM notes;")
             cur.execute("DELETE FROM notes_fts;")
@@ -187,6 +213,7 @@ class VaultIndexer:
                         float(row.get("confidence", 1.0)),
                     ),
                 )
+            self._prune_orphan_tags(cur)
             self.conn.commit()
 
     def add_or_update_task(
@@ -228,6 +255,146 @@ class VaultIndexer:
                 ),
             )
             self.conn.commit()
+
+    def clear_note_todos(self, note_id: str) -> None:
+        with self._lock:
+            self.conn.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
+            self.conn.commit()
+
+    def set_note_todos(
+        self,
+        note_id: str,
+        note_path: str,
+        todos: list[ExtractedTodo],
+        updated_at: str,
+    ) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
+            for todo in todos:
+                cur.execute(
+                    """
+                    INSERT INTO todos(
+                      id, note_id, note_path, line_no, block_ref, checked, raw_text,
+                      explicit_tags_json, inherited_tags_json, links_json,
+                      promoted, promoted_task_id, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        todo.id,
+                        note_id,
+                        note_path,
+                        int(todo.line_no),
+                        todo.block_ref,
+                        1 if todo.checked else 0,
+                        todo.raw_text,
+                        json.dumps(todo.explicit_tags, ensure_ascii=False),
+                        json.dumps(todo.inherited_tags, ensure_ascii=False),
+                        json.dumps(todo.links, ensure_ascii=False),
+                        1 if todo.promoted else 0,
+                        todo.promoted_task_id,
+                        updated_at,
+                    ),
+                )
+            self.conn.commit()
+
+    def list_todos(self) -> list[dict[str, Any]]:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                  t.id,
+                  t.note_id,
+                  t.note_path,
+                  t.line_no,
+                  t.block_ref,
+                  t.checked,
+                  t.raw_text,
+                  t.explicit_tags_json,
+                  t.inherited_tags_json,
+                  t.links_json,
+                  t.promoted,
+                  t.promoted_task_id,
+                  t.updated_at,
+                  n.title AS note_title
+                FROM todos t
+                LEFT JOIN notes n ON n.id = t.note_id
+                ORDER BY t.checked ASC, t.updated_at DESC, t.note_path ASC, t.line_no ASC;
+                """
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+            return [_hydrate_todo_row(row) for row in rows]
+
+    def get_todo(self, todo_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                  t.id,
+                  t.note_id,
+                  t.note_path,
+                  t.line_no,
+                  t.block_ref,
+                  t.checked,
+                  t.raw_text,
+                  t.explicit_tags_json,
+                  t.inherited_tags_json,
+                  t.links_json,
+                  t.promoted,
+                  t.promoted_task_id,
+                  t.updated_at,
+                  n.title AS note_title
+                FROM todos t
+                LEFT JOIN notes n ON n.id = t.note_id
+                WHERE t.id = ?;
+                """,
+                (todo_id,),
+            )
+            row = cur.fetchone()
+            return _hydrate_todo_row(dict(row)) if row else None
+
+    def remove_projection_for_path(self, path: str) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT id FROM notes WHERE path = ?;", (path,))
+            note_ids = [str(row["id"]) for row in cur.fetchall()]
+            if note_ids:
+                cur.executemany("DELETE FROM notes WHERE id = ?;", [(note_id,) for note_id in note_ids])
+            cur.execute("DELETE FROM tasks WHERE path = ?;", (path,))
+            self._prune_orphan_tags(cur)
+            self.conn.commit()
+
+    def reindex_markdown_file(self, vault_path: Path, file_path: Path) -> dict[str, int]:
+        resolved = file_path.resolve()
+        self.remove_projection_for_path(str(resolved))
+
+        if not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
+            return {"notes": 0, "tasks": 0}
+
+        try:
+            relative = resolved.relative_to(vault_path.resolve()).as_posix()
+        except ValueError:
+            return {"notes": 0, "tasks": 0}
+
+        top = relative.split("/", 1)[0].lower()
+        hidden_roots = {".system", "system", "99_system", ".media", "02_entities", "tags", "02_tags"}
+        if top in hidden_roots:
+            return {"notes": 0, "tasks": 0}
+        if top in {"tasks", "03_tasks"}:
+            return {"notes": 0, "tasks": self._index_task_markdown(resolved)}
+
+        return {"notes": self._index_note_markdown(resolved), "tasks": 0}
+
+    def _prune_orphan_tags(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            DELETE FROM tags
+            WHERE id NOT IN (SELECT DISTINCT tag_id FROM note_tags);
+            """
+        )
 
     def get_all_tags(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -486,6 +653,18 @@ class VaultIndexer:
                 )
         self.set_note_tags(note_id, tags)
 
+        inherited_todo_tags = _extract_inherited_note_tags(meta, tags)
+        if normalized_note_type not in {"task", "tag_index"}:
+            todos = extract_todos_from_body(body, note_anchor=note_id, inherited_tags=inherited_todo_tags)
+            self.set_note_todos(
+                note_id=note_id,
+                note_path=str(file_path),
+                todos=todos,
+                updated_at=updated_at,
+            )
+        else:
+            self.clear_note_todos(note_id)
+
         if normalized_note_type == "task":
             task_id = str(meta.get("id", "")).strip() or note_id
             parsed_task = ParsedTask(
@@ -551,3 +730,73 @@ def _split_tag(raw: str) -> tuple[str, str] | None:
     if not category or not slug:
         return None
     return category, slug
+
+
+def _ensure_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def _extract_inherited_note_tags(meta: dict[str, Any], note_tag_rows: list[dict[str, Any]]) -> list[str]:
+    found: set[str] = set()
+    for row in note_tag_rows:
+        category = slugify(str(row.get("category", "")))
+        slug = slugify(str(row.get("slug", "")))
+        if category and slug:
+            found.add(f"{category}:{slug}")
+
+    for raw_tag in _ensure_string_list(meta.get("tags_auto", [])):
+        clean = str(raw_tag).strip()
+        if not clean:
+            continue
+        if ":" in clean:
+            category, slug = clean.split(":", 1)
+            cat_slug = slugify(category)
+            tag_slug = slugify(slug)
+            if cat_slug and tag_slug:
+                found.add(f"{cat_slug}:{tag_slug}")
+            continue
+        topic_slug = slugify(clean.lstrip("#"))
+        if topic_slug:
+            found.add(f"topic:{topic_slug}")
+
+    return sorted(found, key=lambda item: item.lower())
+
+
+def _safe_json_list(raw_value: Any) -> list[str]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    values: list[str] = []
+    for item in parsed:
+        text = str(item).strip()
+        if text:
+            values.append(text)
+    return values
+
+
+def _hydrate_todo_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "note_id": row.get("note_id"),
+        "note_title": row.get("note_title") or "",
+        "note_path": row.get("note_path"),
+        "line_no": int(row.get("line_no") or 0),
+        "block_ref": row.get("block_ref"),
+        "checked": bool(row.get("checked")),
+        "raw_text": row.get("raw_text") or "",
+        "explicit_tags": _safe_json_list(row.get("explicit_tags_json")),
+        "inherited_tags": _safe_json_list(row.get("inherited_tags_json")),
+        "links": _safe_json_list(row.get("links_json")),
+        "promoted": bool(row.get("promoted")),
+        "promoted_task_id": row.get("promoted_task_id"),
+        "updated_at": row.get("updated_at") or "",
+    }

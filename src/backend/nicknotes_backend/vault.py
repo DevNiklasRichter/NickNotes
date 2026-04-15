@@ -13,6 +13,7 @@ from .indexer import VaultIndexer
 from .markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .models import ParsedTask, TagSuggestion
 from .parser import make_note_id, make_task_id, slugify
+from .todos import mark_todo_promoted, toggle_todo_checkbox
 
 
 def _normalize_label(value: str) -> str:
@@ -420,7 +421,7 @@ class VaultManager:
         )
         note_path.write_text(note_content, encoding="utf-8")
 
-        indexer.reindex_vault(self.vault_path)
+        indexer.reindex_markdown_file(self.vault_path, note_path)
         return {"note_id": note_id, "note_path": note_path, "title": clean_title}
 
     def create_task_in_group(self, group_key: str, title: str, indexer: VaultIndexer, status: str = "open") -> dict[str, Any]:
@@ -528,7 +529,8 @@ class VaultManager:
         if normalized != original:
             destination.write_text(normalized, encoding="utf-8")
 
-        indexer.reindex_vault(self.vault_path)
+        indexer.remove_projection_for_path(str(file_path))
+        indexer.reindex_markdown_file(self.vault_path, destination)
         return destination
 
     def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
@@ -553,7 +555,8 @@ class VaultManager:
             suffix += 1
 
         file_path.rename(destination)
-        indexer.reindex_vault(self.vault_path)
+        indexer.remove_projection_for_path(str(file_path))
+        indexer.reindex_markdown_file(self.vault_path, destination)
         return destination
 
     def move_note_files(self, note_paths: list[str], target_group_key: str, indexer: VaultIndexer) -> list[dict[str, str]]:
@@ -600,14 +603,20 @@ class VaultManager:
             )
 
         if changed:
-            indexer.reindex_vault(self.vault_path)
+            for entry in moved_entries:
+                from_path = entry.get("fromPath", "")
+                moved_path = entry.get("movedPath", "")
+                if from_path and from_path != moved_path:
+                    indexer.remove_projection_for_path(from_path)
+                if moved_path:
+                    indexer.reindex_markdown_file(self.vault_path, Path(moved_path))
         return moved_entries
 
     def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
         file_path = self._resolve_note_file(note_path)
         file_path.unlink(missing_ok=False)
         self._cleanup_orphan_media_assets()
-        indexer.reindex_vault(self.vault_path)
+        indexer.remove_projection_for_path(str(file_path))
 
     def add_note_media_asset(
         self,
@@ -922,6 +931,14 @@ class VaultManager:
 
     def save_note_document(self, note_path: str, content: str, indexer: VaultIndexer) -> dict[str, Any]:
         file_path = self._resolve_note_file(note_path)
+        previous_path = str(file_path)
+        previous_content = file_path.read_text(encoding="utf-8")
+        _previous_normalized, previous_meta = self.normalize_note_markdown_text(
+            text=previous_content,
+            path=file_path,
+            touch_updated=False,
+        )
+
         file_path.write_text(content, encoding="utf-8")
         final_path, meta, _changed = self.normalize_note_file(
             note_path=file_path,
@@ -929,11 +946,147 @@ class VaultManager:
             rename_by_title=True,
         )
         self._cleanup_orphan_media_assets()
-        indexer.reindex_vault(self.vault_path)
+
+        indexer.remove_projection_for_path(previous_path)
+        indexer.reindex_markdown_file(self.vault_path, final_path)
+
+        previous_tags = sorted(_ensure_string_list(previous_meta.get("tags", [])))
+        next_tags = sorted(_ensure_string_list(meta.get("tags", [])))
+        previous_auto_tags = sorted(_ensure_string_list(previous_meta.get("tags_auto", [])))
+        next_auto_tags = sorted(_ensure_string_list(meta.get("tags_auto", [])))
+        previous_type = _normalize_note_type(str(previous_meta.get("type", "note")))
+        next_type = _normalize_note_type(str(meta.get("type", "note")))
+        previous_status = _normalize_task_status(str(previous_meta.get("status", "open")))
+        next_status = _normalize_task_status(str(meta.get("status", "open")))
+        title_changed = _normalize_label(str(previous_meta.get("title", ""))) != _normalize_label(str(meta.get("title", "")))
+        path_changed = str(final_path) != previous_path
+        type_changed = previous_type != next_type
+        tags_changed = previous_tags != next_tags or previous_auto_tags != next_auto_tags
+        task_state_changed = previous_status != next_status
+        tag_rebuild_required = path_changed or title_changed or type_changed or tags_changed or task_state_changed
+
         return {
             "path": final_path,
             "title": str(meta.get("title", final_path.stem)),
             "meta": meta,
+            "tag_rebuild_required": tag_rebuild_required,
+        }
+
+    def toggle_todo(self, todo_id: str, indexer: VaultIndexer, checked: bool | None = None) -> dict[str, Any]:
+        todo = indexer.get_todo(todo_id)
+        if not todo:
+            raise ValueError("Todo not found")
+
+        note_file = self._resolve_note_file(str(todo.get("note_path", "")))
+        meta, body = parse_markdown(note_file)
+        note_anchor = str(meta.get("id", "")).strip() or str(todo.get("note_id", "")).strip() or note_file.as_posix()
+        inherited_tags = self._todo_inherited_tags_from_meta(meta)
+        next_body, updated = toggle_todo_checkbox(
+            body=body,
+            note_anchor=note_anchor,
+            todo_id=todo_id,
+            checked=checked,
+            inherited_tags=inherited_tags,
+        )
+        if updated is None:
+            raise ValueError("Todo entry could not be resolved in source note.")
+
+        if next_body != body:
+            meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            note_file.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+
+        indexer.reindex_markdown_file(self.vault_path, note_file)
+        refreshed = indexer.get_todo(todo_id)
+        return {
+            "todo": refreshed,
+            "notePath": str(note_file),
+        }
+
+    def promote_todo_to_task(self, todo_id: str, indexer: VaultIndexer) -> dict[str, Any]:
+        todo = indexer.get_todo(todo_id)
+        if not todo:
+            raise ValueError("Todo not found")
+
+        existing_task_id = str(todo.get("promoted_task_id", "")).strip()
+        if bool(todo.get("promoted")) and existing_task_id:
+            existing_task = next((item for item in indexer.list_tasks(include_done=True) if item.get("id") == existing_task_id), None)
+            if existing_task:
+                return {
+                    "todo": todo,
+                    "taskId": existing_task_id,
+                    "taskPath": existing_task.get("path"),
+                    "created": False,
+                }
+
+        note_file = self._resolve_note_file(str(todo.get("note_path", "")))
+        meta, body = parse_markdown(note_file)
+        note_anchor = str(meta.get("id", "")).strip() or str(todo.get("note_id", "")).strip() or note_file.as_posix()
+        now = datetime.now()
+        task_id = make_task_id(now)
+
+        inherited_tags = self._todo_inherited_tags_from_meta(meta)
+        next_body, updated = mark_todo_promoted(
+            body=body,
+            note_anchor=note_anchor,
+            todo_id=todo_id,
+            task_id=task_id,
+            inherited_tags=inherited_tags,
+        )
+        if updated is None:
+            raise ValueError("Todo entry could not be resolved in source note.")
+
+        explicit_tags = [item.strip() for item in updated.explicit_tags if item and item.strip()]
+        inherited = [item.strip() for item in updated.inherited_tags if item and item.strip()]
+        merged_tags = sorted({*explicit_tags, *inherited}, key=lambda item: item.lower())
+        project_tag = None
+        for key in merged_tags:
+            if key.lower().startswith("project:"):
+                project_tag = key.split(":", 1)[1]
+                break
+
+        parsed_task = ParsedTask(
+            title=updated.raw_text,
+            due_date=None,
+            priority="M",
+            status="open",
+            project_tag=project_tag,
+            tags=merged_tags,
+        )
+
+        task_path = self._create_task_file(
+            task_id=task_id,
+            note_id=note_anchor,
+            task=parsed_task,
+            now=now,
+            indexer=indexer,
+            manual_related=list(updated.links),
+            extra_frontmatter={
+                "origin_todo_id": updated.id,
+                "origin_note_id": note_anchor,
+                "origin_note_path": str(note_file),
+                "origin_line_no": updated.line_no,
+            },
+            body=updated.raw_text,
+        )
+
+        try:
+            meta["updated_at"] = now.isoformat(timespec="seconds")
+            note_file.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+        except OSError as exc:
+            try:
+                task_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            indexer.remove_projection_for_path(str(task_path))
+            raise ValueError(f"Could not update source todo after task creation: {exc}") from exc
+
+        indexer.reindex_markdown_file(self.vault_path, note_file)
+        refreshed = indexer.get_todo(todo_id)
+        return {
+            "todo": refreshed,
+            "taskId": task_id,
+            "taskPath": str(task_path),
+            "created": True,
         }
 
     def migrate_note_templates(self, indexer: VaultIndexer) -> dict[str, Any]:
@@ -1391,26 +1544,7 @@ class VaultManager:
         note_path.write_text(dump_markdown(frontmatter, text), encoding="utf-8")
 
         title = text.strip().splitlines()[0][:120] if text.strip() else note_id
-        indexer.upsert_note(
-            note_id=note_id,
-            path=str(note_path),
-            title=title,
-            body=text,
-            note_type="capture",
-            created_at=created_at,
-            updated_at=created_at,
-        )
-        tag_rows = [
-            {
-                "category": tag.category,
-                "slug": tag.slug,
-                "display_name": tag.display_name,
-                "source": tag.source,
-                "confidence": tag.confidence,
-            }
-            for tag in selected_tags
-        ]
-        indexer.set_note_tags(note_id, tag_rows)
+        indexer.reindex_markdown_file(self.vault_path, note_path)
 
         task_ids = []
         for parsed_task in tasks:
@@ -1436,11 +1570,15 @@ class VaultManager:
         task: ParsedTask,
         now: datetime,
         indexer: VaultIndexer,
+        manual_related: list[str] | None = None,
+        extra_frontmatter: dict[str, Any] | None = None,
+        body: str | None = None,
     ) -> Path:
         status = task.status.lower() if task.status else "open"
         folder = "done" if status == "done" else "open"
         task_path = self.tasks_root_path / folder / f"{task_id}.md"
         ts = now.isoformat(timespec="seconds")
+        related = _dedupe_sorted([item for item in (manual_related or []) if item.strip()])
 
         frontmatter = {
             "id": task_id,
@@ -1456,11 +1594,15 @@ class VaultManager:
             "project_tag": task.project_tag or "",
             "tags": task.tags,
             "tags_auto": [],
-            "related": [],
+            "related": related,
             "related_auto": [],
         }
-        body = task.title
-        task_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        if extra_frontmatter:
+            for key, value in extra_frontmatter.items():
+                if key not in frontmatter:
+                    frontmatter[key] = value
+        body_text = body if body is not None else task.title
+        task_path.write_text(dump_markdown(frontmatter, body_text), encoding="utf-8")
 
         indexer.add_or_update_task(
             task_id=task_id,
@@ -1824,6 +1966,22 @@ class VaultManager:
             candidate = directory / f"{safe_stem}_{counter}{suffix}"
             counter += 1
         return candidate
+
+    def _todo_inherited_tags_from_meta(self, meta: dict[str, Any]) -> list[str]:
+        keys: set[str] = set()
+        for raw_tag in _ensure_string_list(meta.get("tags", [])):
+            key = _normalize_tag_key(raw_tag)
+            if key:
+                keys.add(key)
+        for raw_tag in _ensure_string_list(meta.get("tags_auto", [])):
+            key = _normalize_tag_key(raw_tag)
+            if key:
+                keys.add(key)
+                continue
+            topic = slugify(raw_tag.lstrip("#"))
+            if topic:
+                keys.add(f"topic:{topic}")
+        return sorted(keys, key=lambda item: item.lower())
 
     def _build_note_document(
         self,

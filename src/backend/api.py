@@ -192,6 +192,10 @@ class UiSettingsUpdateRequest(BaseModel):
     explorer: dict[str, Any] | None = None
 
 
+class TodoToggleRequest(BaseModel):
+    checked: bool | None = None
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "vaultLoaded": state.vault is not None}
@@ -382,6 +386,32 @@ def list_tasks(include_done: bool = False) -> dict[str, Any]:
     return {"items": indexer.list_tasks(include_done=include_done)}
 
 
+@app.get("/todos")
+def list_todos() -> dict[str, Any]:
+    _vault, indexer = _require_loaded()
+    return {"items": indexer.list_todos()}
+
+
+@app.post("/todos/{todo_id}/toggle")
+def toggle_todo(todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        result = vault.toggle_todo(todo_id=todo_id, indexer=indexer, checked=req.checked)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
+
+
+@app.post("/todos/{todo_id}/promote")
+def promote_todo(todo_id: str) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        result = vault.promote_todo_to_task(todo_id=todo_id, indexer=indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
 @app.post("/tasks/{task_id}/done")
 def mark_task_done(task_id: str) -> dict[str, Any]:
     _vault, indexer = _require_loaded()
@@ -544,13 +574,14 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
 
     result = vault.save_note_document(req.path, req.content, indexer)
-    tag_groups = vault.sync_tag_groups_with_index(indexer)
+    tag_groups = vault.sync_tag_groups_with_index(indexer) if bool(result.get("tag_rebuild_required")) else None
     return {
         "saved": True,
         "path": str(result["path"]),
         "title": str(result["title"]),
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
+        "tagGroupsRebuilt": bool(tag_groups is not None),
     }
 
 
