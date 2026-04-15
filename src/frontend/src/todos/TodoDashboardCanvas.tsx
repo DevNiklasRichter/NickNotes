@@ -47,10 +47,18 @@ type TodoInlineToken =
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
 
-function normalizeTodoTags(todo: TodoRow): string[] {
-  return Array.from(new Set([...(todo.explicit_tags || []), ...(todo.inherited_tags || [])])).sort((left, right) =>
-    left.localeCompare(right)
-  )
+function normalizeKnownTodoTags(todo: TodoRow, lookup: TagLookup): string[] {
+  const known = new Set<string>()
+  for (const value of todo.explicit_tags || []) {
+    const key = value.trim().toLowerCase()
+    if (!key) {
+      continue
+    }
+    if (lookup.tagVisualByKey.has(key)) {
+      known.add(key)
+    }
+  }
+  return Array.from(known).sort((left, right) => left.localeCompare(right))
 }
 
 function todoNoteLabel(todo: TodoRow): string {
@@ -150,14 +158,18 @@ function parseTodoInlineTokens(rawText: string, lookup: TagLookup): TodoInlineTo
     if (from > cursor) {
       tokens.push({ kind: 'text', value: rawText.slice(cursor, from) })
     }
-    const visual = resolveTagVisual(key, lookup)
-    tokens.push({
-      kind: 'tag',
-      raw: full,
-      key,
-      label: visual.label,
-      color: visual.color,
-    })
+    const knownVisual = lookup.tagVisualByKey.get(key)
+    if (knownVisual) {
+      tokens.push({
+        kind: 'tag',
+        raw: full,
+        key,
+        label: knownVisual.label,
+        color: knownVisual.color,
+      })
+    } else {
+      tokens.push({ kind: 'text', value: full })
+    }
     cursor = from + full.length
     match = INLINE_TAG_PATTERN.exec(rawText)
   }
@@ -173,30 +185,50 @@ function parseTodoInlineTokens(rawText: string, lookup: TagLookup): TodoInlineTo
   return tokens
 }
 
-function groupKeyForTodo(todo: TodoRow, grouping: TodoGroupingMode, lookup: TagLookup): { key: string; heading: string } {
+function groupKeysForTodo(
+  todo: TodoRow,
+  grouping: TodoGroupingMode,
+  lookup: TagLookup,
+  knownTags: string[]
+): Array<{ key: string; heading: string }> {
   if (grouping === 'note') {
     const heading = todoNoteLabel(todo)
-    return { key: todo.note_path || todo.note_id || heading, heading }
+    return [{ key: todo.note_path || todo.note_id || heading, heading }]
   }
 
   if (grouping === 'updated_at') {
     const day = (todo.updated_at || '').slice(0, 10) || 'ohne-datum'
-    return { key: day, heading: day }
+    return [{ key: day, heading: day }]
   }
 
-  const tags = normalizeTodoTags(todo)
   if (grouping === 'tag_group') {
-    const firstTagGroup = tags[0]?.split(':', 1)[0]?.trim().toLowerCase() || ''
-    const heading = firstTagGroup ? lookup.groupDisplayById.get(firstTagGroup) || firstTagGroup : 'Unkategorisiert'
-    return { key: `group:${firstTagGroup || 'uncategorized'}`, heading }
+    const tagGroups = Array.from(
+      new Set(
+        knownTags
+          .map((tag) => tag.split(':', 1)[0]?.trim().toLowerCase() || '')
+          .filter((groupId) => Boolean(groupId))
+      )
+    )
+    if (tagGroups.length === 0) {
+      return [{ key: 'group:uncategorized', heading: 'Unkategorisiert' }]
+    }
+    return tagGroups.map((groupId) => ({
+      key: `group:${groupId}`,
+      heading: lookup.groupDisplayById.get(groupId) || groupId,
+    }))
   }
 
-  const firstTag = tags[0] || ''
-  if (!firstTag) {
-    return { key: 'tag:uncategorized', heading: 'Unkategorisiert' }
+  const uniqueTags = Array.from(new Set(knownTags.map((tag) => tag.toLowerCase())))
+  if (uniqueTags.length === 0) {
+    return [{ key: 'tag:uncategorized', heading: 'Unkategorisiert' }]
   }
-  const visual = resolveTagVisual(firstTag, lookup)
-  return { key: `tag:${firstTag.toLowerCase()}`, heading: visual.label || firstTag }
+  return uniqueTags.map((tagKey) => {
+    const visual = resolveTagVisual(tagKey, lookup)
+    return {
+      key: `tag:${tagKey}`,
+      heading: `${visual.groupLabel} / ${visual.label || tagKey}`,
+    }
+  })
 }
 
 function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters, lookup: TagLookup): TodoGroup[] {
@@ -217,7 +249,7 @@ function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters, lo
         return false
       }
 
-      const tags = normalizeTodoTags(todo)
+      const tags = normalizeKnownTodoTags(todo, lookup)
       if (selectedTags.size > 0 && !tags.some((tag) => selectedTags.has(tag))) {
         return false
       }
@@ -253,12 +285,15 @@ function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters, lo
 
   const groups = new Map<string, TodoGroup>()
   for (const todo of filtered) {
-    const key = groupKeyForTodo(todo, filters.grouping, lookup)
-    const existing = groups.get(key.key)
-    if (existing) {
-      existing.items.push(todo)
-    } else {
-      groups.set(key.key, { key: key.key, heading: key.heading, items: [todo] })
+    const knownTags = normalizeKnownTodoTags(todo, lookup)
+    const groupKeys = groupKeysForTodo(todo, filters.grouping, lookup, knownTags)
+    for (const groupKey of groupKeys) {
+      const existing = groups.get(groupKey.key)
+      if (existing) {
+        existing.items.push(todo)
+      } else {
+        groups.set(groupKey.key, { key: groupKey.key, heading: groupKey.heading, items: [todo] })
+      }
     }
   }
 

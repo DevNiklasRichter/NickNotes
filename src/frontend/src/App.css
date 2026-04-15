@@ -576,6 +576,27 @@
   color: var(--muted);
 }
 
+.todo-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.todo-section-reset-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  color: var(--muted);
+}
+
+.todo-section-reset-button:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
 .todo-sidebar-grouping-section {
   margin-top: 0;
 }
@@ -587,6 +608,21 @@
 
 .todo-grouping-select select {
   width: 100%;
+  min-height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+  color: var(--text);
+  padding: 0.2rem 0.42rem;
+}
+
+.todo-grouping-select select:hover {
+  border-color: var(--line-strong);
+}
+
+.todo-grouping-select select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
 }
 
 .todo-filter-rows {
@@ -658,28 +694,45 @@
   left: 0;
   top: calc(100% + 0.22rem);
   z-index: 40;
-  min-width: 100%;
+  min-width: calc(100% + 30%);
   width: max-content;
-  max-width: min(640px, calc(100vw - 24px));
+  max-width: min(960px, calc(100vw - 18px));
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow);
   display: grid;
   gap: 0.1rem;
-  padding: 0.28rem;
-  max-height: 220px;
+  padding: 0.34rem 1cm 0.34rem 0.34rem;
+  max-height: 264px;
+  scrollbar-gutter: stable;
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 
-.todo-multiselect-menu.upward {
-  top: auto;
-  bottom: calc(100% + 0.22rem);
+.todo-multiselect-search-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  padding: 0.08rem 0.1rem 0.22rem;
+  background: var(--surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  margin-bottom: 0.12rem;
+}
+
+.todo-multiselect-search-field {
+  width: 100%;
+}
+
+.todo-multiselect-search-field .explorer-search-input {
+  width: 100%;
+  padding-left: 1.7rem;
+  padding-right: 2.05rem;
 }
 
 .todo-multiselect-option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.42rem;
   padding: 0.22rem 0.2rem;
@@ -687,17 +740,35 @@
   font-size: 0.74rem;
   color: var(--text);
   white-space: nowrap;
-  min-width: max-content;
+  min-width: 100%;
 }
 
 .todo-multiselect-option:hover {
   background: color-mix(in srgb, var(--surface-contrast) 82%, transparent);
 }
 
+.todo-multiselect-option.is-active {
+  background: color-mix(in srgb, var(--accent-soft) 52%, var(--surface-contrast) 48%);
+}
+
 .todo-multiselect-option input[type='checkbox'] {
   width: 14px;
   height: 14px;
   margin: 0;
+}
+
+.todo-multiselect-hint-check {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--accent) 88%, white 12%);
+  opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 120ms ease-in-out;
+}
+
+.todo-multiselect-hint-check.visible {
+  opacity: 0.45;
 }
 
 .todo-multiselect-color-dot {
