@@ -3212,6 +3212,7 @@ function App() {
         <TodoDashboardCanvas
           todos={todos}
           tasks={tasks}
+          tagGroups={mergedTagGroups}
           filters={todoDashboardFilters}
           onToggleTodo={(todoId, checked) => {
             void toggleTodo(todoId, checked)

@@ -456,9 +456,9 @@ export function EditorWorkspaceLayout({
                   {showMarkerBefore ? <div className="pane-tab-insert-marker" aria-hidden="true" /> : null}
                   <div
                     className={`pane-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
-                    draggable={tab.kind === 'note'}
+                    draggable={tab.kind === 'note' || tab.kind === 'todo_dashboard'}
                     onDragStart={(event) => {
-                      if (tab.kind !== 'note') {
+                      if (tab.kind !== 'note' && tab.kind !== 'todo_dashboard') {
                         event.preventDefault()
                         return
                       }
@@ -468,9 +468,11 @@ export function EditorWorkspaceLayout({
                       }
                       event.dataTransfer.effectAllowed = 'move'
                       event.dataTransfer.setData(WORKSPACE_TAB_MIME, JSON.stringify(payload))
-                      event.dataTransfer.setData('application/x-open-tab-path', tab.path)
-                      event.dataTransfer.setData('application/x-open-tab-title', tab.title)
-                      event.dataTransfer.setData('text/plain', tab.path)
+                      if (tab.kind === 'note') {
+                        event.dataTransfer.setData('application/x-open-tab-path', tab.path)
+                        event.dataTransfer.setData('application/x-open-tab-title', tab.title)
+                        event.dataTransfer.setData('text/plain', tab.path)
+                      }
                       setDraggedTabId(tab.id)
                       setDragOverPaneId(paneId)
                       setInsertIndexByPane((current) => ({ ...current, [paneId]: index + 1 }))

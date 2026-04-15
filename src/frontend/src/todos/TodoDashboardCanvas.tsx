@@ -1,10 +1,13 @@
-import type { ReactNode } from 'react'
+import { useMemo } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
-import type { TaskRow, TodoDashboardFilters, TodoRow, TodoGroupingMode } from '../app/AppShared'
+import type { TaskRow, TodoDashboardFilters, TodoGroupingMode, TodoRow } from '../app/AppShared'
+import type { TagGroupDefinition } from '../tags/tagTypes'
 
 type TodoDashboardCanvasProps = {
   todos: TodoRow[]
   tasks: TaskRow[]
+  tagGroups: TagGroupDefinition[]
   filters: TodoDashboardFilters
   onToggleTodo: (id: string, checked: boolean) => void
   onOpenOrigin: (notePath: string, title?: string) => void
@@ -17,6 +20,32 @@ type TodoGroup = {
   heading: string
   items: TodoRow[]
 }
+
+type TagVisual = {
+  label: string
+  groupLabel: string
+  color: string
+}
+
+type TagLookup = {
+  groupDisplayById: Map<string, string>
+  tagVisualByKey: Map<string, TagVisual>
+}
+
+type TodoInlineToken =
+  | {
+      kind: 'text'
+      value: string
+    }
+  | {
+      kind: 'tag'
+      raw: string
+      key: string
+      label: string
+      color: string
+    }
+
+const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
 
 function normalizeTodoTags(todo: TodoRow): string[] {
   return Array.from(new Set([...(todo.explicit_tags || []), ...(todo.inherited_tags || [])])).sort((left, right) =>
@@ -68,7 +97,83 @@ function renderHighlightedText(text: string, query: string): ReactNode[] {
   return result
 }
 
-function groupKeyForTodo(todo: TodoRow, grouping: TodoGroupingMode): { key: string; heading: string } {
+function buildTagLookup(tagGroups: TagGroupDefinition[]): TagLookup {
+  const groupDisplayById = new Map<string, string>()
+  const tagVisualByKey = new Map<string, TagVisual>()
+
+  for (const group of tagGroups) {
+    const groupKey = group.id.toLowerCase()
+    const groupLabel = group.displayName || group.id
+    groupDisplayById.set(groupKey, groupLabel)
+    for (const tag of group.tags) {
+      tagVisualByKey.set(`${group.id}:${tag.id}`.toLowerCase(), {
+        label: tag.displayName || tag.id,
+        groupLabel,
+        color: group.color || '#4f8cff',
+      })
+    }
+  }
+
+  return {
+    groupDisplayById,
+    tagVisualByKey,
+  }
+}
+
+function resolveTagVisual(tagKey: string, lookup: TagLookup): TagVisual {
+  const [groupRaw = '', tagRaw = ''] = tagKey.split(':', 2)
+  const groupId = groupRaw.trim().toLowerCase()
+  const fallbackLabel = tagRaw || tagKey
+  const visual = lookup.tagVisualByKey.get(tagKey.toLowerCase())
+  if (visual) {
+    return visual
+  }
+  return {
+    label: fallbackLabel,
+    groupLabel: lookup.groupDisplayById.get(groupId) || groupId || 'Tag',
+    color: '#94a3b8',
+  }
+}
+
+function parseTodoInlineTokens(rawText: string, lookup: TagLookup): TodoInlineToken[] {
+  const tokens: TodoInlineToken[] = []
+  INLINE_TAG_PATTERN.lastIndex = 0
+  let cursor = 0
+  let match = INLINE_TAG_PATTERN.exec(rawText)
+
+  while (match) {
+    const full = match[0] ?? ''
+    const groupId = (match[1] ?? '').toLowerCase()
+    const tagId = (match[2] ?? '').toLowerCase()
+    const key = `${groupId}:${tagId}`
+    const from = match.index
+    if (from > cursor) {
+      tokens.push({ kind: 'text', value: rawText.slice(cursor, from) })
+    }
+    const visual = resolveTagVisual(key, lookup)
+    tokens.push({
+      kind: 'tag',
+      raw: full,
+      key,
+      label: visual.label,
+      color: visual.color,
+    })
+    cursor = from + full.length
+    match = INLINE_TAG_PATTERN.exec(rawText)
+  }
+
+  if (cursor < rawText.length) {
+    tokens.push({ kind: 'text', value: rawText.slice(cursor) })
+  }
+
+  if (tokens.length === 0) {
+    return [{ kind: 'text', value: rawText }]
+  }
+
+  return tokens
+}
+
+function groupKeyForTodo(todo: TodoRow, grouping: TodoGroupingMode, lookup: TagLookup): { key: string; heading: string } {
   if (grouping === 'note') {
     const heading = todoNoteLabel(todo)
     return { key: todo.note_path || todo.note_id || heading, heading }
@@ -81,44 +186,53 @@ function groupKeyForTodo(todo: TodoRow, grouping: TodoGroupingMode): { key: stri
 
   const tags = normalizeTodoTags(todo)
   if (grouping === 'tag_group') {
-    const firstTagGroup = tags[0]?.split(':', 1)[0]?.trim() || ''
-    const heading = firstTagGroup || 'Unkategorisiert'
-    return { key: heading, heading }
+    const firstTagGroup = tags[0]?.split(':', 1)[0]?.trim().toLowerCase() || ''
+    const heading = firstTagGroup ? lookup.groupDisplayById.get(firstTagGroup) || firstTagGroup : 'Unkategorisiert'
+    return { key: `group:${firstTagGroup || 'uncategorized'}`, heading }
   }
 
   const firstTag = tags[0] || ''
-  const heading = firstTag || 'Unkategorisiert'
-  return { key: heading, heading }
+  if (!firstTag) {
+    return { key: 'tag:uncategorized', heading: 'Unkategorisiert' }
+  }
+  const visual = resolveTagVisual(firstTag, lookup)
+  return { key: `tag:${firstTag.toLowerCase()}`, heading: visual.label || firstTag }
 }
 
-function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters): TodoGroup[] {
+function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters, lookup: TagLookup): TodoGroup[] {
+  const selectedStatuses = new Set(filters.statuses)
+  const selectedPromotions = new Set(filters.promotions)
+  const selectedTagGroups = new Set(filters.tagGroups.map((value) => value.toLowerCase()))
+  const selectedTags = new Set(filters.tags)
+
   const filtered = todos
     .filter((todo) => {
-      if (filters.status === 'open' && todo.checked) {
+      const statusValue = todo.checked ? 'done' : 'open'
+      if (selectedStatuses.size > 0 && !selectedStatuses.has(statusValue)) {
         return false
       }
-      if (filters.status === 'done' && !todo.checked) {
-        return false
-      }
-      if (filters.promotion === 'promoted' && !todo.promoted) {
-        return false
-      }
-      if (filters.promotion === 'unpromoted' && todo.promoted) {
-        return false
-      }
-      if (filters.notePath !== 'all' && todo.note_path !== filters.notePath) {
+
+      const promotionValue = todo.promoted ? 'promoted' : 'unpromoted'
+      if (selectedPromotions.size > 0 && !selectedPromotions.has(promotionValue)) {
         return false
       }
 
       const tags = normalizeTodoTags(todo)
-      if (filters.tag !== 'all' && !tags.includes(filters.tag)) {
+      if (selectedTags.size > 0 && !tags.some((tag) => selectedTags.has(tag))) {
         return false
       }
-      if (filters.tagGroup !== 'all' && !tags.some((tag) => tag.startsWith(`${filters.tagGroup}:`))) {
+      if (
+        selectedTagGroups.size > 0 &&
+        !tags.some((tag) => {
+          const groupId = tag.split(':', 1)[0]?.trim().toLowerCase() || ''
+          return groupId && selectedTagGroups.has(groupId)
+        })
+      ) {
         return false
       }
 
-      const searchable = [todo.raw_text, todoNoteLabel(todo), tags.join(' ')].join(' ')
+      const tagLabels = tags.map((tag) => resolveTagVisual(tag, lookup).label)
+      const searchable = [todo.raw_text, todoNoteLabel(todo), tags.join(' '), tagLabels.join(' ')].join(' ')
       if (!textMatchesQuery(searchable, filters.query)) {
         return false
       }
@@ -139,7 +253,7 @@ function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters): T
 
   const groups = new Map<string, TodoGroup>()
   for (const todo of filtered) {
-    const key = groupKeyForTodo(todo, filters.grouping)
+    const key = groupKeyForTodo(todo, filters.grouping, lookup)
     const existing = groups.get(key.key)
     if (existing) {
       existing.items.push(todo)
@@ -148,27 +262,32 @@ function buildFilteredGroups(todos: TodoRow[], filters: TodoDashboardFilters): T
     }
   }
 
-  return Array.from(groups.values()).sort((left, right) => left.heading.localeCompare(right.heading))
+  return Array.from(groups.values()).sort((left, right) => left.heading.localeCompare(right.heading, 'de', { sensitivity: 'base' }))
 }
 
 export function TodoDashboardCanvas({
   todos,
   tasks,
+  tagGroups,
   filters,
   onToggleTodo,
   onOpenOrigin,
   onPromoteTodo,
   onOpenTaskPath,
 }: TodoDashboardCanvasProps) {
-  const taskById = new Map(tasks.map((task) => [task.id, task]))
-  const groups = buildFilteredGroups(todos, filters)
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
+  const tagLookup = useMemo(() => buildTagLookup(tagGroups), [tagGroups])
+  const groups = useMemo(() => buildFilteredGroups(todos, filters, tagLookup), [filters, tagLookup, todos])
+  const openTaskCount = useMemo(() => tasks.filter((task) => task.status !== 'done').length, [tasks])
+  const totalHits = groups.reduce((sum, group) => sum + group.items.length, 0)
+  const query = filters.query.trim().toLowerCase()
 
   return (
     <div className="todo-canvas">
       <div className="todo-canvas-header">
         <h2>Todo Dashboard</h2>
         <p>
-          Treffer: {groups.reduce((sum, group) => sum + group.items.length, 0)} | Gruppierung: {filters.grouping}
+          Treffer: {totalHits} | Offene Tasks: {openTaskCount} | Gruppierung: {filters.grouping}
         </p>
       </div>
 
@@ -181,16 +300,39 @@ export function TodoDashboardCanvas({
             <ul>
               {group.items.map((todo) => {
                 const promotedTask = todo.promoted_task_id ? taskById.get(todo.promoted_task_id) : null
+                const canOpenPromotedTask = Boolean(todo.promoted && promotedTask?.path)
+                const tokens = parseTodoInlineTokens(todo.raw_text, tagLookup)
                 return (
                   <li key={todo.id} className="todo-canvas-line">
-                    <label className="todo-canvas-checkbox">
+                    <div className="todo-canvas-checkbox">
                       <input
                         type="checkbox"
                         checked={todo.checked}
                         onChange={(event) => onToggleTodo(todo.id, event.target.checked)}
                       />
-                      <span className={todo.checked ? 'done' : ''}>{renderHighlightedText(todo.raw_text, filters.query)}</span>
-                    </label>
+                      <span className={`todo-canvas-line-text ${todo.checked ? 'done' : ''}`}>
+                        {tokens.map((token, index) => {
+                          if (token.kind === 'text') {
+                            return (
+                              <span key={`${todo.id}-text-${index}`} className="todo-inline-fragment">
+                                {renderHighlightedText(token.value, filters.query)}
+                              </span>
+                            )
+                          }
+                          const tagMatchesQuery = query ? `${token.label} ${token.raw}`.toLowerCase().includes(query) : false
+                          return (
+                            <span
+                              key={`${todo.id}-tag-${token.key}-${index}`}
+                              className={`todo-inline-tag-chip ${tagMatchesQuery ? 'query-match' : ''}`}
+                              style={{ '--todo-tag-color': token.color } as CSSProperties}
+                              title={token.raw}
+                            >
+                              {token.label}
+                            </span>
+                          )
+                        })}
+                      </span>
+                    </div>
 
                     <div className="todo-canvas-line-actions">
                       <button
@@ -200,11 +342,17 @@ export function TodoDashboardCanvas({
                       >
                         <LucideNamedIcon name="ArrowUpRight" size={14} />
                       </button>
-                      {todo.promoted && promotedTask?.path ? (
+                      {todo.promoted ? (
                         <button
                           className="icon-button compact muted"
-                          title={`Task oeffnen (${todo.promoted_task_id})`}
-                          onClick={() => onOpenTaskPath(promotedTask.path || '', promotedTask.title)}
+                          title={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'}
+                          onClick={() => {
+                            if (!canOpenPromotedTask) {
+                              return
+                            }
+                            onOpenTaskPath(promotedTask?.path || '', promotedTask?.title)
+                          }}
+                          disabled={!canOpenPromotedTask}
                         >
                           <LucideNamedIcon name="CheckSquare" size={14} />
                         </button>
@@ -213,7 +361,6 @@ export function TodoDashboardCanvas({
                           className="icon-button compact muted"
                           title="Als Task promoten"
                           onClick={() => onPromoteTodo(todo.id)}
-                          disabled={todo.promoted}
                         >
                           <LucideNamedIcon name="ArrowBigUpDash" size={14} />
                         </button>

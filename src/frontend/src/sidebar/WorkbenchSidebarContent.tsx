@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ExplorerSidebar } from '../explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from '../explorer/TagSidebarV2'
 import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, ExplorerViewState } from '../explorer/types'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
-import type { TodoDashboardFilters } from '../app/AppShared'
+import type { TodoDashboardFilters, TodoPromotionFilterValue, TodoStatusFilterValue } from '../app/AppShared'
 
 type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
 
@@ -123,6 +123,22 @@ type WorkbenchSidebarContentProps = {
 
 type TaskDueBucket = 'overdue' | 'today' | 'week' | 'later' | 'none'
 
+type TodoTagOption = {
+  value: string
+  label: string
+  groupId: string
+  groupLabel: string
+  color: string
+}
+
+type TodoMultiSelectOption = {
+  value: string
+  label: string
+  color?: string
+}
+
+type TodoDropdownKey = 'status' | 'tag_groups' | 'tags' | 'promotions'
+
 function toTodayIso(): string {
   const now = new Date()
   const offsetMinutes = now.getTimezoneOffset()
@@ -179,6 +195,23 @@ function todoTags(todo: TodoRow): string[] {
   return Array.from(new Set([...(todo.explicit_tags || []), ...(todo.inherited_tags || [])])).sort((left, right) =>
     left.localeCompare(right)
   )
+}
+
+function summarizeTodoSelection(selectedValues: string[], allOptions: TodoMultiSelectOption[], fallbackAllLabel: string): string {
+  if (allOptions.length === 0) {
+    return 'Keine Optionen'
+  }
+  if (selectedValues.length === 0) {
+    return 'Keine Auswahl'
+  }
+  if (selectedValues.length === allOptions.length) {
+    return fallbackAllLabel
+  }
+  if (selectedValues.length === 1) {
+    const selected = allOptions.find((option) => option.value === selectedValues[0])
+    return selected?.label || selectedValues[0]
+  }
+  return `${selectedValues.length} ausgewaehlt`
 }
 
 export function WorkbenchSidebarContent({
@@ -258,6 +291,7 @@ export function WorkbenchSidebarContent({
   const setTodoFilter = (patch: Partial<TodoDashboardFilters>) => {
     onTodoFiltersChange({ ...todoFilters, ...patch })
   }
+  const [todoOpenDropdown, setTodoOpenDropdown] = useState<TodoDropdownKey | null>(null)
 
   const visibleTasks = useMemo(() => {
     return tasks
@@ -329,35 +363,173 @@ export function WorkbenchSidebarContent({
     return rows
   }, [todayIso, visibleTasks])
 
-  const todoNotes = useMemo(() => {
-    const rows = new Map<string, string>()
-    for (const todo of todos) {
-      if (todo.note_path && !rows.has(todo.note_path)) {
-        rows.set(todo.note_path, todoLabel(todo))
+  const todoTagGroupLabelById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const group of mergedTagGroups) {
+      map.set(group.id.toLowerCase(), group.displayName || group.id)
+    }
+    return map
+  }, [mergedTagGroups])
+
+  const todoTagLabelByKey = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const group of mergedTagGroups) {
+      for (const tag of group.tags) {
+        map.set(`${group.id}:${tag.id}`.toLowerCase(), tag.displayName || tag.id)
       }
     }
-    return Array.from(rows.entries()).sort((left, right) => left[1].localeCompare(right[1]))
-  }, [todos])
+    return map
+  }, [mergedTagGroups])
 
-  const todoTagOptions = useMemo(() => {
-    const tags = new Set<string>()
+  const todoTagOptions = useMemo<TodoTagOption[]>(() => {
+    const byKey = new Map<string, TodoTagOption>()
+    for (const group of mergedTagGroups) {
+      const groupId = group.id.trim().toLowerCase()
+      const groupLabel = group.displayName || group.id
+      for (const tag of group.tags) {
+        const value = `${group.id}:${tag.id}`
+        byKey.set(value.toLowerCase(), {
+          value,
+          label: tag.displayName || tag.id,
+          groupId,
+          groupLabel,
+          color: group.color || '#94a3b8',
+        })
+      }
+    }
+
     for (const todo of todos) {
       for (const tag of todoTags(todo)) {
-        tags.add(tag)
+        const cleanTag = tag.trim()
+        if (!cleanTag) {
+          continue
+        }
+        const [groupRaw = '', tagRaw = ''] = cleanTag.includes(':') ? cleanTag.split(':', 2) : ['', cleanTag]
+        const groupId = groupRaw.trim().toLowerCase()
+        const key = cleanTag.toLowerCase()
+        if (!byKey.has(key)) {
+          const fallbackLabel = tagRaw || cleanTag
+          byKey.set(key, {
+            value: cleanTag,
+            label: todoTagLabelByKey.get(key) || fallbackLabel,
+            groupId,
+            groupLabel: todoTagGroupLabelById.get(groupId) || groupId,
+            color: '#94a3b8',
+          })
+        }
       }
     }
-    return Array.from(tags).sort((left, right) => left.localeCompare(right))
-  }, [todos])
+    return Array.from(byKey.values()).sort((left, right) => left.label.localeCompare(right.label, 'de', { sensitivity: 'base' }))
+  }, [mergedTagGroups, todoTagGroupLabelById, todoTagLabelByKey, todos])
 
-  const todoTagGroups = useMemo(() => {
-    const groups = new Set<string>()
-    for (const tag of todoTagOptions) {
-      if (tag.includes(':')) {
-        groups.add(tag.split(':', 1)[0] || '')
+  const todoTagGroups = useMemo<TodoMultiSelectOption[]>(() => {
+    const byId = new Map<string, TodoMultiSelectOption>()
+    for (const group of mergedTagGroups) {
+      const groupId = group.id.trim().toLowerCase()
+      if (!groupId || byId.has(groupId)) {
+        continue
       }
+      byId.set(groupId, {
+        value: groupId,
+        label: group.displayName || group.id,
+        color: group.color || '#94a3b8',
+      })
     }
-    return Array.from(groups).filter(Boolean).sort((left, right) => left.localeCompare(right))
-  }, [todoTagOptions])
+    return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label, 'de', { sensitivity: 'base' }))
+  }, [mergedTagGroups])
+
+  const statusOptions = useMemo<TodoMultiSelectOption[]>(
+    () => [
+      { value: 'open', label: 'Open' },
+      { value: 'done', label: 'Done' },
+    ],
+    []
+  )
+
+  const promotionOptions = useMemo<TodoMultiSelectOption[]>(
+    () => [
+      { value: 'promoted', label: 'Promoted' },
+      { value: 'unpromoted', label: 'Unpromoted' },
+    ],
+    []
+  )
+
+  const visibleTodoTagOptions = useMemo(() => {
+    if (todoFilters.tagGroups.length === 0) {
+      return todoTagOptions
+    }
+    const selectedGroups = new Set(todoFilters.tagGroups.map((value) => value.toLowerCase()))
+    return todoTagOptions.filter((option) => selectedGroups.has(option.groupId.toLowerCase()))
+  }, [todoFilters.tagGroups, todoTagOptions])
+
+  useEffect(() => {
+    if (todoFilters.tags.length === 0) {
+      return
+    }
+    const availableValues = new Set(visibleTodoTagOptions.map((option) => option.value))
+    const nextTags = todoFilters.tags.filter((tag) => availableValues.has(tag))
+    if (nextTags.length === todoFilters.tags.length) {
+      return
+    }
+    onTodoFiltersChange({ ...todoFilters, tags: nextTags })
+  }, [onTodoFiltersChange, todoFilters, visibleTodoTagOptions])
+
+  useEffect(() => {
+    const selectedStatusSet = new Set(statusOptions.map((option) => option.value))
+    const nextStatuses = todoFilters.statuses.filter((value) => selectedStatusSet.has(value))
+    if (nextStatuses.length !== todoFilters.statuses.length) {
+      onTodoFiltersChange({ ...todoFilters, statuses: nextStatuses as TodoStatusFilterValue[] })
+      return
+    }
+
+    const selectedPromotionSet = new Set(promotionOptions.map((option) => option.value))
+    const nextPromotions = todoFilters.promotions.filter((value) => selectedPromotionSet.has(value))
+    if (nextPromotions.length !== todoFilters.promotions.length) {
+      onTodoFiltersChange({ ...todoFilters, promotions: nextPromotions as TodoPromotionFilterValue[] })
+      return
+    }
+
+    const availableGroupSet = new Set(todoTagGroups.map((group) => group.value.toLowerCase()))
+    const nextTagGroups = todoFilters.tagGroups.filter((value) => availableGroupSet.has(value.toLowerCase()))
+    if (nextTagGroups.length !== todoFilters.tagGroups.length) {
+      onTodoFiltersChange({ ...todoFilters, tagGroups: nextTagGroups })
+    }
+  }, [onTodoFiltersChange, promotionOptions, statusOptions, todoFilters, todoTagGroups])
+
+  useEffect(() => {
+    if (!todoOpenDropdown) {
+      return
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.closest('.todo-multiselect')) {
+        return
+      }
+      setTodoOpenDropdown(null)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [todoOpenDropdown])
+
+  const toggleMultiSelection = (key: 'statuses' | 'tagGroups' | 'tags' | 'promotions', value: string) => {
+    const current = [...(todoFilters[key] as string[])]
+    const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value]
+    if (key === 'statuses') {
+      setTodoFilter({ statuses: next as TodoStatusFilterValue[] })
+      return
+    }
+    if (key === 'promotions') {
+      setTodoFilter({ promotions: next as TodoPromotionFilterValue[] })
+      return
+    }
+    if (key === 'tagGroups') {
+      setTodoFilter({ tagGroups: next })
+      return
+    }
+    setTodoFilter({ tags: next })
+  }
 
   const focusTodos = useMemo(() => {
     return todos
@@ -367,6 +539,58 @@ export function WorkbenchSidebarContent({
   }, [todos])
 
   const focusTasks = useMemo(() => visibleTasks.slice(0, 8), [visibleTasks])
+
+  const renderTodoMultiSelect = (
+    dropdownKey: TodoDropdownKey,
+    selectedValues: string[],
+    allOptions: TodoMultiSelectOption[],
+    fallbackAllLabel: string,
+    onToggleValue: (value: string) => void,
+    openUpward = false
+  ) => {
+    const open = todoOpenDropdown === dropdownKey
+    const summary = summarizeTodoSelection(selectedValues, allOptions, fallbackAllLabel)
+    return (
+      <div className={`todo-multiselect ${open ? 'open' : ''}`}>
+        <button
+          type="button"
+          className="todo-multiselect-trigger"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setTodoOpenDropdown((current) => (current === dropdownKey ? null : dropdownKey))
+          }}
+        >
+          <span className="todo-multiselect-summary">{summary}</span>
+          <LucideNamedIcon name={open ? 'ChevronUp' : 'ChevronDown'} size={13} />
+        </button>
+        {open ? (
+          <div className={`todo-multiselect-menu ${openUpward ? 'upward' : ''}`}>
+            {allOptions.length === 0 ? <p className="empty-copy">Keine Optionen</p> : null}
+            {allOptions.map((option) => (
+              <label key={`${dropdownKey}-${option.value}`} className="todo-multiselect-option">
+                <input
+                  type="checkbox"
+                  checked={selectedValues.includes(option.value)}
+                  onChange={() => {
+                    onToggleValue(option.value)
+                  }}
+                />
+                {option.color ? (
+                  <span
+                    className="todo-multiselect-color-dot"
+                    style={{ '--todo-option-color': option.color } as CSSProperties}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   if (sidebarView === 'vault') {
     return (
@@ -401,89 +625,126 @@ export function WorkbenchSidebarContent({
 
   if (sidebarView === 'todos') {
     return (
-      <div className="sidebar-content">
-        <div className="sidebar-header-row">
-          <h3>Todos</h3>
-          <div className="header-inline-actions">
-            <button onClick={onRefreshTodos} disabled={!vaultLoaded}>
-              Aktualisieren
-            </button>
-            <button onClick={onOpenTodoDashboard} disabled={!vaultLoaded}>
-              Dashboard
-            </button>
+      <div className="explorer-shell todo-explorer-shell">
+        <header className="explorer-toolbar todo-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <div className="explorer-toolbar-left">
+              <div className="explorer-sort-anchor">
+                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+                </button>
+              </div>
+            </div>
+            <h3>Todos</h3>
+            <div className="explorer-toolbar-right">
+              <button
+                className="icon-button compact"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRefreshTodos()
+                }}
+                disabled={!vaultLoaded}
+                title="Todos aktualisieren"
+              >
+                <LucideNamedIcon name="RefreshCw" size={14} />
+              </button>
+            </div>
           </div>
-        </div>
 
-        <label className="todo-filter-search">
-          Suche
-          <input
-            value={todoFilters.query}
-            onChange={(event) => setTodoFilter({ query: event.target.value })}
-            placeholder="To-dos durchsuchen ..."
-          />
-        </label>
+          <div className="explorer-toolbar-search">
+            <div className="explorer-search-input-wrap">
+              <LucideNamedIcon name="Search" className="explorer-search-icon" size={14} />
+              <input
+                className="explorer-search-input"
+                value={todoFilters.query}
+                onChange={(event) => setTodoFilter({ query: event.target.value })}
+                placeholder="Search"
+                title="Todos durchsuchen"
+              />
+              {todoFilters.query ? (
+                <button
+                  type="button"
+                  className="explorer-search-clear"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setTodoFilter({ query: '' })
+                  }}
+                  aria-label="Suche leeren"
+                  title="Suche leeren"
+                >
+                  <LucideNamedIcon name="X" size={12} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
 
-        <div className="dashboard-filter-grid">
-          <label>
-            Status
-            <select
-              value={todoFilters.status}
-              onChange={(event) => setTodoFilter({ status: event.target.value as 'all' | 'open' | 'done' })}
-            >
-              <option value="open">Open</option>
-              <option value="done">Done</option>
-              <option value="all">Alle</option>
-            </select>
-          </label>
-          <label>
-            Notiz
-            <select value={todoFilters.notePath} onChange={(event) => setTodoFilter({ notePath: event.target.value })}>
-              <option value="all">Alle</option>
-              {todoNotes.map(([path, label]) => (
-                <option key={path} value={path}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Tag
-            <select value={todoFilters.tag} onChange={(event) => setTodoFilter({ tag: event.target.value })}>
-              <option value="all">Alle</option>
-              {todoTagOptions.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Tag-Gruppe
-            <select value={todoFilters.tagGroup} onChange={(event) => setTodoFilter({ tagGroup: event.target.value })}>
-              <option value="all">Alle</option>
-              {todoTagGroups.map((group) => (
-                <option key={group} value={group}>
-                  {group}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Promotion
-            <select
-              value={todoFilters.promotion}
-              onChange={(event) => setTodoFilter({ promotion: event.target.value as 'all' | 'promoted' | 'unpromoted' })}
-            >
-              <option value="all">Alle</option>
-              <option value="promoted">Promoted</option>
-              <option value="unpromoted">Unpromoted</option>
-            </select>
-          </label>
-          <label>
-            Gruppierung
+        <button className="todo-open-dashboard-button" onClick={onOpenTodoDashboard} disabled={!vaultLoaded}>
+          Dashboard oeffnen
+        </button>
+
+        <section className="todo-sidebar-section">
+          <h4>Filter</h4>
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Status</span>
+              {renderTodoMultiSelect('status', todoFilters.statuses, statusOptions, 'Alle', (value) =>
+                toggleMultiSelection('statuses', value)
+              )}
+            </div>
+
+            <div className="todo-filter-divider" />
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Tag-Gruppe</span>
+              {renderTodoMultiSelect('tag_groups', todoFilters.tagGroups, todoTagGroups, 'Alle', (value) =>
+                toggleMultiSelection('tagGroups', value)
+              )}
+            </div>
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Tag</span>
+              {renderTodoMultiSelect(
+                'tags',
+                todoFilters.tags,
+                visibleTodoTagOptions.map((option) => ({
+                  value: option.value,
+                  label:
+                    todoFilters.tagGroups.length === 0 && option.groupLabel
+                      ? `${option.groupLabel} / ${option.label}`
+                      : option.label,
+                  color: option.color,
+                })),
+                'Alle',
+                (value) => toggleMultiSelection('tags', value)
+              )}
+            </div>
+
+            <div className="todo-filter-divider" />
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Promotion</span>
+              {renderTodoMultiSelect(
+                'promotions',
+                todoFilters.promotions,
+                promotionOptions,
+                'Alle',
+                (value) => toggleMultiSelection('promotions', value),
+                true
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="todo-sidebar-section todo-sidebar-grouping-section">
+          <h4>Gruppierung</h4>
+          <label className="todo-grouping-select">
             <select
               value={todoFilters.grouping}
-              onChange={(event) => setTodoFilter({ grouping: event.target.value as 'note' | 'tag' | 'tag_group' | 'updated_at' })}
+              onChange={(event) =>
+                setTodoFilter({ grouping: event.target.value as 'note' | 'tag' | 'tag_group' | 'updated_at' })
+              }
             >
               <option value="note">Nach Notiz</option>
               <option value="tag">Nach Tag</option>
@@ -491,11 +752,7 @@ export function WorkbenchSidebarContent({
               <option value="updated_at">Nach Datum</option>
             </select>
           </label>
-        </div>
-
-        <p className="muted-copy">
-          Die To-do-Liste wird als eigener Dashboard-Tab im Hauptbereich dargestellt. Filter und Suche wirken direkt auf diese Ansicht.
-        </p>
+        </section>
       </div>
     )
   }

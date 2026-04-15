@@ -58,13 +58,15 @@ export type TodoRow = {
 
 export type TodoGroupingMode = 'note' | 'tag' | 'tag_group' | 'updated_at'
 
+export type TodoStatusFilterValue = 'open' | 'done'
+export type TodoPromotionFilterValue = 'promoted' | 'unpromoted'
+
 export type TodoDashboardFilters = {
   query: string
-  status: 'all' | 'open' | 'done'
-  notePath: string
-  tag: string
-  tagGroup: string
-  promotion: 'all' | 'promoted' | 'unpromoted'
+  statuses: TodoStatusFilterValue[]
+  tags: string[]
+  tagGroups: string[]
+  promotions: TodoPromotionFilterValue[]
   grouping: TodoGroupingMode
 }
 
@@ -132,11 +134,10 @@ export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',
-  status: 'open',
-  notePath: 'all',
-  tag: 'all',
-  tagGroup: 'all',
-  promotion: 'all',
+  statuses: ['open'],
+  tags: [],
+  tagGroups: [],
+  promotions: ['promoted', 'unpromoted'],
   grouping: 'tag',
 }
 
