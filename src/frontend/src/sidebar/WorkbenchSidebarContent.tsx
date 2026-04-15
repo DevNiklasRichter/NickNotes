@@ -4,6 +4,7 @@ import { TagSidebar } from '../explorer/TagSidebarV2'
 import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, ExplorerViewState } from '../explorer/types'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
+import type { TodoDashboardFilters } from '../app/AppShared'
 
 type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
 
@@ -62,12 +63,15 @@ type WorkbenchSidebarContentProps = {
   onMigrateExistingNotesToTemplate: () => void
   tasks: TaskRow[]
   todos: TodoRow[]
+  todoFilters: TodoDashboardFilters
+  onTodoFiltersChange: (next: TodoDashboardFilters) => void
   onRefreshTasks: () => void
   onRefreshTodos: () => void
   onMarkTaskDone: (id: string) => void
   onToggleTodo: (id: string) => void
   onPromoteTodo: (id: string) => void
   onOpenTodoOrigin: (notePath: string, title?: string) => void
+  onOpenTodoDashboard: () => void
   onOpenTaskPath: (path: string, title?: string) => void
   taskStatusClassName: (raw: string) => string
   taskStatusLabel: (raw: string) => string
@@ -190,12 +194,15 @@ export function WorkbenchSidebarContent({
   onMigrateExistingNotesToTemplate,
   tasks,
   todos,
+  todoFilters,
+  onTodoFiltersChange,
   onRefreshTasks,
   onRefreshTodos,
   onMarkTaskDone,
   onToggleTodo,
   onPromoteTodo,
   onOpenTodoOrigin,
+  onOpenTodoDashboard,
   onOpenTaskPath,
   taskStatusClassName,
   taskStatusLabel,
@@ -248,12 +255,9 @@ export function WorkbenchSidebarContent({
   const [taskStatusFilter, setTaskStatusFilter] = useState('all')
   const [taskPriorityFilter, setTaskPriorityFilter] = useState('all')
   const [taskDueFilter, setTaskDueFilter] = useState<'all' | TaskDueBucket>('all')
-  const [todoStatusFilter, setTodoStatusFilter] = useState<'all' | 'open' | 'done'>('open')
-  const [todoPromotionFilter, setTodoPromotionFilter] = useState<'all' | 'promoted' | 'unpromoted'>('all')
-  const [todoGroupMode, setTodoGroupMode] = useState<'note' | 'tag' | 'tag_group' | 'uncategorized'>('note')
-  const [todoNoteFilter, setTodoNoteFilter] = useState('all')
-  const [todoTagFilter, setTodoTagFilter] = useState('all')
-  const [todoTagGroupFilter, setTodoTagGroupFilter] = useState('all')
+  const setTodoFilter = (patch: Partial<TodoDashboardFilters>) => {
+    onTodoFiltersChange({ ...todoFilters, ...patch })
+  }
 
   const visibleTasks = useMemo(() => {
     return tasks
@@ -355,70 +359,6 @@ export function WorkbenchSidebarContent({
     return Array.from(groups).filter(Boolean).sort((left, right) => left.localeCompare(right))
   }, [todoTagOptions])
 
-  const visibleTodos = useMemo(() => {
-    return todos
-      .filter((todo) => {
-        if (todoStatusFilter === 'open' && todo.checked) {
-          return false
-        }
-        if (todoStatusFilter === 'done' && !todo.checked) {
-          return false
-        }
-        if (todoPromotionFilter === 'promoted' && !todo.promoted) {
-          return false
-        }
-        if (todoPromotionFilter === 'unpromoted' && todo.promoted) {
-          return false
-        }
-        if (todoNoteFilter !== 'all' && todo.note_path !== todoNoteFilter) {
-          return false
-        }
-        const tags = todoTags(todo)
-        if (todoTagFilter !== 'all' && !tags.includes(todoTagFilter)) {
-          return false
-        }
-        if (todoTagGroupFilter !== 'all' && !tags.some((tag) => tag.startsWith(`${todoTagGroupFilter}:`))) {
-          return false
-        }
-        return true
-      })
-      .sort((left, right) => {
-        if (left.checked !== right.checked) {
-          return left.checked ? 1 : -1
-        }
-        return right.updated_at.localeCompare(left.updated_at)
-      })
-  }, [todoNoteFilter, todoPromotionFilter, todoStatusFilter, todoTagFilter, todoTagGroupFilter, todos])
-
-  const groupedTodos = useMemo(() => {
-    const groups = new Map<string, { label: string; items: TodoRow[] }>()
-    for (const todo of visibleTodos) {
-      let key = 'uncategorized'
-      let label = 'Unkategorisiert'
-      const tags = todoTags(todo)
-      if (todoGroupMode === 'note') {
-        key = todo.note_path || todo.note_id
-        label = todoLabel(todo)
-      } else if (todoGroupMode === 'tag') {
-        const firstTag = tags[0] || ''
-        key = firstTag || 'uncategorized'
-        label = firstTag || 'Unkategorisiert'
-      } else if (todoGroupMode === 'tag_group') {
-        const firstGroup = tags[0]?.split(':', 1)[0] || ''
-        key = firstGroup || 'uncategorized'
-        label = firstGroup || 'Unkategorisiert'
-      }
-
-      const existing = groups.get(key)
-      if (existing) {
-        existing.items.push(todo)
-      } else {
-        groups.set(key, { label, items: [todo] })
-      }
-    }
-    return Array.from(groups.values()).sort((left, right) => left.label.localeCompare(right.label))
-  }, [todoGroupMode, visibleTodos])
-
   const focusTodos = useMemo(() => {
     return todos
       .filter((todo) => !todo.checked)
@@ -464,15 +404,32 @@ export function WorkbenchSidebarContent({
       <div className="sidebar-content">
         <div className="sidebar-header-row">
           <h3>Todos</h3>
-          <button onClick={onRefreshTodos} disabled={!vaultLoaded}>
-            Aktualisieren
-          </button>
+          <div className="header-inline-actions">
+            <button onClick={onRefreshTodos} disabled={!vaultLoaded}>
+              Aktualisieren
+            </button>
+            <button onClick={onOpenTodoDashboard} disabled={!vaultLoaded}>
+              Dashboard
+            </button>
+          </div>
         </div>
+
+        <label className="todo-filter-search">
+          Suche
+          <input
+            value={todoFilters.query}
+            onChange={(event) => setTodoFilter({ query: event.target.value })}
+            placeholder="To-dos durchsuchen ..."
+          />
+        </label>
 
         <div className="dashboard-filter-grid">
           <label>
             Status
-            <select value={todoStatusFilter} onChange={(event) => setTodoStatusFilter(event.target.value as 'all' | 'open' | 'done')}>
+            <select
+              value={todoFilters.status}
+              onChange={(event) => setTodoFilter({ status: event.target.value as 'all' | 'open' | 'done' })}
+            >
               <option value="open">Open</option>
               <option value="done">Done</option>
               <option value="all">Alle</option>
@@ -480,7 +437,7 @@ export function WorkbenchSidebarContent({
           </label>
           <label>
             Notiz
-            <select value={todoNoteFilter} onChange={(event) => setTodoNoteFilter(event.target.value)}>
+            <select value={todoFilters.notePath} onChange={(event) => setTodoFilter({ notePath: event.target.value })}>
               <option value="all">Alle</option>
               {todoNotes.map(([path, label]) => (
                 <option key={path} value={path}>
@@ -491,7 +448,7 @@ export function WorkbenchSidebarContent({
           </label>
           <label>
             Tag
-            <select value={todoTagFilter} onChange={(event) => setTodoTagFilter(event.target.value)}>
+            <select value={todoFilters.tag} onChange={(event) => setTodoFilter({ tag: event.target.value })}>
               <option value="all">Alle</option>
               {todoTagOptions.map((tag) => (
                 <option key={tag} value={tag}>
@@ -502,7 +459,7 @@ export function WorkbenchSidebarContent({
           </label>
           <label>
             Tag-Gruppe
-            <select value={todoTagGroupFilter} onChange={(event) => setTodoTagGroupFilter(event.target.value)}>
+            <select value={todoFilters.tagGroup} onChange={(event) => setTodoFilter({ tagGroup: event.target.value })}>
               <option value="all">Alle</option>
               {todoTagGroups.map((group) => (
                 <option key={group} value={group}>
@@ -514,8 +471,8 @@ export function WorkbenchSidebarContent({
           <label>
             Promotion
             <select
-              value={todoPromotionFilter}
-              onChange={(event) => setTodoPromotionFilter(event.target.value as 'all' | 'promoted' | 'unpromoted')}
+              value={todoFilters.promotion}
+              onChange={(event) => setTodoFilter({ promotion: event.target.value as 'all' | 'promoted' | 'unpromoted' })}
             >
               <option value="all">Alle</option>
               <option value="promoted">Promoted</option>
@@ -525,53 +482,20 @@ export function WorkbenchSidebarContent({
           <label>
             Gruppierung
             <select
-              value={todoGroupMode}
-              onChange={(event) =>
-                setTodoGroupMode(event.target.value as 'note' | 'tag' | 'tag_group' | 'uncategorized')
-              }
+              value={todoFilters.grouping}
+              onChange={(event) => setTodoFilter({ grouping: event.target.value as 'note' | 'tag' | 'tag_group' | 'updated_at' })}
             >
               <option value="note">Nach Notiz</option>
               <option value="tag">Nach Tag</option>
               <option value="tag_group">Nach Tag-Gruppe</option>
-              <option value="uncategorized">Unkategorisiert</option>
+              <option value="updated_at">Nach Datum</option>
             </select>
           </label>
         </div>
 
-        <div className="task-list">
-          {groupedTodos.length === 0 ? <p className="empty-copy">Keine Todos fuer den aktuellen Filter.</p> : null}
-          {groupedTodos.map((group) => (
-            <section key={group.label} className="dashboard-section">
-              <h4>{group.label}</h4>
-              <div className="dashboard-item-list">
-                {group.items.map((todo) => (
-                  <article key={todo.id} className="todo-item">
-                    <header>
-                      <strong>{todo.raw_text}</strong>
-                      <span className={`status-badge ${todo.checked ? 'status-done' : 'status-open'}`}>
-                        {todo.checked ? 'Done' : 'Open'}
-                      </span>
-                    </header>
-                    <p className="muted-copy">
-                      {todoLabel(todo)} | Zeile {todo.line_no}
-                    </p>
-                    <p className="muted-copy">Tags: {todoTags(todo).join(', ') || 'keine'}</p>
-                    <p className="muted-copy">Promoted: {todo.promoted ? todo.promoted_task_id || 'ja' : 'nein'}</p>
-                    <div className="todo-actions-row">
-                      <button onClick={() => onToggleTodo(todo.id)}>{todo.checked ? 'Reopen' : 'Done'}</button>
-                      <button className="muted" onClick={() => onOpenTodoOrigin(todo.note_path, todo.note_title || undefined)}>
-                        Ursprung
-                      </button>
-                      <button onClick={() => onPromoteTodo(todo.id)} disabled={todo.promoted}>
-                        {todo.promoted ? 'Promoted' : 'Als Task'}
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        <p className="muted-copy">
+          Die To-do-Liste wird als eigener Dashboard-Tab im Hauptbereich dargestellt. Filter und Suche wirken direkt auf diese Ansicht.
+        </p>
       </div>
     )
   }

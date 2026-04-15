@@ -542,6 +542,13 @@
   width: 100%;
 }
 
+.todo-filter-search {
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .task-filter-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -614,6 +621,84 @@
   color: #1f6d42;
   border-color: color-mix(in srgb, #47b57a 44%, transparent);
   background: color-mix(in srgb, #47b57a 16%, transparent);
+}
+
+.todo-canvas {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem 1.2rem;
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+}
+
+.todo-canvas-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.todo-canvas-header p {
+  margin: 0.22rem 0 0;
+  color: var(--muted);
+}
+
+.todo-canvas-body {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.todo-canvas-section h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.todo-canvas-section ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.todo-canvas-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0.16rem 0.2rem;
+  border-radius: 8px;
+}
+
+.todo-canvas-line:hover {
+  background: color-mix(in srgb, var(--surface-contrast) 70%, transparent);
+}
+
+.todo-canvas-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.todo-canvas-checkbox span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todo-canvas-checkbox span.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.todo-canvas-line-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .review-card {

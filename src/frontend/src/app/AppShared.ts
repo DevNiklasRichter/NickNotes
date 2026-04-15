@@ -56,6 +56,18 @@ export type TodoRow = {
   updated_at: string
 }
 
+export type TodoGroupingMode = 'note' | 'tag' | 'tag_group' | 'updated_at'
+
+export type TodoDashboardFilters = {
+  query: string
+  status: 'all' | 'open' | 'done'
+  notePath: string
+  tag: string
+  tagGroup: string
+  promotion: 'all' | 'promoted' | 'unpromoted'
+  grouping: TodoGroupingMode
+}
+
 export type SearchRow = {
   id: string
   title: string
@@ -94,7 +106,7 @@ export type BackendState = {
 
 export type ThemeMode = 'light' | 'dark'
 export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-export type NoteTabKind = 'note' | 'settings'
+export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard'
 
 export type NoteTab = {
   id: string
@@ -116,6 +128,17 @@ export type EditorTabContextMenuState = {
 
 export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
 export const SETTINGS_TAB_PATH = '__nicknotes_settings__'
+export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
+
+export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
+  query: '',
+  status: 'open',
+  notePath: 'all',
+  tag: 'all',
+  tagGroup: 'all',
+  promotion: 'all',
+  grouping: 'tag',
+}
 
 export type StatusBarPrefs = {
   showNoteBaseName: boolean

@@ -15,6 +15,7 @@ import { ActivityRail } from './layout/ActivityRail'
 import { StatusBar } from './layout/StatusBar'
 import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent'
 import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
+import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -41,9 +42,11 @@ import {
 import './App.css'
 import {
   SETTINGS_TAB_PATH,
+  TODO_DASHBOARD_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_EXPLORER_OPTIONS,
   DEFAULT_EXPLORER_VIEW_STATE,
+  DEFAULT_TODO_DASHBOARD_FILTERS,
   TAG_COLOR_PRESETS,
   TASK_STATUS_OPTIONS,
   TASK_PRIORITY_OPTIONS,
@@ -102,6 +105,7 @@ import type {
   ThemeMode,
   SidebarView,
   NoteTab,
+  TodoDashboardFilters,
   EditorTabContextMenuState,
   StatusBarPrefs,
   UiSettingsPayload,
@@ -129,6 +133,7 @@ function App() {
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [todos, setTodos] = useState<TodoRow[]>([])
+  const [todoDashboardFilters, setTodoDashboardFilters] = useState<TodoDashboardFilters>({ ...DEFAULT_TODO_DASHBOARD_FILTERS })
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
@@ -987,10 +992,17 @@ function App() {
 
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
+  const todoDashboardTabOpen = openTabs.some((tab) => tab.path === TODO_DASHBOARD_TAB_PATH)
   const tabContextTarget = tabContextMenu ? tabsById[tabContextMenu.tabId] ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
-      return 'Settings'
+      if (tab.kind === 'settings') {
+        return 'Settings'
+      }
+      if (tab.kind === 'todo_dashboard') {
+        return 'ListTodo'
+      }
+      return 'Circle'
     }
     const pathKey = normalizeFilePathKey(tab.path)
     const customIcon = explorerFileIconOverrides.get(pathKey)
@@ -1178,6 +1190,42 @@ function App() {
     })
   }
 
+  const openTodoDashboardTab = () => {
+    const existing = findTabByPath(TODO_DASHBOARD_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
+    if (existing) {
+      setEditorPanelOpen(true)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
+      return
+    }
+
+    const nextTabId = createTabId()
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        id: nextTabId,
+        kind: 'todo_dashboard',
+        path: TODO_DASHBOARD_TAB_PATH,
+        title: 'Todo Dashboard',
+        content: '',
+        loading: false,
+        dirty: false,
+      },
+    ])
+    setEditorPanelOpen(true)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
   const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     const paneId = findPaneByTabId(workspaceStateRef.current, tab.id)
     if (!paneId) {
@@ -1256,6 +1304,9 @@ function App() {
     }
     if (targetTab.kind === 'settings') {
       return saveSettings()
+    }
+    if (targetTab.kind === 'todo_dashboard') {
+      return true
     }
     return saveNoteTab(path)
   }
@@ -1412,11 +1463,11 @@ function App() {
     }
   }
 
-  const toggleTodo = async (todoId: string) => {
+  const toggleTodo = async (todoId: string, checked?: boolean) => {
     try {
       await apiRequest<{ todo?: TodoRow }>(backendUrl, `/todos/${encodeURIComponent(todoId)}/toggle`, {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify(typeof checked === 'boolean' ? { checked } : {}),
       })
       setMessage(`Todo aktualisiert (${todoId}).`)
       await Promise.all([refreshTodos(), runSearch(searchQuery)])
@@ -3088,11 +3139,17 @@ function App() {
   const openSidebarView = (view: SidebarView) => {
     if (sidebarView === view) {
       setSidebarOpen((prev) => !prev)
+      if (view === 'todos' && !todoDashboardTabOpen) {
+        openTodoDashboardTab()
+      }
       return
     }
 
     setSidebarView(view)
     setSidebarOpen(true)
+    if (view === 'todos') {
+      openTodoDashboardTab()
+    }
   }
 
   const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -3146,6 +3203,31 @@ function App() {
             void saveSettings()
           }}
           onDiscard={discardSettings}
+        />
+      )
+    }
+
+    if (paneTab.kind === 'todo_dashboard') {
+      return (
+        <TodoDashboardCanvas
+          todos={todos}
+          tasks={tasks}
+          filters={todoDashboardFilters}
+          onToggleTodo={(todoId, checked) => {
+            void toggleTodo(todoId, checked)
+          }}
+          onOpenOrigin={(path, title) => {
+            void openTodoOrigin(path, title)
+          }}
+          onPromoteTodo={(todoId) => {
+            void promoteTodo(todoId)
+          }}
+          onOpenTaskPath={(path, title) => {
+            if (!path) {
+              return
+            }
+            void openNoteInTab(path, title, { initialNoteType: 'task' })
+          }}
         />
       )
     }
@@ -3257,6 +3339,8 @@ function App() {
             }}
             tasks={tasks}
             todos={todos}
+            todoFilters={todoDashboardFilters}
+            onTodoFiltersChange={setTodoDashboardFilters}
             onRefreshTasks={() => {
               void refreshTasks()
             }}
@@ -3274,6 +3358,9 @@ function App() {
             }}
             onOpenTodoOrigin={(path, title) => {
               void openTodoOrigin(path, title)
+            }}
+            onOpenTodoDashboard={() => {
+              openTodoDashboardTab()
             }}
             onOpenTaskPath={(path, title) => {
               if (!path) {
