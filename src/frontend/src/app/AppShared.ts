@@ -70,6 +70,19 @@ export type TodoDashboardFilters = {
   grouping: TodoGroupingMode
 }
 
+export type TaskDueBucket = 'overdue' | 'tomorrow' | 'this_week' | 'later' | 'none'
+export type TaskDashboardGroupingMode = 'status' | 'priority' | 'due_date'
+export type TaskDashboardLayoutMode = 'board' | 'list'
+
+export type TaskDashboardFilters = {
+  query: string
+  status: 'all' | TaskStatus
+  priority: 'all' | TaskPriority
+  due: 'all' | TaskDueBucket
+  grouping: TaskDashboardGroupingMode
+  layout: TaskDashboardLayoutMode
+}
+
 export type SearchRow = {
   id: string
   title: string
@@ -108,7 +121,7 @@ export type BackendState = {
 
 export type ThemeMode = 'light' | 'dark'
 export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard'
+export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard'
 
 export type NoteTab = {
   id: string
@@ -131,6 +144,7 @@ export type EditorTabContextMenuState = {
 export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
 export const SETTINGS_TAB_PATH = '__nicknotes_settings__'
 export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
+export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',
@@ -139,6 +153,15 @@ export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   tagGroups: [],
   promotions: ['promoted', 'unpromoted'],
   grouping: 'tag',
+}
+
+export const DEFAULT_TASK_DASHBOARD_FILTERS: TaskDashboardFilters = {
+  query: '',
+  status: 'all',
+  priority: 'all',
+  due: 'all',
+  grouping: 'status',
+  layout: 'board',
 }
 
 export type StatusBarPrefs = {

@@ -630,6 +630,12 @@
   gap: 0.34rem;
 }
 
+.task-sidebar-summary {
+  margin: 0.16rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .todo-filter-row {
   display: grid;
   grid-template-columns: minmax(112px, auto) minmax(0, 1fr);
@@ -959,6 +965,159 @@
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
+}
+
+.task-canvas {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem 1.2rem;
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+}
+
+.task-canvas-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.task-canvas-header p {
+  margin: 0.22rem 0 0;
+  color: var(--muted);
+}
+
+.task-canvas-body {
+  min-height: 0;
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.task-canvas-board {
+  min-height: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(270px, 1fr);
+  gap: 0.72rem;
+  overflow: auto;
+  padding-bottom: 0.15rem;
+}
+
+.task-board-column {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-contrast) 88%, transparent);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.38rem;
+}
+
+.task-board-column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.task-board-column-header h3 {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.task-board-column-header span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.02rem 0.4rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+}
+
+.task-board-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.32rem;
+  padding-right: 0.1rem;
+}
+
+.task-board-card {
+  gap: 0.26rem;
+}
+
+.task-board-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.task-canvas-list {
+  display: grid;
+  gap: 0.84rem;
+}
+
+.task-list-section h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.task-list-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.task-list-line {
+  border-radius: 8px;
+}
+
+.task-list-line-main {
+  width: 100%;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
+  display: grid;
+  gap: 0.34rem;
+  padding: 0.4rem 0.48rem;
+  color: var(--text);
+}
+
+.task-list-line-main:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--surface-contrast) 75%, var(--accent-soft) 25%);
+}
+
+.task-list-line-main:disabled {
+  opacity: 0.7;
+}
+
+.task-list-line-title {
+  font-size: 0.87rem;
+  font-weight: 620;
+}
+
+.task-list-line-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.task-list-line-due,
+.task-list-line-updated {
+  color: var(--muted);
 }
 
 .review-card {

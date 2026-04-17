@@ -4,51 +4,20 @@ import { TagSidebar } from '../explorer/TagSidebarV2'
 import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, ExplorerViewState } from '../explorer/types'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
-import type { TodoDashboardFilters, TodoPromotionFilterValue, TodoStatusFilterValue } from '../app/AppShared'
+import {
+  DEFAULT_TASK_DASHBOARD_FILTERS,
+  type TaskDashboardFilters,
+  type TodoDashboardFilters,
+  type TodoPromotionFilterValue,
+  type TodoStatusFilterValue,
+  type TaskRow,
+  type TodoRow,
+  type ReviewDaily,
+  type ReviewWeekly,
+} from '../app/AppShared'
+import { filterTaskRows, toTaskDashboardTodayIso } from '../tasks/taskDashboardModel'
 
 type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-
-type TaskRow = {
-  id: string
-  title: string
-  status: string
-  priority: string
-  due_date: string | null
-  updated_at: string
-  path?: string | null
-}
-
-type TodoRow = {
-  id: string
-  note_id: string
-  note_title: string
-  note_path: string
-  line_no: number
-  block_ref: string | null
-  checked: boolean
-  raw_text: string
-  explicit_tags: string[]
-  inherited_tags: string[]
-  links: string[]
-  promoted: boolean
-  promoted_task_id: string | null
-  updated_at: string
-}
-
-type ReviewDaily = {
-  date: string
-  new_notes: number
-  open_tasks: number
-  done_today: number
-}
-
-type ReviewWeekly = {
-  from: string
-  to: string
-  notes_total: number
-  tasks_open: number
-  tasks_done: number
-}
 
 type WorkbenchSidebarContentProps = {
   sidebarView: SidebarView
@@ -63,7 +32,9 @@ type WorkbenchSidebarContentProps = {
   onMigrateExistingNotesToTemplate: () => void
   tasks: TaskRow[]
   todos: TodoRow[]
+  taskFilters: TaskDashboardFilters
   todoFilters: TodoDashboardFilters
+  onTaskFiltersChange: (next: TaskDashboardFilters) => void
   onTodoFiltersChange: (next: TodoDashboardFilters) => void
   onRefreshTasks: () => void
   onRefreshTodos: () => void
@@ -72,6 +43,7 @@ type WorkbenchSidebarContentProps = {
   onPromoteTodo: (id: string) => void
   onOpenTodoOrigin: (notePath: string, title?: string) => void
   onOpenTodoDashboard: () => void
+  onOpenTaskDashboard: () => void
   onOpenTaskPath: (path: string, title?: string) => void
   taskStatusClassName: (raw: string) => string
   taskStatusLabel: (raw: string) => string
@@ -121,8 +93,6 @@ type WorkbenchSidebarContentProps = {
   onRefreshExplorerSidebarData: () => void
 }
 
-type TaskDueBucket = 'overdue' | 'today' | 'week' | 'later' | 'none'
-
 type TodoTagOption = {
   value: string
   label: string
@@ -138,48 +108,6 @@ type TodoMultiSelectOption = {
 }
 
 type TodoDropdownKey = 'status' | 'tag_groups' | 'tags' | 'promotions'
-
-function toTodayIso(): string {
-  const now = new Date()
-  const offsetMinutes = now.getTimezoneOffset()
-  const local = new Date(now.getTime() - offsetMinutes * 60 * 1000)
-  return local.toISOString().slice(0, 10)
-}
-
-function toIsoDate(value: string | null): string {
-  return (value || '').trim().slice(0, 10)
-}
-
-function toTaskBucket(dueDate: string | null, todayIso: string): TaskDueBucket {
-  const iso = toIsoDate(dueDate)
-  if (!iso) {
-    return 'none'
-  }
-  const due = new Date(`${iso}T00:00:00`)
-  const today = new Date(`${todayIso}T00:00:00`)
-  if (Number.isNaN(due.getTime()) || Number.isNaN(today.getTime())) {
-    return 'none'
-  }
-  if (due.getTime() < today.getTime()) {
-    return 'overdue'
-  }
-  if (due.getTime() === today.getTime()) {
-    return 'today'
-  }
-  const diffDays = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-  return diffDays <= 7 ? 'week' : 'later'
-}
-
-function taskPriorityRank(priority: string): number {
-  const clean = priority.trim().toLowerCase()
-  if (clean === 'h' || clean === 'high') {
-    return 0
-  }
-  if (clean === 'm' || clean === 'medium') {
-    return 1
-  }
-  return 2
-}
 
 function todoLabel(todo: TodoRow): string {
   const explicit = todo.note_title?.trim()
@@ -221,7 +149,9 @@ export function WorkbenchSidebarContent({
   onMigrateExistingNotesToTemplate,
   tasks,
   todos,
+  taskFilters,
   todoFilters,
+  onTaskFiltersChange,
   onTodoFiltersChange,
   onRefreshTasks,
   onRefreshTodos,
@@ -230,6 +160,7 @@ export function WorkbenchSidebarContent({
   onPromoteTodo,
   onOpenTodoOrigin,
   onOpenTodoDashboard,
+  onOpenTaskDashboard,
   onOpenTaskPath,
   taskStatusClassName,
   taskStatusLabel,
@@ -278,10 +209,26 @@ export function WorkbenchSidebarContent({
   onExplorerViewStateChange,
   onRefreshExplorerSidebarData,
 }: WorkbenchSidebarContentProps) {
-  const todayIso = toTodayIso()
-  const [taskStatusFilter, setTaskStatusFilter] = useState('all')
-  const [taskPriorityFilter, setTaskPriorityFilter] = useState('all')
-  const [taskDueFilter, setTaskDueFilter] = useState<'all' | TaskDueBucket>('all')
+  const taskTodayIso = toTaskDashboardTodayIso()
+  const taskFilterHits = useMemo(() => filterTaskRows(tasks, taskFilters, taskTodayIso), [taskFilters, taskTodayIso, tasks])
+  const focusTasks = useMemo(
+    () =>
+      filterTaskRows(
+        tasks,
+        {
+          ...DEFAULT_TASK_DASHBOARD_FILTERS,
+          query: '',
+          status: 'all',
+          priority: 'all',
+          due: 'all',
+        },
+        taskTodayIso
+      ).slice(0, 8),
+    [taskTodayIso, tasks]
+  )
+  const setTaskFilter = (patch: Partial<TaskDashboardFilters>) => {
+    onTaskFiltersChange({ ...taskFilters, ...patch })
+  }
   const setTodoFilter = (patch: Partial<TodoDashboardFilters>) => {
     onTodoFiltersChange({ ...todoFilters, ...patch })
   }
@@ -298,76 +245,6 @@ export function WorkbenchSidebarContent({
     tags: 0,
     promotions: 0,
   })
-
-  const visibleTasks = useMemo(() => {
-    return tasks
-      .filter((task) => task.status !== 'done')
-      .filter((task) => {
-        if (taskStatusFilter !== 'all' && task.status !== taskStatusFilter) {
-          return false
-        }
-        const normalizedPriority = task.priority.trim().toLowerCase()
-        const priority =
-          normalizedPriority === 'h'
-            ? 'high'
-            : normalizedPriority === 'm'
-              ? 'medium'
-              : normalizedPriority === 'l'
-                ? 'low'
-                : normalizedPriority
-        if (taskPriorityFilter !== 'all' && priority !== taskPriorityFilter) {
-          return false
-        }
-        if (taskDueFilter !== 'all' && toTaskBucket(task.due_date, todayIso) !== taskDueFilter) {
-          return false
-        }
-        return true
-      })
-      .sort((left, right) => {
-        const leftBucket = toTaskBucket(left.due_date, todayIso)
-        const rightBucket = toTaskBucket(right.due_date, todayIso)
-        const bucketRank: Record<TaskDueBucket, number> = {
-          overdue: 0,
-          today: 1,
-          week: 2,
-          later: 3,
-          none: 4,
-        }
-        if (bucketRank[leftBucket] !== bucketRank[rightBucket]) {
-          return bucketRank[leftBucket] - bucketRank[rightBucket]
-        }
-        const prio = taskPriorityRank(left.priority) - taskPriorityRank(right.priority)
-        if (prio !== 0) {
-          return prio
-        }
-        const leftDue = toIsoDate(left.due_date)
-        const rightDue = toIsoDate(right.due_date)
-        if (leftDue !== rightDue) {
-          if (!leftDue) {
-            return 1
-          }
-          if (!rightDue) {
-            return -1
-          }
-          return leftDue.localeCompare(rightDue)
-        }
-        return right.updated_at.localeCompare(left.updated_at)
-      })
-  }, [tasks, taskDueFilter, taskPriorityFilter, taskStatusFilter, todayIso])
-
-  const taskSections = useMemo(() => {
-    const rows: Record<TaskDueBucket, TaskRow[]> = {
-      overdue: [],
-      today: [],
-      week: [],
-      later: [],
-      none: [],
-    }
-    for (const task of visibleTasks) {
-      rows[toTaskBucket(task.due_date, todayIso)].push(task)
-    }
-    return rows
-  }, [todayIso, visibleTasks])
 
   const todoTagOptions = useMemo<TodoTagOption[]>(() => {
     const byKey = new Map<string, TodoTagOption>()
@@ -544,8 +421,6 @@ export function WorkbenchSidebarContent({
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
       .slice(0, 10)
   }, [todos])
-
-  const focusTasks = useMemo(() => visibleTasks.slice(0, 8), [visibleTasks])
 
   const renderTodoMultiSelect = (
     dropdownKey: TodoDropdownKey,
@@ -727,6 +602,10 @@ export function WorkbenchSidebarContent({
     })
   }
 
+  const resetTaskFilters = () => {
+    onTaskFiltersChange({ ...DEFAULT_TASK_DASHBOARD_FILTERS })
+  }
+
   if (sidebarView === 'vault') {
     return (
       <div className="sidebar-content">
@@ -902,91 +781,165 @@ export function WorkbenchSidebarContent({
   }
 
   if (sidebarView === 'tasks') {
-    const renderTaskSection = (title: string, items: TaskRow[]) =>
-      items.length > 0 ? (
-        <section className="dashboard-section">
-          <h4>{title}</h4>
-          <div className="dashboard-item-list">
-            {items.map((task) => (
-              <article key={task.id} className="task-item">
-                <header>
-                  <strong>{task.title}</strong>
-                  <div className="task-meta-badges">
-                    <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
-                    <span className="task-priority-badge">
-                      <span className={taskPriorityDotClassName(task.priority)} aria-hidden="true" />
-                      {taskPriorityLabel(task.priority)}
-                    </span>
-                  </div>
-                </header>
-                <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
-                <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
-                <div className="task-actions-row">
-                  {task.path ? (
-                    <button className="muted" onClick={() => onOpenTaskPath(task.path || '', task.title)}>
-                      Oeffnen
-                    </button>
-                  ) : null}
-                  <button onClick={() => onMarkTaskDone(task.id)} disabled={task.status === 'done'}>
-                    Done
-                  </button>
-                </div>
-              </article>
-            ))}
+    return (
+      <div className="explorer-shell todo-explorer-shell">
+        <header className="explorer-toolbar todo-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <div className="explorer-toolbar-left">
+              <div className="explorer-sort-anchor">
+                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+                </button>
+              </div>
+            </div>
+            <h3>Tasks</h3>
+            <div className="explorer-toolbar-right">
+              <button
+                className="icon-button compact"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRefreshTasks()
+                }}
+                disabled={!vaultLoaded}
+                title="Tasks aktualisieren"
+              >
+                <LucideNamedIcon name="RefreshCw" size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div className="explorer-toolbar-search">
+            <div className="explorer-search-input-wrap">
+              <LucideNamedIcon name="Search" className="explorer-search-icon" size={14} />
+              <input
+                className="explorer-search-input"
+                value={taskFilters.query}
+                onChange={(event) => setTaskFilter({ query: event.target.value })}
+                placeholder="Search"
+                title="Tasks durchsuchen"
+              />
+              {taskFilters.query ? (
+                <button
+                  type="button"
+                  className="explorer-search-clear"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setTaskFilter({ query: '' })
+                  }}
+                  aria-label="Suche leeren"
+                  title="Suche leeren"
+                >
+                  <LucideNamedIcon name="X" size={12} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
+
+        <button className="todo-open-dashboard-button" onClick={onOpenTaskDashboard} disabled={!vaultLoaded}>
+          Dashboard oeffnen
+        </button>
+
+        <section className="todo-sidebar-section">
+          <div className="todo-section-header">
+            <h4>Filter</h4>
+            <button
+              className="icon-button compact muted todo-section-reset-button"
+              onClick={resetTaskFilters}
+              title="Alle Filter zuruecksetzen"
+              aria-label="Alle Filter zuruecksetzen"
+            >
+              <LucideNamedIcon name="FilterX" size={13} />
+            </button>
+          </div>
+
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Status</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={taskFilters.status}
+                  onChange={(event) => setTaskFilter({ status: event.target.value as TaskDashboardFilters['status'] })}
+                >
+                  <option value="all">Alle</option>
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="on_hold">On Hold</option>
+                  <option value="new_topic">New Topic</option>
+                  <option value="done">Done</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Prioritaet</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={taskFilters.priority}
+                  onChange={(event) =>
+                    setTaskFilter({ priority: event.target.value as TaskDashboardFilters['priority'] })
+                  }
+                >
+                  <option value="all">Alle</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Faelligkeit</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={taskFilters.due}
+                  onChange={(event) => setTaskFilter({ due: event.target.value as TaskDashboardFilters['due'] })}
+                >
+                  <option value="all">Alle</option>
+                  <option value="overdue">Ueberfaellig</option>
+                  <option value="tomorrow">Morgen</option>
+                  <option value="this_week">Diese Woche</option>
+                  <option value="later">Spaeter</option>
+                  <option value="none">Ohne Faelligkeit</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <p className="task-sidebar-summary">Treffer: {taskFilterHits.length}</p>
+        </section>
+
+        <section className="todo-sidebar-section todo-sidebar-grouping-section">
+          <h4>Gruppierung</h4>
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Sortierung</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={taskFilters.grouping}
+                  onChange={(event) => setTaskFilter({ grouping: event.target.value as TaskDashboardFilters['grouping'] })}
+                >
+                  <option value="status">Status</option>
+                  <option value="priority">Prioritaet</option>
+                  <option value="due_date">Faelligkeit</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Darstellung</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={taskFilters.layout}
+                  onChange={(event) => setTaskFilter({ layout: event.target.value as TaskDashboardFilters['layout'] })}
+                >
+                  <option value="board">Board</option>
+                  <option value="list">Liste</option>
+                </select>
+              </label>
+            </div>
           </div>
         </section>
-      ) : null
-
-    return (
-      <div className="sidebar-content">
-        <div className="sidebar-header-row">
-          <h3>Tasks</h3>
-          <button onClick={onRefreshTasks} disabled={!vaultLoaded}>
-            Aktualisieren
-          </button>
-        </div>
-
-        <div className="dashboard-filter-grid task-filter-grid">
-          <label>
-            Status
-            <select value={taskStatusFilter} onChange={(event) => setTaskStatusFilter(event.target.value)}>
-              <option value="all">Alle</option>
-              <option value="open">Open</option>
-              <option value="in_progress">In Progress</option>
-              <option value="on_hold">On Hold</option>
-              <option value="new_topic">New Topic</option>
-            </select>
-          </label>
-          <label>
-            Prioritaet
-            <select value={taskPriorityFilter} onChange={(event) => setTaskPriorityFilter(event.target.value)}>
-              <option value="all">Alle</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
-          </label>
-          <label>
-            Faelligkeit
-            <select value={taskDueFilter} onChange={(event) => setTaskDueFilter(event.target.value as 'all' | TaskDueBucket)}>
-              <option value="all">Alle</option>
-              <option value="overdue">Ueberfaellig</option>
-              <option value="today">Heute</option>
-              <option value="week">Diese Woche</option>
-              <option value="later">Spaeter</option>
-              <option value="none">Ohne Datum</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="task-list">
-          {visibleTasks.length === 0 ? <p className="empty-copy">Keine offenen Tasks.</p> : null}
-          {renderTaskSection('Ueberfaellig', taskSections.overdue)}
-          {renderTaskSection('Heute', taskSections.today)}
-          {renderTaskSection('Diese Woche', taskSections.week)}
-          {renderTaskSection('Geplant', taskSections.later)}
-          {renderTaskSection('Ohne Datum', taskSections.none)}
-        </div>
       </div>
     )
   }
@@ -1014,9 +967,16 @@ export function WorkbenchSidebarContent({
               <article key={task.id} className="task-item compact">
                 <header>
                   <strong>{task.title}</strong>
-                  <span className="item-kind-pill">TASK</span>
+                  <div className="task-meta-badges">
+                    <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
+                    <span className="task-priority-badge">
+                      <span className={taskPriorityDotClassName(task.priority)} aria-hidden="true" />
+                      {taskPriorityLabel(task.priority)}
+                    </span>
+                  </div>
                 </header>
                 <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
+                <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
                 <div className="task-actions-row">
                   {task.path ? (
                     <button className="muted" onClick={() => onOpenTaskPath(task.path || '', task.title)}>
