@@ -19,6 +19,7 @@ import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent'
 import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
 import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas'
 import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas'
+import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -47,11 +48,13 @@ import {
   SETTINGS_TAB_PATH,
   TODO_DASHBOARD_TAB_PATH,
   TASK_DASHBOARD_TAB_PATH,
+  FOCUS_DASHBOARD_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_EXPLORER_OPTIONS,
   DEFAULT_EXPLORER_VIEW_STATE,
   DEFAULT_TODO_DASHBOARD_FILTERS,
   DEFAULT_TASK_DASHBOARD_FILTERS,
+  DEFAULT_FOCUS_DASHBOARD_FILTERS,
   TAG_COLOR_PRESETS,
   TASK_STATUS_OPTIONS,
   TASK_PRIORITY_OPTIONS,
@@ -112,6 +115,7 @@ import type {
   NoteTab,
   TodoDashboardFilters,
   TaskDashboardFilters,
+  FocusDashboardFilters,
   EditorTabContextMenuState,
   StatusBarPrefs,
   UiSettingsPayload,
@@ -141,6 +145,7 @@ function App() {
   const [todos, setTodos] = useState<TodoRow[]>([])
   const [taskDashboardFilters, setTaskDashboardFilters] = useState<TaskDashboardFilters>({ ...DEFAULT_TASK_DASHBOARD_FILTERS })
   const [todoDashboardFilters, setTodoDashboardFilters] = useState<TodoDashboardFilters>({ ...DEFAULT_TODO_DASHBOARD_FILTERS })
+  const [focusDashboardFilters, setFocusDashboardFilters] = useState<FocusDashboardFilters>({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
@@ -1011,6 +1016,9 @@ function App() {
       if (tab.kind === 'task_dashboard') {
         return 'LayoutDashboard'
       }
+      if (tab.kind === 'focus_dashboard') {
+        return 'Target'
+      }
       return 'Circle'
     }
     const pathKey = normalizeFilePathKey(tab.path)
@@ -1274,6 +1282,45 @@ function App() {
     })
   }
 
+  const openFocusDashboardTab = () => {
+    if (vaultLoaded) {
+      void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes()])
+    }
+    const existing = findTabByPath(FOCUS_DASHBOARD_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
+    if (existing) {
+      setEditorPanelOpen(true)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
+      return
+    }
+
+    const nextTabId = createTabId()
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        id: nextTabId,
+        kind: 'focus_dashboard',
+        path: FOCUS_DASHBOARD_TAB_PATH,
+        title: 'Focus Dashboard',
+        content: '',
+        loading: false,
+        dirty: false,
+      },
+    ])
+    setEditorPanelOpen(true)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
   const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     const paneId = findPaneByTabId(workspaceStateRef.current, tab.id)
     if (!paneId) {
@@ -1353,7 +1400,7 @@ function App() {
     if (targetTab.kind === 'settings') {
       return saveSettings()
     }
-    if (targetTab.kind === 'todo_dashboard' || targetTab.kind === 'task_dashboard') {
+    if (targetTab.kind === 'todo_dashboard' || targetTab.kind === 'task_dashboard' || targetTab.kind === 'focus_dashboard') {
       return true
     }
     return saveNoteTab(path)
@@ -1494,18 +1541,6 @@ function App() {
       setParsedTasks([])
       setMessage(`Capture gespeichert (${response.noteId}).`)
       await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const markTaskDone = async (taskId: string) => {
-    try {
-      await apiRequest(backendUrl, `/tasks/${encodeURIComponent(taskId)}/done`, {
-        method: 'POST',
-      })
-      setMessage(`Task ${taskId} als erledigt markiert.`)
-      await Promise.all([refreshTasks(), refreshTodos(), refreshReview(), runSearch(searchQuery)])
     } catch (caught) {
       setError(String(caught))
     }
@@ -3342,6 +3377,36 @@ function App() {
       )
     }
 
+    if (paneTab.kind === 'focus_dashboard') {
+      return (
+        <FocusDashboardCanvas
+          tasks={tasks}
+          todos={todos}
+          notes={allNotes}
+          filters={focusDashboardFilters}
+          onOpenTaskPath={(path, title) => {
+            if (!path) {
+              return
+            }
+            void openNoteInTab(path, title, { initialNoteType: 'task' })
+          }}
+          onOpenTodoOrigin={(path, title) => {
+            if (!path) {
+              return
+            }
+            void openNoteInTab(path, title, { initialNoteType: 'note' })
+          }}
+          onOpenNotePath={(path, title, noteType) => {
+            if (!path) {
+              return
+            }
+            void openNoteInTab(path, title, { initialNoteType: noteType === 'task' ? 'task' : 'note' })
+          }}
+          toGermanTimestamp={toGermanTimestamp}
+        />
+      )
+    }
+
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
     return (
       <div className="note-editor-shell">
@@ -3448,28 +3513,20 @@ function App() {
               void migrateExistingNotesToTemplate()
             }}
             tasks={tasks}
-            todos={todos}
             taskFilters={taskDashboardFilters}
             todoFilters={todoDashboardFilters}
+            focusFilters={focusDashboardFilters}
             onTaskFiltersChange={setTaskDashboardFilters}
             onTodoFiltersChange={setTodoDashboardFilters}
+            onFocusFiltersChange={setFocusDashboardFilters}
             onRefreshTasks={() => {
               void refreshTasks()
             }}
             onRefreshTodos={() => {
               void refreshTodos()
             }}
-            onMarkTaskDone={(id) => {
-              void markTaskDone(id)
-            }}
-            onToggleTodo={(id) => {
-              void toggleTodo(id)
-            }}
-            onPromoteTodo={(id) => {
-              void promoteTodo(id)
-            }}
-            onOpenTodoOrigin={(path, title) => {
-              void openTodoOrigin(path, title)
+            onRefreshFocusData={() => {
+              void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes()])
             }}
             onOpenTodoDashboard={() => {
               openTodoDashboardTab()
@@ -3477,17 +3534,9 @@ function App() {
             onOpenTaskDashboard={() => {
               openTaskDashboardTab()
             }}
-            onOpenTaskPath={(path, title) => {
-              if (!path) {
-                return
-              }
-              void openNoteInTab(path, title, { initialNoteType: 'task' })
+            onOpenFocusDashboard={() => {
+              openFocusDashboardTab()
             }}
-            taskStatusClassName={taskStatusClassName}
-            taskStatusLabel={taskStatusLabel}
-            taskPriorityDotClassName={taskPriorityDotClassName}
-            taskPriorityLabel={taskPriorityLabel}
-            toGermanTimestamp={toGermanTimestamp}
             daily={daily}
             weekly={weekly}
             onRefreshReview={() => {

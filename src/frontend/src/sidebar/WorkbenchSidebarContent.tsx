@@ -5,6 +5,7 @@ import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, Explorer
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 import {
+  DEFAULT_FOCUS_DASHBOARD_FILTERS,
   DEFAULT_TASK_DASHBOARD_FILTERS,
   TASK_STATUS_OPTIONS,
   TASK_STATUS_COLORS,
@@ -13,12 +14,12 @@ import {
   normalizeRelatedCandidate,
   normalizeTagCandidate,
   type TaskDashboardFilters,
+  type FocusDashboardFilters,
   type TaskDueBucket,
   type TodoDashboardFilters,
   type TodoPromotionFilterValue,
   type TodoStatusFilterValue,
   type TaskRow,
-  type TodoRow,
   type ReviewDaily,
   type ReviewWeekly,
 } from '../app/AppShared'
@@ -38,25 +39,18 @@ type WorkbenchSidebarContentProps = {
   onCreateVault: () => void
   onMigrateExistingNotesToTemplate: () => void
   tasks: TaskRow[]
-  todos: TodoRow[]
   taskFilters: TaskDashboardFilters
   todoFilters: TodoDashboardFilters
+  focusFilters: FocusDashboardFilters
   onTaskFiltersChange: (next: TaskDashboardFilters) => void
   onTodoFiltersChange: (next: TodoDashboardFilters) => void
+  onFocusFiltersChange: (next: FocusDashboardFilters) => void
   onRefreshTasks: () => void
   onRefreshTodos: () => void
-  onMarkTaskDone: (id: string) => void
-  onToggleTodo: (id: string) => void
-  onPromoteTodo: (id: string) => void
-  onOpenTodoOrigin: (notePath: string, title?: string) => void
+  onRefreshFocusData: () => void
   onOpenTodoDashboard: () => void
   onOpenTaskDashboard: () => void
-  onOpenTaskPath: (path: string, title?: string) => void
-  taskStatusClassName: (raw: string) => string
-  taskStatusLabel: (raw: string) => string
-  taskPriorityDotClassName: (raw: string) => string
-  taskPriorityLabel: (raw: string) => string
-  toGermanTimestamp: (value: string) => string
+  onOpenFocusDashboard: () => void
   daily: ReviewDaily | null
   weekly: ReviewWeekly | null
   onRefreshReview: () => void
@@ -117,16 +111,6 @@ type TodoMultiSelectOption = {
 type TodoDropdownKey = 'status' | 'tag_groups' | 'tags' | 'promotions'
 type TaskDropdownKey = 'status' | 'priority' | 'due' | 'tag_groups' | 'tags' | 'related'
 
-function todoLabel(todo: TodoRow): string {
-  const explicit = todo.note_title?.trim()
-  if (explicit) {
-    return explicit
-  }
-  const normalized = (todo.note_path || '').replace(/\\/g, '/')
-  const segments = normalized.split('/')
-  return segments[segments.length - 1] || todo.note_id || 'Unknown Note'
-}
-
 function summarizeTodoSelection(selectedValues: string[], allOptions: TodoMultiSelectOption[], fallbackAllLabel: string): string {
   if (allOptions.length === 0) {
     return 'Keine Optionen'
@@ -156,25 +140,18 @@ export function WorkbenchSidebarContent({
   onCreateVault,
   onMigrateExistingNotesToTemplate,
   tasks,
-  todos,
   taskFilters,
   todoFilters,
+  focusFilters,
   onTaskFiltersChange,
   onTodoFiltersChange,
+  onFocusFiltersChange,
   onRefreshTasks,
   onRefreshTodos,
-  onMarkTaskDone,
-  onToggleTodo,
-  onPromoteTodo,
-  onOpenTodoOrigin,
+  onRefreshFocusData,
   onOpenTodoDashboard,
   onOpenTaskDashboard,
-  onOpenTaskPath,
-  taskStatusClassName,
-  taskStatusLabel,
-  taskPriorityDotClassName,
-  taskPriorityLabel,
-  toGermanTimestamp,
+  onOpenFocusDashboard,
   daily,
   weekly,
   onRefreshReview,
@@ -219,24 +196,14 @@ export function WorkbenchSidebarContent({
 }: WorkbenchSidebarContentProps) {
   const taskTodayIso = toTaskDashboardTodayIso()
   const taskFilterHits = useMemo(() => filterTaskRows(tasks, taskFilters, taskTodayIso), [taskFilters, taskTodayIso, tasks])
-  const focusTasks = useMemo(
-    () =>
-      filterTaskRows(
-        tasks,
-        {
-          ...DEFAULT_TASK_DASHBOARD_FILTERS,
-          query: '',
-          statuses: TASK_STATUS_OPTIONS.filter((entry) => entry.value !== 'done').map((entry) => entry.value),
-        },
-        taskTodayIso
-      ).slice(0, 8),
-    [taskTodayIso, tasks]
-  )
   const setTaskFilter = (patch: Partial<TaskDashboardFilters>) => {
     onTaskFiltersChange({ ...taskFilters, ...patch })
   }
   const setTodoFilter = (patch: Partial<TodoDashboardFilters>) => {
     onTodoFiltersChange({ ...todoFilters, ...patch })
+  }
+  const setFocusFilter = (patch: Partial<FocusDashboardFilters>) => {
+    onFocusFiltersChange({ ...focusFilters, ...patch })
   }
   const [taskOpenDropdown, setTaskOpenDropdown] = useState<TaskDropdownKey | null>(null)
   const [taskDropdownQueries, setTaskDropdownQueries] = useState<Record<TaskDropdownKey, string>>({
@@ -691,13 +658,6 @@ export function WorkbenchSidebarContent({
     setTaskFilter({ dueBuckets: next as TaskDashboardFilters['dueBuckets'] })
   }
 
-  const focusTodos = useMemo(() => {
-    return todos
-      .filter((todo) => !todo.checked)
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
-      .slice(0, 10)
-  }, [todos])
-
   const renderTodoMultiSelect = (
     dropdownKey: TodoDropdownKey,
     selectedValues: string[],
@@ -1064,6 +1024,28 @@ export function WorkbenchSidebarContent({
     })
   }
 
+  const focusSectionOptions: Array<{ value: 'tasks' | 'todos' | 'notes'; label: string }> = [
+    { value: 'tasks', label: 'Tasks' },
+    { value: 'todos', label: 'Todos' },
+    { value: 'notes', label: 'Notizen' },
+  ]
+
+  const toggleFocusSection = (section: 'tasks' | 'todos' | 'notes') => {
+    const selected = new Set(focusFilters.sections)
+    if (selected.has(section)) {
+      selected.delete(section)
+    } else {
+      selected.add(section)
+    }
+    setFocusFilter({ sections: Array.from(selected) })
+  }
+
+  const focusSectionSummary = focusFilters.sections.length === 0 ? 'Alle Bereiche' : `${focusFilters.sections.length} ausgewaehlt`
+
+  const resetFocusFilters = () => {
+    onFocusFiltersChange({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
+  }
+
   if (sidebarView === 'vault') {
     return (
       <div className="sidebar-content">
@@ -1408,74 +1390,135 @@ export function WorkbenchSidebarContent({
 
   if (sidebarView === 'focus') {
     return (
-      <div className="sidebar-content">
-        <div className="sidebar-header-row">
-          <h3>Focus</h3>
-          <div className="header-inline-actions">
-            <button onClick={onRefreshTasks} disabled={!vaultLoaded}>
-              Tasks
-            </button>
-            <button onClick={onRefreshTodos} disabled={!vaultLoaded}>
-              Todos
+      <div className="explorer-shell todo-explorer-shell">
+        <header className="explorer-toolbar todo-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <div className="explorer-toolbar-left">
+              <div className="explorer-sort-anchor">
+                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+                </button>
+              </div>
+            </div>
+            <h3>Focus</h3>
+            <div className="explorer-toolbar-right">
+              <button
+                className="icon-button compact"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRefreshFocusData()
+                }}
+                disabled={!vaultLoaded}
+                title="Focus-Daten aktualisieren"
+              >
+                <LucideNamedIcon name="RefreshCw" size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div className="explorer-toolbar-search">
+            <div className="explorer-search-input-wrap">
+              <LucideNamedIcon name="Search" className="explorer-search-icon" size={14} />
+              <input
+                className="explorer-search-input"
+                value={focusFilters.query}
+                onChange={(event) => setFocusFilter({ query: event.target.value })}
+                placeholder="Search"
+                title="Focus durchsuchen"
+              />
+              {focusFilters.query ? (
+                <button
+                  type="button"
+                  className="explorer-search-clear"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setFocusFilter({ query: '' })
+                  }}
+                  aria-label="Suche leeren"
+                  title="Suche leeren"
+                >
+                  <LucideNamedIcon name="X" size={12} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
+
+        <button className="todo-open-dashboard-button" onClick={onOpenFocusDashboard} disabled={!vaultLoaded}>
+          Dashboard oeffnen
+        </button>
+
+        <section className="todo-sidebar-section">
+          <div className="todo-section-header">
+            <h4>Filter</h4>
+            <button
+              className="icon-button compact muted todo-section-reset-button"
+              onClick={resetFocusFilters}
+              title="Focus-Filter zuruecksetzen"
+              aria-label="Focus-Filter zuruecksetzen"
+            >
+              <LucideNamedIcon name="FilterX" size={13} />
             </button>
           </div>
-        </div>
-
-        <section className="dashboard-section">
-          <h4>Task Fokus</h4>
-          <div className="dashboard-item-list">
-            {focusTasks.length === 0 ? <p className="empty-copy">Keine offenen Tasks.</p> : null}
-            {focusTasks.map((task) => (
-              <article key={task.id} className="task-item compact">
-                <header>
-                  <strong>{task.title}</strong>
-                  <div className="task-meta-badges">
-                    <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
-                    <span className="task-priority-badge">
-                      <span className={taskPriorityDotClassName(task.priority)} aria-hidden="true" />
-                      {taskPriorityLabel(task.priority)}
-                    </span>
-                  </div>
-                </header>
-                <p>{task.due_date ? `Faellig: ${task.due_date}` : 'Kein Faelligkeitsdatum'}</p>
-                <p className="muted-copy">{toGermanTimestamp(task.updated_at)}</p>
-                <div className="task-actions-row">
-                  {task.path ? (
-                    <button className="muted" onClick={() => onOpenTaskPath(task.path || '', task.title)}>
-                      Oeffnen
-                    </button>
-                  ) : null}
-                  <button onClick={() => onMarkTaskDone(task.id)}>Done</button>
-                </div>
-              </article>
-            ))}
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Bereiche</span>
+              <div className="focus-sidebar-check-grid">
+                {focusSectionOptions.map((option) => {
+                  const checked = focusFilters.sections.includes(option.value)
+                  return (
+                    <label key={option.value} className="focus-sidebar-check-option">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          toggleFocusSection(option.value)
+                        }}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  )
+                })}
+                <span className="focus-sidebar-check-summary">{focusSectionSummary}</span>
+              </div>
+            </div>
           </div>
         </section>
 
-        <section className="dashboard-section">
-          <h4>Todo Fokus</h4>
-          <div className="dashboard-item-list">
-            {focusTodos.length === 0 ? <p className="empty-copy">Keine offenen Todos.</p> : null}
-            {focusTodos.map((todo) => (
-              <article key={todo.id} className="todo-item compact">
-                <header>
-                  <strong>{todo.raw_text}</strong>
-                  <span className="item-kind-pill todo">TODO</span>
-                </header>
-                <p className="muted-copy">
-                  {todoLabel(todo)} | Zeile {todo.line_no}
-                </p>
-                <div className="todo-actions-row">
-                  <button onClick={() => onToggleTodo(todo.id)}>{todo.checked ? 'Reopen' : 'Done'}</button>
-                  <button className="muted" onClick={() => onOpenTodoOrigin(todo.note_path, todo.note_title || undefined)}>
-                    Ursprung
-                  </button>
-                  <button onClick={() => onPromoteTodo(todo.id)} disabled={todo.promoted}>
-                    {todo.promoted ? 'Promoted' : 'Als Task'}
-                  </button>
-                </div>
-              </article>
-            ))}
+        <section className="todo-sidebar-section todo-sidebar-grouping-section">
+          <h4>Ausrichtung</h4>
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Zeitraum</span>
+              <label className="todo-grouping-select">
+                <select value={focusFilters.scope} onChange={(event) => setFocusFilter({ scope: event.target.value as FocusDashboardFilters['scope'] })}>
+                  <option value="today">Heute</option>
+                  <option value="week">Diese Woche</option>
+                  <option value="all">Gesamt</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Fokuspunkte</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={String(focusFilters.maxItems)}
+                  onChange={(event) => {
+                    const parsed = Number.parseInt(event.target.value, 10)
+                    if (Number.isFinite(parsed)) {
+                      setFocusFilter({ maxItems: parsed })
+                    }
+                  }}
+                >
+                  <option value="8">8</option>
+                  <option value="12">12</option>
+                  <option value="16">16</option>
+                  <option value="20">20</option>
+                </select>
+              </label>
+            </div>
           </div>
         </section>
       </div>

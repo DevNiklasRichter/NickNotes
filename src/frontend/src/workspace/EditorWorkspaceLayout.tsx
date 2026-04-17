@@ -456,9 +456,19 @@ export function EditorWorkspaceLayout({
                   {showMarkerBefore ? <div className="pane-tab-insert-marker" aria-hidden="true" /> : null}
                   <div
                     className={`pane-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
-                    draggable={tab.kind === 'note' || tab.kind === 'todo_dashboard' || tab.kind === 'task_dashboard'}
+                    draggable={
+                      tab.kind === 'note' ||
+                      tab.kind === 'todo_dashboard' ||
+                      tab.kind === 'task_dashboard' ||
+                      tab.kind === 'focus_dashboard'
+                    }
                     onDragStart={(event) => {
-                      if (tab.kind !== 'note' && tab.kind !== 'todo_dashboard' && tab.kind !== 'task_dashboard') {
+                      if (
+                        tab.kind !== 'note' &&
+                        tab.kind !== 'todo_dashboard' &&
+                        tab.kind !== 'task_dashboard' &&
+                        tab.kind !== 'focus_dashboard'
+                      ) {
                         event.preventDefault()
                         return
                       }

@@ -92,6 +92,16 @@ export type TaskDashboardFilters = {
   listSortDirection: TaskListSortDirection
 }
 
+export type FocusDashboardSection = 'tasks' | 'todos' | 'notes'
+export type FocusDashboardScope = 'today' | 'week' | 'all'
+
+export type FocusDashboardFilters = {
+  query: string
+  sections: FocusDashboardSection[]
+  scope: FocusDashboardScope
+  maxItems: number
+}
+
 export type SearchRow = {
   id: string
   title: string
@@ -130,7 +140,7 @@ export type BackendState = {
 
 export type ThemeMode = 'light' | 'dark'
 export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard'
+export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard' | 'focus_dashboard'
 
 export type NoteTab = {
   id: string
@@ -154,6 +164,7 @@ export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
 export const SETTINGS_TAB_PATH = '__nicknotes_settings__'
 export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
+export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',
@@ -176,6 +187,13 @@ export const DEFAULT_TASK_DASHBOARD_FILTERS: TaskDashboardFilters = {
   layout: 'board',
   listSortBy: 'default',
   listSortDirection: 'desc',
+}
+
+export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
+  query: '',
+  sections: [],
+  scope: 'today',
+  maxItems: 12,
 }
 
 export type StatusBarPrefs = {

@@ -786,6 +786,23 @@
   flex: 0 0 0.56rem;
 }
 
+.focus-sidebar-check-grid {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.focus-sidebar-check-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  color: var(--text);
+}
+
+.focus-sidebar-check-summary {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .task-filter-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1263,6 +1280,245 @@
   margin: 0;
   font-size: 0.76rem;
   color: var(--muted);
+}
+
+.focus-canvas {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.9rem 1rem 1.2rem;
+  display: grid;
+  align-content: start;
+  gap: 0.82rem;
+}
+
+.focus-canvas-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.focus-canvas-header p {
+  margin: 0.22rem 0 0;
+  color: var(--muted);
+}
+
+.focus-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(134px, 1fr));
+  gap: 0.45rem;
+}
+
+.focus-metric-card {
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-contrast) 88%, transparent);
+  padding: 0.45rem 0.52rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.focus-metric-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.focus-metric-card strong {
+  font-size: 1rem;
+}
+
+.focus-canvas-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 0.72rem;
+}
+
+.focus-panel {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
+  padding: 0.48rem;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.34rem;
+}
+
+.focus-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.focus-panel-header h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.focus-panel-header span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.02rem 0.4rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.focus-panel-header-sub {
+  margin-top: 0.3rem;
+}
+
+.focus-primary-list {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.focus-primary-card {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  display: flex;
+  gap: 0.34rem;
+  align-items: stretch;
+}
+
+.focus-primary-card.selected {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 42%, transparent);
+}
+
+.focus-primary-card-main {
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  padding: 0.4rem 0.44rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.focus-primary-card-main strong {
+  font-size: 0.85rem;
+  line-height: 1.33;
+}
+
+.focus-primary-card-main p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.focus-primary-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.focus-primary-actions {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.26rem 0.22rem 0.26rem 0;
+}
+
+.focus-context-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.focus-context-list,
+.focus-note-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.focus-context-row,
+.focus-note-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.18rem 0.2rem;
+  border-radius: 7px;
+}
+
+.focus-context-row:hover,
+.focus-note-row:hover {
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+}
+
+.focus-context-row-main,
+.focus-note-row-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28rem;
+}
+
+.focus-context-note-type {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+}
+
+.focus-context-note-title,
+.focus-note-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-context-reasons {
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.focus-note-row-time {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.focus-note-card {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  padding: 0.35rem 0.42rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.focus-note-card strong {
+  display: block;
+}
+
+.focus-note-card p {
+  margin: 0.14rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.focus-canvas-footer p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+@media (max-width: 1160px) {
+  .focus-canvas-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .review-card {
