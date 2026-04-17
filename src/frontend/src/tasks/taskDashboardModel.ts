@@ -1,4 +1,6 @@
 import {
+  normalizeRelatedCandidate,
+  normalizeTagCandidate,
   normalizeTaskPriorityValue,
   normalizeTaskStatusValue,
   type TaskDashboardFilters,
@@ -129,6 +131,8 @@ function toTaskSearchText(task: TaskRow, todayIso: string): string {
   const priority = normalizeTaskPriorityValue(task.priority)
   const dueIso = toTaskDueIso(task.due_date)
   const dueBucket = toTaskDueBucket(task.due_date, todayIso)
+  const tags = (task.tags || []).map((item) => normalizeTagCandidate(item)).filter(Boolean)
+  const related = (task.related || []).map((item) => normalizeRelatedCandidate(item)).filter(Boolean)
   return [
     task.id,
     task.title,
@@ -139,27 +143,63 @@ function toTaskSearchText(task: TaskRow, todayIso: string): string {
     PRIORITY_LABELS[priority],
     dueIso,
     taskDueBucketLabel(dueBucket),
+    ...tags,
+    ...related,
   ]
     .join(' ')
     .toLowerCase()
 }
 
+function toTaskTagKeys(task: TaskRow): string[] {
+  return Array.from(new Set((task.tags || []).map((item) => normalizeTagCandidate(item)).filter(Boolean)))
+}
+
+function toTaskRelatedKeys(task: TaskRow): string[] {
+  return Array.from(new Set((task.related || []).map((item) => normalizeRelatedCandidate(item)).filter(Boolean)))
+}
+
 export function filterTaskRows(tasks: TaskRow[], filters: TaskDashboardFilters, todayIso: string): TaskRow[] {
   const cleanQuery = filters.query.trim().toLowerCase()
+  const selectedStatuses = new Set(filters.statuses)
+  const selectedPriorities = new Set(filters.priorities)
+  const selectedDueBuckets = new Set(filters.dueBuckets)
+  const selectedTagGroups = new Set(filters.tagGroups.map((value) => value.toLowerCase()))
+  const selectedTags = new Set(filters.tags.map((value) => normalizeTagCandidate(value)).filter(Boolean))
+  const selectedRelated = new Set(filters.related.map((value) => normalizeRelatedCandidate(value)).filter(Boolean))
   return tasks
     .filter((task) => {
       const status = normalizeTaskStatusValue(task.status)
-      if (filters.status !== 'all' && status !== filters.status) {
+      if (selectedStatuses.size > 0 && !selectedStatuses.has(status)) {
         return false
       }
 
       const priority = normalizeTaskPriorityValue(task.priority)
-      if (filters.priority !== 'all' && priority !== filters.priority) {
+      if (selectedPriorities.size > 0 && !selectedPriorities.has(priority)) {
         return false
       }
 
       const dueBucket = toTaskDueBucket(task.due_date, todayIso)
-      if (filters.due !== 'all' && dueBucket !== filters.due) {
+      if (selectedDueBuckets.size > 0 && !selectedDueBuckets.has(dueBucket)) {
+        return false
+      }
+
+      const taskTags = toTaskTagKeys(task)
+      if (selectedTagGroups.size > 0) {
+        const matchesGroup = taskTags.some((tagKey) => {
+          const [group = ''] = tagKey.split(':', 1)
+          return selectedTagGroups.has(group.toLowerCase())
+        })
+        if (!matchesGroup) {
+          return false
+        }
+      }
+
+      if (selectedTags.size > 0 && !taskTags.some((tagKey) => selectedTags.has(tagKey))) {
+        return false
+      }
+
+      const taskRelated = toTaskRelatedKeys(task)
+      if (selectedRelated.size > 0 && !taskRelated.some((relatedKey) => selectedRelated.has(relatedKey))) {
         return false
       }
 
@@ -173,10 +213,11 @@ export function filterTaskRows(tasks: TaskRow[], filters: TaskDashboardFilters, 
 
 function getStatusColumns(tasks: TaskRow[], filters: TaskDashboardFilters): TaskDashboardColumn[] {
   const known = new Set(tasks.map((task) => normalizeTaskStatusValue(task.status)))
+  const selectedStatuses = new Set(filters.statuses)
   return STATUS_ORDER
     .filter((status) => {
-      if (filters.status !== 'all') {
-        return status === filters.status
+      if (selectedStatuses.size > 0 && !selectedStatuses.has(status)) {
+        return false
       }
       return known.has(status)
     })
@@ -187,10 +228,11 @@ function getStatusColumns(tasks: TaskRow[], filters: TaskDashboardFilters): Task
 }
 
 function getPriorityColumns(filters: TaskDashboardFilters): TaskDashboardColumn[] {
+  const selectedPriorities = new Set(filters.priorities)
   return PRIORITY_ORDER
     .filter((priority) => {
-      if (filters.priority !== 'all') {
-        return priority === filters.priority
+      if (selectedPriorities.size > 0 && !selectedPriorities.has(priority)) {
+        return false
       }
       return true
     })
@@ -201,10 +243,11 @@ function getPriorityColumns(filters: TaskDashboardFilters): TaskDashboardColumn[
 }
 
 function getDueColumns(filters: TaskDashboardFilters): TaskDashboardColumn[] {
+  const selectedDueBuckets = new Set(filters.dueBuckets)
   return DUE_BUCKET_ORDER
     .filter((bucket) => {
-      if (filters.due !== 'all') {
-        return bucket === filters.due
+      if (selectedDueBuckets.size > 0 && !selectedDueBuckets.has(bucket)) {
+        return false
       }
       return true
     })

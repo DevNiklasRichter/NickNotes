@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
 
@@ -76,10 +76,20 @@ export function NotePropertiesPanel({
   onCloseRelatedInput,
 }: NotePropertiesPanelProps) {
   const [titleDraft, setTitleDraft] = useState(document.frontmatter.title)
+  const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     setTitleDraft(document.frontmatter.title)
   }, [tabPath, document.frontmatter.title])
+
+  useEffect(() => {
+    const titleInput = titleInputRef.current
+    if (!titleInput) {
+      return
+    }
+    titleInput.style.height = '0px'
+    titleInput.style.height = `${titleInput.scrollHeight}px`
+  }, [titleDraft, tabPath])
 
   const manualTags = document.frontmatter.tags
   const manualTagSet = new Set(manualTags)
@@ -128,11 +138,19 @@ export function NotePropertiesPanel({
   return (
     <section className={`note-properties-panel ${compact ? 'split-note-properties-panel' : ''}`}>
       <div className="note-title-row">
-        <input
-          className="note-title-input"
+        <textarea
+          ref={titleInputRef}
+          className="note-title-input note-title-textarea"
+          rows={1}
           value={titleDraft}
           onChange={(event) => {
-            setTitleDraft(event.target.value)
+            const normalizedTitle = event.target.value.replace(/\r?\n/g, ' ')
+            if (normalizedTitle !== event.target.value) {
+              event.currentTarget.value = normalizedTitle
+            }
+            setTitleDraft(normalizedTitle)
+            event.currentTarget.style.height = '0px'
+            event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`
           }}
           onBlur={(event) => {
             onTitleChange(event.currentTarget.value)
@@ -278,7 +296,7 @@ export function NotePropertiesPanel({
                 key={`tag-auto-${item}`}
                 className="property-chip tag-chip auto"
                 style={{ '--tag-chip-color': visual.color } as CSSProperties}
-                title={`Automatisch erkannt â€¢ ${item}`}
+                title={`Automatisch erkannt - ${item}`}
               >
                 {visual.label}
               </span>

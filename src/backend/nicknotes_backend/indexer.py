@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 from datetime import date, datetime, timedelta
@@ -12,6 +13,10 @@ from .markdown_io import parse_markdown
 from .models import ParsedTask, TagRef
 from .parser import slugify
 from .todos import ExtractedTodo, extract_todos_from_body
+
+
+INLINE_TITLE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}", re.IGNORECASE)
+BODY_HASHTAG_PATTERN = re.compile(r"(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})")
 
 
 class VaultIndexer:
@@ -477,7 +482,43 @@ class VaultIndexer:
                       updated_at DESC;
                     """
                 )
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+            for row in rows:
+                tags, related = self._extract_task_property_tokens(path=str(row.get("path") or ""))
+                row["tags"] = tags
+                row["related"] = related
+            return rows
+
+    def _extract_task_property_tokens(self, path: str) -> tuple[list[str], list[str]]:
+        tag_values: set[str] = set()
+        related_values: set[str] = set()
+
+        clean_path = path.strip()
+        if clean_path:
+            file_path = Path(clean_path)
+            if file_path.exists() and file_path.suffix.lower() == ".md":
+                try:
+                    meta, _body = parse_markdown(file_path)
+                    for raw_tag in _ensure_string_list(meta.get("tags", [])):
+                        normalized = _normalize_tag_value(raw_tag)
+                        if normalized:
+                            tag_values.add(normalized)
+                    for raw_tag in _extract_body_auto_tags(_body):
+                        normalized = _normalize_tag_value(raw_tag)
+                        if normalized:
+                            tag_values.add(normalized)
+                    for raw_related in _ensure_string_list(meta.get("related", [])):
+                        normalized = _normalize_related_value(raw_related)
+                        if normalized:
+                            related_values.add(normalized)
+                    for raw_related in _ensure_string_list(meta.get("related_auto", [])):
+                        normalized = _normalize_related_value(raw_related)
+                        if normalized:
+                            related_values.add(normalized)
+                except OSError:
+                    pass
+
+        return sorted(tag_values, key=lambda item: item.lower()), sorted(related_values, key=lambda item: item.lower())
 
     def notes_for_tag(self, category: str, slug: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -730,6 +771,60 @@ def _split_tag(raw: str) -> tuple[str, str] | None:
     if not category or not slug:
         return None
     return category, slug
+
+
+def _normalize_tag_value(raw: str) -> str | None:
+    clean = str(raw).strip()
+    if not clean:
+        return None
+
+    inline = INLINE_TITLE_TAG_PATTERN.fullmatch(clean)
+    if inline:
+        clean = f"{inline.group(1)}:{inline.group(2)}"
+
+    clean = clean.lstrip("#")
+    delimiter = ":" if ":" in clean else "/" if "/" in clean else ""
+    if delimiter:
+        left, right = clean.split(delimiter, 1)
+        category = slugify(left)
+        slug = slugify(right)
+        if category and slug:
+            return f"{category}:{slug}"
+        return None
+
+    topic = slugify(clean)
+    return f"topic:{topic}" if topic else None
+
+
+def _normalize_related_value(raw: str) -> str:
+    clean = str(raw).strip()
+    if not clean:
+        return ""
+    if clean.startswith("[[") and clean.endswith("]]"):
+        clean = clean[2:-2].strip()
+    if "|" in clean:
+        clean = clean.split("|", 1)[0].strip()
+    if "#" in clean:
+        clean = clean.split("#", 1)[0].strip()
+    clean = clean.replace("\\", "/").strip()
+    if clean.lower().endswith(".md"):
+        clean = clean[:-3]
+    return clean.strip()
+
+
+def _extract_body_auto_tags(body: str) -> list[str]:
+    found: set[str] = set()
+    text = body or ""
+
+    for match in INLINE_TITLE_TAG_PATTERN.finditer(text):
+        found.add(f"{match.group(1)}:{match.group(2)}")
+
+    for match in BODY_HASHTAG_PATTERN.finditer(text):
+        hashtag = str(match.group(2) or "").strip()
+        if hashtag:
+            found.add(hashtag)
+
+    return sorted(found, key=lambda item: item.lower())
 
 
 def _ensure_string_list(value: Any) -> list[str]:

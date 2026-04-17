@@ -6,6 +6,8 @@ import { NotePropertiesPanel } from './editor/NotePropertiesPanel'
 import {
   parseNoteDocument,
   serializeNoteDocument,
+  extractAutoTags,
+  extractRelatedLinks,
   type ParsedNoteDocument,
   type TaskPriority,
   type TaskStatus,
@@ -411,7 +413,7 @@ function App() {
       return
     }
 
-    const response = await apiRequest<{ items: TaskRow[] }>(backendUrl, '/tasks?include_done=false')
+    const response = await apiRequest<{ items: TaskRow[] }>(backendUrl, '/tasks?include_done=true')
     setTasks(response.items)
   }
 
@@ -997,8 +999,6 @@ function App() {
 
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
   const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
-  const todoDashboardTabOpen = openTabs.some((tab) => tab.path === TODO_DASHBOARD_TAB_PATH)
-  const taskDashboardTabOpen = openTabs.some((tab) => tab.path === TASK_DASHBOARD_TAB_PATH)
   const tabContextTarget = tabContextMenu ? tabsById[tabContextMenu.tabId] ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
@@ -1236,6 +1236,9 @@ function App() {
   }
 
   const openTaskDashboardTab = () => {
+    if (vaultLoaded) {
+      void refreshTasks()
+    }
     const existing = findTabByPath(TASK_DASHBOARD_TAB_PATH, openTabs)
     const targetPane = workspaceStateRef.current.lastFocusedPane
     if (existing) {
@@ -1742,13 +1745,48 @@ function App() {
   }
 
   const closeEditorTab = async (tabId: string) => {
-    const canClose = await confirmCloseTab(tabId)
-    if (!canClose) {
-      return
+    await closeEditorTabs([tabId])
+  }
+
+  const closeEditorTabs = async (tabIds: string[]): Promise<boolean> => {
+    if (tabIds.length === 0) {
+      return true
     }
-    setOpenTabs((prev) => prev.filter((tab) => tab.id !== tabId))
-    dispatchWorkspace({ type: 'CLOSE_TAB', tabId })
+
+    const openTabIdSet = new Set(openTabsRef.current.map((tab) => tab.id))
+    const uniqueTabIds: string[] = []
+    for (const tabId of tabIds) {
+      if (!openTabIdSet.has(tabId) || uniqueTabIds.includes(tabId)) {
+        continue
+      }
+      uniqueTabIds.push(tabId)
+    }
+    if (uniqueTabIds.length === 0) {
+      return true
+    }
+
+    for (const tabId of uniqueTabIds) {
+      const canClose = await confirmCloseTab(tabId)
+      if (!canClose) {
+        return false
+      }
+    }
+
+    const closeSet = new Set(uniqueTabIds)
+    setOpenTabs((prev) => prev.filter((tab) => !closeSet.has(tab.id)))
+    for (const tabId of uniqueTabIds) {
+      dispatchWorkspace({ type: 'CLOSE_TAB', tabId })
+    }
     setTabContextMenu(null)
+    return true
+  }
+
+  const closeAllEditorTabs = async (): Promise<boolean> => {
+    return await closeEditorTabs(openTabsRef.current.map((tab) => tab.id))
+  }
+
+  const closeOtherEditorTabs = async (keepTabId: string): Promise<boolean> => {
+    return await closeEditorTabs(openTabsRef.current.filter((tab) => tab.id !== keepTabId).map((tab) => tab.id))
   }
 
   const openNoteInCurrentEditor = async (path: string, suggestedTitle?: string) => {
@@ -1816,14 +1854,24 @@ function App() {
       if (nextDocument === parsed) {
         return prev
       }
+      const nextAutoTags = extractAutoTags(nextDocument.body)
+      const nextAutoRelated = extractRelatedLinks(nextDocument.body)
+      const normalizedDocument: ParsedNoteDocument = {
+        ...nextDocument,
+        frontmatter: {
+          ...nextDocument.frontmatter,
+          tags_auto: nextAutoTags,
+          related_auto: nextAutoRelated,
+        },
+      }
 
       const next = prev.slice()
       next[targetIndex] = {
         ...targetTab,
-        title: nextDocument.frontmatter.title || targetTab.title,
+        title: normalizedDocument.frontmatter.title || targetTab.title,
         dirty: true,
-        noteType: normalizeNoteTypeValue(nextDocument.frontmatter.type),
-        parsedDocument: nextDocument,
+        noteType: normalizeNoteTypeValue(normalizedDocument.frontmatter.type),
+        parsedDocument: normalizedDocument,
       }
       return next
     })
@@ -3184,23 +3232,11 @@ function App() {
   const openSidebarView = (view: SidebarView) => {
     if (sidebarView === view) {
       setSidebarOpen((prev) => !prev)
-      if (view === 'todos' && !todoDashboardTabOpen) {
-        openTodoDashboardTab()
-      }
-      if (view === 'tasks' && !taskDashboardTabOpen) {
-        openTaskDashboardTab()
-      }
       return
     }
 
     setSidebarView(view)
     setSidebarOpen(true)
-    if (view === 'todos') {
-      openTodoDashboardTab()
-    }
-    if (view === 'tasks') {
-      openTaskDashboardTab()
-    }
   }
 
   const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -3289,6 +3325,8 @@ function App() {
         <TaskDashboardCanvas
           tasks={tasks}
           filters={taskDashboardFilters}
+          tagGroups={mergedTagGroups}
+          onFiltersChange={setTaskDashboardFilters}
           onOpenTaskPath={(path, title) => {
             if (!path) {
               return
@@ -3618,7 +3656,7 @@ function App() {
         </div>
       </section>
 
-      {tabContextMenu && tabContextTarget?.kind === 'note' ? (
+      {tabContextMenu && tabContextTarget ? (
         <div
           className="editor-tab-context-menu"
           style={{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }}
@@ -3638,6 +3676,24 @@ function App() {
             }}
           >
             Registerkarte schliessen
+          </button>
+          <button
+            className="muted"
+            onClick={() => {
+              void closeOtherEditorTabs(tabContextTarget.id)
+            }}
+            disabled={openTabs.length <= 1}
+          >
+            Alle anderen Registerkarten schliessen
+          </button>
+          <button
+            className="muted"
+            onClick={() => {
+              void closeAllEditorTabs()
+            }}
+            disabled={openTabs.length === 0}
+          >
+            Alle Registerkarten schliessen
           </button>
         </div>
       ) : null}

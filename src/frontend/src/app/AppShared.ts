@@ -35,6 +35,8 @@ export type TaskRow = {
   priority: string
   due_date: string | null
   project_tag: string | null
+  tags?: string[]
+  related?: string[]
   updated_at: string
   path: string | null
 }
@@ -73,14 +75,21 @@ export type TodoDashboardFilters = {
 export type TaskDueBucket = 'overdue' | 'tomorrow' | 'this_week' | 'later' | 'none'
 export type TaskDashboardGroupingMode = 'status' | 'priority' | 'due_date'
 export type TaskDashboardLayoutMode = 'board' | 'list'
+export type TaskListSortField = 'default' | 'priority' | 'due_date'
+export type TaskListSortDirection = 'asc' | 'desc'
 
 export type TaskDashboardFilters = {
   query: string
-  status: 'all' | TaskStatus
-  priority: 'all' | TaskPriority
-  due: 'all' | TaskDueBucket
+  statuses: TaskStatus[]
+  priorities: TaskPriority[]
+  dueBuckets: TaskDueBucket[]
+  tagGroups: string[]
+  tags: string[]
+  related: string[]
   grouping: TaskDashboardGroupingMode
   layout: TaskDashboardLayoutMode
+  listSortBy: TaskListSortField
+  listSortDirection: TaskListSortDirection
 }
 
 export type SearchRow = {
@@ -157,11 +166,16 @@ export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
 
 export const DEFAULT_TASK_DASHBOARD_FILTERS: TaskDashboardFilters = {
   query: '',
-  status: 'all',
-  priority: 'all',
-  due: 'all',
+  statuses: [],
+  priorities: [],
+  dueBuckets: [],
+  tagGroups: [],
+  tags: [],
+  related: [],
   grouping: 'status',
   layout: 'board',
+  listSortBy: 'default',
+  listSortDirection: 'desc',
 }
 
 export type StatusBarPrefs = {
@@ -223,6 +237,18 @@ export const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ]
+export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
+  new_topic: '#4f8cff',
+  open: '#cf5d5d',
+  in_progress: '#d3a33a',
+  on_hold: '#8a8da1',
+  done: '#43a36f',
+}
+export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
+  low: '#59a477',
+  medium: '#cea73d',
+  high: '#cf5d5d',
+}
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   new_topic: 'New Topic',
   open: 'Open',
