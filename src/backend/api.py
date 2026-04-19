@@ -76,6 +76,16 @@ class CaptureSaveRequest(BaseModel):
     selected_tag_keys: list[str] = Field(default_factory=list, alias="selectedTagKeys")
 
 
+class FocusMitUpdateRequest(BaseModel):
+    date: str | None = None
+    mit_ids: list[str] = Field(default_factory=list, alias="mitIds")
+
+
+class FocusQuickCaptureRequest(BaseModel):
+    text: str
+    date: str | None = None
+
+
 class NoteOpenRequest(BaseModel):
     path: str
 
@@ -380,6 +390,46 @@ def save_capture(req: CaptureSaveRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/focus/mit")
+def get_focus_mit(date: str | None = None) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    state = vault.get_daily_mit(day_iso=date)
+    return {
+        "date": state["date"],
+        "notePath": str(state["note_path"]),
+        "mitIds": state["mit_ids"],
+    }
+
+
+@app.post("/focus/mit")
+def save_focus_mit(req: FocusMitUpdateRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    state = vault.set_daily_mit(day_iso=req.date, mit_ids=req.mit_ids, indexer=indexer)
+    return {
+        "saved": True,
+        "date": state["date"],
+        "notePath": str(state["note_path"]),
+        "mitIds": state["mit_ids"],
+        "counts": _counts(indexer),
+    }
+
+
+@app.post("/focus/quick-capture")
+def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        result = vault.add_quick_todo_to_daily(text=req.text, indexer=indexer, day_iso=req.date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "saved": True,
+        "date": result["date"],
+        "notePath": str(result["note_path"]),
+        "todoText": result["todo_text"],
+        "counts": _counts(indexer),
+    }
+
+
 @app.get("/tasks")
 def list_tasks(include_done: bool = False) -> dict[str, Any]:
     _vault, indexer = _require_loaded()
@@ -445,6 +495,25 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
     if src != done_path and src.exists():
         src.unlink()
 
+    blocked_by_raw = meta.get("blocked_by_ids")
+    blocked_by_ids: list[str] = []
+    if isinstance(blocked_by_raw, list):
+        iterable = [str(item) for item in blocked_by_raw]
+    elif isinstance(blocked_by_raw, str):
+        iterable = blocked_by_raw.split(",")
+    else:
+        iterable = []
+    seen_blockers: set[str] = set()
+    for item in iterable:
+        clean = item.strip()
+        if not clean:
+            continue
+        lowered = clean.lower()
+        if lowered in seen_blockers:
+            continue
+        seen_blockers.add(lowered)
+        blocked_by_ids.append(clean)
+
     parsed = ParsedTask(
         title=str(meta.get("title", row["title"])),
         due_date=str(meta.get("due_date", "")).strip() or row.get("due_date"),
@@ -452,6 +521,12 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
         status="done",
         project_tag=str(meta.get("project_tag", "")).strip() or row.get("project_tag"),
         tags=[],
+        estimate_minutes=row.get("estimate_minutes"),
+        blocked_by_ids=blocked_by_ids,
+        waiting_for=str(meta.get("waiting_for", "")).strip() or None,
+        follow_up_date=str(meta.get("follow_up_date", "")).strip() or None,
+        blocked_reason=str(meta.get("blocked_reason", "")).strip() or None,
+        next_action_hint=str(meta.get("next_action_hint", "")).strip() or None,
     )
     indexer.add_or_update_task(
         task_id=str(task_id),
@@ -973,6 +1048,12 @@ def _task_payload(item: ParsedTask) -> dict[str, Any]:
         "status": item.status,
         "projectTag": item.project_tag,
         "tags": item.tags,
+        "estimateMinutes": item.estimate_minutes,
+        "blockedByIds": item.blocked_by_ids,
+        "waitingFor": item.waiting_for,
+        "followUpDate": item.follow_up_date,
+        "blockedReason": item.blocked_reason,
+        "nextActionHint": item.next_action_hint,
     }
 
 

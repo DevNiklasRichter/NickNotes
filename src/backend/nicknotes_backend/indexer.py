@@ -91,6 +91,12 @@ class VaultIndexer:
                   priority TEXT NOT NULL,
                   due_date TEXT,
                   project_tag TEXT,
+                  estimate_minutes INTEGER,
+                  blocked_by_ids_json TEXT NOT NULL DEFAULT '[]',
+                  waiting_for TEXT,
+                  follow_up_date TEXT,
+                  blocked_reason TEXT,
+                  next_action_hint TEXT,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
                 );
@@ -125,7 +131,27 @@ class VaultIndexer:
                 USING fts5(note_id UNINDEXED, title, body);
                 """
             )
+            self._ensure_tasks_schema(cur)
             self.conn.commit()
+
+    def _ensure_tasks_schema(self, cur: sqlite3.Cursor) -> None:
+        cur.execute("PRAGMA table_info(tasks);")
+        columns = {str(row["name"]) for row in cur.fetchall()}
+        migrations: list[str] = []
+        if "estimate_minutes" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN estimate_minutes INTEGER;")
+        if "blocked_by_ids_json" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN blocked_by_ids_json TEXT NOT NULL DEFAULT '[]';")
+        if "waiting_for" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN waiting_for TEXT;")
+        if "follow_up_date" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN follow_up_date TEXT;")
+        if "blocked_reason" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN blocked_reason TEXT;")
+        if "next_action_hint" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN next_action_hint TEXT;")
+        for statement in migrations:
+            cur.execute(statement)
 
     def clear_all(self) -> None:
         with self._lock:
@@ -234,8 +260,12 @@ class VaultIndexer:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                INSERT INTO tasks(id, note_id, path, title, status, priority, due_date, project_tag, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks(
+                  id, note_id, path, title, status, priority, due_date, project_tag,
+                  estimate_minutes, blocked_by_ids_json, waiting_for, follow_up_date, blocked_reason, next_action_hint,
+                  created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   note_id=excluded.note_id,
                   path=excluded.path,
@@ -244,6 +274,12 @@ class VaultIndexer:
                   priority=excluded.priority,
                   due_date=excluded.due_date,
                   project_tag=excluded.project_tag,
+                  estimate_minutes=excluded.estimate_minutes,
+                  blocked_by_ids_json=excluded.blocked_by_ids_json,
+                  waiting_for=excluded.waiting_for,
+                  follow_up_date=excluded.follow_up_date,
+                  blocked_reason=excluded.blocked_reason,
+                  next_action_hint=excluded.next_action_hint,
                   updated_at=excluded.updated_at;
                 """,
                 (
@@ -255,6 +291,12 @@ class VaultIndexer:
                     parsed.priority,
                     parsed.due_date,
                     parsed.project_tag,
+                    parsed.estimate_minutes,
+                    json.dumps(_normalize_task_id_list(parsed.blocked_by_ids), ensure_ascii=False),
+                    _normalize_free_text(parsed.waiting_for),
+                    _normalize_iso_date(parsed.follow_up_date),
+                    _normalize_free_text(parsed.blocked_reason),
+                    _normalize_free_text(parsed.next_action_hint),
                     created_at,
                     updated_at,
                 ),
@@ -462,7 +504,21 @@ class VaultIndexer:
             if include_done:
                 cur.execute(
                     """
-                    SELECT id, title, status, priority, due_date, project_tag, updated_at, path
+                    SELECT
+                      id,
+                      title,
+                      status,
+                      priority,
+                      due_date,
+                      project_tag,
+                      estimate_minutes,
+                      blocked_by_ids_json,
+                      waiting_for,
+                      follow_up_date,
+                      blocked_reason,
+                      next_action_hint,
+                      updated_at,
+                      path
                     FROM tasks
                     ORDER BY
                       CASE priority WHEN 'H' THEN 1 WHEN 'M' THEN 2 ELSE 3 END,
@@ -473,7 +529,21 @@ class VaultIndexer:
             else:
                 cur.execute(
                     """
-                    SELECT id, title, status, priority, due_date, project_tag, updated_at, path
+                    SELECT
+                      id,
+                      title,
+                      status,
+                      priority,
+                      due_date,
+                      project_tag,
+                      estimate_minutes,
+                      blocked_by_ids_json,
+                      waiting_for,
+                      follow_up_date,
+                      blocked_reason,
+                      next_action_hint,
+                      updated_at,
+                      path
                     FROM tasks
                     WHERE status <> 'done'
                     ORDER BY
@@ -487,6 +557,13 @@ class VaultIndexer:
                 tags, related = self._extract_task_property_tokens(path=str(row.get("path") or ""))
                 row["tags"] = tags
                 row["related"] = related
+                row["estimate_minutes"] = _normalize_estimate_minutes(row.get("estimate_minutes"))
+                row["blocked_by_ids"] = _normalize_task_id_list(_safe_json_list(row.get("blocked_by_ids_json")))
+                row["waiting_for"] = _normalize_free_text(row.get("waiting_for"))
+                row["follow_up_date"] = _normalize_iso_date(row.get("follow_up_date"))
+                row["blocked_reason"] = _normalize_free_text(row.get("blocked_reason"))
+                row["next_action_hint"] = _normalize_free_text(row.get("next_action_hint"))
+                row.pop("blocked_by_ids_json", None)
             return rows
 
     def _extract_task_property_tokens(self, path: str) -> tuple[list[str], list[str]]:
@@ -714,6 +791,12 @@ class VaultIndexer:
                 priority=str(meta.get("priority", "M")).upper()[:1] or "M",
                 status=str(meta.get("status", "open")).strip().lower().replace("-", "_") or "open",
                 project_tag=str(meta.get("project_tag", "")).strip() or None,
+                estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
+                blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids")),
+                waiting_for=_normalize_free_text(meta.get("waiting_for")),
+                follow_up_date=_normalize_iso_date(meta.get("follow_up_date")),
+                blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
+                next_action_hint=_normalize_free_text(meta.get("next_action_hint")),
             )
             self.add_or_update_task(
                 task_id=task_id,
@@ -746,6 +829,12 @@ class VaultIndexer:
             priority=str(meta.get("priority", "M")).upper()[:1] or "M",
             status=str(meta.get("status", inferred_status)).lower().replace("-", "_"),
             project_tag=str(meta.get("project_tag", "") or "") or None,
+            estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
+            blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids")),
+            waiting_for=_normalize_free_text(meta.get("waiting_for")),
+            follow_up_date=_normalize_iso_date(meta.get("follow_up_date")),
+            blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
+            next_action_hint=_normalize_free_text(meta.get("next_action_hint")),
         )
         created_at = str(meta.get("created_at", fallback_created))
         updated_at = str(meta.get("updated_at", fallback_updated))
@@ -810,6 +899,69 @@ def _normalize_related_value(raw: str) -> str:
     if clean.lower().endswith(".md"):
         clean = clean[:-3]
     return clean.strip()
+
+
+def _normalize_iso_date(raw: Any) -> str | None:
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    return clean if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean) else None
+
+
+def _normalize_free_text(raw: Any) -> str | None:
+    clean = " ".join(str(raw or "").split())
+    return clean or None
+
+
+def _normalize_estimate_minutes(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        value = int(raw)
+    else:
+        clean = str(raw).strip()
+        if not clean:
+            return None
+        try:
+            value = int(float(clean))
+        except ValueError:
+            return None
+    if value <= 0:
+        return None
+    return min(value, 10000)
+
+
+def _normalize_task_id_list(raw: Any) -> list[str]:
+    source: list[str]
+    if isinstance(raw, str):
+        clean = raw.strip()
+        if not clean:
+            source = []
+        elif clean.startswith("["):
+            source = _safe_json_list(clean)
+        else:
+            source = [clean]
+    elif isinstance(raw, list):
+        source = [str(item).strip() for item in raw]
+    else:
+        source = []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in source:
+        parts = item.split(",") if "," in item else [item]
+        for part in parts:
+            clean_item = part.strip()
+            if not clean_item:
+                continue
+            lowered = clean_item.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(clean_item)
+    return normalized
 
 
 def _extract_body_auto_tags(body: str) -> list[str]:

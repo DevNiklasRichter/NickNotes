@@ -26,6 +26,12 @@ export type ParsedTask = {
   status: string
   projectTag: string | null
   tags: string[]
+  estimateMinutes?: number | null
+  blockedByIds?: string[]
+  waitingFor?: string | null
+  followUpDate?: string | null
+  blockedReason?: string | null
+  nextActionHint?: string | null
 }
 
 export type TaskRow = {
@@ -35,6 +41,12 @@ export type TaskRow = {
   priority: string
   due_date: string | null
   project_tag: string | null
+  estimate_minutes?: number | null
+  blocked_by_ids?: string[]
+  waiting_for?: string | null
+  follow_up_date?: string | null
+  blocked_reason?: string | null
+  next_action_hint?: string | null
   tags?: string[]
   related?: string[]
   updated_at: string
@@ -93,7 +105,7 @@ export type TaskDashboardFilters = {
 }
 
 export type FocusDashboardSection = 'tasks' | 'todos' | 'notes'
-export type FocusDashboardScope = 'today' | 'week' | 'all'
+export type FocusDashboardScope = 'overdue' | 'today' | 'tomorrow' | 'week' | 'next7' | 'all'
 
 export type FocusDashboardFilters = {
   query: string

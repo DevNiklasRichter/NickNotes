@@ -44,6 +44,8 @@ MEDIA_IMAGE_CONTENT_TYPES = {
 }
 MEDIA_IMAGE_EXTENSIONS = set(MEDIA_IMAGE_CONTENT_TYPES.values())
 MAX_MEDIA_ASSET_BYTES = 20 * 1024 * 1024
+ISO_DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_DAILY_MIT_ITEMS = 3
 
 
 def _normalize_tag_id(value: str) -> str:
@@ -109,6 +111,45 @@ def _normalize_due_date(raw: str) -> str:
     if not clean:
         return ""
     return clean if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean) else ""
+
+
+def _normalize_estimate_minutes(raw: Any) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        value = int(raw)
+    else:
+        clean = str(raw).strip()
+        if not clean:
+            return None
+        try:
+            value = int(float(clean))
+        except ValueError:
+            return None
+    if value <= 0:
+        return None
+    return min(value, 10000)
+
+
+def _normalize_optional_text(raw: Any) -> str:
+    return " ".join(str(raw or "").split())
+
+
+def _normalize_blocked_by_ids(raw: Any) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in _ensure_string_list(raw):
+        parts = item.split(",") if "," in item else [item]
+        for part in parts:
+            clean = part.strip()
+            if not clean:
+                continue
+            lowered = clean.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(clean)
+    return normalized
 
 
 def _extract_title_from_body(body: str) -> str:
@@ -199,6 +240,29 @@ def _extract_markdown_link_target(raw_target: str) -> str:
             break
 
     return clean
+
+
+def _normalize_daily_day(raw_day: str | None) -> str:
+    if raw_day and ISO_DAY_PATTERN.fullmatch(raw_day.strip()):
+        return raw_day.strip()
+    return datetime.now().date().isoformat()
+
+
+def _normalize_mit_ids(raw_value: Any, limit: int = MAX_DAILY_MIT_ITEMS) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in _ensure_string_list(raw_value):
+        clean = item.strip()
+        if not clean:
+            continue
+        lowered = clean.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(clean)
+        if len(normalized) >= limit:
+            break
+    return normalized
 
 
 class VaultManager:
@@ -414,6 +478,12 @@ class VaultManager:
             status=normalized_status,
             priority=normalized_priority,
             due_date="",
+            estimate_minutes=None,
+            blocked_by_ids=[],
+            waiting_for="",
+            follow_up_date="",
+            blocked_reason="",
+            next_action_hint="",
             manual_tags=[],
             manual_related=[],
             auto_tags=[],
@@ -831,6 +901,12 @@ class VaultManager:
         status = _normalize_task_status(str(frontmatter.get("status", "open")))
         priority = _normalize_task_priority(str(frontmatter.get("priority", "medium")))
         due_date = _normalize_due_date(str(frontmatter.get("due_date", "")))
+        estimate_minutes = _normalize_estimate_minutes(frontmatter.get("estimate_minutes"))
+        blocked_by_ids = _normalize_blocked_by_ids(frontmatter.get("blocked_by_ids"))
+        waiting_for = _normalize_optional_text(frontmatter.get("waiting_for"))
+        follow_up_date = _normalize_due_date(str(frontmatter.get("follow_up_date", "")))
+        blocked_reason = _normalize_optional_text(frontmatter.get("blocked_reason"))
+        next_action_hint = _normalize_optional_text(frontmatter.get("next_action_hint"))
 
         known_keys = {
             "id",
@@ -846,6 +922,12 @@ class VaultManager:
             "tags_auto",
             "related",
             "related_auto",
+            "estimate_minutes",
+            "blocked_by_ids",
+            "waiting_for",
+            "follow_up_date",
+            "blocked_reason",
+            "next_action_hint",
         }
         extra: dict[str, Any] = {}
         for key, value in frontmatter.items():
@@ -864,6 +946,12 @@ class VaultManager:
             status=status,
             priority=priority,
             due_date=due_date,
+            estimate_minutes=estimate_minutes,
+            blocked_by_ids=blocked_by_ids,
+            waiting_for=waiting_for,
+            follow_up_date=follow_up_date,
+            blocked_reason=blocked_reason,
+            next_action_hint=next_action_hint,
             manual_tags=manual_tags,
             manual_related=manual_related,
             auto_tags=auto_tags,
@@ -878,6 +966,12 @@ class VaultManager:
             "status": status,
             "priority": priority,
             "due_date": due_date,
+            "estimate_minutes": estimate_minutes,
+            "blocked_by_ids": blocked_by_ids,
+            "waiting_for": waiting_for,
+            "follow_up_date": follow_up_date,
+            "blocked_reason": blocked_reason,
+            "next_action_hint": next_action_hint,
             "created_at": created_at,
             "updated_at": updated_at,
             "tags": manual_tags,
@@ -1563,6 +1657,82 @@ class VaultManager:
             "task_ids": task_ids,
         }
 
+    def get_daily_mit(self, day_iso: str | None = None) -> dict[str, Any]:
+        day = _normalize_daily_day(day_iso)
+        daily_path = self.daily_root_path / f"{day}.md"
+        if not daily_path.exists():
+            return {
+                "date": day,
+                "note_path": daily_path,
+                "mit_ids": [],
+            }
+
+        meta, _body = parse_markdown(daily_path)
+        return {
+            "date": day,
+            "note_path": daily_path,
+            "mit_ids": _normalize_mit_ids(meta.get("mit", [])),
+        }
+
+    def set_daily_mit(self, day_iso: str | None, mit_ids: list[str], indexer: VaultIndexer) -> dict[str, Any]:
+        day = _normalize_daily_day(day_iso)
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        daily_path = self._ensure_daily_note(day, now_iso)
+        meta, body = parse_markdown(daily_path)
+
+        if not str(meta.get("id", "")).strip():
+            meta["id"] = f"daily_{day}"
+        if not str(meta.get("type", "")).strip():
+            meta["type"] = "daily"
+        if not str(meta.get("created_at", "")).strip():
+            meta["created_at"] = f"{day}T00:00:00"
+        meta["tags"] = _ensure_string_list(meta.get("tags", []))
+        meta["mit"] = _normalize_mit_ids(mit_ids)
+        meta["updated_at"] = now_iso
+
+        daily_path.write_text(dump_markdown(meta, body), encoding="utf-8")
+        indexer.reindex_markdown_file(self.vault_path, daily_path)
+
+        return {
+            "date": day,
+            "note_path": daily_path,
+            "mit_ids": _normalize_mit_ids(meta.get("mit", [])),
+        }
+
+    def add_quick_todo_to_daily(self, text: str, indexer: VaultIndexer, day_iso: str | None = None) -> dict[str, Any]:
+        clean_text = " ".join(text.strip().split())
+        if not clean_text:
+            raise ValueError("Quick capture text is empty")
+
+        day = _normalize_daily_day(day_iso)
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        daily_path = self._ensure_daily_note(day, now_iso)
+        meta, body = parse_markdown(daily_path)
+
+        if not str(meta.get("id", "")).strip():
+            meta["id"] = f"daily_{day}"
+        if not str(meta.get("type", "")).strip():
+            meta["type"] = "daily"
+        if not str(meta.get("created_at", "")).strip():
+            meta["created_at"] = f"{day}T00:00:00"
+        meta["tags"] = _ensure_string_list(meta.get("tags", []))
+        meta["updated_at"] = now_iso
+
+        todo_line = f"- [ ] {clean_text}"
+        if body.strip():
+            next_body = body.rstrip() + "\n" + todo_line + "\n"
+        else:
+            next_body = f"# Daily {day}\n\n{todo_line}\n"
+
+        daily_path.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+        indexer.reindex_markdown_file(self.vault_path, daily_path)
+
+        return {
+            "date": day,
+            "note_path": daily_path,
+            "todo_text": clean_text,
+        }
+
     def _create_task_file(
         self,
         task_id: str,
@@ -1597,6 +1767,24 @@ class VaultManager:
             "related": related,
             "related_auto": [],
         }
+        estimate_minutes = _normalize_estimate_minutes(task.estimate_minutes)
+        blocked_by_ids = _normalize_blocked_by_ids(task.blocked_by_ids)
+        waiting_for = _normalize_optional_text(task.waiting_for)
+        follow_up_date = _normalize_due_date(task.follow_up_date or "")
+        blocked_reason = _normalize_optional_text(task.blocked_reason)
+        next_action_hint = _normalize_optional_text(task.next_action_hint)
+        if estimate_minutes is not None:
+            frontmatter["estimate_minutes"] = estimate_minutes
+        if blocked_by_ids:
+            frontmatter["blocked_by_ids"] = blocked_by_ids
+        if waiting_for:
+            frontmatter["waiting_for"] = waiting_for
+        if follow_up_date:
+            frontmatter["follow_up_date"] = follow_up_date
+        if blocked_reason:
+            frontmatter["blocked_reason"] = blocked_reason
+        if next_action_hint:
+            frontmatter["next_action_hint"] = next_action_hint
         if extra_frontmatter:
             for key, value in extra_frontmatter.items():
                 if key not in frontmatter:
@@ -1623,17 +1811,7 @@ class VaultManager:
         tag_keys: list[str],
     ) -> None:
         day = created_at[:10]
-        daily_path = self.daily_root_path / f"{day}.md"
-        if not daily_path.exists():
-            fm = {
-                "id": f"daily_{day}",
-                "type": "daily",
-                "created_at": f"{day}T00:00:00",
-                "updated_at": created_at,
-                "tags": [],
-            }
-            body = f"# Daily {day}\n"
-            daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
+        daily_path = self._ensure_daily_note(day, created_at)
 
         existing = daily_path.read_text(encoding="utf-8")
         tags_hint = f" | tags: {', '.join(tag_keys)}" if tag_keys else ""
@@ -1641,6 +1819,22 @@ class VaultManager:
         if line not in existing:
             updated = existing.rstrip() + "\n" + line + "\n"
             daily_path.write_text(updated, encoding="utf-8")
+
+    def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
+        daily_path = self.daily_root_path / f"{day_iso}.md"
+        if daily_path.exists():
+            return daily_path
+
+        fm = {
+            "id": f"daily_{day_iso}",
+            "type": "daily",
+            "created_at": f"{day_iso}T00:00:00",
+            "updated_at": updated_at,
+            "tags": [],
+        }
+        body = f"# Daily {day_iso}\n"
+        daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
+        return daily_path
 
     def rebuild_all_tag_pages(self, groups: list[dict[str, Any]], indexer: VaultIndexer) -> None:
         self.tag_root_path.mkdir(parents=True, exist_ok=True)
@@ -1995,6 +2189,12 @@ class VaultManager:
         status: str,
         priority: str,
         due_date: str,
+        estimate_minutes: int | None,
+        blocked_by_ids: list[str],
+        waiting_for: str,
+        follow_up_date: str,
+        blocked_reason: str,
+        next_action_hint: str,
         manual_tags: list[str],
         manual_related: list[str],
         auto_tags: list[str],
@@ -2016,6 +2216,18 @@ class VaultManager:
             "related": _dedupe_sorted(manual_related),
             "related_auto": _dedupe_sorted(auto_related),
         }
+        if estimate_minutes is not None:
+            frontmatter["estimate_minutes"] = estimate_minutes
+        if blocked_by_ids:
+            frontmatter["blocked_by_ids"] = _normalize_blocked_by_ids(blocked_by_ids)
+        if waiting_for:
+            frontmatter["waiting_for"] = waiting_for
+        if follow_up_date:
+            frontmatter["follow_up_date"] = _normalize_due_date(follow_up_date)
+        if blocked_reason:
+            frontmatter["blocked_reason"] = blocked_reason
+        if next_action_hint:
+            frontmatter["next_action_hint"] = next_action_hint
         if extra:
             for key, value in extra.items():
                 if key not in frontmatter:

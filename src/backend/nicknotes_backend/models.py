@@ -40,4 +40,9 @@ class ParsedTask:
     status: str = "open"
     project_tag: Optional[str] = None
     tags: list[str] = field(default_factory=list)
-
+    estimate_minutes: Optional[int] = None
+    blocked_by_ids: list[str] = field(default_factory=list)
+    waiting_for: Optional[str] = None
+    follow_up_date: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    next_action_hint: Optional[str] = None

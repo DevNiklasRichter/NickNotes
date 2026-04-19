@@ -146,6 +146,7 @@ function App() {
   const [taskDashboardFilters, setTaskDashboardFilters] = useState<TaskDashboardFilters>({ ...DEFAULT_TASK_DASHBOARD_FILTERS })
   const [todoDashboardFilters, setTodoDashboardFilters] = useState<TodoDashboardFilters>({ ...DEFAULT_TODO_DASHBOARD_FILTERS })
   const [focusDashboardFilters, setFocusDashboardFilters] = useState<FocusDashboardFilters>({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
+  const [focusMitIds, setFocusMitIds] = useState<string[]>([])
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
@@ -542,6 +543,21 @@ function App() {
     setWeekly(response.weekly)
   }
 
+  const refreshFocusMit = async (force = false) => {
+    if (!vaultLoaded && !force) {
+      return
+    }
+
+    const todayIso = toLocalIsoDate()
+    try {
+      const response = await apiRequest<{ mitIds: string[] }>(backendUrl, `/focus/mit?date=${encodeURIComponent(todayIso)}`)
+      setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
+    } catch (caught) {
+      setError(String(caught))
+      setFocusMitIds([])
+    }
+  }
+
   const refreshTagGroups = async (force = false) => {
     if (!vaultLoaded && !force) {
       return
@@ -581,6 +597,7 @@ function App() {
       refreshTodos(force),
       runSearch(searchQuery, force),
       refreshReview(force),
+      refreshFocusMit(force),
       refreshTagGroups(force),
       refreshExplorerSidebarData(force),
     ])
@@ -715,6 +732,7 @@ function App() {
       if (!state.vaultLoaded) {
         uiSettingsReadyRef.current = false
         setVaultLoaded(false)
+        setFocusMitIds([])
         setOpenTabs([])
         dispatchWorkspace({ type: 'RESET' })
         setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
@@ -760,6 +778,7 @@ function App() {
 
   useEffect(() => {
     if (!vaultLoaded) {
+      setFocusMitIds([])
       setOpenTabs([])
       dispatchWorkspace({ type: 'RESET' })
       setAllNotes([])
@@ -1284,7 +1303,7 @@ function App() {
 
   const openFocusDashboardTab = () => {
     if (vaultLoaded) {
-      void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes()])
+      void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshFocusMit()])
     }
     const existing = findTabByPath(FOCUS_DASHBOARD_TAB_PATH, openTabs)
     const targetPane = workspaceStateRef.current.lastFocusedPane
@@ -1435,7 +1454,14 @@ function App() {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
       setMessage(`NoteBase umbenannt: ${previousName} -> ${getPathTail(loadedPath)}`)
-      await Promise.all([refreshTasks(true), refreshTodos(true), runSearch(searchQuery, true), refreshReview(true), refreshNoteGroups(true)])
+      await Promise.all([
+        refreshTasks(true),
+        refreshTodos(true),
+        runSearch(searchQuery, true),
+        refreshReview(true),
+        refreshFocusMit(true),
+        refreshNoteGroups(true),
+      ])
     } catch (caught) {
       setError(String(caught))
     }
@@ -1465,6 +1491,7 @@ function App() {
       setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
       setTasks([])
       setTodos([])
+      setFocusMitIds([])
       setSearchResults([])
       setSuggestions([])
       setSelectedTagKeys([])
@@ -1544,6 +1571,39 @@ function App() {
     } catch (caught) {
       setError(String(caught))
     }
+  }
+
+  const saveFocusMit = async (nextMitIds: string[]): Promise<string[]> => {
+    const todayIso = toLocalIsoDate()
+    const response = await apiRequest<{ mitIds: string[]; counts: VaultCounts }>(backendUrl, '/focus/mit', {
+      method: 'POST',
+      body: JSON.stringify({
+        date: todayIso,
+        mitIds: nextMitIds,
+      }),
+    })
+    setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
+    setCounts(response.counts)
+    await Promise.all([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshReview()])
+    return Array.isArray(response.mitIds) ? response.mitIds : []
+  }
+
+  const quickCaptureFocusTodo = async (rawText: string): Promise<void> => {
+    const text = rawText.trim()
+    if (!text) {
+      return
+    }
+    const todayIso = toLocalIsoDate()
+    const response = await apiRequest<{ notePath: string; todoText: string; counts: VaultCounts }>(backendUrl, '/focus/quick-capture', {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        date: todayIso,
+      }),
+    })
+    setCounts(response.counts)
+    setMessage(`Todo fuer heute erfasst: ${response.todoText}`)
+    await Promise.all([refreshTodos(), refreshAllNotes(), refreshReview()])
   }
 
   const toggleTodo = async (todoId: string, checked?: boolean) => {
@@ -3384,6 +3444,10 @@ function App() {
           todos={todos}
           notes={allNotes}
           filters={focusDashboardFilters}
+          mitIds={focusMitIds}
+          onFiltersChange={setFocusDashboardFilters}
+          onSaveMit={saveFocusMit}
+          onQuickCaptureTodo={quickCaptureFocusTodo}
           onOpenTaskPath={(path, title) => {
             if (!path) {
               return
@@ -3526,7 +3590,7 @@ function App() {
               void refreshTodos()
             }}
             onRefreshFocusData={() => {
-              void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes()])
+              void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshFocusMit()])
             }}
             onOpenTodoDashboard={() => {
               openTodoDashboardTab()

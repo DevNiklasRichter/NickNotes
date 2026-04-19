@@ -10,6 +10,12 @@ export type NoteFrontmatter = {
   status: TaskStatus
   priority: TaskPriority
   due_date: string
+  estimate_minutes: number | null
+  blocked_by_ids: string[]
+  waiting_for: string
+  follow_up_date: string
+  blocked_reason: string
+  next_action_hint: string
   created_at: string
   updated_at: string
   tags: string[]
@@ -39,6 +45,12 @@ const KNOWN_KEYS = new Set([
   'status',
   'priority',
   'due_date',
+  'estimate_minutes',
+  'blocked_by_ids',
+  'waiting_for',
+  'follow_up_date',
+  'blocked_reason',
+  'next_action_hint',
   'created_at',
   'updated_at',
   'tags',
@@ -143,6 +155,53 @@ function normalizeDueDate(raw: unknown): string {
     return ''
   }
   return /^\d{4}-\d{2}-\d{2}$/.test(clean) ? clean : ''
+}
+
+function normalizeEstimateMinutes(raw: unknown): number | null {
+  if (raw === null || raw === undefined || typeof raw === 'boolean') {
+    return null
+  }
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) {
+      return null
+    }
+    const value = Math.trunc(raw)
+    return value > 0 ? Math.min(value, 10000) : null
+  }
+  const clean = String(raw).trim()
+  if (!clean) {
+    return null
+  }
+  const parsed = Number.parseInt(clean, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null
+  }
+  return Math.min(parsed, 10000)
+}
+
+function normalizeOptionalText(raw: unknown): string {
+  return normalizeLabel(String(raw ?? ''))
+}
+
+function normalizeBlockedByIds(raw: unknown): string[] {
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const item of ensureListOfStrings(raw)) {
+    const parts = item.includes(',') ? item.split(',') : [item]
+    for (const part of parts) {
+      const clean = part.trim()
+      if (!clean) {
+        continue
+      }
+      const key = clean.toLowerCase()
+      if (seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      normalized.push(clean)
+    }
+  }
+  return normalized
 }
 
 function extractTitleFromBody(body: string): string {
@@ -318,6 +377,12 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
   const status = normalizeStatus(rawFrontmatter.status)
   const priority = normalizePriority(rawFrontmatter.priority)
   const dueDate = normalizeDueDate(rawFrontmatter.due_date)
+  const estimateMinutes = normalizeEstimateMinutes(rawFrontmatter.estimate_minutes)
+  const blockedByIds = normalizeBlockedByIds(rawFrontmatter.blocked_by_ids)
+  const waitingFor = normalizeOptionalText(rawFrontmatter.waiting_for)
+  const followUpDate = normalizeDueDate(rawFrontmatter.follow_up_date)
+  const blockedReason = normalizeOptionalText(rawFrontmatter.blocked_reason)
+  const nextActionHint = normalizeOptionalText(rawFrontmatter.next_action_hint)
   const tags = Array.from(new Set(ensureListOfStrings(rawFrontmatter.tags).map(normalizeTagKey).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
   )
@@ -349,6 +414,12 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
       status,
       priority,
       due_date: dueDate,
+      estimate_minutes: estimateMinutes,
+      blocked_by_ids: blockedByIds,
+      waiting_for: waitingFor,
+      follow_up_date: followUpDate,
+      blocked_reason: blockedReason,
+      next_action_hint: nextActionHint,
       created_at: createdAt,
       updated_at: String(rawFrontmatter.updated_at || '').trim() || createdAt,
       tags,
@@ -377,6 +448,24 @@ export function serializeNoteDocument(document: ParsedNoteDocument): string {
   frontmatter.status = document.frontmatter.status
   frontmatter.priority = document.frontmatter.priority
   frontmatter.due_date = document.frontmatter.due_date
+  if (document.frontmatter.estimate_minutes && document.frontmatter.estimate_minutes > 0) {
+    frontmatter.estimate_minutes = document.frontmatter.estimate_minutes
+  }
+  if (document.frontmatter.blocked_by_ids.length > 0) {
+    frontmatter.blocked_by_ids = document.frontmatter.blocked_by_ids
+  }
+  if (document.frontmatter.waiting_for) {
+    frontmatter.waiting_for = document.frontmatter.waiting_for
+  }
+  if (document.frontmatter.follow_up_date) {
+    frontmatter.follow_up_date = document.frontmatter.follow_up_date
+  }
+  if (document.frontmatter.blocked_reason) {
+    frontmatter.blocked_reason = document.frontmatter.blocked_reason
+  }
+  if (document.frontmatter.next_action_hint) {
+    frontmatter.next_action_hint = document.frontmatter.next_action_hint
+  }
   for (const [key, value] of Object.entries(document.frontmatter.extra || {})) {
     if (!KNOWN_KEYS.has(key)) {
       frontmatter[key] = value

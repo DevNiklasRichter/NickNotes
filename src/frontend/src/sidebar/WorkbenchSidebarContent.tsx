@@ -1493,9 +1493,12 @@ export function WorkbenchSidebarContent({
               <span className="todo-filter-row-label">Zeitraum</span>
               <label className="todo-grouping-select">
                 <select value={focusFilters.scope} onChange={(event) => setFocusFilter({ scope: event.target.value as FocusDashboardFilters['scope'] })}>
+                  <option value="overdue">Ueberfaellig</option>
                   <option value="today">Heute</option>
-                  <option value="week">Diese Woche</option>
-                  <option value="all">Gesamt</option>
+                  <option value="tomorrow">Morgen</option>
+                  <option value="week">Woche</option>
+                  <option value="next7">7 Tage</option>
+                  <option value="all">Alles</option>
                 </select>
               </label>
             </div>
