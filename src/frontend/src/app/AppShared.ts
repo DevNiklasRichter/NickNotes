@@ -27,6 +27,7 @@ export type ParsedTask = {
   projectTag: string | null
   tags: string[]
   estimateMinutes?: number | null
+  completedAt?: string | null
   blockedByIds?: string[]
   waitingFor?: string | null
   followUpDate?: string | null
@@ -42,6 +43,7 @@ export type TaskRow = {
   due_date: string | null
   project_tag: string | null
   estimate_minutes?: number | null
+  completed_at?: string | null
   blocked_by_ids?: string[]
   waiting_for?: string | null
   follow_up_date?: string | null
@@ -67,6 +69,7 @@ export type TodoRow = {
   links: string[]
   promoted: boolean
   promoted_task_id: string | null
+  completed_at?: string | null
   updated_at: string
 }
 
@@ -106,12 +109,34 @@ export type TaskDashboardFilters = {
 
 export type FocusDashboardSection = 'tasks' | 'todos' | 'notes'
 export type FocusDashboardScope = 'overdue' | 'today' | 'tomorrow' | 'week' | 'next7' | 'all'
+export type FocusDashboardMode = 'execution' | 'planning' | 'rescue' | 'context'
 
 export type FocusDashboardFilters = {
   query: string
   sections: FocusDashboardSection[]
   scope: FocusDashboardScope
+  mode: FocusDashboardMode
   maxItems: number
+}
+
+export type FocusDashboardAggregateStats = {
+  overdueCount: number
+  blockedCount: number
+  waitingCount: number
+  doneToday: number
+  doneTodayTasks: number
+  doneTodayTodos: number
+}
+
+export type FocusDashboardAggregateResponse = {
+  date: string
+  tasks: TaskRow[]
+  todos: TodoRow[]
+  notes: SearchRow[]
+  mitIds: string[]
+  mitNotePath: string
+  stats: FocusDashboardAggregateStats
+  counts: VaultCounts
 }
 
 export type SearchRow = {
@@ -205,6 +230,7 @@ export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
   query: '',
   sections: [],
   scope: 'today',
+  mode: 'execution',
   maxItems: 12,
 }
 

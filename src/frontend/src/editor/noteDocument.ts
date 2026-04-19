@@ -11,6 +11,7 @@ export type NoteFrontmatter = {
   priority: TaskPriority
   due_date: string
   estimate_minutes: number | null
+  completed_at: string
   blocked_by_ids: string[]
   waiting_for: string
   follow_up_date: string
@@ -46,6 +47,7 @@ const KNOWN_KEYS = new Set([
   'priority',
   'due_date',
   'estimate_minutes',
+  'completed_at',
   'blocked_by_ids',
   'waiting_for',
   'follow_up_date',
@@ -155,6 +157,19 @@ function normalizeDueDate(raw: unknown): string {
     return ''
   }
   return /^\d{4}-\d{2}-\d{2}$/.test(clean) ? clean : ''
+}
+
+function normalizeIsoTimestamp(raw: unknown): string {
+  const clean = String(raw ?? '').trim()
+  if (!clean) {
+    return ''
+  }
+  const normalized = clean.endsWith('Z') ? `${clean.slice(0, -1)}+00:00` : clean
+  const parsed = new Date(normalized)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toISOString().slice(0, 19)
 }
 
 function normalizeEstimateMinutes(raw: unknown): number | null {
@@ -378,6 +393,8 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
   const priority = normalizePriority(rawFrontmatter.priority)
   const dueDate = normalizeDueDate(rawFrontmatter.due_date)
   const estimateMinutes = normalizeEstimateMinutes(rawFrontmatter.estimate_minutes)
+  const rawCompletedAt = normalizeIsoTimestamp(rawFrontmatter.completed_at)
+  const completedAt = status === 'done' ? rawCompletedAt : ''
   const blockedByIds = normalizeBlockedByIds(rawFrontmatter.blocked_by_ids)
   const waitingFor = normalizeOptionalText(rawFrontmatter.waiting_for)
   const followUpDate = normalizeDueDate(rawFrontmatter.follow_up_date)
@@ -415,6 +432,7 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
       priority,
       due_date: dueDate,
       estimate_minutes: estimateMinutes,
+      completed_at: completedAt,
       blocked_by_ids: blockedByIds,
       waiting_for: waitingFor,
       follow_up_date: followUpDate,
@@ -450,6 +468,9 @@ export function serializeNoteDocument(document: ParsedNoteDocument): string {
   frontmatter.due_date = document.frontmatter.due_date
   if (document.frontmatter.estimate_minutes && document.frontmatter.estimate_minutes > 0) {
     frontmatter.estimate_minutes = document.frontmatter.estimate_minutes
+  }
+  if (document.frontmatter.status === 'done' && document.frontmatter.completed_at) {
+    frontmatter.completed_at = normalizeIsoTimestamp(document.frontmatter.completed_at)
   }
   if (document.frontmatter.blocked_by_ids.length > 0) {
     frontmatter.blocked_by_ids = document.frontmatter.blocked_by_ids

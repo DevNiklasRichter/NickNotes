@@ -14,11 +14,13 @@ type NotePropertiesPanelProps = {
   taskPriorityOptionLabel: (value: TaskPriority) => string
   propertyTagOptions: string[]
   relatedOptions: string[]
+  taskIdOptions: string[]
   tagVisualByKey: Map<string, { label: string; color: string }>
   tagInputOpen: boolean
   tagDraft: string
   relatedInputOpen: boolean
   relatedDraft: string
+  taskFieldErrors?: { estimate_minutes?: string; follow_up_date?: string }
   formatTimestamp: (value: string) => string
   onTitleChange: (next: string) => void
   onTitleBlur: (next: string) => void
@@ -27,6 +29,12 @@ type NotePropertiesPanelProps = {
   onPriorityChange: (next: TaskPriority) => void
   onDueDateChange: (next: string) => void
   onRemoveDueDate: () => void
+  onEstimateMinutesChange: (next: string) => void
+  onBlockedByIdsChange: (next: string) => void
+  onWaitingForChange: (next: string) => void
+  onFollowUpDateChange: (next: string) => void
+  onBlockedReasonChange: (next: string) => void
+  onNextActionHintChange: (next: string) => void
   onRemoveTag: (tag: string) => void
   onOpenTagInput: () => void
   onTagDraftChange: (value: string) => void
@@ -51,11 +59,13 @@ export function NotePropertiesPanel({
   taskPriorityOptionLabel,
   propertyTagOptions,
   relatedOptions,
+  taskIdOptions,
   tagVisualByKey,
   tagInputOpen,
   tagDraft,
   relatedInputOpen,
   relatedDraft,
+  taskFieldErrors,
   formatTimestamp,
   onTitleChange,
   onTitleBlur,
@@ -64,6 +74,12 @@ export function NotePropertiesPanel({
   onPriorityChange,
   onDueDateChange,
   onRemoveDueDate,
+  onEstimateMinutesChange,
+  onBlockedByIdsChange,
+  onWaitingForChange,
+  onFollowUpDateChange,
+  onBlockedReasonChange,
+  onNextActionHintChange,
   onRemoveTag,
   onOpenTagInput,
   onTagDraftChange,
@@ -76,11 +92,41 @@ export function NotePropertiesPanel({
   onCloseRelatedInput,
 }: NotePropertiesPanelProps) {
   const [titleDraft, setTitleDraft] = useState(document.frontmatter.title)
+  const [estimateDraft, setEstimateDraft] = useState(document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
+  const [blockedByIdsDraft, setBlockedByIdsDraft] = useState(document.frontmatter.blocked_by_ids.join(', '))
+  const [waitingForDraft, setWaitingForDraft] = useState(document.frontmatter.waiting_for)
+  const [followUpDateDraft, setFollowUpDateDraft] = useState(document.frontmatter.follow_up_date)
+  const [blockedReasonDraft, setBlockedReasonDraft] = useState(document.frontmatter.blocked_reason)
+  const [nextActionHintDraft, setNextActionHintDraft] = useState(document.frontmatter.next_action_hint)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     setTitleDraft(document.frontmatter.title)
   }, [tabPath, document.frontmatter.title])
+
+  useEffect(() => {
+    setEstimateDraft(document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
+  }, [document.frontmatter.estimate_minutes, tabPath])
+
+  useEffect(() => {
+    setBlockedByIdsDraft(document.frontmatter.blocked_by_ids.join(', '))
+  }, [document.frontmatter.blocked_by_ids, tabPath])
+
+  useEffect(() => {
+    setWaitingForDraft(document.frontmatter.waiting_for)
+  }, [document.frontmatter.waiting_for, tabPath])
+
+  useEffect(() => {
+    setFollowUpDateDraft(document.frontmatter.follow_up_date)
+  }, [document.frontmatter.follow_up_date, tabPath])
+
+  useEffect(() => {
+    setBlockedReasonDraft(document.frontmatter.blocked_reason)
+  }, [document.frontmatter.blocked_reason, tabPath])
+
+  useEffect(() => {
+    setNextActionHintDraft(document.frontmatter.next_action_hint)
+  }, [document.frontmatter.next_action_hint, tabPath])
 
   useEffect(() => {
     const titleInput = titleInputRef.current
@@ -100,6 +146,8 @@ export function NotePropertiesPanel({
   const listToken = tabPath.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
   const tagDatalistId = `property-tags-${listToken}`
   const relatedDatalistId = `property-related-${listToken}`
+  const blockerDatalistId = `property-blockers-${listToken}`
+  const estimatePresets = [5, 15, 30, 60, 90, 120]
 
   const toTagChipVisual = (rawTag: string): { label: string; color: string } => {
     const normalized = rawTag.trim().toLowerCase()
@@ -132,6 +180,18 @@ export function NotePropertiesPanel({
     if (event.key === 'Escape') {
       event.preventDefault()
       onCloseRelatedInput()
+    }
+  }
+
+  const onTaskInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      event.currentTarget.blur()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.currentTarget.blur()
     }
   }
 
@@ -260,6 +320,158 @@ export function NotePropertiesPanel({
                   x
                 </button>
               ) : null}
+            </div>
+
+            <span className="property-key">Estimate</span>
+            <div className="property-value-stack">
+              <div className="property-value-inline">
+                <input
+                  className="property-number-input"
+                  type="number"
+                  min={1}
+                  step={5}
+                  value={estimateDraft}
+                  onChange={(event) => {
+                    setEstimateDraft(event.target.value)
+                  }}
+                  onBlur={() => {
+                    onEstimateMinutesChange(estimateDraft)
+                  }}
+                  onKeyDown={onTaskInputKeyDown}
+                  placeholder="z. B. 30"
+                />
+                {document.frontmatter.estimate_minutes ? (
+                  <button
+                    type="button"
+                    className="property-chip add"
+                    onClick={() => {
+                      setEstimateDraft('')
+                      onEstimateMinutesChange('')
+                    }}
+                    title="Schaetzung entfernen"
+                  >
+                    x
+                  </button>
+                ) : null}
+              </div>
+              <div className="property-chip-row">
+                {estimatePresets.map((preset) => (
+                  <button
+                    key={`estimate-${preset}`}
+                    type="button"
+                    className="property-chip property-chip-action"
+                    onClick={() => {
+                      const value = String(preset)
+                      setEstimateDraft(value)
+                      onEstimateMinutesChange(value)
+                    }}
+                  >
+                    {preset}m
+                  </button>
+                ))}
+              </div>
+              {taskFieldErrors?.estimate_minutes ? <span className="property-inline-error">{taskFieldErrors.estimate_minutes}</span> : null}
+            </div>
+
+            <span className="property-key">Blocked By</span>
+            <div className="property-value-inline">
+              <input
+                className="property-text-input"
+                list={blockerDatalistId}
+                value={blockedByIdsDraft}
+                onChange={(event) => {
+                  setBlockedByIdsDraft(event.target.value)
+                }}
+                onBlur={() => {
+                  onBlockedByIdsChange(blockedByIdsDraft)
+                }}
+                onKeyDown={onTaskInputKeyDown}
+                placeholder="Task-IDs, mit Komma trennen"
+              />
+              <datalist id={blockerDatalistId}>
+                {taskIdOptions.map((taskId) => (
+                  <option key={taskId} value={taskId} />
+                ))}
+              </datalist>
+            </div>
+
+            <span className="property-key">Waiting For</span>
+            <div className="property-value-inline">
+              <input
+                className="property-text-input"
+                value={waitingForDraft}
+                onChange={(event) => {
+                  setWaitingForDraft(event.target.value)
+                }}
+                onBlur={() => {
+                  onWaitingForChange(waitingForDraft)
+                }}
+                onKeyDown={onTaskInputKeyDown}
+                placeholder="z. B. Rueckmeldung Team"
+              />
+            </div>
+
+            <span className="property-key">Follow-up</span>
+            <div className="property-value-stack">
+              <div className="property-value-inline">
+                <input
+                  className="property-date-input"
+                  type="date"
+                  value={followUpDateDraft}
+                  onChange={(event) => {
+                    setFollowUpDateDraft(event.target.value)
+                  }}
+                  onBlur={() => {
+                    onFollowUpDateChange(followUpDateDraft)
+                  }}
+                />
+                {document.frontmatter.follow_up_date ? (
+                  <button
+                    type="button"
+                    className="property-chip add"
+                    onClick={() => {
+                      setFollowUpDateDraft('')
+                      onFollowUpDateChange('')
+                    }}
+                    title="Follow-up entfernen"
+                  >
+                    x
+                  </button>
+                ) : null}
+              </div>
+              {taskFieldErrors?.follow_up_date ? <span className="property-inline-error">{taskFieldErrors.follow_up_date}</span> : null}
+            </div>
+
+            <span className="property-key">Blocked Reason</span>
+            <div className="property-value-inline">
+              <textarea
+                className="property-textarea-input"
+                rows={2}
+                value={blockedReasonDraft}
+                onChange={(event) => {
+                  setBlockedReasonDraft(event.target.value)
+                }}
+                onBlur={() => {
+                  onBlockedReasonChange(blockedReasonDraft)
+                }}
+                placeholder="Warum blockiert?"
+              />
+            </div>
+
+            <span className="property-key">Next Action</span>
+            <div className="property-value-inline">
+              <textarea
+                className="property-textarea-input"
+                rows={2}
+                value={nextActionHintDraft}
+                onChange={(event) => {
+                  setNextActionHintDraft(event.target.value)
+                }}
+                onBlur={() => {
+                  onNextActionHintChange(nextActionHintDraft)
+                }}
+                placeholder="Naechster konkreter Schritt"
+              />
             </div>
           </>
         ) : null}

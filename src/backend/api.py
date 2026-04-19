@@ -430,6 +430,13 @@ def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/focus/dashboard")
+def get_focus_dashboard(date: str | None = None) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    day_iso = _normalize_iso_day_param(date)
+    return _build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
+
+
 @app.get("/tasks")
 def list_tasks(include_done: bool = False) -> dict[str, Any]:
     _vault, indexer = _require_loaded()
@@ -481,7 +488,10 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
 
     meta, body = parse_markdown(src)
     meta["status"] = "done"
-    meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    meta["updated_at"] = now_iso
+    # `completed_at` is the canonical completion timestamp for task done metrics.
+    meta["completed_at"] = now_iso
     done_path = src
     if src.parent.name.lower() == "open":
         done_dir = src.parent.parent / "done"
@@ -522,6 +532,7 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
         project_tag=str(meta.get("project_tag", "")).strip() or row.get("project_tag"),
         tags=[],
         estimate_minutes=row.get("estimate_minutes"),
+        completed_at=str(meta.get("completed_at", "")).strip() or None,
         blocked_by_ids=blocked_by_ids,
         waiting_for=str(meta.get("waiting_for", "")).strip() or None,
         follow_up_date=str(meta.get("follow_up_date", "")).strip() or None,
@@ -1049,6 +1060,7 @@ def _task_payload(item: ParsedTask) -> dict[str, Any]:
         "projectTag": item.project_tag,
         "tags": item.tags,
         "estimateMinutes": item.estimate_minutes,
+        "completedAt": item.completed_at,
         "blockedByIds": item.blocked_by_ids,
         "waitingFor": item.waiting_for,
         "followUpDate": item.follow_up_date,
@@ -1069,4 +1081,144 @@ def _counts(indexer: VaultIndexer) -> dict[str, int]:
         "notes": notes,
         "openTasks": open_tasks,
         "doneTasks": done_tasks,
+    }
+
+
+def _normalize_iso_day_param(raw: str | None) -> str:
+    clean = (raw or "").strip()
+    if len(clean) >= 10:
+        candidate = clean[:10]
+        try:
+            datetime.fromisoformat(candidate)
+            return candidate
+        except ValueError:
+            pass
+    return date.today().isoformat()
+
+
+def _to_iso_day(value: Any) -> str:
+    clean = str(value or "").strip()
+    if not clean:
+        return ""
+    candidate = clean[:10]
+    try:
+        datetime.fromisoformat(candidate)
+    except ValueError:
+        return ""
+    return candidate
+
+
+def _compute_done_today_counts(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> tuple[int, int]:
+    done_tasks = 0
+    for task in tasks:
+        status = str(task.get("status", "")).strip().lower().replace("-", "_")
+        if status != "done":
+            continue
+        completed_day = _to_iso_day(task.get("completed_at"))
+        updated_day = _to_iso_day(task.get("updated_at"))
+        # Transitional fallback for legacy items without completed_at.
+        effective_day = completed_day or updated_day
+        if effective_day == day_iso:
+            done_tasks += 1
+
+    done_todos = 0
+    for todo in todos:
+        if not bool(todo.get("checked")):
+            continue
+        completed_day = _to_iso_day(todo.get("completed_at"))
+        updated_day = _to_iso_day(todo.get("updated_at"))
+        # Transitional fallback for legacy items without completed_at.
+        effective_day = completed_day or updated_day
+        if effective_day == day_iso:
+            done_todos += 1
+
+    return done_tasks, done_todos
+
+
+def _to_blocked_by_ids(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        values = [str(item).strip() for item in raw]
+    elif isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",")]
+    else:
+        values = []
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(value)
+    return normalized
+
+
+def _is_task_blocked(task: dict[str, Any], status_by_id: dict[str, str]) -> bool:
+    status = str(task.get("status", "")).strip().lower().replace("-", "_")
+    if status == "done":
+        return False
+
+    waiting_for = str(task.get("waiting_for", "")).strip()
+    if waiting_for:
+        return True
+
+    blocked_by_ids = _to_blocked_by_ids(task.get("blocked_by_ids"))
+    for blocker_id in blocked_by_ids:
+        blocker_status = status_by_id.get(blocker_id.lower())
+        if not blocker_status:
+            return True
+        normalized_blocker_status = blocker_status.strip().lower().replace("-", "_")
+        if normalized_blocker_status != "done":
+            return True
+    return False
+
+
+def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> dict[str, int]:
+    status_by_id = {str(task.get("id", "")).strip().lower(): str(task.get("status", "")) for task in tasks if task.get("id")}
+    overdue_count = 0
+    blocked_count = 0
+    waiting_count = 0
+    for task in tasks:
+        status = str(task.get("status", "")).strip().lower().replace("-", "_")
+        if status == "done":
+            continue
+        due_date = str(task.get("due_date", "")).strip()
+        if len(due_date) >= 10:
+            due_iso = due_date[:10]
+            if due_iso < day_iso:
+                overdue_count += 1
+        waiting_for = str(task.get("waiting_for", "")).strip()
+        if waiting_for:
+            waiting_count += 1
+        if _is_task_blocked(task, status_by_id):
+            blocked_count += 1
+
+    done_today_tasks, done_today_todos = _compute_done_today_counts(tasks, todos, day_iso)
+
+    return {
+        "overdueCount": overdue_count,
+        "blockedCount": blocked_count,
+        "waitingCount": waiting_count,
+        "doneToday": done_today_tasks + done_today_todos,
+        "doneTodayTasks": done_today_tasks,
+        "doneTodayTodos": done_today_todos,
+    }
+
+
+def _build_focus_dashboard_payload(vault: VaultManager, indexer: VaultIndexer, day_iso: str) -> dict[str, Any]:
+    tasks = indexer.list_tasks(include_done=True)
+    todos = indexer.list_todos()
+    notes = indexer.search_notes(query="", limit=500)
+    mit_state = vault.get_daily_mit(day_iso=day_iso)
+    return {
+        "date": day_iso,
+        "tasks": tasks,
+        "todos": todos,
+        "notes": notes,
+        "mitIds": mit_state.get("mit_ids", []),
+        "mitNotePath": str(mit_state.get("note_path", "")),
+        "stats": _compute_focus_stats(tasks=tasks, todos=todos, day_iso=day_iso),
+        "counts": _counts(indexer),
     }

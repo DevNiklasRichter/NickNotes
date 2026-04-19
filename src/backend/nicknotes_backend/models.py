@@ -41,6 +41,7 @@ class ParsedTask:
     project_tag: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     estimate_minutes: Optional[int] = None
+    completed_at: Optional[str] = None
     blocked_by_ids: list[str] = field(default_factory=list)
     waiting_for: Optional[str] = None
     follow_up_date: Optional[str] = None

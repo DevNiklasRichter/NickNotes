@@ -1305,6 +1305,24 @@
   flex-wrap: wrap;
 }
 
+.focus-header-switchers {
+  display: grid;
+  justify-items: end;
+  gap: 0.24rem;
+}
+
+.focus-mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  padding: 0.16rem;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 .focus-scope-switcher {
   display: inline-flex;
   align-items: center;
@@ -1417,6 +1435,10 @@
   gap: 0.72rem;
 }
 
+.focus-canvas-grid.context-mode {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+}
+
 .focus-panel-stack {
   display: grid;
   align-content: start;
@@ -1500,6 +1522,11 @@
 
 .focus-primary-card.blocked {
   border-color: color-mix(in srgb, #f59e0b 36%, var(--line));
+}
+
+.focus-primary-card.context-boost {
+  border-color: color-mix(in srgb, #4f46e5 35%, var(--line));
+  background: color-mix(in srgb, #4f46e5 6%, var(--surface));
 }
 
 .focus-primary-card.done {
@@ -1599,6 +1626,11 @@
 .focus-panel-blocking {
   border-color: color-mix(in srgb, #f59e0b 28%, var(--line));
   background: color-mix(in srgb, #f59e0b 6%, var(--surface-contrast));
+}
+
+.focus-panel-context-priority {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface-contrast));
 }
 
 .focus-blocking-row-main {
@@ -1715,6 +1747,12 @@
     align-items: stretch;
   }
 
+  .focus-header-switchers {
+    justify-items: stretch;
+    width: 100%;
+  }
+
+  .focus-mode-switcher,
   .focus-scope-switcher {
     width: 100%;
   }
@@ -3763,6 +3801,12 @@ textarea:focus-visible {
   min-height: 1.8rem;
 }
 
+.property-value-stack {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
 .property-value-static {
   font-size: 0.8rem;
   color: var(--text);
@@ -3878,9 +3922,50 @@ textarea:focus-visible {
   padding: 0.18rem 0.42rem;
 }
 
+.property-number-input,
+.property-text-input,
+.property-textarea-input {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.75rem;
+  padding: 0.18rem 0.42rem;
+  width: min(100%, 320px);
+}
+
+.property-textarea-input {
+  width: min(100%, 420px);
+  min-height: 3.2rem;
+  resize: vertical;
+}
+
 .property-date-input:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+}
+
+.property-number-input:focus,
+.property-text-input:focus,
+.property-textarea-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+}
+
+.property-chip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  flex-wrap: wrap;
+}
+
+.property-chip-action {
+  cursor: pointer;
+}
+
+.property-inline-error {
+  color: var(--error-text);
+  font-size: 0.7rem;
 }
 
 .property-token-line {

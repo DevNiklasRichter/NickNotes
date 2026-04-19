@@ -2,6 +2,7 @@ import {
   normalizeFilePathKey,
   normalizeRelatedCandidate,
   normalizeTagCandidate,
+  type FocusDashboardMode,
   normalizeTaskPriorityValue,
   normalizeTaskStatusValue,
   type FocusDashboardFilters,
@@ -33,6 +34,9 @@ export type FocusPrimaryItem = {
   followUpDate: string | null
   blockedReason: string | null
   nextActionHint: string | null
+  hasTaskBlocker: boolean
+  hasExternalWaiting: boolean
+  unknownBlockerCount: number
   tags: string[]
   related: string[]
   links: string[]
@@ -66,6 +70,7 @@ export type FocusDailyTrailItem = {
 
 export type FocusDashboardData = {
   selectedScope: FocusDashboardFilters['scope']
+  focusMode: FocusDashboardMode
   openTaskCount: number
   inProgressTaskCount: number
   dueTodayTaskCount: number
@@ -78,6 +83,9 @@ export type FocusDashboardData = {
   waitingTaskCount: number
   followUpTodayCount: number
   todayEstimatedMinutes: number
+  mitEstimatedMinutes: number
+  focusEstimatedMinutes: number
+  withoutEstimateCount: number
   todayDailyNote: SearchRow | null
   mitIds: string[]
   mitItems: FocusPrimaryItem[]
@@ -85,6 +93,7 @@ export type FocusDashboardData = {
   blockedItems: FocusPrimaryItem[]
   waitingItems: FocusPrimaryItem[]
   followUpTodayItems: FocusPrimaryItem[]
+  nextActionItems: FocusPrimaryItem[]
   focusItems: FocusPrimaryItem[]
   candidateItems: FocusPrimaryItem[]
   primaryItems: FocusPrimaryItem[]
@@ -122,6 +131,14 @@ function toIsoDate(date: Date): string {
 
 function toUpdatedDay(value: string): string {
   return value.slice(0, 10)
+}
+
+function toCompletedDay(value: string | null | undefined): string {
+  const clean = String(value || '').trim()
+  if (!clean) {
+    return ''
+  }
+  return clean.slice(0, 10)
 }
 
 function isValidIsoDate(isoDate: string): boolean {
@@ -315,6 +332,9 @@ type TaskExecutionSignals = {
   blockedReason: string | null
   nextActionHint: string | null
   blockedByIds: string[]
+  unknownBlockerCount: number
+  hasTaskBlocker: boolean
+  hasExternalWaiting: boolean
   blockedByDependencies: boolean
   followUpToday: boolean
   isBlocked: boolean
@@ -360,17 +380,25 @@ function toTaskExecutionSignals(task: TaskRow, taskStatusById: Map<string, strin
   const blockedByIds = normalizeTaskIdList(task.blocked_by_ids)
   const waitingFor = normalizeOptionalText(task.waiting_for)
   const followUpDate = toTaskDueIso(task.follow_up_date || null)
-  const blockedByDependencies = blockedByIds.some((blockerId) => {
+  let unknownBlockerCount = 0
+  let unresolvedDependencyCount = 0
+  for (const blockerId of blockedByIds) {
     const blockerStatus = taskStatusById.get(blockerId)
     if (!blockerStatus) {
       // Unknown blocker ids are treated defensively as unresolved blockers.
-      return true
+      unknownBlockerCount += 1
+      unresolvedDependencyCount += 1
+      continue
     }
-    return normalizeTaskStatusValue(blockerStatus) !== 'done'
-  })
+    if (normalizeTaskStatusValue(blockerStatus) !== 'done') {
+      unresolvedDependencyCount += 1
+    }
+  }
+  const blockedByDependencies = unresolvedDependencyCount > 0
   const followUpToday = Boolean(followUpDate) && followUpDate === todayIso
   const normalizedStatus = normalizeTaskStatusValue(task.status)
-  const isBlocked = normalizedStatus !== 'done' && (blockedByDependencies || Boolean(waitingFor))
+  const hasExternalWaiting = Boolean(waitingFor) && normalizedStatus !== 'done'
+  const isBlocked = normalizedStatus !== 'done' && (blockedByDependencies || hasExternalWaiting)
 
   return {
     estimateMinutes: normalizeEstimateMinutes(task.estimate_minutes),
@@ -379,6 +407,9 @@ function toTaskExecutionSignals(task: TaskRow, taskStatusById: Map<string, strin
     blockedReason: normalizeOptionalText(task.blocked_reason),
     nextActionHint: normalizeOptionalText(task.next_action_hint),
     blockedByIds,
+    unknownBlockerCount,
+    hasTaskBlocker: blockedByDependencies,
+    hasExternalWaiting,
     blockedByDependencies,
     followUpToday,
     isBlocked,
@@ -561,6 +592,9 @@ function toTaskPrimaryItem(task: TaskRow, todayIso: string, taskStatusById: Map<
     followUpDate: signals.followUpDate,
     blockedReason: signals.blockedReason,
     nextActionHint: signals.nextActionHint,
+    hasTaskBlocker: signals.hasTaskBlocker,
+    hasExternalWaiting: signals.hasExternalWaiting,
+    unknownBlockerCount: signals.unknownBlockerCount,
     tags: Array.from(new Set((task.tags || []).map((entry) => normalizeTagCandidate(entry)).filter(Boolean))),
     related: Array.from(new Set((task.related || []).map((entry) => normalizeRelatedCandidate(entry)).filter(Boolean))),
     links: [],
@@ -592,6 +626,9 @@ function toTodoPrimaryItem(todo: TodoRow, todayIso: string): FocusPrimaryItem {
     followUpDate: null,
     blockedReason: null,
     nextActionHint: null,
+    hasTaskBlocker: false,
+    hasExternalWaiting: false,
+    unknownBlockerCount: 0,
     tags: Array.from(
       new Set([...(todo.explicit_tags || []), ...(todo.inherited_tags || [])].map((entry) => normalizeTagCandidate(entry)).filter(Boolean))
     ),
@@ -744,9 +781,194 @@ function resolveMitItems(
   return resolved
 }
 
-function toFocusSplitCount(maxItems: number): number {
+function normalizeFocusMode(raw: unknown): FocusDashboardMode {
+  return raw === 'execution' || raw === 'planning' || raw === 'rescue' || raw === 'context' ? raw : 'execution'
+}
+
+function hasFollowUpDueNow(item: FocusPrimaryItem, todayIso: string): boolean {
+  if (!item.followUpDate || !isValidIsoDate(item.followUpDate)) {
+    return false
+  }
+  return item.followUpDate <= todayIso
+}
+
+function toModeAdjustedScore(item: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string): number {
+  let score = item.score
+  const dueIso = item.dueDate
+  const dueDelta = dueIso && isValidIsoDate(dueIso) ? diffDays(dueIso, todayIso) : 999
+  const isOverdue = typeof dueIso === 'string' && dueIso < todayIso
+  const dueToday = typeof dueIso === 'string' && dueIso === todayIso
+  const dueTomorrow = dueDelta === 1
+  const dueThisWeek = dueDelta >= 0 && dueDelta <= 7
+  const followUpDueNow = hasFollowUpDueNow(item, todayIso)
+  const hasContext = item.contextBadgeCount > 0
+
+  if (mode === 'execution') {
+    if (item.isMit) {
+      score += 16
+    }
+    if (item.isBlocked) {
+      score -= 12
+    } else {
+      score += 10
+    }
+    if (item.waitingFor && !followUpDueNow) {
+      score -= 8
+    }
+    if (item.nextActionHint) {
+      score += 8
+    }
+    if (item.status && normalizeTaskStatusValue(item.status) === 'in_progress') {
+      score += 7
+    }
+    if (item.estimateMinutes !== null) {
+      if (item.estimateMinutes <= 15) {
+        score += 7
+      } else if (item.estimateMinutes <= 30) {
+        score += 5
+      } else if (item.estimateMinutes <= 60) {
+        score += 2
+      } else if (item.estimateMinutes > 120) {
+        score -= 2
+      }
+    }
+    if (isOverdue) {
+      score += 9
+    } else if (dueToday) {
+      score += 7
+    }
+    return score
+  }
+
+  if (mode === 'planning') {
+    if (item.isMit) {
+      score += 10
+    }
+    if (isOverdue) {
+      score += 7
+    } else if (dueToday) {
+      score += 9
+    } else if (dueTomorrow) {
+      score += 7
+    } else if (dueThisWeek) {
+      score += 5
+    }
+    if (item.estimateMinutes !== null) {
+      score += 4
+    }
+    if (followUpDueNow) {
+      score += 6
+    } else if (item.waitingFor) {
+      score += 2
+    }
+    if (item.isBlocked) {
+      score -= 3
+    }
+    return score
+  }
+
+  if (mode === 'rescue') {
+    if (isOverdue) {
+      score += 14
+    }
+    if (item.isBlocked) {
+      score += 13
+    }
+    if (item.hasTaskBlocker) {
+      score += 7
+    }
+    if (item.hasExternalWaiting) {
+      score += 8
+    }
+    if (followUpDueNow) {
+      score += 10
+    }
+    if (!item.isBlocked && !isOverdue && !followUpDueNow) {
+      score -= 5
+    }
+    return score
+  }
+
+  // Context mode emphasizes context-rich items instead of pure urgency.
+  score += Math.min(20, item.contextBadgeCount * 3)
+  if (item.hasOriginNote) {
+    score += 6
+  }
+  if (item.hasRelatedContext) {
+    score += 7
+  }
+  if (item.hasTagContext) {
+    score += 4
+  }
+  if (!hasContext) {
+    score -= 4
+  }
+  if (item.nextActionHint) {
+    score += 2
+  }
+  return score
+}
+
+function compareByMode(left: FocusPrimaryItem, right: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string): number {
+  const leftScore = toModeAdjustedScore(left, mode, todayIso)
+  const rightScore = toModeAdjustedScore(right, mode, todayIso)
+  if (leftScore !== rightScore) {
+    return rightScore - leftScore
+  }
+  return sortByRecency(left, right)
+}
+
+function toFocusSplitCount(maxItems: number, mode: FocusDashboardMode): number {
+  if (mode === 'planning') {
+    return Math.max(6, Math.min(10, Math.round(maxItems * 0.58)))
+  }
+  if (mode === 'rescue') {
+    return Math.max(4, Math.min(7, Math.round(maxItems * 0.5)))
+  }
+  if (mode === 'context') {
+    return Math.max(3, Math.min(6, Math.round(maxItems * 0.4)))
+  }
   const heuristic = Math.round(maxItems * 0.45)
   return Math.max(5, Math.min(8, heuristic))
+}
+
+function sumEstimatedMinutes(items: FocusPrimaryItem[]): number {
+  let total = 0
+  for (const item of items) {
+    if (item.kind !== 'task' || item.estimateMinutes === null) {
+      continue
+    }
+    total += item.estimateMinutes
+  }
+  return total
+}
+
+function countWithoutEstimate(items: FocusPrimaryItem[]): number {
+  const seen = new Set<string>()
+  let total = 0
+  for (const item of items) {
+    if (item.kind !== 'task' || item.isDone || seen.has(item.key)) {
+      continue
+    }
+    seen.add(item.key)
+    if (item.estimateMinutes === null) {
+      total += 1
+    }
+  }
+  return total
+}
+
+function dedupeFocusItems(items: FocusPrimaryItem[]): FocusPrimaryItem[] {
+  const seen = new Set<string>()
+  const deduped: FocusPrimaryItem[] = []
+  for (const item of items) {
+    if (seen.has(item.key)) {
+      continue
+    }
+    seen.add(item.key)
+    deduped.push(item)
+  }
+  return deduped
 }
 
 export function buildFocusDashboardData(args: {
@@ -759,6 +981,7 @@ export function buildFocusDashboardData(args: {
 }): FocusDashboardData {
   const { tasks, todos, notes, filters, todayIso, mitIds } = args
   const { includeTasks, includeTodos, includeNotes } = toSectionFlags(filters)
+  const mode = normalizeFocusMode(filters.mode)
   const maxItems = normalizeMaxItems(filters.maxItems)
   const openTasks = tasks.filter((task) => normalizeTaskStatusValue(task.status) !== 'done')
   const openTodos = todos.filter((todo) => !todo.checked)
@@ -770,6 +993,7 @@ export function buildFocusDashboardData(args: {
   const mitKeySet = new Set(mitItemsRaw.map((item) => item.key))
 
   const filteredOpenTasks = includeTasks ? openTasks.filter((task) => textMatchesQuery(toTaskQueryText(task), filters.query)) : []
+  const blockingPoolRaw = filteredOpenTasks.map((task) => toTaskPrimaryItem(task, todayIso, taskStatusById))
 
   const overdueItemsRaw = includeTasks
     ? filteredOpenTasks
@@ -788,77 +1012,79 @@ export function buildFocusDashboardData(args: {
     : []
   const overdueKeySet = new Set(overdueItemsRaw.map((item) => item.key))
 
-  const scopedTasks = includeTasks
-    ? filteredOpenTasks
-        .filter((task) => isTaskInScope(task, filters.scope, todayIso))
-    : []
+  const scopedTasks = includeTasks ? filteredOpenTasks.filter((task) => isTaskInScope(task, filters.scope, todayIso)) : []
   const scopedTodos = includeTodos
     ? openTodos
         .filter((todo) => isTodoInScope(todo, filters.scope, todayIso))
         .filter((todo) => textMatchesQuery(toTodoQueryText(todo), filters.query))
     : []
-
-  const rankedItemsRaw = [...scopedTasks.map((task) => toTaskPrimaryItem(task, todayIso, taskStatusById)), ...scopedTodos.map((todo) => toTodoPrimaryItem(todo, todayIso))].sort(
-    (left, right) => {
-      if (left.score !== right.score) {
-        return right.score - left.score
-      }
-      return sortByRecency(left, right)
-    }
-  )
-
-  const remainingRanked = rankedItemsRaw.filter((item) => !mitKeySet.has(item.key) && !overdueKeySet.has(item.key))
-  const preferredRanked = remainingRanked.filter((item) => item.kind !== 'task' || !item.isBlocked || item.followUpDate === todayIso)
-  const deferredRanked = remainingRanked.filter((item) => !(item.kind !== 'task' || !item.isBlocked || item.followUpDate === todayIso))
-  const stitchedRanked = [...preferredRanked, ...deferredRanked]
-  const focusCount = Math.min(maxItems, toFocusSplitCount(maxItems))
-  const focusItemsRaw = stitchedRanked.slice(0, focusCount)
-  const candidateItemsRaw = stitchedRanked.slice(focusItemsRaw.length, maxItems)
-  const primaryItemsRaw = [...focusItemsRaw, ...candidateItemsRaw]
-
-  const blockingPool = filteredOpenTasks.map((task) => toTaskPrimaryItem(task, todayIso, taskStatusById))
-  const blockedItemsRaw = blockingPool.filter((item) => item.isBlocked).sort((left, right) => {
-    if (left.followUpDate !== right.followUpDate) {
-      return (left.followUpDate || '9999-12-31').localeCompare(right.followUpDate || '9999-12-31')
-    }
-    if (left.score !== right.score) {
-      return right.score - left.score
-    }
-    return sortByRecency(left, right)
-  }).slice(0, MAX_BLOCKING_ITEMS)
-  const waitingItemsRaw = blockedItemsRaw.filter((item) => Boolean(item.waitingFor)).slice(0, MAX_BLOCKING_ITEMS)
-  const followUpTodayItemsRaw = waitingItemsRaw.filter((item) => item.followUpDate === todayIso).slice(0, MAX_BLOCKING_ITEMS)
+  const rankedPoolRaw = [...scopedTasks.map((task) => toTaskPrimaryItem(task, todayIso, taskStatusById)), ...scopedTodos.map((todo) => toTodoPrimaryItem(todo, todayIso))]
 
   const contextBadgeMap = buildContextBadgeMap(
-    [...mitItemsRaw, ...overdueItemsRaw, ...blockedItemsRaw, ...waitingItemsRaw, ...followUpTodayItemsRaw, ...focusItemsRaw, ...candidateItemsRaw],
+    [...mitItemsRaw, ...overdueItemsRaw, ...blockingPoolRaw, ...rankedPoolRaw],
     notes,
     todayIso
   )
-  const mitItems = mitItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const overdueItems = overdueItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const blockedItems = blockedItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const waitingItems = waitingItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const followUpTodayItems = followUpTodayItemsRaw.map((item) =>
-    withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length)
-  )
-  const focusItems = focusItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const candidateItems = candidateItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
-  const primaryItems = primaryItemsRaw.map((item) => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length))
+  const applyItemDecorators = (item: FocusPrimaryItem): FocusPrimaryItem => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length)
+
+  const rankedPool = rankedPoolRaw.map(applyItemDecorators).sort((left, right) => compareByMode(left, right, mode, todayIso))
+
+  const remainingRanked = rankedPool.filter((item) => !mitKeySet.has(item.key) && !overdueKeySet.has(item.key))
+  const moveBlockedToBack = mode === 'execution' || mode === 'planning'
+  const stitchedRanked = moveBlockedToBack
+    ? [
+        ...remainingRanked.filter((item) => item.kind !== 'task' || !item.isBlocked || hasFollowUpDueNow(item, todayIso)),
+        ...remainingRanked.filter((item) => item.kind === 'task' && item.isBlocked && !hasFollowUpDueNow(item, todayIso)),
+      ]
+    : remainingRanked
+
+  const focusCount = Math.min(maxItems, toFocusSplitCount(maxItems, mode))
+  const focusItems = stitchedRanked.slice(0, focusCount)
+  const candidateItems = stitchedRanked.slice(focusItems.length, maxItems)
+  const primaryItems = [...focusItems, ...candidateItems]
+
+  const blockingPool = blockingPoolRaw.map(applyItemDecorators)
+  const blockedItems = blockingPool
+    .filter((item) => item.isBlocked)
+    .sort((left, right) => {
+      const leftFollowUpDueNow = hasFollowUpDueNow(left, todayIso)
+      const rightFollowUpDueNow = hasFollowUpDueNow(right, todayIso)
+      if (leftFollowUpDueNow !== rightFollowUpDueNow) {
+        return leftFollowUpDueNow ? -1 : 1
+      }
+      return compareByMode(left, right, mode, todayIso)
+    })
+    .slice(0, MAX_BLOCKING_ITEMS)
+  const waitingItems = blockingPool
+    .filter((item) => item.hasExternalWaiting)
+    .sort((left, right) => {
+      const leftFollowUpDueNow = hasFollowUpDueNow(left, todayIso)
+      const rightFollowUpDueNow = hasFollowUpDueNow(right, todayIso)
+      if (leftFollowUpDueNow !== rightFollowUpDueNow) {
+        return leftFollowUpDueNow ? -1 : 1
+      }
+      return compareByMode(left, right, mode, todayIso)
+    })
+    .slice(0, MAX_BLOCKING_ITEMS)
+  const followUpTodayItems = waitingItems.filter((item) => item.followUpDate === todayIso).slice(0, MAX_BLOCKING_ITEMS)
+
+  const mitItems = mitItemsRaw.map(applyItemDecorators)
+  const overdueItems = overdueItemsRaw.map(applyItemDecorators)
+  const nextActionItems = dedupeFocusItems([...mitItems, ...focusItems])
+    .filter((item) => item.kind === 'task' && !item.isDone && !item.isBlocked && Boolean(item.nextActionHint))
+    .sort((left, right) => compareByMode(left, right, mode, todayIso))
+    .slice(0, 3)
 
   const dueTodayTaskCount = openTasks.filter((task) => toTaskDueIso(task.due_date) === todayIso).length
   const inProgressTaskCount = openTasks.filter((task) => normalizeTaskStatusValue(task.status) === 'in_progress').length
   const blockedTaskCount = blockingPool.filter((item) => item.isBlocked).length
-  const waitingTaskCount = blockingPool.filter((item) => Boolean(item.waitingFor)).length
-  const followUpTodayCount = blockingPool.filter((item) => Boolean(item.waitingFor) && item.followUpDate === todayIso).length
+  const waitingTaskCount = blockingPool.filter((item) => item.hasExternalWaiting).length
+  const followUpTodayCount = blockingPool.filter((item) => item.hasExternalWaiting && item.followUpDate === todayIso).length
 
-  const relevantEstimatedTasks = new Map<string, number>()
-  for (const item of [...mitItemsRaw, ...overdueItemsRaw, ...focusItemsRaw]) {
-    if (item.kind !== 'task' || item.estimateMinutes === null) {
-      continue
-    }
-    relevantEstimatedTasks.set(item.key, item.estimateMinutes)
-  }
-  const todayEstimatedMinutes = Array.from(relevantEstimatedTasks.values()).reduce((sum, minutes) => sum + minutes, 0)
+  const todayEstimatedMinutes = sumEstimatedMinutes(dedupeFocusItems([...mitItems, ...overdueItems, ...focusItems]))
+  const mitEstimatedMinutes = sumEstimatedMinutes(mitItems)
+  const focusEstimatedMinutes = sumEstimatedMinutes(focusItems)
+  const withoutEstimateCount = countWithoutEstimate([...mitItems, ...focusItems])
 
   const notesWithQuery = includeNotes ? notes.filter((note) => textMatchesQuery(toNoteSearchText(note), filters.query)) : []
   const notesToday = notesWithQuery
@@ -870,12 +1096,27 @@ export function buildFocusDashboardData(args: {
     .sort((left, right) => sortByRecency({ updatedAt: left.updated_at, title: left.title }, { updatedAt: right.updated_at, title: right.title }))
     .slice(0, Math.max(maxItems, 8))
 
-  // Until `completed_at` exists, "done today" is approximated by `updated_at` for done tasks/todos.
-  const doneTodayTasks = tasks.filter((task) => normalizeTaskStatusValue(task.status) === 'done' && toUpdatedDay(task.updated_at) === todayIso).length
-  const doneTodayTodos = todos.filter((todo) => todo.checked && toUpdatedDay(todo.updated_at) === todayIso).length
+  // `completed_at` is the canonical source; `updated_at` is a transitional fallback for legacy rows.
+  const doneTodayTasks = tasks.filter((task) => {
+    if (normalizeTaskStatusValue(task.status) !== 'done') {
+      return false
+    }
+    const completedDay = toCompletedDay(task.completed_at || null)
+    const fallbackDay = toUpdatedDay(task.updated_at)
+    return (completedDay || fallbackDay) === todayIso
+  }).length
+  const doneTodayTodos = todos.filter((todo) => {
+    if (!todo.checked) {
+      return false
+    }
+    const completedDay = toCompletedDay(todo.completed_at || null)
+    const fallbackDay = toUpdatedDay(todo.updated_at)
+    return (completedDay || fallbackDay) === todayIso
+  }).length
 
   return {
     selectedScope: filters.scope,
+    focusMode: mode,
     openTaskCount: openTasks.length,
     inProgressTaskCount,
     dueTodayTaskCount,
@@ -888,6 +1129,9 @@ export function buildFocusDashboardData(args: {
     waitingTaskCount,
     followUpTodayCount,
     todayEstimatedMinutes,
+    mitEstimatedMinutes,
+    focusEstimatedMinutes,
+    withoutEstimateCount,
     todayDailyNote: includeNotes ? findDailyNote(notesWithQuery, todayIso) : null,
     mitIds: normalizedMitIds,
     mitItems,
@@ -895,6 +1139,7 @@ export function buildFocusDashboardData(args: {
     blockedItems,
     waitingItems,
     followUpTodayItems,
+    nextActionItems,
     focusItems,
     candidateItems,
     primaryItems,

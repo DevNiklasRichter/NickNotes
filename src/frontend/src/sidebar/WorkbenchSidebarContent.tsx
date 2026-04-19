@@ -1490,6 +1490,18 @@ export function WorkbenchSidebarContent({
           <h4>Ausrichtung</h4>
           <div className="todo-filter-rows">
             <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Modus</span>
+              <label className="todo-grouping-select">
+                <select value={focusFilters.mode} onChange={(event) => setFocusFilter({ mode: event.target.value as FocusDashboardFilters['mode'] })}>
+                  <option value="execution">Execution</option>
+                  <option value="planning">Planning</option>
+                  <option value="rescue">Rescue</option>
+                  <option value="context">Context</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="todo-filter-row">
               <span className="todo-filter-row-label">Zeitraum</span>
               <label className="todo-grouping-select">
                 <select value={focusFilters.scope} onChange={(event) => setFocusFilter({ scope: event.target.value as FocusDashboardFilters['scope'] })}>

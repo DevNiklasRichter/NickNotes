@@ -92,6 +92,7 @@ class VaultIndexer:
                   due_date TEXT,
                   project_tag TEXT,
                   estimate_minutes INTEGER,
+                  completed_at TEXT,
                   blocked_by_ids_json TEXT NOT NULL DEFAULT '[]',
                   waiting_for TEXT,
                   follow_up_date TEXT,
@@ -117,6 +118,7 @@ class VaultIndexer:
                   links_json TEXT NOT NULL,
                   promoted INTEGER NOT NULL DEFAULT 0,
                   promoted_task_id TEXT,
+                  completed_at TEXT,
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
                 );
@@ -132,6 +134,7 @@ class VaultIndexer:
                 """
             )
             self._ensure_tasks_schema(cur)
+            self._ensure_todos_schema(cur)
             self.conn.commit()
 
     def _ensure_tasks_schema(self, cur: sqlite3.Cursor) -> None:
@@ -140,6 +143,8 @@ class VaultIndexer:
         migrations: list[str] = []
         if "estimate_minutes" not in columns:
             migrations.append("ALTER TABLE tasks ADD COLUMN estimate_minutes INTEGER;")
+        if "completed_at" not in columns:
+            migrations.append("ALTER TABLE tasks ADD COLUMN completed_at TEXT;")
         if "blocked_by_ids_json" not in columns:
             migrations.append("ALTER TABLE tasks ADD COLUMN blocked_by_ids_json TEXT NOT NULL DEFAULT '[]';")
         if "waiting_for" not in columns:
@@ -150,6 +155,15 @@ class VaultIndexer:
             migrations.append("ALTER TABLE tasks ADD COLUMN blocked_reason TEXT;")
         if "next_action_hint" not in columns:
             migrations.append("ALTER TABLE tasks ADD COLUMN next_action_hint TEXT;")
+        for statement in migrations:
+            cur.execute(statement)
+
+    def _ensure_todos_schema(self, cur: sqlite3.Cursor) -> None:
+        cur.execute("PRAGMA table_info(todos);")
+        columns = {str(row["name"]) for row in cur.fetchall()}
+        migrations: list[str] = []
+        if "completed_at" not in columns:
+            migrations.append("ALTER TABLE todos ADD COLUMN completed_at TEXT;")
         for statement in migrations:
             cur.execute(statement)
 
@@ -262,10 +276,10 @@ class VaultIndexer:
                 """
                 INSERT INTO tasks(
                   id, note_id, path, title, status, priority, due_date, project_tag,
-                  estimate_minutes, blocked_by_ids_json, waiting_for, follow_up_date, blocked_reason, next_action_hint,
+                  estimate_minutes, completed_at, blocked_by_ids_json, waiting_for, follow_up_date, blocked_reason, next_action_hint,
                   created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   note_id=excluded.note_id,
                   path=excluded.path,
@@ -275,6 +289,7 @@ class VaultIndexer:
                   due_date=excluded.due_date,
                   project_tag=excluded.project_tag,
                   estimate_minutes=excluded.estimate_minutes,
+                  completed_at=excluded.completed_at,
                   blocked_by_ids_json=excluded.blocked_by_ids_json,
                   waiting_for=excluded.waiting_for,
                   follow_up_date=excluded.follow_up_date,
@@ -292,7 +307,8 @@ class VaultIndexer:
                     parsed.due_date,
                     parsed.project_tag,
                     parsed.estimate_minutes,
-                    json.dumps(_normalize_task_id_list(parsed.blocked_by_ids), ensure_ascii=False),
+                    _normalize_iso_timestamp(parsed.completed_at),
+                    json.dumps(_normalize_task_id_list(parsed.blocked_by_ids, exclude_id=task_id), ensure_ascii=False),
                     _normalize_free_text(parsed.waiting_for),
                     _normalize_iso_date(parsed.follow_up_date),
                     _normalize_free_text(parsed.blocked_reason),
@@ -317,16 +333,32 @@ class VaultIndexer:
     ) -> None:
         with self._lock:
             cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT id, checked, completed_at
+                FROM todos
+                WHERE note_id = ?;
+                """,
+                (note_id,),
+            )
+            existing_rows = [dict(row) for row in cur.fetchall()]
+            existing_by_id: dict[str, dict[str, Any]] = {str(row.get("id")): row for row in existing_rows if row.get("id")}
             cur.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
             for todo in todos:
+                previous_row = existing_by_id.get(todo.id) or {}
+                previous_completed_at = _normalize_iso_timestamp(previous_row.get("completed_at"))
+                if todo.checked:
+                    completed_at = previous_completed_at or (updated_at or datetime.now().isoformat(timespec="seconds"))
+                else:
+                    completed_at = None
                 cur.execute(
                     """
                     INSERT INTO todos(
                       id, note_id, note_path, line_no, block_ref, checked, raw_text,
                       explicit_tags_json, inherited_tags_json, links_json,
-                      promoted, promoted_task_id, updated_at
+                      promoted, promoted_task_id, completed_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                     """,
                     (
                         todo.id,
@@ -341,6 +373,7 @@ class VaultIndexer:
                         json.dumps(todo.links, ensure_ascii=False),
                         1 if todo.promoted else 0,
                         todo.promoted_task_id,
+                        _normalize_iso_timestamp(completed_at),
                         updated_at,
                     ),
                 )
@@ -364,6 +397,7 @@ class VaultIndexer:
                   t.links_json,
                   t.promoted,
                   t.promoted_task_id,
+                  t.completed_at,
                   t.updated_at,
                   n.title AS note_title
                 FROM todos t
@@ -392,6 +426,7 @@ class VaultIndexer:
                   t.links_json,
                   t.promoted,
                   t.promoted_task_id,
+                  t.completed_at,
                   t.updated_at,
                   n.title AS note_title
                 FROM todos t
@@ -512,6 +547,7 @@ class VaultIndexer:
                       due_date,
                       project_tag,
                       estimate_minutes,
+                      completed_at,
                       blocked_by_ids_json,
                       waiting_for,
                       follow_up_date,
@@ -537,6 +573,7 @@ class VaultIndexer:
                       due_date,
                       project_tag,
                       estimate_minutes,
+                      completed_at,
                       blocked_by_ids_json,
                       waiting_for,
                       follow_up_date,
@@ -558,7 +595,8 @@ class VaultIndexer:
                 row["tags"] = tags
                 row["related"] = related
                 row["estimate_minutes"] = _normalize_estimate_minutes(row.get("estimate_minutes"))
-                row["blocked_by_ids"] = _normalize_task_id_list(_safe_json_list(row.get("blocked_by_ids_json")))
+                row["completed_at"] = _normalize_iso_timestamp(row.get("completed_at"))
+                row["blocked_by_ids"] = _normalize_task_id_list(_safe_json_list(row.get("blocked_by_ids_json")), exclude_id=str(row.get("id") or ""))
                 row["waiting_for"] = _normalize_free_text(row.get("waiting_for"))
                 row["follow_up_date"] = _normalize_iso_date(row.get("follow_up_date"))
                 row["blocked_reason"] = _normalize_free_text(row.get("blocked_reason"))
@@ -636,7 +674,7 @@ class VaultIndexer:
                 """
                 SELECT COUNT(*) AS cnt
                 FROM tasks
-                WHERE status = 'done' AND substr(updated_at, 1, 10) = ?;
+                WHERE status = 'done' AND substr(COALESCE(completed_at, updated_at), 1, 10) = ?;
                 """,
                 (day_str,),
             )
@@ -674,7 +712,7 @@ class VaultIndexer:
                 SELECT COUNT(*) AS cnt
                 FROM tasks
                 WHERE status = 'done'
-                  AND substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?;
                 """,
                 (start.isoformat(), end_day.isoformat()),
             )
@@ -792,7 +830,8 @@ class VaultIndexer:
                 status=str(meta.get("status", "open")).strip().lower().replace("-", "_") or "open",
                 project_tag=str(meta.get("project_tag", "")).strip() or None,
                 estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
-                blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids")),
+                completed_at=_normalize_iso_timestamp(meta.get("completed_at")),
+                blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids"), exclude_id=task_id),
                 waiting_for=_normalize_free_text(meta.get("waiting_for")),
                 follow_up_date=_normalize_iso_date(meta.get("follow_up_date")),
                 blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
@@ -830,7 +869,8 @@ class VaultIndexer:
             status=str(meta.get("status", inferred_status)).lower().replace("-", "_"),
             project_tag=str(meta.get("project_tag", "") or "") or None,
             estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
-            blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids")),
+            completed_at=_normalize_iso_timestamp(meta.get("completed_at")),
+            blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids"), exclude_id=task_id),
             waiting_for=_normalize_free_text(meta.get("waiting_for")),
             follow_up_date=_normalize_iso_date(meta.get("follow_up_date")),
             blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
@@ -908,6 +948,19 @@ def _normalize_iso_date(raw: Any) -> str | None:
     return clean if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean) else None
 
 
+def _normalize_iso_timestamp(raw: Any) -> str | None:
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    if clean.endswith("Z"):
+        clean = f"{clean[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(clean)
+    except ValueError:
+        return None
+    return parsed.isoformat(timespec="seconds")
+
+
 def _normalize_free_text(raw: Any) -> str | None:
     clean = " ".join(str(raw or "").split())
     return clean or None
@@ -933,7 +986,7 @@ def _normalize_estimate_minutes(raw: Any) -> int | None:
     return min(value, 10000)
 
 
-def _normalize_task_id_list(raw: Any) -> list[str]:
+def _normalize_task_id_list(raw: Any, exclude_id: str = "") -> list[str]:
     source: list[str]
     if isinstance(raw, str):
         clean = raw.strip()
@@ -950,6 +1003,7 @@ def _normalize_task_id_list(raw: Any) -> list[str]:
 
     normalized: list[str] = []
     seen: set[str] = set()
+    exclude_key = exclude_id.strip().lower()
     for item in source:
         parts = item.split(",") if "," in item else [item]
         for part in parts:
@@ -957,6 +1011,9 @@ def _normalize_task_id_list(raw: Any) -> list[str]:
             if not clean_item:
                 continue
             lowered = clean_item.lower()
+            if exclude_key and lowered == exclude_key:
+                # Ignore self-references in blocker ids defensively.
+                continue
             if lowered in seen:
                 continue
             seen.add(lowered)
@@ -1031,6 +1088,10 @@ def _safe_json_list(raw_value: Any) -> list[str]:
 
 
 def _hydrate_todo_row(row: dict[str, Any]) -> dict[str, Any]:
+    completed_at = _normalize_iso_timestamp(row.get("completed_at"))
+    checked = bool(row.get("checked"))
+    if not checked:
+        completed_at = None
     return {
         "id": row.get("id"),
         "note_id": row.get("note_id"),
@@ -1038,12 +1099,13 @@ def _hydrate_todo_row(row: dict[str, Any]) -> dict[str, Any]:
         "note_path": row.get("note_path"),
         "line_no": int(row.get("line_no") or 0),
         "block_ref": row.get("block_ref"),
-        "checked": bool(row.get("checked")),
+        "checked": checked,
         "raw_text": row.get("raw_text") or "",
         "explicit_tags": _safe_json_list(row.get("explicit_tags_json")),
         "inherited_tags": _safe_json_list(row.get("inherited_tags_json")),
         "links": _safe_json_list(row.get("links_json")),
         "promoted": bool(row.get("promoted")),
         "promoted_task_id": row.get("promoted_task_id"),
+        "completed_at": completed_at,
         "updated_at": row.get("updated_at") or "",
     }

@@ -116,6 +116,7 @@ import type {
   TodoDashboardFilters,
   TaskDashboardFilters,
   FocusDashboardFilters,
+  FocusDashboardAggregateResponse,
   EditorTabContextMenuState,
   StatusBarPrefs,
   UiSettingsPayload,
@@ -199,6 +200,9 @@ function App() {
   const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
   const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
   const [propertyRelatedDraftByPath, setPropertyRelatedDraftByPath] = useState<Record<string, string>>({})
+  const [propertyTaskFieldErrorsByPath, setPropertyTaskFieldErrorsByPath] = useState<
+    Record<string, { estimate_minutes?: string; follow_up_date?: string }>
+  >({})
   const leftEditorRef = useRef<MarkdownEditorApi | null>(null)
   const rightEditorRef = useRef<MarkdownEditorApi | null>(null)
 
@@ -543,18 +547,21 @@ function App() {
     setWeekly(response.weekly)
   }
 
-  const refreshFocusMit = async (force = false) => {
+  const refreshFocusAggregate = async (force = false) => {
     if (!vaultLoaded && !force) {
       return
     }
-
     const todayIso = toLocalIsoDate()
-    try {
-      const response = await apiRequest<{ mitIds: string[] }>(backendUrl, `/focus/mit?date=${encodeURIComponent(todayIso)}`)
-      setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
-    } catch (caught) {
-      setError(String(caught))
-      setFocusMitIds([])
+    const response = await apiRequest<FocusDashboardAggregateResponse>(
+      backendUrl,
+      `/focus/dashboard?date=${encodeURIComponent(todayIso)}`
+    )
+    setTasks(Array.isArray(response.tasks) ? response.tasks : [])
+    setTodos(Array.isArray(response.todos) ? response.todos : [])
+    setAllNotes(Array.isArray(response.notes) ? response.notes : [])
+    setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
+    if (response.counts) {
+      setCounts(response.counts)
     }
   }
 
@@ -593,11 +600,9 @@ function App() {
       return
     }
     await Promise.allSettled([
-      refreshTasks(force),
-      refreshTodos(force),
+      refreshFocusAggregate(force),
       runSearch(searchQuery, force),
       refreshReview(force),
-      refreshFocusMit(force),
       refreshTagGroups(force),
       refreshExplorerSidebarData(force),
     ])
@@ -1303,7 +1308,7 @@ function App() {
 
   const openFocusDashboardTab = () => {
     if (vaultLoaded) {
-      void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshFocusMit()])
+      void Promise.allSettled([refreshFocusAggregate(), refreshReview()])
     }
     const existing = findTabByPath(FOCUS_DASHBOARD_TAB_PATH, openTabs)
     const targetPane = workspaceStateRef.current.lastFocusedPane
@@ -1455,11 +1460,9 @@ function App() {
       }
       setMessage(`NoteBase umbenannt: ${previousName} -> ${getPathTail(loadedPath)}`)
       await Promise.all([
-        refreshTasks(true),
-        refreshTodos(true),
+        refreshFocusAggregate(true),
         runSearch(searchQuery, true),
         refreshReview(true),
-        refreshFocusMit(true),
         refreshNoteGroups(true),
       ])
     } catch (caught) {
@@ -1584,7 +1587,7 @@ function App() {
     })
     setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
     setCounts(response.counts)
-    await Promise.all([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshReview()])
+    await Promise.all([refreshFocusAggregate(), refreshReview()])
     return Array.isArray(response.mitIds) ? response.mitIds : []
   }
 
@@ -1603,7 +1606,7 @@ function App() {
     })
     setCounts(response.counts)
     setMessage(`Todo fuer heute erfasst: ${response.todoText}`)
-    await Promise.all([refreshTodos(), refreshAllNotes(), refreshReview()])
+    await Promise.all([refreshFocusAggregate(), refreshReview()])
   }
 
   const toggleTodo = async (todoId: string, checked?: boolean) => {
@@ -2038,6 +2041,130 @@ function App() {
     }))
   }
 
+  const setTaskFieldErrorByPath = (tabPath: string, field: 'estimate_minutes' | 'follow_up_date', message: string) => {
+    setPropertyTaskFieldErrorsByPath((prev) => {
+      const current = prev[tabPath] || {}
+      const nextForPath = { ...current, [field]: message || undefined }
+      if (!nextForPath.estimate_minutes && !nextForPath.follow_up_date) {
+        if (!(tabPath in prev)) {
+          return prev
+        }
+        const next = { ...prev }
+        delete next[tabPath]
+        return next
+      }
+      return { ...prev, [tabPath]: nextForPath }
+    })
+  }
+
+  const updateNoteEstimateMinutesByPath = (tabPath: string, rawEstimateMinutes: string) => {
+    const clean = normalizeLabel(rawEstimateMinutes)
+    if (!clean) {
+      setTaskFieldErrorByPath(tabPath, 'estimate_minutes', '')
+      updateNoteDocumentByPath(tabPath, (document) => ({
+        ...document,
+        frontmatter: {
+          ...document.frontmatter,
+          estimate_minutes: null,
+        },
+      }))
+      return
+    }
+
+    const parsed = Number.parseInt(clean, 10)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setTaskFieldErrorByPath(tabPath, 'estimate_minutes', 'Bitte eine positive Zahl eingeben.')
+      return
+    }
+
+    setTaskFieldErrorByPath(tabPath, 'estimate_minutes', '')
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        estimate_minutes: Math.min(parsed, 10000),
+      },
+    }))
+  }
+
+  const updateNoteBlockedByIdsByPath = (tabPath: string, rawBlockedByIds: string) => {
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        blocked_by_ids: Array.from(
+          new Set(
+            rawBlockedByIds
+              .split(/[,\n;]+/)
+              .map((entry) => normalizeLabel(entry))
+              .filter(Boolean)
+              .filter((entry) => entry.toLowerCase() !== document.frontmatter.id.trim().toLowerCase())
+          )
+        ),
+      },
+    }))
+  }
+
+  const updateNoteWaitingForByPath = (tabPath: string, rawWaitingFor: string) => {
+    const normalized = rawWaitingFor.trim()
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        waiting_for: normalized,
+      },
+    }))
+  }
+
+  const updateNoteFollowUpDateByPath = (tabPath: string, rawFollowUpDate: string) => {
+    const clean = normalizeLabel(rawFollowUpDate)
+    if (!clean) {
+      setTaskFieldErrorByPath(tabPath, 'follow_up_date', '')
+      updateNoteDocumentByPath(tabPath, (document) => ({
+        ...document,
+        frontmatter: {
+          ...document.frontmatter,
+          follow_up_date: '',
+        },
+      }))
+      return
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gueltiges ISO-Datum eingeben.')
+      return
+    }
+    setTaskFieldErrorByPath(tabPath, 'follow_up_date', '')
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        follow_up_date: clean,
+      },
+    }))
+  }
+
+  const updateNoteBlockedReasonByPath = (tabPath: string, rawBlockedReason: string) => {
+    const normalized = rawBlockedReason.trim()
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        blocked_reason: normalized,
+      },
+    }))
+  }
+
+  const updateNoteNextActionHintByPath = (tabPath: string, rawNextActionHint: string) => {
+    const normalized = rawNextActionHint.trim()
+    updateNoteDocumentByPath(tabPath, (document) => ({
+      ...document,
+      frontmatter: {
+        ...document.frontmatter,
+        next_action_hint: normalized,
+      },
+    }))
+  }
+
   const addNoteTagByPath = (tabPath: string, rawTag: string) => {
     const normalized = normalizeTagCandidate(rawTag)
     if (!normalized) {
@@ -2127,9 +2254,15 @@ function App() {
     const relatedDraft = propertyRelatedDraftByPath[tabPath] ?? ''
     const tagInputOpen = propertyTagInputOpenByPath[tabPath] ?? false
     const relatedInputOpen = propertyRelatedInputOpenByPath[tabPath] ?? false
+    const taskFieldErrors = propertyTaskFieldErrorsByPath[tabPath] || {}
     const relatedOptionsForPath = propertyRelatedOptions.filter(
       (item) => normalizeWikiLookup(item) !== normalizeWikiLookup(toNoteDisplayName(tabPath))
     )
+    const currentTaskId = normalizeLabel(document.frontmatter.id).toLowerCase()
+    const taskIdOptions = tasks
+      .map((task) => normalizeLabel(task.id))
+      .filter((taskId) => taskId && taskId.toLowerCase() !== currentTaskId)
+      .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
 
     return (
       <NotePropertiesPanel
@@ -2144,11 +2277,13 @@ function App() {
         taskPriorityOptionLabel={taskPriorityOptionLabel}
         propertyTagOptions={propertyTagOptions}
         relatedOptions={relatedOptionsForPath}
+        taskIdOptions={taskIdOptions}
         tagVisualByKey={tagVisualByKey}
         tagInputOpen={tagInputOpen}
         tagDraft={tagDraft}
         relatedInputOpen={relatedInputOpen}
         relatedDraft={relatedDraft}
+        taskFieldErrors={taskFieldErrors}
         formatTimestamp={toGermanTimestamp}
         onTitleChange={(nextTitle) => {
           updateNoteTitleByPath(tabPath, nextTitle)
@@ -2170,6 +2305,24 @@ function App() {
         }}
         onRemoveDueDate={() => {
           updateNoteDueDateByPath(tabPath, '')
+        }}
+        onEstimateMinutesChange={(nextEstimateMinutes) => {
+          updateNoteEstimateMinutesByPath(tabPath, nextEstimateMinutes)
+        }}
+        onBlockedByIdsChange={(nextBlockedByIds) => {
+          updateNoteBlockedByIdsByPath(tabPath, nextBlockedByIds)
+        }}
+        onWaitingForChange={(nextWaitingFor) => {
+          updateNoteWaitingForByPath(tabPath, nextWaitingFor)
+        }}
+        onFollowUpDateChange={(nextFollowUpDate) => {
+          updateNoteFollowUpDateByPath(tabPath, nextFollowUpDate)
+        }}
+        onBlockedReasonChange={(nextBlockedReason) => {
+          updateNoteBlockedReasonByPath(tabPath, nextBlockedReason)
+        }}
+        onNextActionHintChange={(nextActionHint) => {
+          updateNoteNextActionHintByPath(tabPath, nextActionHint)
         }}
         onRemoveTag={(tag) => {
           removeNoteTagByPath(tabPath, tag)
@@ -3590,7 +3743,7 @@ function App() {
               void refreshTodos()
             }}
             onRefreshFocusData={() => {
-              void Promise.allSettled([refreshTasks(), refreshTodos(), refreshAllNotes(), refreshFocusMit()])
+              void Promise.allSettled([refreshFocusAggregate(), refreshReview()])
             }}
             onOpenTodoDashboard={() => {
               openTodoDashboardTab()

@@ -113,6 +113,19 @@ def _normalize_due_date(raw: str) -> str:
     return clean if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean) else ""
 
 
+def _normalize_iso_timestamp(raw: Any) -> str:
+    clean = str(raw or "").strip()
+    if not clean:
+        return ""
+    if clean.endswith("Z"):
+        clean = f"{clean[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(clean)
+    except ValueError:
+        return ""
+    return parsed.isoformat(timespec="seconds")
+
+
 def _normalize_estimate_minutes(raw: Any) -> int | None:
     if raw is None or isinstance(raw, bool):
         return None
@@ -135,9 +148,10 @@ def _normalize_optional_text(raw: Any) -> str:
     return " ".join(str(raw or "").split())
 
 
-def _normalize_blocked_by_ids(raw: Any) -> list[str]:
+def _normalize_blocked_by_ids(raw: Any, exclude_id: str = "") -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
+    exclude_key = exclude_id.strip().lower()
     for item in _ensure_string_list(raw):
         parts = item.split(",") if "," in item else [item]
         for part in parts:
@@ -145,6 +159,9 @@ def _normalize_blocked_by_ids(raw: Any) -> list[str]:
             if not clean:
                 continue
             lowered = clean.lower()
+            if exclude_key and lowered == exclude_key:
+                # Defensive hygiene: avoid self-referential blockers.
+                continue
             if lowered in seen:
                 continue
             seen.add(lowered)
@@ -479,6 +496,7 @@ class VaultManager:
             priority=normalized_priority,
             due_date="",
             estimate_minutes=None,
+            completed_at="",
             blocked_by_ids=[],
             waiting_for="",
             follow_up_date="",
@@ -902,11 +920,17 @@ class VaultManager:
         priority = _normalize_task_priority(str(frontmatter.get("priority", "medium")))
         due_date = _normalize_due_date(str(frontmatter.get("due_date", "")))
         estimate_minutes = _normalize_estimate_minutes(frontmatter.get("estimate_minutes"))
-        blocked_by_ids = _normalize_blocked_by_ids(frontmatter.get("blocked_by_ids"))
+        task_self_id = note_id if note_type == "task" else ""
+        blocked_by_ids = _normalize_blocked_by_ids(frontmatter.get("blocked_by_ids"), exclude_id=task_self_id)
         waiting_for = _normalize_optional_text(frontmatter.get("waiting_for"))
         follow_up_date = _normalize_due_date(str(frontmatter.get("follow_up_date", "")))
         blocked_reason = _normalize_optional_text(frontmatter.get("blocked_reason"))
         next_action_hint = _normalize_optional_text(frontmatter.get("next_action_hint"))
+        raw_completed_at = _normalize_iso_timestamp(frontmatter.get("completed_at"))
+        if status == "done":
+            completed_at = raw_completed_at or (now_iso if touch_updated else "")
+        else:
+            completed_at = ""
 
         known_keys = {
             "id",
@@ -918,6 +942,7 @@ class VaultManager:
             "due_date",
             "created_at",
             "updated_at",
+            "completed_at",
             "tags",
             "tags_auto",
             "related",
@@ -947,6 +972,7 @@ class VaultManager:
             priority=priority,
             due_date=due_date,
             estimate_minutes=estimate_minutes,
+            completed_at=completed_at,
             blocked_by_ids=blocked_by_ids,
             waiting_for=waiting_for,
             follow_up_date=follow_up_date,
@@ -967,6 +993,7 @@ class VaultManager:
             "priority": priority,
             "due_date": due_date,
             "estimate_minutes": estimate_minutes,
+            "completed_at": completed_at,
             "blocked_by_ids": blocked_by_ids,
             "waiting_for": waiting_for,
             "follow_up_date": follow_up_date,
@@ -1749,6 +1776,11 @@ class VaultManager:
         task_path = self.tasks_root_path / folder / f"{task_id}.md"
         ts = now.isoformat(timespec="seconds")
         related = _dedupe_sorted([item for item in (manual_related or []) if item.strip()])
+        completed_at = _normalize_iso_timestamp(task.completed_at)
+        if status == "done" and not completed_at:
+            completed_at = ts
+        if status != "done":
+            completed_at = ""
 
         frontmatter = {
             "id": task_id,
@@ -1768,13 +1800,15 @@ class VaultManager:
             "related_auto": [],
         }
         estimate_minutes = _normalize_estimate_minutes(task.estimate_minutes)
-        blocked_by_ids = _normalize_blocked_by_ids(task.blocked_by_ids)
+        blocked_by_ids = _normalize_blocked_by_ids(task.blocked_by_ids, exclude_id=task_id)
         waiting_for = _normalize_optional_text(task.waiting_for)
         follow_up_date = _normalize_due_date(task.follow_up_date or "")
         blocked_reason = _normalize_optional_text(task.blocked_reason)
         next_action_hint = _normalize_optional_text(task.next_action_hint)
         if estimate_minutes is not None:
             frontmatter["estimate_minutes"] = estimate_minutes
+        if completed_at:
+            frontmatter["completed_at"] = completed_at
         if blocked_by_ids:
             frontmatter["blocked_by_ids"] = blocked_by_ids
         if waiting_for:
@@ -1792,11 +1826,26 @@ class VaultManager:
         body_text = body if body is not None else task.title
         task_path.write_text(dump_markdown(frontmatter, body_text), encoding="utf-8")
 
+        task_for_index = ParsedTask(
+            title=task.title,
+            due_date=task.due_date,
+            priority=task.priority,
+            status=task.status,
+            project_tag=task.project_tag,
+            tags=list(task.tags),
+            estimate_minutes=estimate_minutes,
+            completed_at=completed_at or None,
+            blocked_by_ids=blocked_by_ids,
+            waiting_for=waiting_for or None,
+            follow_up_date=follow_up_date or None,
+            blocked_reason=blocked_reason or None,
+            next_action_hint=next_action_hint or None,
+        )
         indexer.add_or_update_task(
             task_id=task_id,
             note_id=note_id,
             path=str(task_path),
-            parsed=task,
+            parsed=task_for_index,
             created_at=ts,
             updated_at=ts,
         )
@@ -2190,6 +2239,7 @@ class VaultManager:
         priority: str,
         due_date: str,
         estimate_minutes: int | None,
+        completed_at: str,
         blocked_by_ids: list[str],
         waiting_for: str,
         follow_up_date: str,
@@ -2218,6 +2268,8 @@ class VaultManager:
         }
         if estimate_minutes is not None:
             frontmatter["estimate_minutes"] = estimate_minutes
+        if completed_at:
+            frontmatter["completed_at"] = _normalize_iso_timestamp(completed_at)
         if blocked_by_ids:
             frontmatter["blocked_by_ids"] = _normalize_blocked_by_ids(blocked_by_ids)
         if waiting_for:

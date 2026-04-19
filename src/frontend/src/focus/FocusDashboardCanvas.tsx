@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import {
+  type FocusDashboardMode,
   taskPriorityDotClassName,
   taskPriorityLabel,
   taskStatusClassName,
@@ -33,6 +34,11 @@ type ScopeOption = {
   label: string
 }
 
+type ModeOption = {
+  value: FocusDashboardMode
+  label: string
+}
+
 const SCOPE_OPTIONS: ScopeOption[] = [
   { value: 'overdue', label: 'Ueberfaellig' },
   { value: 'today', label: 'Heute' },
@@ -40,6 +46,13 @@ const SCOPE_OPTIONS: ScopeOption[] = [
   { value: 'week', label: 'Woche' },
   { value: 'next7', label: '7 Tage' },
   { value: 'all', label: 'Alles' },
+]
+
+const MODE_OPTIONS: ModeOption[] = [
+  { value: 'execution', label: 'Execution' },
+  { value: 'planning', label: 'Planning' },
+  { value: 'rescue', label: 'Rescue' },
+  { value: 'context', label: 'Context' },
 ]
 
 function focusItemMetaLabel(item: FocusPrimaryItem): string {
@@ -100,13 +113,14 @@ type FocusItemCardProps = {
   item: FocusPrimaryItem
   selected: boolean
   overdue?: boolean
+  focusMode: FocusDashboardMode
   mitBusy: boolean
   onSelect: (itemKey: string) => void
   onToggleMit: (item: FocusPrimaryItem) => void
   onOpenOrigin: (item: FocusPrimaryItem) => void
 }
 
-function FocusItemCard({ item, selected, overdue = false, mitBusy, onSelect, onToggleMit, onOpenOrigin }: FocusItemCardProps) {
+function FocusItemCard({ item, selected, overdue = false, focusMode, mitBusy, onSelect, onToggleMit, onOpenOrigin }: FocusItemCardProps) {
   const canOpen = Boolean(item.path)
   const mitActionDisabled = mitBusy || (!item.isMit && !item.canAddToMit)
   const mitActionTitle = item.isMit
@@ -119,7 +133,7 @@ function FocusItemCard({ item, selected, overdue = false, mitBusy, onSelect, onT
     <article
       className={`focus-primary-card ${selected ? 'selected' : ''} ${overdue ? 'overdue' : ''} ${item.isMit ? 'mit' : ''} ${item.isDone ? 'done' : ''} ${
         item.isBlocked ? 'blocked' : ''
-      }`}
+      } ${focusMode === 'context' && item.contextBadgeCount > 0 ? 'context-boost' : ''}`}
     >
       <button
         className="focus-primary-card-main"
@@ -139,9 +153,14 @@ function FocusItemCard({ item, selected, overdue = false, mitBusy, onSelect, onT
           ) : null}
           {item.kind === 'task' && item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
           {item.isDone ? <span className="focus-context-badge-chip">Erledigt</span> : null}
-          {item.isBlocked ? <span className="focus-context-badge-chip">Blockiert</span> : null}
-          {item.waitingFor ? <span className="focus-context-badge-chip">Waiting</span> : null}
+          {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
+          {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
           {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
+          {item.unknownBlockerCount > 0 ? (
+            <span className="focus-context-badge-chip">
+              {item.unknownBlockerCount} unbekannter Blocker
+            </span>
+          ) : null}
         </div>
         <strong>{item.title}</strong>
         <p>{focusItemMetaLabel(item)}</p>
@@ -263,6 +282,13 @@ export function FocusDashboardCanvas({
     onFiltersChange({ ...filters, scope })
   }
 
+  const setMode = (mode: FocusDashboardMode) => {
+    if (mode === filters.mode) {
+      return
+    }
+    onFiltersChange({ ...filters, mode })
+  }
+
   const openItemOrigin = (item: FocusPrimaryItem) => {
     if (!item.path) {
       return
@@ -338,24 +364,41 @@ export function FocusDashboardCanvas({
       <div className="focus-canvas-header">
         <div className="focus-canvas-header-top">
           <h2>Focus Dashboard</h2>
-          <div className="focus-scope-switcher" role="tablist" aria-label="Zeithorizont">
-            {SCOPE_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                className={`focus-scope-switch-button ${filters.scope === option.value ? 'active' : ''}`}
-                onClick={() => {
-                  setScope(option.value)
-                }}
-                role="tab"
-                aria-selected={filters.scope === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div className="focus-header-switchers">
+            <div className="focus-mode-switcher" role="tablist" aria-label="Fokusmodus">
+              {MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className={`focus-scope-switch-button ${filters.mode === option.value ? 'active' : ''}`}
+                  onClick={() => {
+                    setMode(option.value)
+                  }}
+                  role="tab"
+                  aria-selected={filters.mode === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="focus-scope-switcher" role="tablist" aria-label="Zeithorizont">
+              {SCOPE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  className={`focus-scope-switch-button ${filters.scope === option.value ? 'active' : ''}`}
+                  onClick={() => {
+                    setScope(option.value)
+                  }}
+                  role="tab"
+                  aria-selected={filters.scope === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <p>
-          Query: {filters.query.trim() || 'keine'} | Auto-Fokus: {totalAutoFocusItems} | MIT: {data.mitItems.length}/3
+          Modus: {data.focusMode} | Query: {filters.query.trim() || 'keine'} | Auto-Fokus: {totalAutoFocusItems} | MIT: {data.mitItems.length}/3
         </p>
 
         <div className="focus-capture-inline">
@@ -412,6 +455,18 @@ export function FocusDashboardCanvas({
           <strong>{data.todayEstimatedMinutes > 0 ? `${data.todayEstimatedMinutes}m` : '-'}</strong>
         </article>
         <article className="focus-metric-card">
+          <span className="focus-metric-label">Dauer MIT</span>
+          <strong>{data.mitEstimatedMinutes > 0 ? `${data.mitEstimatedMinutes}m` : '-'}</strong>
+        </article>
+        <article className="focus-metric-card">
+          <span className="focus-metric-label">Dauer Fokus</span>
+          <strong>{data.focusEstimatedMinutes > 0 ? `${data.focusEstimatedMinutes}m` : '-'}</strong>
+        </article>
+        <article className="focus-metric-card">
+          <span className="focus-metric-label">Ohne Schaetzung</span>
+          <strong>{data.withoutEstimateCount}</strong>
+        </article>
+        <article className="focus-metric-card">
           <span className="focus-metric-label">Done heute</span>
           <strong>{data.doneToday}</strong>
           <span className="focus-metric-subtext">
@@ -420,7 +475,7 @@ export function FocusDashboardCanvas({
         </article>
       </div>
 
-      <div className="focus-canvas-grid">
+      <div className={`focus-canvas-grid ${data.focusMode === 'context' ? 'context-mode' : ''}`}>
         <div className="focus-panel-stack">
           <section className="focus-panel focus-panel-mit">
             <header className="focus-panel-header">
@@ -435,6 +490,7 @@ export function FocusDashboardCanvas({
                   key={item.key}
                   item={item}
                   selected={selectedItem?.key === item.key}
+                  focusMode={data.focusMode}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -459,6 +515,7 @@ export function FocusDashboardCanvas({
                   item={item}
                   selected={selectedItem?.key === item.key}
                   overdue
+                  focusMode={data.focusMode}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -482,6 +539,7 @@ export function FocusDashboardCanvas({
                   key={item.key}
                   item={item}
                   selected={selectedItem?.key === item.key}
+                  focusMode={data.focusMode}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -505,6 +563,7 @@ export function FocusDashboardCanvas({
                   key={item.key}
                   item={item}
                   selected={selectedItem?.key === item.key}
+                  focusMode={data.focusMode}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -518,7 +577,43 @@ export function FocusDashboardCanvas({
         </div>
 
         <div className="focus-panel-stack">
-          <section className="focus-panel">
+          <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
+            <header className="focus-panel-header">
+              <h3>Naechste sinnvolle Schritte</h3>
+              <span>{data.nextActionItems.length}</span>
+            </header>
+            {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
+            <ul className="focus-note-list">
+              {data.nextActionItems.map((item) => (
+                <li key={`next-action-${item.key}`} className="focus-note-row">
+                  <button
+                    className="focus-blocking-row-main"
+                    onClick={() => {
+                      setSelectedKey(item.key)
+                    }}
+                  >
+                    <span className="focus-note-row-title">{item.title}</span>
+                    <span className="focus-context-badge-row">
+                      {item.nextActionHint ? <span className="focus-context-badge-chip">{truncateText(item.nextActionHint, 54)}</span> : null}
+                      {item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
+                    </span>
+                  </button>
+                  <button
+                    className="icon-button compact muted"
+                    onClick={() => {
+                      openItemOrigin(item)
+                    }}
+                    disabled={!item.path}
+                    title="Ursprung oeffnen"
+                  >
+                    <LucideNamedIcon name="ArrowUpRight" size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
             <header className="focus-panel-header">
               <h3>Kontext</h3>
               <span>{contextHits.length}</span>
@@ -555,6 +650,36 @@ export function FocusDashboardCanvas({
             </ul>
           </section>
 
+          {data.focusMode === 'context' ? (
+            <section className="focus-panel focus-panel-context-priority">
+              <header className="focus-panel-header">
+                <h3>Daily Trail</h3>
+                <span>{data.dailyTrailItems.length}</span>
+              </header>
+              {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
+              <ul className="focus-note-list">
+                {data.dailyTrailItems.map((dailyItem) => (
+                  <li key={dailyItem.key} className="focus-note-row">
+                    <div className="focus-note-row-main">
+                      <span className="focus-note-row-title">{cleanNoteTitle(dailyItem.title)}</span>
+                      {dailyItem.isToday ? <span className="focus-trail-today">Heute</span> : null}
+                      <span className="focus-note-row-time">{toGermanTimestamp(dailyItem.updatedAt)}</span>
+                    </div>
+                    <button
+                      className="icon-button compact muted"
+                      onClick={() => {
+                        onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
+                      }}
+                      title="Daily oeffnen"
+                    >
+                      <LucideNamedIcon name="ArrowUpRight" size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           <section className="focus-panel focus-panel-blocking">
             <header className="focus-panel-header">
               <h3>Blockiert / Warten auf</h3>
@@ -575,7 +700,9 @@ export function FocusDashboardCanvas({
                   >
                     <span className="focus-note-row-title">{item.title}</span>
                     <span className="focus-context-badge-row">
-                      {item.waitingFor ? <span className="focus-context-badge-chip">Waiting</span> : null}
+                      {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
+                      {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
+                      {item.unknownBlockerCount > 0 ? <span className="focus-context-badge-chip">{item.unknownBlockerCount} unbekannt</span> : null}
                       {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
                       {item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
                     </span>
@@ -595,33 +722,35 @@ export function FocusDashboardCanvas({
             </ul>
           </section>
 
-          <section className="focus-panel">
-            <header className="focus-panel-header">
-              <h3>Daily Trail</h3>
-              <span>{data.dailyTrailItems.length}</span>
-            </header>
-            {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
-            <ul className="focus-note-list">
-              {data.dailyTrailItems.map((dailyItem) => (
-                <li key={dailyItem.key} className="focus-note-row">
-                  <div className="focus-note-row-main">
-                    <span className="focus-note-row-title">{cleanNoteTitle(dailyItem.title)}</span>
-                    {dailyItem.isToday ? <span className="focus-trail-today">Heute</span> : null}
-                    <span className="focus-note-row-time">{toGermanTimestamp(dailyItem.updatedAt)}</span>
-                  </div>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => {
-                      onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
-                    }}
-                    title="Daily oeffnen"
-                  >
-                    <LucideNamedIcon name="ArrowUpRight" size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {data.focusMode !== 'context' ? (
+            <section className="focus-panel">
+              <header className="focus-panel-header">
+                <h3>Daily Trail</h3>
+                <span>{data.dailyTrailItems.length}</span>
+              </header>
+              {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
+              <ul className="focus-note-list">
+                {data.dailyTrailItems.map((dailyItem) => (
+                  <li key={dailyItem.key} className="focus-note-row">
+                    <div className="focus-note-row-main">
+                      <span className="focus-note-row-title">{cleanNoteTitle(dailyItem.title)}</span>
+                      {dailyItem.isToday ? <span className="focus-trail-today">Heute</span> : null}
+                      <span className="focus-note-row-time">{toGermanTimestamp(dailyItem.updatedAt)}</span>
+                    </div>
+                    <button
+                      className="icon-button compact muted"
+                      onClick={() => {
+                        onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
+                      }}
+                      title="Daily oeffnen"
+                    >
+                      <LucideNamedIcon name="ArrowUpRight" size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="focus-panel">
             <header className="focus-panel-header">

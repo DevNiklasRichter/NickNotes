@@ -5,6 +5,8 @@ __pycache__/
 node_modules/
 dist/
 /desktop/
+.tmp/phase_e_tests/
+src/backend/tests/_runtime/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
