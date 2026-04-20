@@ -94,6 +94,7 @@ type CodeMirrorMarkdownEditorProps = {
   embeddedInScroll?: boolean
   onChange: (nextValue: string) => void
   onInsertImageAsset?: (file: File) => Promise<string | null>
+  onOpenWikiLink?: (target: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
 
@@ -299,6 +300,7 @@ export function CodeMirrorMarkdownEditor({
   embeddedInScroll = false,
   onChange,
   onInsertImageAsset,
+  onOpenWikiLink,
   editorApiRef,
 }: CodeMirrorMarkdownEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -751,6 +753,7 @@ export function CodeMirrorMarkdownEditor({
             liveMarkdownPreview({
               notePath: initialNotePathRef.current,
               backendUrl: initialBackendUrlRef.current,
+              onOpenWikiLink,
             })
           ),
           keymap.of([
@@ -895,10 +898,11 @@ export function CodeMirrorMarkdownEditor({
         liveMarkdownPreview({
           notePath,
           backendUrl,
+          onOpenWikiLink,
         })
       ),
     })
-  }, [notePath, backendUrl])
+  }, [notePath, backendUrl, onOpenWikiLink])
 
   useEffect(() => {
     const instance = editorRef.current

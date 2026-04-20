@@ -2412,11 +2412,17 @@
   text-decoration-color: color-mix(in srgb, var(--accent) 78%, transparent);
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
+  cursor: pointer;
 }
 
 .code-editor-host .cm-md-link-url {
   color: color-mix(in srgb, var(--accent) 68%, var(--muted));
   font-size: 0.94em;
+  cursor: pointer;
+}
+
+.code-editor-host .cm-md-wikilink {
+  cursor: pointer;
 }
 
 .code-editor-host .cm-md-inline-tag-chip {

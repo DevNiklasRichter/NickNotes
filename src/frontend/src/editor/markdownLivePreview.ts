@@ -27,6 +27,7 @@ type DecorationEntry = {
 type LivePreviewOptions = {
   notePath?: string
   backendUrl?: string
+  onOpenWikiLink?: (target: string) => void
 }
 
 const HEADING_OWNER_NAMES = new Set(['ATXHeading1', 'ATXHeading2', 'ATXHeading3', 'ATXHeading4', 'ATXHeading5', 'ATXHeading6'])
@@ -42,6 +43,7 @@ const inlineCodeDeco = Decoration.mark({ class: 'cm-md-inline-code' })
 const codeBlockDeco = Decoration.mark({ class: 'cm-md-code-block' })
 const linkTextDeco = Decoration.mark({ class: 'cm-md-link-text' })
 const linkUrlDeco = Decoration.mark({ class: 'cm-md-link-url' })
+const wikiLinkDeco = Decoration.mark({ class: 'cm-md-wikilink' })
 const syntaxVisibleDeco = Decoration.mark({ class: 'cm-md-syntax-token cm-md-syntax-visible' })
 const syntaxMutedDeco = Decoration.mark({ class: 'cm-md-syntax-token cm-md-syntax-muted' })
 const listMarkVisibleDeco = Decoration.mark({ class: 'cm-md-list-mark cm-md-syntax-token cm-md-syntax-visible' })
@@ -53,6 +55,7 @@ const inlineTagSourceDeco = Decoration.mark({ class: 'cm-md-inline-tag-source' }
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
 const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)((?:\s*\{[^}\n]*\})*)/g
+const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const EMPTY_TAG_LOOKUP = buildTagLookup([])
 
 export const markdownTagLookupFacet = Facet.define<TagLookup, TagLookup>({
@@ -244,6 +247,11 @@ type ParsedInlineImage = {
   height: number | null
 }
 
+type ParsedWikiLink = {
+  from: number
+  to: number
+}
+
 function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInlineTag[] {
   const matches: ParsedInlineTag[] = []
   INLINE_TAG_PATTERN.lastIndex = 0
@@ -343,6 +351,25 @@ function parseInlineImagesInLine(lineText: string, lineFrom: number): ParsedInli
       })
     }
     result = INLINE_IMAGE_PATTERN.exec(lineText)
+  }
+
+  return matches
+}
+
+function parseWikiLinksInLine(lineText: string, lineFrom: number): ParsedWikiLink[] {
+  const matches: ParsedWikiLink[] = []
+  WIKILINK_PATTERN.lastIndex = 0
+  let result = WIKILINK_PATTERN.exec(lineText)
+
+  while (result) {
+    const full = result[0] ?? ''
+    if (full) {
+      matches.push({
+        from: lineFrom + result.index,
+        to: lineFrom + result.index + full.length,
+      })
+    }
+    result = WIKILINK_PATTERN.exec(lineText)
   }
 
   return matches
@@ -587,6 +614,30 @@ function decorateInlineImages(
   }
 }
 
+function decorateWikiLinks(entries: DecorationEntry[], view: EditorView): void {
+  const processedLines = new Set<number>()
+  for (const range of view.visibleRanges) {
+    const end = Math.max(range.from, range.to - 1)
+    let line = view.state.doc.lineAt(range.from)
+    const endLine = view.state.doc.lineAt(end).number
+
+    while (true) {
+      if (!processedLines.has(line.number)) {
+        const wikiLinks = parseWikiLinksInLine(line.text, line.from)
+        for (const link of wikiLinks) {
+          addRange(entries, link.from, link.to, wikiLinkDeco)
+        }
+        processedLines.add(line.number)
+      }
+
+      if (line.number >= endLine) {
+        break
+      }
+      line = view.state.doc.line(line.number + 1)
+    }
+  }
+}
+
 function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
   const entries: DecorationEntry[] = []
   const doc = view.state.doc
@@ -703,6 +754,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
   decorateTaskLines(entries, view, lineClassSeen, selections)
   decorateInlineTags(entries, view, selections, tagLookup)
   decorateInlineImages(entries, view, selections, options)
+  decorateWikiLinks(entries, view)
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
   return Decoration.set(ranges, true)
@@ -723,6 +775,46 @@ function findLinkUrlAtPosition(state: EditorState, position: number): string | n
     }
     cursor = cursor.parent
   }
+  return null
+}
+
+function normalizeWikiLinkTarget(raw: string): string {
+  let clean = raw.trim()
+  if (!clean) {
+    return ''
+  }
+  if (clean.includes('|')) {
+    clean = clean.split('|', 1)[0]?.trim() ?? ''
+  }
+  if (clean.includes('#')) {
+    clean = clean.split('#', 1)[0]?.trim() ?? ''
+  }
+  clean = clean.replace(/\\/g, '/').replace(/\.md$/i, '').trim()
+  return clean
+}
+
+function findWikiLinkTargetAtPosition(state: EditorState, position: number): string | null {
+  if (position < 0 || position > state.doc.length) {
+    return null
+  }
+
+  const line = state.doc.lineAt(position)
+  const text = line.text
+  WIKILINK_PATTERN.lastIndex = 0
+
+  let match = WIKILINK_PATTERN.exec(text)
+  while (match) {
+    const full = match[0] ?? ''
+    const innerTarget = match[1] ?? ''
+    const from = line.from + match.index
+    const to = from + full.length
+    if (position >= from && position < to) {
+      const normalized = normalizeWikiLinkTarget(innerTarget)
+      return normalized || null
+    }
+    match = WIKILINK_PATTERN.exec(text)
+  }
+
   return null
 }
 
@@ -991,7 +1083,7 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
           }
         }
 
-        if (event.button !== 0 || (!event.metaKey && !event.ctrlKey)) {
+        if (event.button !== 0) {
           return false
         }
 
@@ -1003,6 +1095,18 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
         }
 
         if (position < 0) {
+          return false
+        }
+
+        const wikiTarget = findWikiLinkTargetAtPosition(view.state, position)
+        if (wikiTarget && options.onOpenWikiLink) {
+          event.preventDefault()
+          event.stopPropagation()
+          options.onOpenWikiLink(wikiTarget)
+          return true
+        }
+
+        if (!event.metaKey && !event.ctrlKey) {
           return false
         }
 

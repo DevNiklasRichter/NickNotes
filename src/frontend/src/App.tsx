@@ -1938,6 +1938,49 @@ function App() {
     })
   }
 
+  const openWikiLinkInEditor = useCallback(
+    (rawTarget: string, paneId?: PaneId, currentPath?: string) => {
+      const normalizedTarget = normalizeRelatedCandidate(rawTarget)
+      if (!normalizedTarget) {
+        return
+      }
+
+      const lookup = normalizeWikiLookup(normalizedTarget)
+      const relativeMatches = linkIndexRows.filter((row) => {
+        const relativePath = getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
+        return normalizeWikiLookup(relativePath) === lookup
+      })
+
+      const titleMatches =
+        relativeMatches.length > 0
+          ? relativeMatches
+          : linkIndexRows.filter((row) => normalizeWikiLookup(toNoteDisplayName(row.path)) === lookup)
+
+      if (titleMatches.length === 0) {
+        setMessage(`Wiki-Link nicht gefunden: ${normalizedTarget}`)
+        return
+      }
+      if (titleMatches.length > 1) {
+        setMessage(`Wiki-Link ist nicht eindeutig: ${normalizedTarget}`)
+        return
+      }
+
+      const match = titleMatches[0]
+      if (!match) {
+        return
+      }
+
+      const replacePath =
+        currentPath && normalizeFilePathKey(currentPath) !== normalizeFilePathKey(match.path) ? currentPath : ''
+      void openNoteInTab(match.path, match.title || toNoteDisplayName(match.path), {
+        initialNoteType: normalizeNoteTypeValue(match.note_type),
+        targetPane: paneId ?? workspaceStateRef.current.lastFocusedPane,
+        replacePath,
+      })
+    },
+    [linkIndexRows, openNoteInTab, vaultPath]
+  )
+
   const revealActiveNoteInExplorer = () => {
     if (!activeTab || activeTab.kind !== 'note') {
       return
@@ -3687,6 +3730,9 @@ function App() {
               updateNoteContentByPath(paneTab.path, nextContent)
             }}
             onInsertImageAsset={(file) => uploadImageForNote(paneTab.path, file)}
+            onOpenWikiLink={(target) => {
+              openWikiLinkInEditor(target, paneId, paneTab.path)
+            }}
             editorApiRef={paneId === 'left' ? leftEditorRef : rightEditorRef}
           />
         </div>
