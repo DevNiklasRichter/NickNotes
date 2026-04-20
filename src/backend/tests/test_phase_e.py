@@ -122,6 +122,61 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(done_tasks, 2)
         self.assertEqual(done_todos, 2)
 
+    @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
+    def test_compute_focus_stats_includes_phase_f_hygiene_counts(self) -> None:
+        tasks = [
+            {
+                "id": "task_a",
+                "status": "open",
+                "due_date": "2026-04-18",
+                "estimate_minutes": 30,
+                "waiting_for": "",
+                "follow_up_date": "",
+                "blocked_by_ids": [],
+                "updated_at": "2026-04-18T10:00:00",
+            },
+            {
+                "id": "task_b",
+                "status": "open",
+                "due_date": "",
+                "estimate_minutes": None,
+                "waiting_for": "Vendor feedback",
+                "follow_up_date": "",
+                "blocked_by_ids": [],
+                "updated_at": "2026-04-19T10:00:00",
+            },
+            {
+                "id": "task_c",
+                "status": "open",
+                "due_date": "",
+                "estimate_minutes": "",
+                "waiting_for": "",
+                "follow_up_date": "",
+                "blocked_by_ids": ["task_a", "missing_task"],
+                "updated_at": "2026-04-19T12:00:00",
+            },
+            {
+                "id": "task_done",
+                "status": "done",
+                "due_date": "2026-04-19",
+                "estimate_minutes": 15,
+                "waiting_for": "",
+                "follow_up_date": "",
+                "blocked_by_ids": [],
+                "completed_at": "2026-04-19T18:00:00",
+                "updated_at": "2026-04-19T18:00:00",
+            },
+        ]
+        stats = backend_api._compute_focus_stats(tasks=tasks, todos=[], day_iso="2026-04-19")
+        self.assertEqual(int(stats.get("overdueCount", 0)), 1)
+        self.assertEqual(int(stats.get("blockedCount", 0)), 2)
+        self.assertEqual(int(stats.get("waitingCount", 0)), 1)
+        self.assertEqual(int(stats.get("doneTodayTasks", 0)), 1)
+        self.assertEqual(int(stats.get("openTasksWithoutEstimateCount", 0)), 2)
+        self.assertEqual(int(stats.get("waitingWithoutFollowUpCount", 0)), 1)
+        self.assertEqual(int(stats.get("unknownBlockerTaskCount", 0)), 1)
+        self.assertEqual(int(stats.get("unknownBlockerReferenceCount", 0)), 1)
+
     @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
     def test_focus_dashboard_endpoint_returns_aggregate_structure(self) -> None:
         backend_api.state.close()
@@ -171,6 +226,10 @@ class PhaseEBackendTests(unittest.TestCase):
         stats = payload.get("stats") or {}
         self.assertGreaterEqual(int(stats.get("doneTodayTasks", 0)), 1)
         self.assertGreaterEqual(int(stats.get("doneToday", 0)), int(stats.get("doneTodayTasks", 0)))
+        self.assertIn("openTasksWithoutEstimateCount", stats)
+        self.assertIn("waitingWithoutFollowUpCount", stats)
+        self.assertIn("unknownBlockerTaskCount", stats)
+        self.assertIn("unknownBlockerReferenceCount", stats)
 
 
 if __name__ == "__main__":

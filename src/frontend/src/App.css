@@ -1362,6 +1362,41 @@
   color: var(--muted);
 }
 
+.focus-capacity-strip {
+  margin-top: 0.34rem;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
+  padding: 0.34rem 0.46rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.focus-capacity-strip strong {
+  font-size: 0.76rem;
+}
+
+.focus-capacity-strip span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.focus-capacity-strip.focus-capacity-light {
+  border-color: color-mix(in srgb, #22c55e 34%, var(--line));
+}
+
+.focus-capacity-strip.focus-capacity-balanced {
+  border-color: color-mix(in srgb, #3b82f6 32%, var(--line));
+}
+
+.focus-capacity-strip.focus-capacity-heavy {
+  border-color: color-mix(in srgb, #f59e0b 34%, var(--line));
+}
+
+.focus-capacity-strip.focus-capacity-overloaded {
+  border-color: color-mix(in srgb, #ef4444 40%, var(--line));
+}
+
 .focus-capture-inline {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1512,6 +1547,13 @@
   background: color-mix(in srgb, #3b82f6 8%, var(--surface-contrast));
 }
 
+.focus-inline-suggestions {
+  border-top: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  padding-top: 0.3rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
 .focus-primary-card.overdue {
   border-color: color-mix(in srgb, #ef4444 24%, var(--line));
 }
@@ -1626,6 +1668,11 @@
 .focus-panel-blocking {
   border-color: color-mix(in srgb, #f59e0b 28%, var(--line));
   background: color-mix(in srgb, #f59e0b 6%, var(--surface-contrast));
+}
+
+.focus-panel-hints {
+  border-color: color-mix(in srgb, #6366f1 28%, var(--line));
+  background: color-mix(in srgb, #6366f1 5%, var(--surface-contrast));
 }
 
 .focus-panel-context-priority {

@@ -68,6 +68,26 @@ export type FocusDailyTrailItem = {
   isToday: boolean
 }
 
+export type FocusCapacityStatus = 'light' | 'balanced' | 'heavy' | 'overloaded'
+
+export type FocusNextActionItem = {
+  item: FocusPrimaryItem
+  reasons: string[]
+}
+
+export type FocusMitSuggestion = {
+  item: FocusPrimaryItem
+  reasons: string[]
+}
+
+export type FocusPlanningHints = {
+  focusWithoutEstimateCount: number
+  mitWithoutEstimateCount: number
+  waitingWithoutFollowUpCount: number
+  unknownBlockerTaskCount: number
+  unknownBlockerReferenceCount: number
+}
+
 export type FocusDashboardData = {
   selectedScope: FocusDashboardFilters['scope']
   focusMode: FocusDashboardMode
@@ -82,18 +102,25 @@ export type FocusDashboardData = {
   blockedTaskCount: number
   waitingTaskCount: number
   followUpTodayCount: number
+  estimatedLoadTodayMinutes: number
+  estimatedMitMinutes: number
+  estimatedFocusMinutes: number
+  capacityStatus: FocusCapacityStatus
+  capacityMessage: string
   todayEstimatedMinutes: number
   mitEstimatedMinutes: number
   focusEstimatedMinutes: number
   withoutEstimateCount: number
+  planningHints: FocusPlanningHints
   todayDailyNote: SearchRow | null
   mitIds: string[]
   mitItems: FocusPrimaryItem[]
+  suggestedMitItems: FocusMitSuggestion[]
   overdueItems: FocusPrimaryItem[]
   blockedItems: FocusPrimaryItem[]
   waitingItems: FocusPrimaryItem[]
   followUpTodayItems: FocusPrimaryItem[]
-  nextActionItems: FocusPrimaryItem[]
+  nextActionItems: FocusNextActionItem[]
   focusItems: FocusPrimaryItem[]
   candidateItems: FocusPrimaryItem[]
   primaryItems: FocusPrimaryItem[]
@@ -112,6 +139,341 @@ const EMPTY_CONTEXT_BADGES = {
   hasOriginNote: false,
   hasRelatedContext: false,
   hasTagContext: false,
+}
+
+type FocusScoreConfig = {
+  taskBase: {
+    priority: {
+      high: number
+      medium: number
+      low: number
+    }
+    status: {
+      inProgress: number
+      open: number
+      newTopic: number
+      fallback: number
+    }
+    due: {
+      overdue: number
+      today: number
+      tomorrow: number
+      thisWeek: number
+      later: number
+    }
+    recency: {
+      today: number
+      recent: number
+      week: number
+    }
+    estimate: {
+      quick: number
+      short: number
+      medium: number
+      veryLargePenalty: number
+    }
+    nextActionBonus: number
+    blockedPenalty: number
+    blockedFollowUpPenalty: number
+    waitingPenalty: number
+    waitingFollowUpBonus: number
+  }
+  todoBase: {
+    promoted: number
+    inboxLike: number
+    recency: {
+      today: number
+      recent: number
+      week: number
+    }
+    linkBonus: number
+  }
+  modeAdjustments: Record<
+    FocusDashboardMode,
+    {
+      mitBonus: number
+      blockedPenalty: number
+      unblockedBonus: number
+      waitingPenalty: number
+      waitingBonus: number
+      followUpDueBonus: number
+      nextActionBonus: number
+      inProgressBonus: number
+      quickEstimateBonus: number
+      shortEstimateBonus: number
+      mediumEstimateBonus: number
+      largeEstimatePenalty: number
+      overdueBonus: number
+      todayBonus: number
+      tomorrowBonus: number
+      weekBonus: number
+      taskBlockerBonus: number
+      externalWaitingBonus: number
+      contextPerHit: number
+      contextCap: number
+      originContextBonus: number
+      relatedContextBonus: number
+      tagContextBonus: number
+      noContextPenalty: number
+      neutralPenalty: number
+    }
+  >
+  focusSplit: Record<
+    FocusDashboardMode,
+    {
+      ratio: number
+      min: number
+      max: number
+    }
+  >
+  nextAction: {
+    maxItems: number
+    mitBonus: number
+    focusOriginBonus: number
+    candidateOriginBonus: number
+    overdueOriginBonus: number
+    executionModeBonus: number
+    planningModeBonus: number
+    rescueModeBonus: number
+    contextModeBonus: number
+    blockedPenalty: number
+    waitingWithoutFollowUpPenalty: number
+    followUpDueBonus: number
+    overdueBonus: number
+    todayBonus: number
+    inProgressBonus: number
+    nextActionBonus: number
+    quickEstimateBonus: number
+    shortEstimateBonus: number
+    mediumEstimateBonus: number
+    largeEstimatePenalty: number
+    unblockedBonus: number
+  }
+  mitSuggestion: {
+    maxSuggestions: number
+    highPriorityBonus: number
+    mediumPriorityBonus: number
+    overdueBonus: number
+    todayBonus: number
+    tomorrowBonus: number
+    inProgressBonus: number
+    nextActionBonus: number
+    contextPerHit: number
+    contextCap: number
+    quickEstimateBonus: number
+    shortEstimateBonus: number
+    mediumEstimateBonus: number
+    largeEstimateWithoutActionPenalty: number
+    blockedPenalty: number
+    waitingWithoutFollowUpPenalty: number
+    focusOriginBonus: number
+    candidateOriginBonus: number
+    executionModeBonus: number
+    planningModeBonus: number
+    rescueModeBonus: number
+    contextModeBonus: number
+  }
+  capacity: {
+    lightMaxMinutes: number
+    balancedMaxMinutes: number
+    heavyMaxMinutes: number
+    uncertaintyPerMissingEstimate: number
+    blockedPenalty: number
+    unknownBlockerPenalty: number
+  }
+}
+
+// Centralized scoring configuration for Phase F tuning.
+export const focusScoringConfig: FocusScoreConfig = {
+  taskBase: {
+    priority: { high: 55, medium: 34, low: 18 },
+    status: { inProgress: 24, open: 15, newTopic: 11, fallback: 7 },
+    due: { overdue: 35, today: 28, tomorrow: 20, thisWeek: 12, later: 6 },
+    recency: { today: 8, recent: 5, week: 2 },
+    estimate: { quick: 6, short: 4, medium: 2, veryLargePenalty: 2 },
+    nextActionBonus: 4,
+    blockedPenalty: 12,
+    blockedFollowUpPenalty: 2,
+    waitingPenalty: 4,
+    waitingFollowUpBonus: 2,
+  },
+  todoBase: {
+    promoted: 26,
+    inboxLike: 34,
+    recency: { today: 10, recent: 6, week: 3 },
+    linkBonus: 4,
+  },
+  modeAdjustments: {
+    execution: {
+      mitBonus: 16,
+      blockedPenalty: 12,
+      unblockedBonus: 10,
+      waitingPenalty: 8,
+      waitingBonus: 0,
+      followUpDueBonus: 0,
+      nextActionBonus: 8,
+      inProgressBonus: 7,
+      quickEstimateBonus: 7,
+      shortEstimateBonus: 5,
+      mediumEstimateBonus: 2,
+      largeEstimatePenalty: 2,
+      overdueBonus: 9,
+      todayBonus: 7,
+      tomorrowBonus: 0,
+      weekBonus: 0,
+      taskBlockerBonus: 0,
+      externalWaitingBonus: 0,
+      contextPerHit: 0,
+      contextCap: 0,
+      originContextBonus: 0,
+      relatedContextBonus: 0,
+      tagContextBonus: 0,
+      noContextPenalty: 0,
+      neutralPenalty: 0,
+    },
+    planning: {
+      mitBonus: 10,
+      blockedPenalty: 3,
+      unblockedBonus: 0,
+      waitingPenalty: 0,
+      waitingBonus: 2,
+      followUpDueBonus: 6,
+      nextActionBonus: 0,
+      inProgressBonus: 0,
+      quickEstimateBonus: 0,
+      shortEstimateBonus: 0,
+      mediumEstimateBonus: 4,
+      largeEstimatePenalty: 0,
+      overdueBonus: 7,
+      todayBonus: 9,
+      tomorrowBonus: 7,
+      weekBonus: 5,
+      taskBlockerBonus: 0,
+      externalWaitingBonus: 0,
+      contextPerHit: 0,
+      contextCap: 0,
+      originContextBonus: 0,
+      relatedContextBonus: 0,
+      tagContextBonus: 0,
+      noContextPenalty: 0,
+      neutralPenalty: 0,
+    },
+    rescue: {
+      mitBonus: 0,
+      blockedPenalty: 13,
+      unblockedBonus: 0,
+      waitingPenalty: 0,
+      waitingBonus: 0,
+      followUpDueBonus: 10,
+      nextActionBonus: 0,
+      inProgressBonus: 0,
+      quickEstimateBonus: 0,
+      shortEstimateBonus: 0,
+      mediumEstimateBonus: 0,
+      largeEstimatePenalty: 0,
+      overdueBonus: 14,
+      todayBonus: 0,
+      tomorrowBonus: 0,
+      weekBonus: 0,
+      taskBlockerBonus: 7,
+      externalWaitingBonus: 8,
+      contextPerHit: 0,
+      contextCap: 0,
+      originContextBonus: 0,
+      relatedContextBonus: 0,
+      tagContextBonus: 0,
+      noContextPenalty: 0,
+      neutralPenalty: 5,
+    },
+    context: {
+      mitBonus: 0,
+      blockedPenalty: 0,
+      unblockedBonus: 0,
+      waitingPenalty: 0,
+      waitingBonus: 0,
+      followUpDueBonus: 0,
+      nextActionBonus: 2,
+      inProgressBonus: 0,
+      quickEstimateBonus: 0,
+      shortEstimateBonus: 0,
+      mediumEstimateBonus: 0,
+      largeEstimatePenalty: 0,
+      overdueBonus: 0,
+      todayBonus: 0,
+      tomorrowBonus: 0,
+      weekBonus: 0,
+      taskBlockerBonus: 0,
+      externalWaitingBonus: 0,
+      contextPerHit: 3,
+      contextCap: 20,
+      originContextBonus: 6,
+      relatedContextBonus: 7,
+      tagContextBonus: 4,
+      noContextPenalty: 4,
+      neutralPenalty: 0,
+    },
+  },
+  focusSplit: {
+    execution: { ratio: 0.45, min: 5, max: 8 },
+    planning: { ratio: 0.58, min: 6, max: 10 },
+    rescue: { ratio: 0.5, min: 4, max: 7 },
+    context: { ratio: 0.4, min: 3, max: 6 },
+  },
+  nextAction: {
+    maxItems: 3,
+    mitBonus: 14,
+    focusOriginBonus: 8,
+    candidateOriginBonus: 2,
+    overdueOriginBonus: 5,
+    executionModeBonus: 6,
+    planningModeBonus: 3,
+    rescueModeBonus: 2,
+    contextModeBonus: 2,
+    blockedPenalty: 100,
+    waitingWithoutFollowUpPenalty: 20,
+    followUpDueBonus: 6,
+    overdueBonus: 11,
+    todayBonus: 9,
+    inProgressBonus: 6,
+    nextActionBonus: 10,
+    quickEstimateBonus: 7,
+    shortEstimateBonus: 5,
+    mediumEstimateBonus: 2,
+    largeEstimatePenalty: 3,
+    unblockedBonus: 4,
+  },
+  mitSuggestion: {
+    maxSuggestions: 3,
+    highPriorityBonus: 8,
+    mediumPriorityBonus: 4,
+    overdueBonus: 12,
+    todayBonus: 10,
+    tomorrowBonus: 5,
+    inProgressBonus: 6,
+    nextActionBonus: 7,
+    contextPerHit: 2,
+    contextCap: 10,
+    quickEstimateBonus: 6,
+    shortEstimateBonus: 4,
+    mediumEstimateBonus: 2,
+    largeEstimateWithoutActionPenalty: 6,
+    blockedPenalty: 24,
+    waitingWithoutFollowUpPenalty: 14,
+    focusOriginBonus: 7,
+    candidateOriginBonus: 2,
+    executionModeBonus: 5,
+    planningModeBonus: 4,
+    rescueModeBonus: 1,
+    contextModeBonus: 3,
+  },
+  capacity: {
+    lightMaxMinutes: 150,
+    balancedMaxMinutes: 280,
+    heavyMaxMinutes: 420,
+    uncertaintyPerMissingEstimate: 18,
+    blockedPenalty: 8,
+    unknownBlockerPenalty: 6,
+  },
 }
 
 function toDateFromIso(isoDate: string): Date | null {
@@ -417,67 +779,78 @@ function toTaskExecutionSignals(task: TaskRow, taskStatusById: Map<string, strin
 }
 
 function taskFocusScore(task: TaskRow, todayIso: string, signals: TaskExecutionSignals): number {
+  const config = focusScoringConfig.taskBase
   const priority = normalizeTaskPriorityValue(task.priority)
   const status = normalizeTaskStatusValue(task.status)
   const dueBucket = toTaskDueBucket(task.due_date, todayIso)
   const dueIso = toTaskDueIso(task.due_date)
   let score = 0
-  score += priority === 'high' ? 55 : priority === 'medium' ? 34 : 18
-  score += status === 'in_progress' ? 24 : status === 'open' ? 15 : status === 'new_topic' ? 11 : 7
-  score += dueBucket === 'overdue' ? 35 : dueIso === todayIso ? 28 : dueBucket === 'tomorrow' ? 20 : dueBucket === 'this_week' ? 12 : 6
+  score += priority === 'high' ? config.priority.high : priority === 'medium' ? config.priority.medium : config.priority.low
+  score += status === 'in_progress' ? config.status.inProgress : status === 'open' ? config.status.open : status === 'new_topic' ? config.status.newTopic : config.status.fallback
+  score +=
+    dueBucket === 'overdue'
+      ? config.due.overdue
+      : dueIso === todayIso
+        ? config.due.today
+        : dueBucket === 'tomorrow'
+          ? config.due.tomorrow
+          : dueBucket === 'this_week'
+            ? config.due.thisWeek
+            : config.due.later
   const updatedDay = toUpdatedDay(task.updated_at)
   const age = diffDays(todayIso, updatedDay)
   if (age <= 0) {
-    score += 8
+    score += config.recency.today
   } else if (age <= 2) {
-    score += 5
+    score += config.recency.recent
   } else if (age <= 6) {
-    score += 2
+    score += config.recency.week
   }
 
   if (signals.estimateMinutes !== null) {
     if (signals.estimateMinutes <= 15) {
-      score += 6
+      score += config.estimate.quick
     } else if (signals.estimateMinutes <= 30) {
-      score += 4
+      score += config.estimate.short
     } else if (signals.estimateMinutes <= 60) {
-      score += 2
+      score += config.estimate.medium
     } else if (signals.estimateMinutes >= 240) {
-      score -= 2
+      score -= config.estimate.veryLargePenalty
     }
   }
 
   if (signals.nextActionHint) {
-    score += 4
+    score += config.nextActionBonus
   }
 
   if (signals.isBlocked) {
     // Blocked work should still stay visible, but be deprioritized for execution.
-    score -= signals.followUpToday ? 2 : 12
+    score -= signals.followUpToday ? config.blockedFollowUpPenalty : config.blockedPenalty
   }
   if (signals.waitingFor && !signals.followUpToday) {
-    score -= 4
+    score -= config.waitingPenalty
   }
   if (signals.waitingFor && signals.followUpToday) {
-    score += 2
+    score += config.waitingFollowUpBonus
   }
 
   return score
 }
 
 function todoFocusScore(todo: TodoRow, todayIso: string): number {
-  let score = todo.promoted ? 26 : 34
+  const config = focusScoringConfig.todoBase
+  let score = todo.promoted ? config.promoted : config.inboxLike
   const updatedDay = toUpdatedDay(todo.updated_at)
   const age = diffDays(todayIso, updatedDay)
   if (age <= 0) {
-    score += 10
+    score += config.recency.today
   } else if (age <= 2) {
-    score += 6
+    score += config.recency.recent
   } else if (age <= 6) {
-    score += 3
+    score += config.recency.week
   }
   if (todo.links.length > 0) {
-    score += 4
+    score += config.linkBonus
   }
   return score
 }
@@ -792,119 +1165,143 @@ function hasFollowUpDueNow(item: FocusPrimaryItem, todayIso: string): boolean {
   return item.followUpDate <= todayIso
 }
 
-function toModeAdjustedScore(item: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string): number {
-  let score = item.score
+type FocusDueSignals = {
+  dueIso: string | null
+  dueDelta: number
+  isOverdue: boolean
+  dueToday: boolean
+  dueTomorrow: boolean
+  dueThisWeek: boolean
+}
+
+type FocusCandidateOrigin = 'mit' | 'focus' | 'candidate' | 'overdue'
+
+function toDueSignals(item: FocusPrimaryItem, todayIso: string): FocusDueSignals {
   const dueIso = item.dueDate
   const dueDelta = dueIso && isValidIsoDate(dueIso) ? diffDays(dueIso, todayIso) : 999
-  const isOverdue = typeof dueIso === 'string' && dueIso < todayIso
-  const dueToday = typeof dueIso === 'string' && dueIso === todayIso
-  const dueTomorrow = dueDelta === 1
-  const dueThisWeek = dueDelta >= 0 && dueDelta <= 7
+  return {
+    dueIso,
+    dueDelta,
+    isOverdue: typeof dueIso === 'string' && dueIso < todayIso,
+    dueToday: typeof dueIso === 'string' && dueIso === todayIso,
+    dueTomorrow: dueDelta === 1,
+    dueThisWeek: dueDelta >= 0 && dueDelta <= 7,
+  }
+}
+
+function isWaitingWithoutFollowUpDueNow(item: FocusPrimaryItem, todayIso: string): boolean {
+  return Boolean(item.hasExternalWaiting) && !hasFollowUpDueNow(item, todayIso)
+}
+
+function toModeAdjustedScore(item: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string): number {
+  const config = focusScoringConfig.modeAdjustments[mode]
+  let score = item.score
+  const dueSignals = toDueSignals(item, todayIso)
   const followUpDueNow = hasFollowUpDueNow(item, todayIso)
   const hasContext = item.contextBadgeCount > 0
 
   if (mode === 'execution') {
     if (item.isMit) {
-      score += 16
+      score += config.mitBonus
     }
     if (item.isBlocked) {
-      score -= 12
+      score -= config.blockedPenalty
     } else {
-      score += 10
+      score += config.unblockedBonus
     }
     if (item.waitingFor && !followUpDueNow) {
-      score -= 8
+      score -= config.waitingPenalty
     }
     if (item.nextActionHint) {
-      score += 8
+      score += config.nextActionBonus
     }
     if (item.status && normalizeTaskStatusValue(item.status) === 'in_progress') {
-      score += 7
+      score += config.inProgressBonus
     }
     if (item.estimateMinutes !== null) {
       if (item.estimateMinutes <= 15) {
-        score += 7
+        score += config.quickEstimateBonus
       } else if (item.estimateMinutes <= 30) {
-        score += 5
+        score += config.shortEstimateBonus
       } else if (item.estimateMinutes <= 60) {
-        score += 2
+        score += config.mediumEstimateBonus
       } else if (item.estimateMinutes > 120) {
-        score -= 2
+        score -= config.largeEstimatePenalty
       }
     }
-    if (isOverdue) {
-      score += 9
-    } else if (dueToday) {
-      score += 7
+    if (dueSignals.isOverdue) {
+      score += config.overdueBonus
+    } else if (dueSignals.dueToday) {
+      score += config.todayBonus
     }
     return score
   }
 
   if (mode === 'planning') {
     if (item.isMit) {
-      score += 10
+      score += config.mitBonus
     }
-    if (isOverdue) {
-      score += 7
-    } else if (dueToday) {
-      score += 9
-    } else if (dueTomorrow) {
-      score += 7
-    } else if (dueThisWeek) {
-      score += 5
+    if (dueSignals.isOverdue) {
+      score += config.overdueBonus
+    } else if (dueSignals.dueToday) {
+      score += config.todayBonus
+    } else if (dueSignals.dueTomorrow) {
+      score += config.tomorrowBonus
+    } else if (dueSignals.dueThisWeek) {
+      score += config.weekBonus
     }
     if (item.estimateMinutes !== null) {
-      score += 4
+      score += config.mediumEstimateBonus
     }
     if (followUpDueNow) {
-      score += 6
+      score += config.followUpDueBonus
     } else if (item.waitingFor) {
-      score += 2
+      score += config.waitingBonus
     }
     if (item.isBlocked) {
-      score -= 3
+      score -= config.blockedPenalty
     }
     return score
   }
 
   if (mode === 'rescue') {
-    if (isOverdue) {
-      score += 14
+    if (dueSignals.isOverdue) {
+      score += config.overdueBonus
     }
     if (item.isBlocked) {
-      score += 13
+      score += config.blockedPenalty
     }
     if (item.hasTaskBlocker) {
-      score += 7
+      score += config.taskBlockerBonus
     }
     if (item.hasExternalWaiting) {
-      score += 8
+      score += config.externalWaitingBonus
     }
     if (followUpDueNow) {
-      score += 10
+      score += config.followUpDueBonus
     }
-    if (!item.isBlocked && !isOverdue && !followUpDueNow) {
-      score -= 5
+    if (!item.isBlocked && !dueSignals.isOverdue && !followUpDueNow) {
+      score -= config.neutralPenalty
     }
     return score
   }
 
   // Context mode emphasizes context-rich items instead of pure urgency.
-  score += Math.min(20, item.contextBadgeCount * 3)
+  score += Math.min(config.contextCap, item.contextBadgeCount * config.contextPerHit)
   if (item.hasOriginNote) {
-    score += 6
+    score += config.originContextBonus
   }
   if (item.hasRelatedContext) {
-    score += 7
+    score += config.relatedContextBonus
   }
   if (item.hasTagContext) {
-    score += 4
+    score += config.tagContextBonus
   }
   if (!hasContext) {
-    score -= 4
+    score -= config.noContextPenalty
   }
   if (item.nextActionHint) {
-    score += 2
+    score += config.nextActionBonus
   }
   return score
 }
@@ -919,17 +1316,341 @@ function compareByMode(left: FocusPrimaryItem, right: FocusPrimaryItem, mode: Fo
 }
 
 function toFocusSplitCount(maxItems: number, mode: FocusDashboardMode): number {
+  const config = focusScoringConfig.focusSplit[mode]
+  const heuristic = Math.round(maxItems * config.ratio)
+  return Math.max(config.min, Math.min(config.max, heuristic))
+}
+
+function toModeSpecificBonus(mode: FocusDashboardMode, config: { executionModeBonus: number; planningModeBonus: number; rescueModeBonus: number; contextModeBonus: number }): number {
+  if (mode === 'execution') {
+    return config.executionModeBonus
+  }
   if (mode === 'planning') {
-    return Math.max(6, Math.min(10, Math.round(maxItems * 0.58)))
+    return config.planningModeBonus
   }
   if (mode === 'rescue') {
-    return Math.max(4, Math.min(7, Math.round(maxItems * 0.5)))
+    return config.rescueModeBonus
   }
-  if (mode === 'context') {
-    return Math.max(3, Math.min(6, Math.round(maxItems * 0.4)))
+  return config.contextModeBonus
+}
+
+function toEstimateExecutionScore(minutes: number | null, config: { quickEstimateBonus: number; shortEstimateBonus: number; mediumEstimateBonus: number; largeEstimatePenalty: number }): number {
+  if (minutes === null) {
+    return 0
   }
-  const heuristic = Math.round(maxItems * 0.45)
-  return Math.max(5, Math.min(8, heuristic))
+  if (minutes <= 30) {
+    return config.quickEstimateBonus
+  }
+  if (minutes <= 60) {
+    return config.shortEstimateBonus
+  }
+  if (minutes <= 90) {
+    return config.mediumEstimateBonus
+  }
+  if (minutes > 120) {
+    return -config.largeEstimatePenalty
+  }
+  return 0
+}
+
+function toNextActionScore(item: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string, origin: FocusCandidateOrigin): number {
+  const config = focusScoringConfig.nextAction
+  const dueSignals = toDueSignals(item, todayIso)
+  const followUpDueNow = hasFollowUpDueNow(item, todayIso)
+  let score = toModeAdjustedScore(item, mode, todayIso)
+
+  score += toModeSpecificBonus(mode, config)
+  if (origin === 'focus') {
+    score += config.focusOriginBonus
+  } else if (origin === 'candidate') {
+    score += config.candidateOriginBonus
+  } else if (origin === 'overdue') {
+    score += config.overdueOriginBonus
+  }
+
+  if (item.isMit) {
+    score += config.mitBonus
+  }
+  if (item.isBlocked) {
+    score -= config.blockedPenalty
+  } else {
+    score += config.unblockedBonus
+  }
+  if (isWaitingWithoutFollowUpDueNow(item, todayIso)) {
+    score -= config.waitingWithoutFollowUpPenalty
+  } else if (item.hasExternalWaiting && followUpDueNow) {
+    score += config.followUpDueBonus
+  }
+  if (dueSignals.isOverdue) {
+    score += config.overdueBonus
+  } else if (dueSignals.dueToday) {
+    score += config.todayBonus
+  }
+  if (item.status && normalizeTaskStatusValue(item.status) === 'in_progress') {
+    score += config.inProgressBonus
+  }
+  if (item.nextActionHint) {
+    score += config.nextActionBonus
+  }
+  score += toEstimateExecutionScore(item.estimateMinutes, config)
+  return score
+}
+
+function toNextActionReasons(item: FocusPrimaryItem, todayIso: string): string[] {
+  const dueSignals = toDueSignals(item, todayIso)
+  const reasons: string[] = []
+  if (item.isMit) {
+    reasons.push('MIT')
+  }
+  if (dueSignals.isOverdue) {
+    reasons.push('ueberfaellig')
+  } else if (dueSignals.dueToday) {
+    reasons.push('heute faellig')
+  } else if (hasFollowUpDueNow(item, todayIso) && item.hasExternalWaiting) {
+    reasons.push('follow-up heute')
+  }
+  if (item.estimateMinutes !== null) {
+    reasons.push(`${item.estimateMinutes}m`)
+  }
+  if (item.status && normalizeTaskStatusValue(item.status) === 'in_progress') {
+    reasons.push('in Arbeit')
+  }
+  if (item.nextActionHint) {
+    reasons.push('klarer Schritt')
+  }
+  if (!item.isBlocked && !isWaitingWithoutFollowUpDueNow(item, todayIso)) {
+    reasons.push('unblockiert')
+  }
+  if (reasons.length === 0) {
+    reasons.push('fokussiert')
+  }
+  return reasons.slice(0, 4)
+}
+
+function buildNextActionItems(args: {
+  mitItems: FocusPrimaryItem[]
+  focusItems: FocusPrimaryItem[]
+  candidateItems: FocusPrimaryItem[]
+  overdueItems: FocusPrimaryItem[]
+  mode: FocusDashboardMode
+  todayIso: string
+}): FocusNextActionItem[] {
+  const { mitItems, focusItems, candidateItems, overdueItems, mode, todayIso } = args
+  const config = focusScoringConfig.nextAction
+  const seen = new Set<string>()
+  const scored: Array<{ item: FocusPrimaryItem; score: number; reasons: string[] }> = []
+  const push = (items: FocusPrimaryItem[], origin: FocusCandidateOrigin) => {
+    for (const item of items) {
+      if (seen.has(item.key) || item.kind !== 'task' || item.isDone) {
+        continue
+      }
+      seen.add(item.key)
+      if (item.isBlocked || isWaitingWithoutFollowUpDueNow(item, todayIso)) {
+        continue
+      }
+      scored.push({
+        item,
+        score: toNextActionScore(item, mode, todayIso, origin),
+        reasons: toNextActionReasons(item, todayIso),
+      })
+    }
+  }
+  push(mitItems, 'mit')
+  push(focusItems, 'focus')
+  push(overdueItems, 'overdue')
+  push(candidateItems, 'candidate')
+
+  return scored
+    .sort((left, right) => {
+      if (left.score !== right.score) {
+        return right.score - left.score
+      }
+      return sortByRecency(left.item, right.item)
+    })
+    .slice(0, config.maxItems)
+    .map((entry) => ({ item: entry.item, reasons: entry.reasons }))
+}
+
+function toMitSuggestionScore(item: FocusPrimaryItem, mode: FocusDashboardMode, todayIso: string, origin: FocusCandidateOrigin): number {
+  const config = focusScoringConfig.mitSuggestion
+  const dueSignals = toDueSignals(item, todayIso)
+  let score = toModeAdjustedScore(item, mode, todayIso)
+  if (origin === 'focus') {
+    score += config.focusOriginBonus
+  } else if (origin === 'candidate') {
+    score += config.candidateOriginBonus
+  }
+  score += toModeSpecificBonus(mode, {
+    executionModeBonus: config.executionModeBonus,
+    planningModeBonus: config.planningModeBonus,
+    rescueModeBonus: config.rescueModeBonus,
+    contextModeBonus: config.contextModeBonus,
+  })
+  if (item.kind === 'task') {
+    const priority = normalizeTaskPriorityValue(item.priority || 'medium')
+    if (priority === 'high') {
+      score += config.highPriorityBonus
+    } else if (priority === 'medium') {
+      score += config.mediumPriorityBonus
+    }
+    if (dueSignals.isOverdue) {
+      score += config.overdueBonus
+    } else if (dueSignals.dueToday) {
+      score += config.todayBonus
+    } else if (dueSignals.dueTomorrow) {
+      score += config.tomorrowBonus
+    }
+    if (item.status && normalizeTaskStatusValue(item.status) === 'in_progress') {
+      score += config.inProgressBonus
+    }
+    if (item.nextActionHint) {
+      score += config.nextActionBonus
+    }
+    score += Math.min(config.contextCap, item.contextBadgeCount * config.contextPerHit)
+    if (item.estimateMinutes !== null) {
+      if (item.estimateMinutes <= 30) {
+        score += config.quickEstimateBonus
+      } else if (item.estimateMinutes <= 60) {
+        score += config.shortEstimateBonus
+      } else if (item.estimateMinutes <= 90) {
+        score += config.mediumEstimateBonus
+      } else if (item.estimateMinutes > 180 && !item.nextActionHint) {
+        score -= config.largeEstimateWithoutActionPenalty
+      }
+    }
+    if (item.isBlocked) {
+      score -= config.blockedPenalty
+    }
+    if (isWaitingWithoutFollowUpDueNow(item, todayIso)) {
+      score -= config.waitingWithoutFollowUpPenalty
+    }
+  }
+  return score
+}
+
+function toMitSuggestionReasons(item: FocusPrimaryItem, todayIso: string): string[] {
+  const dueSignals = toDueSignals(item, todayIso)
+  const reasons: string[] = []
+  if (item.kind === 'task') {
+    const priority = normalizeTaskPriorityValue(item.priority || 'medium')
+    if (priority === 'high') {
+      reasons.push('hohe Prioritaet')
+    }
+  }
+  if (dueSignals.isOverdue) {
+    reasons.push('ueberfaellig')
+  } else if (dueSignals.dueToday) {
+    reasons.push('heute faellig')
+  }
+  if (item.estimateMinutes !== null) {
+    reasons.push(`${item.estimateMinutes}m`)
+  }
+  if (item.nextActionHint) {
+    reasons.push('klarer Schritt')
+  }
+  if (!item.isBlocked && !isWaitingWithoutFollowUpDueNow(item, todayIso)) {
+    reasons.push('machbar')
+  }
+  if (reasons.length === 0) {
+    reasons.push('fokusrelevant')
+  }
+  return reasons.slice(0, 3)
+}
+
+function buildSuggestedMitItems(args: {
+  mitItems: FocusPrimaryItem[]
+  focusItems: FocusPrimaryItem[]
+  candidateItems: FocusPrimaryItem[]
+  overdueItems: FocusPrimaryItem[]
+  mode: FocusDashboardMode
+  todayIso: string
+}): FocusMitSuggestion[] {
+  const { mitItems, focusItems, candidateItems, overdueItems, mode, todayIso } = args
+  const config = focusScoringConfig.mitSuggestion
+  const remainingSlots = Math.max(0, MAX_MIT_ITEMS - mitItems.length)
+  if (remainingSlots <= 0) {
+    return []
+  }
+  const seen = new Set<string>(mitItems.map((item) => item.key))
+  const scored: Array<{ item: FocusPrimaryItem; score: number; reasons: string[] }> = []
+  const push = (items: FocusPrimaryItem[], origin: FocusCandidateOrigin) => {
+    for (const item of items) {
+      if (seen.has(item.key) || item.isDone) {
+        continue
+      }
+      seen.add(item.key)
+      scored.push({
+        item,
+        score: toMitSuggestionScore(item, mode, todayIso, origin),
+        reasons: toMitSuggestionReasons(item, todayIso),
+      })
+    }
+  }
+  push(overdueItems, 'overdue')
+  push(focusItems, 'focus')
+  push(candidateItems, 'candidate')
+
+  return scored
+    .sort((left, right) => {
+      if (left.score !== right.score) {
+        return right.score - left.score
+      }
+      return sortByRecency(left.item, right.item)
+    })
+    .slice(0, Math.min(config.maxSuggestions, remainingSlots))
+    .map((entry) => ({ item: entry.item, reasons: entry.reasons }))
+}
+
+function toPlanningHints(args: { mitItems: FocusPrimaryItem[]; focusItems: FocusPrimaryItem[]; blockingPool: FocusPrimaryItem[] }): FocusPlanningHints {
+  const { mitItems, focusItems, blockingPool } = args
+  const waitingWithoutFollowUpCount = blockingPool.filter((item) => item.hasExternalWaiting && !item.followUpDate).length
+  const unknownBlockerItems = blockingPool.filter((item) => item.unknownBlockerCount > 0)
+  return {
+    focusWithoutEstimateCount: countWithoutEstimate(focusItems),
+    mitWithoutEstimateCount: countWithoutEstimate(mitItems),
+    waitingWithoutFollowUpCount,
+    unknownBlockerTaskCount: unknownBlockerItems.length,
+    unknownBlockerReferenceCount: unknownBlockerItems.reduce((sum, item) => sum + item.unknownBlockerCount, 0),
+  }
+}
+
+function toCapacitySummary(args: {
+  estimatedMitMinutes: number
+  estimatedFocusMinutes: number
+  withoutEstimateCount: number
+  blockedTaskCount: number
+  unknownBlockerReferenceCount: number
+}): { estimatedLoadTodayMinutes: number; capacityStatus: FocusCapacityStatus; capacityMessage: string } {
+  const { estimatedMitMinutes, estimatedFocusMinutes, withoutEstimateCount, blockedTaskCount, unknownBlockerReferenceCount } = args
+  const config = focusScoringConfig.capacity
+  const estimatedLoadTodayMinutes = Math.max(0, estimatedMitMinutes + estimatedFocusMinutes)
+  // Missing estimates and blockers increase uncertainty in the plan.
+  const uncertaintyLoad =
+    withoutEstimateCount * config.uncertaintyPerMissingEstimate +
+    blockedTaskCount * config.blockedPenalty +
+    unknownBlockerReferenceCount * config.unknownBlockerPenalty
+  const effectiveLoad = estimatedLoadTodayMinutes + uncertaintyLoad
+
+  let capacityStatus: FocusCapacityStatus
+  if (effectiveLoad <= config.lightMaxMinutes) {
+    capacityStatus = 'light'
+  } else if (effectiveLoad <= config.balancedMaxMinutes) {
+    capacityStatus = 'balanced'
+  } else if (effectiveLoad <= config.heavyMaxMinutes) {
+    capacityStatus = 'heavy'
+  } else {
+    capacityStatus = 'overloaded'
+  }
+
+  const capacityMessage =
+    capacityStatus === 'light'
+      ? 'Heute gut machbar.'
+      : capacityStatus === 'balanced'
+        ? 'Heute gut ausbalanciert.'
+        : capacityStatus === 'heavy'
+          ? 'Heute eher voll.'
+          : 'Heute ueberladen - Fokus schaerfen.'
+  return { estimatedLoadTodayMinutes, capacityStatus, capacityMessage }
 }
 
 function sumEstimatedMinutes(items: FocusPrimaryItem[]): number {
@@ -1070,10 +1791,22 @@ export function buildFocusDashboardData(args: {
 
   const mitItems = mitItemsRaw.map(applyItemDecorators)
   const overdueItems = overdueItemsRaw.map(applyItemDecorators)
-  const nextActionItems = dedupeFocusItems([...mitItems, ...focusItems])
-    .filter((item) => item.kind === 'task' && !item.isDone && !item.isBlocked && Boolean(item.nextActionHint))
-    .sort((left, right) => compareByMode(left, right, mode, todayIso))
-    .slice(0, 3)
+  const nextActionItems = buildNextActionItems({
+    mitItems,
+    focusItems,
+    candidateItems,
+    overdueItems,
+    mode,
+    todayIso,
+  })
+  const suggestedMitItems = buildSuggestedMitItems({
+    mitItems,
+    focusItems,
+    candidateItems,
+    overdueItems,
+    mode,
+    todayIso,
+  })
 
   const dueTodayTaskCount = openTasks.filter((task) => toTaskDueIso(task.due_date) === todayIso).length
   const inProgressTaskCount = openTasks.filter((task) => normalizeTaskStatusValue(task.status) === 'in_progress').length
@@ -1085,6 +1818,14 @@ export function buildFocusDashboardData(args: {
   const mitEstimatedMinutes = sumEstimatedMinutes(mitItems)
   const focusEstimatedMinutes = sumEstimatedMinutes(focusItems)
   const withoutEstimateCount = countWithoutEstimate([...mitItems, ...focusItems])
+  const planningHints = toPlanningHints({ mitItems, focusItems, blockingPool })
+  const capacitySummary = toCapacitySummary({
+    estimatedMitMinutes: mitEstimatedMinutes,
+    estimatedFocusMinutes: focusEstimatedMinutes,
+    withoutEstimateCount,
+    blockedTaskCount,
+    unknownBlockerReferenceCount: planningHints.unknownBlockerReferenceCount,
+  })
 
   const notesWithQuery = includeNotes ? notes.filter((note) => textMatchesQuery(toNoteSearchText(note), filters.query)) : []
   const notesToday = notesWithQuery
@@ -1128,13 +1869,20 @@ export function buildFocusDashboardData(args: {
     blockedTaskCount,
     waitingTaskCount,
     followUpTodayCount,
+    estimatedLoadTodayMinutes: capacitySummary.estimatedLoadTodayMinutes,
+    estimatedMitMinutes: mitEstimatedMinutes,
+    estimatedFocusMinutes: focusEstimatedMinutes,
+    capacityStatus: capacitySummary.capacityStatus,
+    capacityMessage: capacitySummary.capacityMessage,
     todayEstimatedMinutes,
     mitEstimatedMinutes,
     focusEstimatedMinutes,
     withoutEstimateCount,
+    planningHints,
     todayDailyNote: includeNotes ? findDailyNote(notesWithQuery, todayIso) : null,
     mitIds: normalizedMitIds,
     mitItems,
+    suggestedMitItems,
     overdueItems,
     blockedItems,
     waitingItems,

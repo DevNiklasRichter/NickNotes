@@ -1155,6 +1155,18 @@ def _to_blocked_by_ids(raw: Any) -> list[str]:
     return normalized
 
 
+def _to_estimate_minutes(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
 def _is_task_blocked(task: dict[str, Any], status_by_id: dict[str, str]) -> bool:
     status = str(task.get("status", "")).strip().lower().replace("-", "_")
     if status == "done":
@@ -1180,18 +1192,35 @@ def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]
     overdue_count = 0
     blocked_count = 0
     waiting_count = 0
+    open_tasks_without_estimate_count = 0
+    waiting_without_follow_up_count = 0
+    unknown_blocker_task_count = 0
+    unknown_blocker_reference_count = 0
     for task in tasks:
         status = str(task.get("status", "")).strip().lower().replace("-", "_")
         if status == "done":
             continue
+        if _to_estimate_minutes(task.get("estimate_minutes")) is None:
+            open_tasks_without_estimate_count += 1
         due_date = str(task.get("due_date", "")).strip()
         if len(due_date) >= 10:
             due_iso = due_date[:10]
             if due_iso < day_iso:
                 overdue_count += 1
         waiting_for = str(task.get("waiting_for", "")).strip()
+        follow_up_day = _to_iso_day(task.get("follow_up_date"))
         if waiting_for:
             waiting_count += 1
+            if not follow_up_day:
+                waiting_without_follow_up_count += 1
+        blocked_by_ids = _to_blocked_by_ids(task.get("blocked_by_ids"))
+        unknown_refs_for_task = 0
+        for blocker_id in blocked_by_ids:
+            if blocker_id.lower() not in status_by_id:
+                unknown_refs_for_task += 1
+        if unknown_refs_for_task > 0:
+            unknown_blocker_task_count += 1
+            unknown_blocker_reference_count += unknown_refs_for_task
         if _is_task_blocked(task, status_by_id):
             blocked_count += 1
 
@@ -1204,6 +1233,10 @@ def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]
         "doneToday": done_today_tasks + done_today_todos,
         "doneTodayTasks": done_today_tasks,
         "doneTodayTodos": done_today_todos,
+        "openTasksWithoutEstimateCount": open_tasks_without_estimate_count,
+        "waitingWithoutFollowUpCount": waiting_without_follow_up_count,
+        "unknownBlockerTaskCount": unknown_blocker_task_count,
+        "unknownBlockerReferenceCount": unknown_blocker_reference_count,
     }
 
 

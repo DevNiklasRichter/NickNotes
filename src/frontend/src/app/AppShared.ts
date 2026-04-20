@@ -126,6 +126,10 @@ export type FocusDashboardAggregateStats = {
   doneToday: number
   doneTodayTasks: number
   doneTodayTodos: number
+  openTasksWithoutEstimateCount?: number
+  waitingWithoutFollowUpCount?: number
+  unknownBlockerTaskCount?: number
+  unknownBlockerReferenceCount?: number
 }
 
 export type FocusDashboardAggregateResponse = {

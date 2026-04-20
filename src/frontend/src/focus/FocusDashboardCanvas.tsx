@@ -12,7 +12,15 @@ import {
   type TodoRow,
 } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
-import { buildFocusContextHits, buildFocusDashboardData, toDotDateLabel, type FocusPrimaryItem } from './focusDashboardModel'
+import {
+  buildFocusContextHits,
+  buildFocusDashboardData,
+  toDotDateLabel,
+  type FocusCapacityStatus,
+  type FocusMitSuggestion,
+  type FocusNextActionItem,
+  type FocusPrimaryItem,
+} from './focusDashboardModel'
 
 type FocusDashboardCanvasProps = {
   tasks: TaskRow[]
@@ -107,6 +115,27 @@ function dedupeByKey(items: FocusPrimaryItem[]): FocusPrimaryItem[] {
     deduped.push(item)
   }
   return deduped
+}
+
+function toCapacityLabel(status: FocusCapacityStatus): string {
+  if (status === 'light') {
+    return 'Leicht'
+  }
+  if (status === 'balanced') {
+    return 'Ausbalanciert'
+  }
+  if (status === 'heavy') {
+    return 'Voll'
+  }
+  return 'Ueberladen'
+}
+
+function toSuggestionActionDisabled(entry: FocusMitSuggestion, mitBusyKey: string): boolean {
+  return Boolean(mitBusyKey) || !entry.item.canAddToMit
+}
+
+function toNextActionEntry(item: FocusNextActionItem): FocusPrimaryItem {
+  return item.item
 }
 
 type FocusItemCardProps = {
@@ -358,6 +387,38 @@ export function FocusDashboardCanvas({
     () => dedupeByKey([...data.followUpTodayItems, ...data.waitingItems, ...data.blockedItems]).slice(0, 10),
     [data.blockedItems, data.followUpTodayItems, data.waitingItems]
   )
+  const planningHintEntries = useMemo(() => {
+    const entries: Array<{ key: string; label: string; count: number }> = []
+    if (data.planningHints.focusWithoutEstimateCount > 0) {
+      entries.push({
+        key: 'focus_without_estimate',
+        label: 'Fokus ohne Schaetzung',
+        count: data.planningHints.focusWithoutEstimateCount,
+      })
+    }
+    if (data.planningHints.mitWithoutEstimateCount > 0) {
+      entries.push({
+        key: 'mit_without_estimate',
+        label: 'MIT ohne Schaetzung',
+        count: data.planningHints.mitWithoutEstimateCount,
+      })
+    }
+    if (data.planningHints.waitingWithoutFollowUpCount > 0) {
+      entries.push({
+        key: 'waiting_without_followup',
+        label: 'Waiting ohne Follow-up',
+        count: data.planningHints.waitingWithoutFollowUpCount,
+      })
+    }
+    if (data.planningHints.unknownBlockerTaskCount > 0) {
+      entries.push({
+        key: 'unknown_blockers',
+        label: 'Tasks mit unbekanntem Blocker',
+        count: data.planningHints.unknownBlockerTaskCount,
+      })
+    }
+    return entries
+  }, [data.planningHints.focusWithoutEstimateCount, data.planningHints.mitWithoutEstimateCount, data.planningHints.unknownBlockerTaskCount, data.planningHints.waitingWithoutFollowUpCount])
 
   return (
     <div className="focus-canvas">
@@ -400,6 +461,15 @@ export function FocusDashboardCanvas({
         <p>
           Modus: {data.focusMode} | Query: {filters.query.trim() || 'keine'} | Auto-Fokus: {totalAutoFocusItems} | MIT: {data.mitItems.length}/3
         </p>
+        <div className={`focus-capacity-strip focus-capacity-${data.capacityStatus}`}>
+          <strong>
+            Kapazitaet: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
+          </strong>
+          <span>{data.capacityMessage}</span>
+          <span>
+            MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schaetzung {data.withoutEstimateCount}
+          </span>
+        </div>
 
         <div className="focus-capture-inline">
           <label className="focus-capture-label" htmlFor="focus-quick-capture">
@@ -500,6 +570,42 @@ export function FocusDashboardCanvas({
                 />
               ))}
             </div>
+            {data.suggestedMitItems.length > 0 ? (
+              <div className="focus-inline-suggestions">
+                <p className="focus-context-subtitle">MIT-Vorschlaege</p>
+                <ul className="focus-note-list">
+                  {data.suggestedMitItems.map((entry) => (
+                    <li key={`mit-suggestion-${entry.item.key}`} className="focus-note-row">
+                      <button
+                        className="focus-blocking-row-main"
+                        onClick={() => {
+                          setSelectedKey(entry.item.key)
+                        }}
+                      >
+                        <span className="focus-note-row-title">{entry.item.title}</span>
+                        <span className="focus-context-badge-row">
+                          {entry.reasons.map((reason) => (
+                            <span key={`${entry.item.key}-${reason}`} className="focus-context-badge-chip">
+                              {reason}
+                            </span>
+                          ))}
+                        </span>
+                      </button>
+                      <button
+                        className="focus-card-action-button"
+                        disabled={toSuggestionActionDisabled(entry, mitBusyKey)}
+                        title={entry.item.canAddToMit ? 'Als MIT uebernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
+                        onClick={() => {
+                          void toggleMit(entry.item)
+                        }}
+                      >
+                        Uebernehmen
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </section>
 
           <section className="focus-panel focus-panel-overdue">
@@ -584,7 +690,9 @@ export function FocusDashboardCanvas({
             </header>
             {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
             <ul className="focus-note-list">
-              {data.nextActionItems.map((item) => (
+              {data.nextActionItems.map((entry) => {
+                const item = toNextActionEntry(entry)
+                return (
                 <li key={`next-action-${item.key}`} className="focus-note-row">
                   <button
                     className="focus-blocking-row-main"
@@ -595,7 +703,11 @@ export function FocusDashboardCanvas({
                     <span className="focus-note-row-title">{item.title}</span>
                     <span className="focus-context-badge-row">
                       {item.nextActionHint ? <span className="focus-context-badge-chip">{truncateText(item.nextActionHint, 54)}</span> : null}
-                      {item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
+                      {entry.reasons.map((reason) => (
+                        <span key={`${item.key}-${reason}`} className="focus-context-badge-chip">
+                          {reason}
+                        </span>
+                      ))}
                     </span>
                   </button>
                   <button
@@ -609,7 +721,8 @@ export function FocusDashboardCanvas({
                     <LucideNamedIcon name="ArrowUpRight" size={14} />
                   </button>
                 </li>
-              ))}
+                )
+              })}
             </ul>
           </section>
 
@@ -720,6 +833,29 @@ export function FocusDashboardCanvas({
                 </li>
               ))}
             </ul>
+          </section>
+
+          <section className="focus-panel focus-panel-hints">
+            <header className="focus-panel-header">
+              <h3>Planungshinweise</h3>
+              <span>{planningHintEntries.length}</span>
+            </header>
+            {planningHintEntries.length === 0 ? <p className="empty-copy">Keine offenen Hygiene-Hinweise.</p> : null}
+            {planningHintEntries.length > 0 ? (
+              <ul className="focus-note-list">
+                {planningHintEntries.map((hint) => (
+                  <li key={`hint-${hint.key}`} className="focus-note-row">
+                    <div className="focus-note-row-main">
+                      <span className="focus-note-row-title">{hint.label}</span>
+                    </div>
+                    <span className="focus-context-badge-chip">{hint.count}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {data.planningHints.unknownBlockerReferenceCount > 0 ? (
+              <p className="focus-context-subtitle">Unbekannte Blocker-Referenzen: {data.planningHints.unknownBlockerReferenceCount}</p>
+            ) : null}
           </section>
 
           {data.focusMode !== 'context' ? (
