@@ -132,6 +132,41 @@ export type FocusDashboardData = {
 }
 
 const WORD_PATTERN = /[A-Za-z0-9][A-Za-z0-9_-]{2,}/g
+const LETTER_PATTERN = /[a-z]/
+const GENERIC_CONTEXT_WORDS = new Set([
+  'task',
+  'tasks',
+  'todo',
+  'todos',
+  'note',
+  'notes',
+  'notiz',
+  'notizen',
+  'daily',
+  'overview',
+  'update',
+  'status',
+  'projekt',
+  'project',
+  'projekte',
+  'projects',
+  'thema',
+  'themen',
+  'topic',
+  'topics',
+  'arbeit',
+  'offen',
+  'open',
+  'done',
+  'inbox',
+  'capture',
+  'captures',
+  'tag',
+  'tags',
+  'kunden',
+  'customer',
+  'customers',
+])
 const DAILY_DATE_PATTERN = /(\d{4}-\d{2}-\d{2})/
 const MAX_OVERDUE_ITEMS = 20
 const MAX_BLOCKING_ITEMS = 12
@@ -559,7 +594,25 @@ function toWords(raw: string): string[] {
   if (!matches) {
     return []
   }
-  return Array.from(new Set(matches))
+  return Array.from(
+    new Set(
+      matches.filter((word) => {
+        const clean = word.trim()
+        if (!clean) {
+          return false
+        }
+        // Ignore tokens that are mostly structural/generic and tend to create noisy context matches.
+        if (GENERIC_CONTEXT_WORDS.has(clean)) {
+          return false
+        }
+        // Ignore number-only tokens (dates/ids) to avoid accidental broad matches.
+        if (!LETTER_PATTERN.test(clean)) {
+          return false
+        }
+        return true
+      })
+    )
+  )
 }
 
 function textMatchesQuery(raw: string, query: string): boolean {
@@ -1551,7 +1604,10 @@ function toMitSuggestionScore(item: FocusPrimaryItem, mode: FocusDashboardMode, 
   return score
 }
 
-function toMitSuggestionReasons(item: FocusPrimaryItem, todayIso: string): string[] {
+function toMitSuggestionReasons(item: FocusPrimaryItem, todayIso: string, includeReasonHints: boolean): string[] {
+  if (!includeReasonHints) {
+    return []
+  }
   const dueSignals = toDueSignals(item, todayIso)
   const reasons: string[] = []
   if (item.kind === 'task') {
@@ -1587,8 +1643,9 @@ function buildSuggestedMitItems(args: {
   overdueItems: FocusPrimaryItem[]
   mode: FocusDashboardMode
   todayIso: string
+  includeReasonHints: boolean
 }): FocusMitSuggestion[] {
-  const { mitItems, focusItems, candidateItems, overdueItems, mode, todayIso } = args
+  const { mitItems, focusItems, candidateItems, overdueItems, mode, todayIso, includeReasonHints } = args
   const config = focusScoringConfig.mitSuggestion
   const remainingSlots = Math.max(0, MAX_MIT_ITEMS - mitItems.length)
   if (remainingSlots <= 0) {
@@ -1605,7 +1662,7 @@ function buildSuggestedMitItems(args: {
       scored.push({
         item,
         score: toMitSuggestionScore(item, mode, todayIso, origin),
-        reasons: toMitSuggestionReasons(item, todayIso),
+        reasons: toMitSuggestionReasons(item, todayIso, includeReasonHints),
       })
     }
   }
@@ -1849,6 +1906,7 @@ export function buildFocusDashboardData(args: {
     overdueItems,
     mode,
     todayIso,
+    includeReasonHints: taskFeatures.advancedTaskHandling,
   })
 
   const dueTodayTaskCount = openTasks.filter((task) => toTaskDueIso(task.due_date) === todayIso).length
@@ -1960,7 +2018,7 @@ function toReferenceLinks(item: FocusPrimaryItem): string[] {
   return Array.from(new Set([...item.related, ...item.links].map((entry) => normalizeRelatedCandidate(entry)).filter(Boolean)))
 }
 
-export function buildFocusContextHits(item: FocusPrimaryItem, notes: SearchRow[], todayIso: string): FocusContextHit[] {
+export function buildFocusContextHits(item: FocusPrimaryItem, notes: SearchRow[], _todayIso: string): FocusContextHit[] {
   const referenceWords = toReferenceWords(item)
   const referenceLinks = toReferenceLinks(item)
   const linkSet = new Set(referenceLinks.map((entry) => entry.toLowerCase()))
@@ -2009,15 +2067,8 @@ export function buildFocusContextHits(item: FocusPrimaryItem, notes: SearchRow[]
       reasons.push('Tag')
     }
 
-    const updatedDay = toUpdatedDay(note.updated_at)
-    const age = diffDays(todayIso, updatedDay)
-    if (age <= 0) {
-      score += 4
-    } else if (age <= 3) {
-      score += 2
-    }
-
-    if (score <= 0) {
+    // Require at least one semantic match; recency alone should not create context hits.
+    if (reasons.length === 0 || score <= 0) {
       continue
     }
     hits.push({

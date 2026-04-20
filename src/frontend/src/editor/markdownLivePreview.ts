@@ -28,6 +28,7 @@ type LivePreviewOptions = {
   notePath?: string
   backendUrl?: string
   onOpenWikiLink?: (target: string) => void
+  onOpenTagReference?: (groupId: string, tagId: string) => void
 }
 
 const HEADING_OWNER_NAMES = new Set(['ATXHeading1', 'ATXHeading2', 'ATXHeading3', 'ATXHeading4', 'ATXHeading5', 'ATXHeading6'])
@@ -97,13 +98,17 @@ class TaskCheckboxWidget extends WidgetType {
 }
 
 class InlineTagWidget extends WidgetType {
+  readonly groupId: string
+  readonly tagId: string
   readonly groupDisplayName: string
   readonly tagDisplayName: string
   readonly groupColor: string
   readonly syntax: string
 
-  constructor(groupDisplayName: string, tagDisplayName: string, groupColor: string, syntax: string) {
+  constructor(groupId: string, tagId: string, groupDisplayName: string, tagDisplayName: string, groupColor: string, syntax: string) {
     super()
+    this.groupId = groupId
+    this.tagId = tagId
     this.groupDisplayName = groupDisplayName
     this.tagDisplayName = tagDisplayName
     this.groupColor = groupColor
@@ -112,6 +117,8 @@ class InlineTagWidget extends WidgetType {
 
   eq(other: InlineTagWidget): boolean {
     return (
+      other.groupId === this.groupId &&
+      other.tagId === this.tagId &&
       other.groupDisplayName === this.groupDisplayName &&
       other.tagDisplayName === this.tagDisplayName &&
       other.groupColor === this.groupColor &&
@@ -123,6 +130,8 @@ class InlineTagWidget extends WidgetType {
     const element = document.createElement('span')
     element.className = 'cm-md-inline-tag-chip'
     element.style.setProperty('--cm-md-tag-color', this.groupColor)
+    element.dataset.tagGroupId = this.groupId
+    element.dataset.tagId = this.tagId
     element.textContent = this.tagDisplayName
     element.title = `${this.groupDisplayName} / ${this.tagDisplayName}`
     element.setAttribute('aria-label', `Tag ${this.tagDisplayName}`)
@@ -130,7 +139,7 @@ class InlineTagWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    return true
+    return false
   }
 }
 
@@ -540,7 +549,7 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
             tag.from,
             tag.to,
             Decoration.replace({
-              widget: new InlineTagWidget(groupDisplayName, tagDisplayName, groupColor, tag.syntax),
+              widget: new InlineTagWidget(tag.groupId, tag.tagId, groupDisplayName, tagDisplayName, groupColor, tag.syntax),
             })
           )
         }
@@ -1080,6 +1089,19 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
             event.preventDefault()
             view.focus()
             return toggleTaskMarker(view, markerFrom, markerTo)
+          }
+        }
+
+        const tagChip = target.closest<HTMLElement>('.cm-md-inline-tag-chip')
+        if (tagChip && event.button === 0 && options.onOpenTagReference) {
+          const groupId = (tagChip.dataset.tagGroupId || '').trim()
+          const tagId = (tagChip.dataset.tagId || '').trim()
+          if (groupId && tagId) {
+            event.preventDefault()
+            event.stopPropagation()
+            view.focus()
+            options.onOpenTagReference(groupId, tagId)
+            return true
           }
         }
 

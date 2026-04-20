@@ -1,5 +1,5 @@
-import type { FocusDashboardFilters, TaskRow, TodoRow } from '../app/AppShared'
-import { buildFocusDashboardData } from './focusDashboardModel'
+import type { FocusDashboardFilters, SearchRow, TaskRow, TodoRow } from '../app/AppShared'
+import { buildFocusContextHits, buildFocusDashboardData } from './focusDashboardModel'
 
 type AssertContext = {
   name: string
@@ -60,6 +60,16 @@ function makeTodo(id: string, rawText: string, updatedAt: string): TodoRow {
     promoted_task_id: null,
     completed_at: null,
     updated_at: updatedAt,
+  }
+}
+
+function makeNote(id: string, title: string, path: string, updatedAt: string): SearchRow {
+  return {
+    id,
+    title,
+    note_type: 'note',
+    updated_at: updatedAt,
+    path,
   }
 }
 
@@ -163,4 +173,49 @@ export function runPhaseFFocusModelAssertions(): void {
   assert(simpleData.waitingTaskCount === 0, { name: 'feature-toggle-waiting' }, 'waiting KPI should be hidden in simple task mode')
   assert(simpleData.nextActionItems.length === 0, { name: 'feature-toggle-next-action' }, 'next action selection should be disabled in simple task mode')
   assert(simpleData.todayEstimatedMinutes === 0, { name: 'feature-toggle-estimate' }, 'estimate KPIs should be disabled when time management is off')
+  assert(
+    simpleData.suggestedMitItems.every((entry) => entry.reasons.length === 0),
+    { name: 'feature-toggle-mit-reasons' },
+    'MIT reason badges should be hidden when advanced task handling is disabled'
+  )
+
+  const contextTask: TaskRow = makeTask({
+    id: 'tk_context_generic',
+    title: 'Task Integration Overview',
+    status: 'open',
+    priority: 'medium',
+    due_date: todayIso,
+    updated_at: `${todayIso}T10:00:00`,
+  })
+  const contextNotes: SearchRow[] = [
+    makeNote('n_generic', 'Task Overview', '/vault/notes/task-overview.md', `${todayIso}T12:00:00`),
+    makeNote('n_specific', 'Integration Plan', '/vault/notes/integration-plan.md', `${todayIso}T11:00:00`),
+  ]
+  const contextData = buildFocusDashboardData({
+    tasks: [contextTask],
+    todos: [],
+    notes: contextNotes,
+    filters: baseFilters('execution'),
+    todayIso,
+    mitIds: [],
+    taskFeatureSettings: {
+      advancedTaskHandling: true,
+      taskTimeManagement: false,
+    },
+  })
+  const contextItem = contextData.focusItems[0]
+  assert(Boolean(contextItem), { name: 'context-stopwords' }, 'context test item should exist')
+  if (contextItem) {
+    const contextHits = buildFocusContextHits(contextItem, contextNotes, todayIso)
+    assert(
+      contextHits.some((hit) => hit.path.endsWith('/integration-plan.md')),
+      { name: 'context-stopwords' },
+      'specific context words should still match'
+    )
+    assert(
+      !contextHits.some((hit) => hit.path.endsWith('/task-overview.md')),
+      { name: 'context-stopwords' },
+      'generic words should not create context matches'
+    )
+  }
 }

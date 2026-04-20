@@ -606,7 +606,7 @@ export function FocusDashboardCanvas({
         <div className="focus-panel-stack">
           <section className="focus-panel focus-panel-mit">
             <header className="focus-panel-header">
-              <h3>Heute committen (MIT)</h3>
+              <h3>Most Important Tasks</h3>
               <span>{data.mitItems.length}</span>
             </header>
             {mitError ? <p className="focus-inline-error">{mitError}</p> : null}
@@ -635,13 +635,14 @@ export function FocusDashboardCanvas({
                 <ul className="focus-note-list">
                   {data.suggestedMitItems.map((entry) => (
                     <li key={`mit-suggestion-${entry.item.key}`} className="focus-note-row">
-                      <button
-                        className="focus-blocking-row-main"
-                        onClick={() => {
-                          setSelectedKey(entry.item.key)
-                        }}
-                      >
-                        <span className="focus-note-row-title">{entry.item.title}</span>
+                    <button
+                      className="focus-blocking-row-main"
+                      onClick={() => {
+                        setSelectedKey(entry.item.key)
+                      }}
+                    >
+                      <span className="focus-note-row-title">{entry.item.title}</span>
+                      {entry.reasons.length > 0 ? (
                         <span className="focus-context-badge-row">
                           {entry.reasons.map((reason) => (
                             <span key={`${entry.item.key}-${reason}`} className="focus-context-badge-chip">
@@ -649,7 +650,8 @@ export function FocusDashboardCanvas({
                             </span>
                           ))}
                         </span>
-                      </button>
+                      ) : null}
+                    </button>
                       <button
                         className="focus-card-action-button"
                         disabled={toSuggestionActionDisabled(entry, mitBusyKey)}
@@ -667,32 +669,33 @@ export function FocusDashboardCanvas({
             ) : null}
           </section>
 
-          <section className="focus-panel focus-panel-overdue">
-            <header className="focus-panel-header">
-              <h3>Ueberfaellig</h3>
-              <span>{data.overdueItems.length}</span>
-            </header>
-            {data.overdueItems.length === 0 ? <p className="empty-copy">Keine ueberfaelligen Tasks.</p> : null}
-            <div className="focus-primary-list">
-              {data.overdueItems.map((item) => (
-                <FocusItemCard
-                  key={item.key}
-                  item={item}
-                  selected={selectedItem?.key === item.key}
-                  overdue
-                  focusMode={data.focusMode}
-                  showAdvancedTaskSignals={showAdvancedTaskSignals}
-                  showTaskTimeManagement={showTaskTimeManagement}
-                  mitBusy={mitBusyKey === item.key}
-                  onSelect={setSelectedKey}
-                  onToggleMit={(target) => {
-                    void toggleMit(target)
-                  }}
-                  onOpenOrigin={openItemOrigin}
-                />
-              ))}
-            </div>
-          </section>
+          {data.overdueItems.length > 0 ? (
+            <section className="focus-panel focus-panel-overdue">
+              <header className="focus-panel-header">
+                <h3>Ueberfaellig</h3>
+                <span>{data.overdueItems.length}</span>
+              </header>
+              <div className="focus-primary-list">
+                {data.overdueItems.map((item) => (
+                  <FocusItemCard
+                    key={item.key}
+                    item={item}
+                    selected={selectedItem?.key === item.key}
+                    overdue
+                    focusMode={data.focusMode}
+                    showAdvancedTaskSignals={showAdvancedTaskSignals}
+                    showTaskTimeManagement={showTaskTimeManagement}
+                    mitBusy={mitBusyKey === item.key}
+                    onSelect={setSelectedKey}
+                    onToggleMit={(target) => {
+                      void toggleMit(target)
+                    }}
+                    onOpenOrigin={openItemOrigin}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="focus-panel">
             <header className="focus-panel-header">

@@ -41,6 +41,7 @@ type TagSidebarProps = {
   onDeleteGroup: (groupId: string) => void
   onRenameTag: (groupId: string, tagId: string) => void
   onDeleteTag: (groupId: string, tagId: string) => void
+  onOpenTagOverview?: (groupId: string, tagId: string) => void
 }
 
 type VisibleTagGroup = {
@@ -118,6 +119,7 @@ export function TagSidebar({
   onDeleteGroup,
   onRenameTag,
   onDeleteTag,
+  onOpenTagOverview,
 }: TagSidebarProps) {
   const [filterQuery, setFilterQuery] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState<string>('')
@@ -440,6 +442,7 @@ export function TagSidebar({
             ) : null}
           </div>
         </div>
+        <p className="tag-explorer-hint">Klick auf einen Tag laedt die zugehoerige Overview-Notiz.</p>
       </header>
 
       <section
@@ -539,6 +542,7 @@ export function TagSidebar({
                         setSortMenuOpen(false)
                         setSelectedGroupId(group.id)
                         setSelectedTagKey(tagKey)
+                        onOpenTagOverview?.(group.id, tag.id)
                       }}
                       onContextMenu={(event) => {
                         const target = event.target

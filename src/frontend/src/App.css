@@ -968,6 +968,17 @@
   font-weight: 600;
   line-height: 1.25;
   padding: 0.02rem 0.42rem;
+  cursor: pointer;
+}
+
+.todo-inline-tag-chip-button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid color-mix(in srgb, var(--todo-tag-color, #94a3b8) 34%, transparent);
+  background: color-mix(in srgb, var(--todo-tag-color, #94a3b8) 14%, transparent);
+  color: color-mix(in srgb, var(--todo-tag-color, #94a3b8) 74%, var(--text));
+  font: inherit;
+  line-height: inherit;
 }
 
 .todo-inline-tag-chip.query-match {
@@ -1285,10 +1296,10 @@
 .focus-canvas {
   height: 100%;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 0.9rem 1rem 1.2rem;
   display: grid;
-  align-content: start;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0.82rem;
 }
 
@@ -1468,6 +1479,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 0.72rem;
+  min-height: 0;
+  align-items: stretch;
 }
 
 .focus-canvas-grid.context-mode {
@@ -1475,9 +1488,18 @@
 }
 
 .focus-panel-stack {
-  display: grid;
-  align-content: start;
-  gap: 0.62rem;
+  display: block;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.focus-panel-stack > .focus-panel {
+  margin-bottom: 0.62rem;
+}
+
+.focus-panel-stack > .focus-panel:last-child {
+  margin-bottom: 0;
 }
 
 .focus-panel {
@@ -1486,9 +1508,12 @@
   background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
   padding: 0.48rem;
   min-height: 0;
+  flex: 0 0 auto;
   display: grid;
   align-content: start;
   gap: 0.34rem;
+  position: relative;
+  overflow: hidden;
 }
 
 .focus-panel-header {
@@ -1519,8 +1544,9 @@
 }
 
 .focus-primary-list {
-  display: grid;
-  gap: 0.28rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
 }
 
 .focus-primary-card {
@@ -1533,8 +1559,11 @@
 }
 
 .focus-primary-card.selected {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 78%, var(--line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 62%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent-soft) 44%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 18%, var(--surface));
 }
 
 .focus-panel-overdue {
@@ -1559,7 +1588,7 @@
 }
 
 .focus-primary-card.mit {
-  border-color: color-mix(in srgb, #3b82f6 34%, var(--line));
+  border-color: color-mix(in srgb, #8b5cf6 40%, var(--line));
 }
 
 .focus-primary-card.blocked {
@@ -1569,6 +1598,13 @@
 .focus-primary-card.context-boost {
   border-color: color-mix(in srgb, #4f46e5 35%, var(--line));
   background: color-mix(in srgb, #4f46e5 6%, var(--surface));
+}
+
+.focus-primary-card.selected.overdue,
+.focus-primary-card.selected.mit,
+.focus-primary-card.selected.blocked,
+.focus-primary-card.selected.context-boost {
+  border-color: color-mix(in srgb, var(--accent) 78%, var(--line));
 }
 
 .focus-primary-card.done {
@@ -1786,8 +1822,27 @@
 }
 
 @media (max-width: 1160px) {
+  .focus-canvas {
+    overflow: auto;
+    grid-template-rows: auto auto auto;
+  }
+
   .focus-canvas-grid {
     grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+  }
+
+  .focus-panel-stack {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .focus-panel-stack > .focus-panel {
+    margin-bottom: 0.62rem;
+  }
+
+  .focus-panel-stack > .focus-panel:last-child {
+    margin-bottom: 0;
   }
 
   .focus-canvas-header-top {
@@ -2439,6 +2494,7 @@
   padding: 0.02rem 0.42rem;
   margin-inline: 0.03rem;
   vertical-align: baseline;
+  cursor: pointer;
   transition: filter 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
 }
 
@@ -3691,6 +3747,25 @@ textarea:focus-visible {
   gap: 0.24rem;
 }
 
+.note-readonly-banner {
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  padding: 0.6rem 0.72rem;
+  margin-bottom: 0.18rem;
+}
+
+.note-readonly-banner h2 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.note-readonly-banner p {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .split-note-flow-content {
   width: min(760px, calc(100% - 1rem));
   padding-top: 0.86rem;
@@ -4061,6 +4136,24 @@ textarea:focus-visible {
 
 .property-chip.manual.interactive {
   padding-right: 0.12rem;
+}
+
+.property-chip-link {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.property-chip-link-button {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  font: inherit;
 }
 
 .property-chip.add {

@@ -11,6 +11,7 @@ type TodoDashboardCanvasProps = {
   filters: TodoDashboardFilters
   onToggleTodo: (id: string, checked: boolean) => void
   onOpenOrigin: (notePath: string, title?: string) => void
+  onOpenTagOverview: (tagKey: string) => void
   onPromoteTodo: (id: string) => void
   onOpenTaskPath: (path: string, title?: string) => void
 }
@@ -307,6 +308,7 @@ export function TodoDashboardCanvas({
   filters,
   onToggleTodo,
   onOpenOrigin,
+  onOpenTagOverview,
   onPromoteTodo,
   onOpenTaskPath,
 }: TodoDashboardCanvasProps) {
@@ -356,14 +358,16 @@ export function TodoDashboardCanvas({
                           }
                           const tagMatchesQuery = query ? `${token.label} ${token.raw}`.toLowerCase().includes(query) : false
                           return (
-                            <span
+                            <button
+                              type="button"
                               key={`${todo.id}-tag-${token.key}-${index}`}
-                              className={`todo-inline-tag-chip ${tagMatchesQuery ? 'query-match' : ''}`}
+                              className={`todo-inline-tag-chip todo-inline-tag-chip-button ${tagMatchesQuery ? 'query-match' : ''}`}
                               style={{ '--todo-tag-color': token.color } as CSSProperties}
-                              title={token.raw}
+                              title={`${token.raw} - Tag-Overview oeffnen`}
+                              onClick={() => onOpenTagOverview(token.key)}
                             >
                               {token.label}
-                            </span>
+                            </button>
                           )
                         })}
                       </span>

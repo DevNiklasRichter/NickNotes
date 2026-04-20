@@ -1051,6 +1051,12 @@ class VaultManager:
 
     def save_note_document(self, note_path: str, content: str, indexer: VaultIndexer) -> dict[str, Any]:
         file_path = self._resolve_note_file(note_path)
+        raw_meta, _raw_body = parse_markdown(file_path)
+        raw_type = str(raw_meta.get("type", "")).strip().lower()
+        is_tag_overview_file = file_path.name.lower() == "overview.md" and self._is_tag_path(file_path.parent)
+        if raw_type == "tag_index" or is_tag_overview_file:
+            raise ValueError("Tag-Overview-Notizen sind schreibgeschuetzt und werden automatisch erzeugt.")
+
         previous_path = str(file_path)
         previous_content = file_path.read_text(encoding="utf-8")
         _previous_normalized, previous_meta = self.normalize_note_markdown_text(
@@ -2013,6 +2019,50 @@ class VaultManager:
         body = "\n".join(body_lines) + "\n"
         tag_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
         return tag_path
+
+    def resolve_tag_overview_note(self, group_id: str, tag_id: str, indexer: VaultIndexer) -> dict[str, Any]:
+        group_slug = slugify(group_id)
+        tag_slug = slugify(tag_id)
+        if not group_slug or not tag_slug:
+            raise ValueError(f"Invalid tag reference: {group_id}:{tag_id}")
+
+        groups = self.read_tag_groups()
+        selected_group: dict[str, Any] | None = None
+        for group in groups:
+            candidate = str(group.get("id", "")).strip()
+            if not candidate:
+                continue
+            candidate_slug = slugify(candidate)
+            if candidate_slug and candidate_slug.lower() == group_slug.lower():
+                selected_group = group
+                break
+            if _normalize_tag_id(candidate) == _normalize_tag_id(group_slug):
+                selected_group = group
+
+        group_display_name = group_slug
+        tag_display_name = tag_slug
+        if selected_group is not None:
+            group_display_name = _normalize_label(str(selected_group.get("displayName", ""))) or group_slug
+            tags = selected_group.get("tags", [])
+            if isinstance(tags, list):
+                for tag in tags:
+                    if not isinstance(tag, dict):
+                        continue
+                    candidate_id = str(tag.get("id", "")).strip()
+                    if not candidate_id:
+                        continue
+                    candidate_slug = slugify(candidate_id)
+                    if candidate_slug and candidate_slug.lower() == tag_slug.lower():
+                        tag_display_name = _normalize_label(str(tag.get("displayName", ""))) or tag_slug
+                        break
+                    if _normalize_tag_id(candidate_id) == _normalize_tag_id(tag_slug):
+                        tag_display_name = _normalize_label(str(tag.get("displayName", ""))) or tag_slug
+
+        tag_path = self.rebuild_tag_page(group_slug, group_display_name, tag_slug, tag_display_name, indexer)
+        return {
+            "path": tag_path,
+            "title": f"{group_display_name} / {tag_display_name}",
+        }
 
     def _open_tasks_for_tag(self, group_slug: str, tag_slug: str) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []

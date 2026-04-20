@@ -191,6 +191,7 @@ export type NoteTab = {
   content: string
   loading: boolean
   dirty: boolean
+  readOnly?: boolean
   noteType?: 'note' | 'task'
   parsedDocument?: ParsedNoteDocument
 }

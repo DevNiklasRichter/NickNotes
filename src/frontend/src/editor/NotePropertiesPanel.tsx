@@ -37,6 +37,7 @@ type NotePropertiesPanelProps = {
   onFollowUpDateChange: (next: string) => void
   onBlockedReasonChange: (next: string) => void
   onNextActionHintChange: (next: string) => void
+  onOpenTagOverview?: (tag: string) => void
   onRemoveTag: (tag: string) => void
   onOpenTagInput: () => void
   onTagDraftChange: (value: string) => void
@@ -84,6 +85,7 @@ export function NotePropertiesPanel({
   onFollowUpDateChange,
   onBlockedReasonChange,
   onNextActionHintChange,
+  onOpenTagOverview,
   onRemoveTag,
   onOpenTagInput,
   onTagDraftChange,
@@ -499,11 +501,21 @@ export function NotePropertiesPanel({
                 style={{ '--tag-chip-color': visual.color } as CSSProperties}
                 title={item}
               >
-                <span>{visual.label}</span>
+                <button
+                  type="button"
+                  className="property-chip-link"
+                  onClick={() => {
+                    onOpenTagOverview?.(item)
+                  }}
+                  title={`Tag-Overview oeffnen (${item})`}
+                >
+                  {visual.label}
+                </button>
                 <button
                   type="button"
                   className="property-chip-remove"
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation()
                     onRemoveTag(item)
                   }}
                   title="Tag entfernen"
@@ -516,14 +528,18 @@ export function NotePropertiesPanel({
           {autoTags.map((item) => {
             const visual = toTagChipVisual(item)
             return (
-              <span
+              <button
+                type="button"
                 key={`tag-auto-${item}`}
-                className="property-chip tag-chip auto"
+                className="property-chip tag-chip auto property-chip-link-button"
                 style={{ '--tag-chip-color': visual.color } as CSSProperties}
                 title={`Automatisch erkannt - ${item}`}
+                onClick={() => {
+                  onOpenTagOverview?.(item)
+                }}
               >
                 {visual.label}
-              </span>
+              </button>
             )
           })}
           {tagInputOpen ? (

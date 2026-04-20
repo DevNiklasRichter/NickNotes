@@ -56,6 +56,14 @@
   display: flex;
 }
 
+.tag-explorer-hint {
+  margin: 0;
+  padding: 0.05rem 0.1rem 0;
+  font-size: 0.69rem;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--muted) 90%, var(--text));
+}
+
 .explorer-search-input-wrap {
   width: 100%;
   position: relative;

@@ -88,6 +88,7 @@ type CodeMirrorMarkdownEditorProps = {
   theme: 'light' | 'dark'
   notePath?: string
   backendUrl?: string
+  readOnly?: boolean
   tagGroups: TagGroupDefinition[]
   searchHighlightQuery?: string
   className?: string
@@ -95,6 +96,7 @@ type CodeMirrorMarkdownEditorProps = {
   onChange: (nextValue: string) => void
   onInsertImageAsset?: (file: File) => Promise<string | null>
   onOpenWikiLink?: (target: string) => void
+  onOpenTagReference?: (groupId: string, tagId: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
 
@@ -294,6 +296,7 @@ export function CodeMirrorMarkdownEditor({
   theme,
   notePath = '',
   backendUrl = '',
+  readOnly = false,
   tagGroups,
   searchHighlightQuery = '',
   className = '',
@@ -301,6 +304,7 @@ export function CodeMirrorMarkdownEditor({
   onChange,
   onInsertImageAsset,
   onOpenWikiLink,
+  onOpenTagReference,
   editorApiRef,
 }: CodeMirrorMarkdownEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -314,11 +318,13 @@ export function CodeMirrorMarkdownEditor({
   const onChangeFrameRef = useRef<number | null>(null)
   const localEchoValuesRef = useRef<Array<{ value: string; at: number }>>([])
   const themeCompartmentRef = useRef(new Compartment())
+  const readOnlyCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
   const searchHighlightCompartmentRef = useRef(new Compartment())
   const previewCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialThemeRef = useRef(theme)
+  const initialReadOnlyRef = useRef(readOnly)
   const initialNotePathRef = useRef(notePath)
   const initialBackendUrlRef = useRef(backendUrl)
   const initialTagGroupsRef = useRef(tagGroups)
@@ -549,6 +555,9 @@ export function CodeMirrorMarkdownEditor({
       if (!current || !view) {
         return false
       }
+      if (view.state.facet(EditorState.readOnly)) {
+        return false
+      }
 
       const available = paletteItemsRef.current
       if (available.length === 0) {
@@ -687,6 +696,9 @@ export function CodeMirrorMarkdownEditor({
     }
 
     const insertImageMarkdown = async (view: EditorView, files: File[], position?: number): Promise<boolean> => {
+      if (view.state.facet(EditorState.readOnly)) {
+        return false
+      }
       const uploader = onInsertImageAssetRef.current
       if (!uploader || files.length === 0) {
         return false
@@ -754,8 +766,13 @@ export function CodeMirrorMarkdownEditor({
               notePath: initialNotePathRef.current,
               backendUrl: initialBackendUrlRef.current,
               onOpenWikiLink,
+              onOpenTagReference,
             })
           ),
+          readOnlyCompartmentRef.current.of([
+            EditorState.readOnly.of(initialReadOnlyRef.current),
+            EditorView.editable.of(!initialReadOnlyRef.current),
+          ]),
           keymap.of([
             {
               key: 'Mod-k',
@@ -789,6 +806,10 @@ export function CodeMirrorMarkdownEditor({
           ]),
           EditorView.domEventHandlers({
             paste: (event, view) => {
+              if (view.state.facet(EditorState.readOnly)) {
+                event.preventDefault()
+                return true
+              }
               const imageFiles = extractImageFiles(event.clipboardData?.files)
               if (imageFiles.length === 0) {
                 return false
@@ -798,6 +819,10 @@ export function CodeMirrorMarkdownEditor({
               return true
             },
             drop: (event, view) => {
+              if (view.state.facet(EditorState.readOnly)) {
+                event.preventDefault()
+                return true
+              }
               const imageFiles = extractImageFiles(event.dataTransfer?.files)
               if (imageFiles.length === 0) {
                 return false
@@ -899,10 +924,22 @@ export function CodeMirrorMarkdownEditor({
           notePath,
           backendUrl,
           onOpenWikiLink,
+          onOpenTagReference,
         })
       ),
     })
-  }, [notePath, backendUrl, onOpenWikiLink])
+  }, [notePath, backendUrl, onOpenWikiLink, onOpenTagReference])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    instance.dispatch({
+      effects: readOnlyCompartmentRef.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
+    })
+  }, [readOnly])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -993,6 +1030,9 @@ export function CodeMirrorMarkdownEditor({
   const applyPaletteItemByIndex = (index: number) => {
     const view = editorRef.current
     if (!view) {
+      return
+    }
+    if (view.state.facet(EditorState.readOnly)) {
       return
     }
     const current = paletteStateRef.current

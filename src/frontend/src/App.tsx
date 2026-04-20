@@ -229,6 +229,37 @@ function App() {
 
   const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '')
   const toNoteId = (path: string): string => normalizePath(path).toLowerCase()
+  const isTagOverviewPath = (path: string): boolean => {
+    const normalized = normalizePath(path).toLowerCase()
+    return /\/(tags|02_tags)\//.test(normalized) && normalized.endsWith('/overview.md')
+  }
+  const isTagIndexFrontmatter = (content: string): boolean => {
+    const normalized = content.replace(/^\uFEFF/, '')
+    if (!normalized.startsWith('---')) {
+      return false
+    }
+    const frontmatterEnd = normalized.indexOf('\n---', 3)
+    const frontmatter = frontmatterEnd >= 0 ? normalized.slice(0, frontmatterEnd) : normalized.slice(0, 2000)
+    return /(^|\n)\s*type\s*:\s*tag_index\s*($|\n)/i.test(frontmatter)
+  }
+  const isTagOverviewReadOnly = (path: string, content: string): boolean => isTagOverviewPath(path) || isTagIndexFrontmatter(content)
+  const parseTagReference = (rawTag: string): { groupId: string; tagId: string } | null => {
+    const cleanRaw = normalizeLabel(rawTag).replace(/^\{tag:/i, '').replace(/\}$/g, '').replace(/^#+/, '')
+    if (!cleanRaw) {
+      return null
+    }
+    const delimiter = cleanRaw.includes(':') ? ':' : cleanRaw.includes('/') ? '/' : ''
+    if (!delimiter) {
+      return null
+    }
+    const [groupRaw, tagRaw] = cleanRaw.split(delimiter, 2)
+    const groupId = groupRaw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+    const tagId = tagRaw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+    if (!groupId || !tagId) {
+      return null
+    }
+    return { groupId, tagId }
+  }
 
   const findTabByPath = (path: string, tabs: NoteTab[] = openTabsRef.current): NoteTab | null => {
     const targetKey = toNoteId(path)
@@ -1378,6 +1409,10 @@ function App() {
     if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
       return true
     }
+    if (targetTab.readOnly) {
+      setMessage('Diese Tag-Overview wird automatisch generiert und ist schreibgeschuetzt.')
+      return true
+    }
     const baseDocument = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path))
     const liveBody = getLiveMarkdownForTab(targetTab)
     const nextDocument = liveBody !== null ? { ...baseDocument, body: liveBody } : baseDocument
@@ -1719,13 +1754,14 @@ function App() {
     const existing =
       (existingOpenRef ? openTabsRef.current.find((tab) => tab.id === existingOpenRef.id) ?? null : null) ?? findTabByPath(cleanPath)
     if (existing) {
-      if (existing.kind === 'note' && !existing.noteType) {
+      if (existing.kind === 'note' && (!existing.noteType || (!existing.readOnly && isTagOverviewPath(existing.path)))) {
         setOpenTabs((prev) =>
           prev.map((tab) =>
             tab.id === existing.id && tab.kind === 'note'
               ? {
                   ...tab,
                   noteType: initialNoteType,
+                  readOnly: tab.readOnly || isTagOverviewPath(tab.path),
                 }
               : tab
           )
@@ -1784,6 +1820,7 @@ function App() {
       content: '',
       loading: true,
       dirty: false,
+      readOnly: isTagOverviewPath(cleanPath),
       noteType: initialNoteType,
     }
 
@@ -1822,6 +1859,7 @@ function App() {
       const parsed = parseNoteDocument(content, fallbackTitle)
       const normalizedContent = serializeNoteDocument(parsed)
       const nextTitle = parsed.frontmatter.title || fallbackTitle
+      const readOnly = isTagOverviewReadOnly(cleanPath, content)
       setOpenTabs((prev) =>
         prev.map((tab) =>
           tab.id === nextTabId
@@ -1832,6 +1870,7 @@ function App() {
                 content: normalizedContent,
                 loading: false,
                 dirty: false,
+                readOnly,
                 noteType: normalizeNoteTypeValue(parsed.frontmatter.type),
                 parsedDocument: parsed,
               }
@@ -1844,6 +1883,29 @@ function App() {
       setError(String(caught))
     }
   }
+
+  const openTagOverviewByReference = useCallback(
+    async (rawTag: string, options?: { targetPane?: PaneId }) => {
+      const parsed = parseTagReference(rawTag)
+      if (!parsed) {
+        return
+      }
+      try {
+        setError('')
+        const response = await apiRequest<{ path: string; title?: string }>(
+          backendUrl,
+          `/tags/overview?groupId=${encodeURIComponent(parsed.groupId)}&tagId=${encodeURIComponent(parsed.tagId)}`
+        )
+        await openNoteInTab(response.path, response.title || `${parsed.groupId}:${parsed.tagId}`, {
+          targetPane: options?.targetPane ?? workspaceStateRef.current.lastFocusedPane,
+          initialNoteType: 'note',
+        })
+      } catch (caught) {
+        setError(String(caught))
+      }
+    },
+    [backendUrl, openNoteInTab]
+  )
 
   const confirmCloseTab = async (tabId: string): Promise<boolean> => {
     const tab = openTabsRef.current.find((candidate) => candidate.id === tabId)
@@ -2020,6 +2082,9 @@ function App() {
 
       const targetTab = prev[targetIndex]
       if (!targetTab || targetTab.kind !== 'note') {
+        return prev
+      }
+      if (targetTab.readOnly) {
         return prev
       }
 
@@ -2401,6 +2466,9 @@ function App() {
         }}
         onNextActionHintChange={(nextActionHint) => {
           updateNoteNextActionHintByPath(tabPath, nextActionHint)
+        }}
+        onOpenTagOverview={(rawTag) => {
+          void openTagOverviewByReference(rawTag)
         }}
         onRemoveTag={(tag) => {
           removeNoteTagByPath(tabPath, tag)
@@ -3635,6 +3703,9 @@ function App() {
           onOpenOrigin={(path, title) => {
             void openTodoOrigin(path, title)
           }}
+          onOpenTagOverview={(tagKey) => {
+            void openTagOverviewByReference(tagKey)
+          }}
           onPromoteTodo={(todoId) => {
             void promoteTodo(todoId)
           }}
@@ -3707,10 +3778,19 @@ function App() {
     }
 
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
+    const isReadOnlyNote = Boolean(paneTab.readOnly)
+    const readOnlyTitle = normalizeLabel(document.frontmatter.title) || paneTab.title || toNoteDisplayName(paneTab.path)
     return (
       <div className="note-editor-shell">
         <div className={`note-flow-content ${workspaceState.layoutMode === 'split' ? 'split-note-flow-content' : ''}`}>
-          {renderNoteProperties(paneTab.path, document, workspaceState.layoutMode === 'split')}
+          {isReadOnlyNote ? (
+            <section className={`note-readonly-banner ${workspaceState.layoutMode === 'split' ? 'split-note-readonly-banner' : ''}`}>
+              <h2>{readOnlyTitle}</h2>
+              <p>Diese Notiz wird automatisch aus allen Tag-Verwendungen generiert und kann nicht manuell bearbeitet werden.</p>
+            </section>
+          ) : (
+            renderNoteProperties(paneTab.path, document, workspaceState.layoutMode === 'split')
+          )}
           <CodeMirrorMarkdownEditor
             key={`editor-${paneId}-${paneTab.id}`}
             className={`note-body-editor ${workspaceState.layoutMode === 'split' ? 'split-note-body-editor' : ''}`}
@@ -3719,9 +3799,13 @@ function App() {
             theme={theme}
             notePath={paneTab.path}
             backendUrl={backendUrl}
+            readOnly={isReadOnlyNote}
             tagGroups={mergedTagGroups}
             searchHighlightQuery={explorerFilterQuery}
             onChange={(nextContent) => {
+              if (isReadOnlyNote) {
+                return
+              }
               dispatchWorkspace({
                 type: 'SET_LAST_FOCUSED_PANE',
                 paneId,
@@ -3729,9 +3813,17 @@ function App() {
               })
               updateNoteContentByPath(paneTab.path, nextContent)
             }}
-            onInsertImageAsset={(file) => uploadImageForNote(paneTab.path, file)}
+            onInsertImageAsset={(file) => {
+              if (isReadOnlyNote) {
+                return Promise.resolve(null)
+              }
+              return uploadImageForNote(paneTab.path, file)
+            }}
             onOpenWikiLink={(target) => {
               openWikiLinkInEditor(target, paneId, paneTab.path)
+            }}
+            onOpenTagReference={(groupId, tagId) => {
+              void openTagOverviewByReference(`${groupId}:${tagId}`, { targetPane: paneId })
             }}
             editorApiRef={paneId === 'left' ? leftEditorRef : rightEditorRef}
           />
@@ -3867,6 +3959,9 @@ function App() {
             }}
             onDeleteTag={(groupName, tagName) => {
               void deleteTag(groupName, tagName)
+            }}
+            onOpenTagOverview={(groupName, tagName) => {
+              void openTagOverviewByReference(`${groupName}:${tagName}`)
             }}
             noteGroups={noteGroups}
             explorerRows={explorerRows}

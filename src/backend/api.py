@@ -672,7 +672,10 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
 
-    result = vault.save_note_document(req.path, req.content, indexer)
+    try:
+        result = vault.save_note_document(req.path, req.content, indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     tag_groups = vault.sync_tag_groups_with_index(indexer) if bool(result.get("tag_rebuild_required")) else None
     return {
         "saved": True,
@@ -765,6 +768,19 @@ def update_ui_settings(req: UiSettingsUpdateRequest) -> dict[str, Any]:
 def get_tag_groups() -> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"groups": vault.read_tag_groups()}
+
+
+@app.get("/tags/overview")
+def get_tag_overview(groupId: str, tagId: str) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        result = vault.resolve_tag_overview_note(group_id=groupId, tag_id=tagId, indexer=indexer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "path": str(result["path"]),
+        "title": str(result["title"]),
+    }
 
 
 @app.post("/tag-groups/add-group")
