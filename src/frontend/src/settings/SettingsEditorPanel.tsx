@@ -11,16 +11,23 @@ type StatusBarPrefs = {
   showStateMessage: boolean
 }
 
+type TaskFeatureSettings = {
+  advancedTaskHandling: boolean
+  taskTimeManagement: boolean
+}
+
 type SettingsEditorPanelProps = {
   displayName: string
   theme: ThemeMode
   sidebarOpen: boolean
   explorerOptions: ExplorerOptions
   statusBarPrefs: StatusBarPrefs
+  taskFeatureSettings: TaskFeatureSettings
   settingsDirty: boolean
   setSidebarOpen: Dispatch<SetStateAction<boolean>>
   setExplorerOptions: Dispatch<SetStateAction<ExplorerOptions>>
   setStatusBarPrefs: Dispatch<SetStateAction<StatusBarPrefs>>
+  setTaskFeatureSettings: Dispatch<SetStateAction<TaskFeatureSettings>>
   onDisplayNameChange: (nextRawValue: string) => void
   onThemeChange: (nextTheme: ThemeMode) => void
   onSave: () => void
@@ -33,10 +40,12 @@ export function SettingsEditorPanel({
   sidebarOpen,
   explorerOptions,
   statusBarPrefs,
+  taskFeatureSettings,
   settingsDirty,
   setSidebarOpen,
   setExplorerOptions,
   setStatusBarPrefs,
+  setTaskFeatureSettings,
   onDisplayNameChange,
   onThemeChange,
   onSave,
@@ -55,6 +64,28 @@ export function SettingsEditorPanel({
           onChange={(event) => onDisplayNameChange(event.target.value)}
           placeholder="Dein Name"
         />
+      </section>
+
+      <section className="settings-block">
+        <h4>Task Management</h4>
+        <label className="checkbox-row" htmlFor="settings-task-advanced">
+          <input
+            id="settings-task-advanced"
+            type="checkbox"
+            checked={taskFeatureSettings.advancedTaskHandling}
+            onChange={(event) => setTaskFeatureSettings((prev) => ({ ...prev, advancedTaskHandling: event.target.checked }))}
+          />
+          Detailliertes Task-Handling (Blocker, Waiting, Follow-up, Next Action)
+        </label>
+        <label className="checkbox-row" htmlFor="settings-task-time-management">
+          <input
+            id="settings-task-time-management"
+            type="checkbox"
+            checked={taskFeatureSettings.taskTimeManagement}
+            onChange={(event) => setTaskFeatureSettings((prev) => ({ ...prev, taskTimeManagement: event.target.checked }))}
+          />
+          Zeitmanagement bei Tasks (Estimate)
+        </label>
       </section>
 
       <section className="settings-block">
@@ -182,4 +213,3 @@ export function SettingsEditorPanel({
     </div>
   )
 }
-

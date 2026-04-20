@@ -123,6 +123,10 @@ export function runPhaseFFocusModelAssertions(): void {
     filters: baseFilters('execution'),
     todayIso,
     mitIds: ['task:tk_mit'],
+    taskFeatureSettings: {
+      advancedTaskHandling: true,
+      taskTimeManagement: true,
+    },
   })
 
   assert(data.capacityStatus === 'balanced' || data.capacityStatus === 'heavy' || data.capacityStatus === 'overloaded', { name: 'capacity' }, 'capacity status should consider estimates and uncertainty')
@@ -142,4 +146,21 @@ export function runPhaseFFocusModelAssertions(): void {
   assert(data.planningHints.focusWithoutEstimateCount >= 1, { name: 'planning-hints' }, 'focus without estimate hint should be reported')
   assert(data.planningHints.waitingWithoutFollowUpCount >= 1, { name: 'planning-hints' }, 'waiting without follow-up should be reported')
   assert(data.planningHints.unknownBlockerTaskCount >= 1, { name: 'planning-hints' }, 'unknown blockers should be reported')
+
+  const simpleData = buildFocusDashboardData({
+    tasks,
+    todos,
+    notes: [],
+    filters: baseFilters('execution'),
+    todayIso,
+    mitIds: ['task:tk_mit'],
+    taskFeatureSettings: {
+      advancedTaskHandling: false,
+      taskTimeManagement: false,
+    },
+  })
+  assert(simpleData.blockedTaskCount === 0, { name: 'feature-toggle-blocked' }, 'blocked KPI should be hidden in simple task mode')
+  assert(simpleData.waitingTaskCount === 0, { name: 'feature-toggle-waiting' }, 'waiting KPI should be hidden in simple task mode')
+  assert(simpleData.nextActionItems.length === 0, { name: 'feature-toggle-next-action' }, 'next action selection should be disabled in simple task mode')
+  assert(simpleData.todayEstimatedMinutes === 0, { name: 'feature-toggle-estimate' }, 'estimate KPIs should be disabled when time management is off')
 }

@@ -71,6 +71,7 @@ type WorkbenchSidebarContentProps = {
   vaultPath: string
   onOpenNoteInTab: (path: string, title?: string) => Promise<void>
   onOpenNoteInCurrentEditor: (path: string, title?: string) => Promise<void>
+  onOpenOrCreateTodayDaily: () => Promise<void>
   onCreateExplorerFile: (parentFolderKey: string, title: string) => Promise<void>
   onCreateExplorerTask: (parentFolderKey: string, title: string) => Promise<void>
   onCreateExplorerFolder: (parentFolderKey: string, name: string) => Promise<void>
@@ -172,6 +173,7 @@ export function WorkbenchSidebarContent({
   vaultPath,
   onOpenNoteInTab,
   onOpenNoteInCurrentEditor,
+  onOpenOrCreateTodayDaily,
   onCreateExplorerFile,
   onCreateExplorerTask,
   onCreateExplorerFolder,
@@ -1615,6 +1617,7 @@ export function WorkbenchSidebarContent({
       onWidthChange={onExplorerWidthChange}
       onOpenFile={onOpenNoteInTab}
       onPreviewFile={onOpenNoteInCurrentEditor}
+      onOpenOrCreateTodayDaily={onOpenOrCreateTodayDaily}
       onCreateFile={onCreateExplorerFile}
       onCreateTask={onCreateExplorerTask}
       onCreateFolder={onCreateExplorerFolder}

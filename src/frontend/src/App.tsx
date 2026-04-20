@@ -50,6 +50,7 @@ import {
   TASK_DASHBOARD_TAB_PATH,
   FOCUS_DASHBOARD_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
+  DEFAULT_TASK_FEATURE_SETTINGS,
   DEFAULT_EXPLORER_OPTIONS,
   DEFAULT_EXPLORER_VIEW_STATE,
   DEFAULT_TODO_DASHBOARD_FILTERS,
@@ -87,11 +88,13 @@ import {
   storeLastNoteBasePath,
   clearStoredLastNoteBasePath,
   areStatusBarPrefsEqual,
+  areTaskFeatureSettingsEqual,
   areExplorerOptionsEqual,
   toBoolean,
   toBoundedNumber,
   toThemeMode,
   toStatusBarPrefsFromSettings,
+  toTaskFeatureSettingsFromSettings,
   toExplorerOptionsFromSettings,
   toExpandedTagGroups,
   toExplorerViewStateFromSettings,
@@ -119,6 +122,7 @@ import type {
   FocusDashboardAggregateResponse,
   EditorTabContextMenuState,
   StatusBarPrefs,
+  TaskFeatureSettings,
   UiSettingsPayload,
   NoteGroup,
 } from './app/AppShared'
@@ -162,11 +166,13 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [displayName, setDisplayName] = useState('Max')
   const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
+  const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS })
   const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
   const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme)
   const [savedDisplayName, setSavedDisplayName] = useState('Max')
   const [savedSidebarOpen, setSavedSidebarOpen] = useState(true)
   const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
+  const [savedTaskFeatureSettings, setSavedTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS })
   const [savedExplorerOptions, setSavedExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
   const [explorerWidth, setExplorerWidth] = useState(300)
   const [editorPanelOpen, setEditorPanelOpen] = useState(true)
@@ -350,6 +356,7 @@ function App() {
       displayName !== savedDisplayName ||
       sidebarOpen !== savedSidebarOpen ||
       !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
+      !areTaskFeatureSettingsEqual(taskFeatureSettings, savedTaskFeatureSettings) ||
       !areExplorerOptionsEqual(explorerOptions, savedExplorerOptions),
     [
       displayName,
@@ -358,9 +365,11 @@ function App() {
       savedExplorerOptions,
       savedSidebarOpen,
       savedStatusBarPrefs,
+      savedTaskFeatureSettings,
       savedTheme,
       sidebarOpen,
       statusBarPrefs,
+      taskFeatureSettings,
       theme,
     ]
   )
@@ -623,6 +632,7 @@ function App() {
     displayName,
     sidebarOpen,
     statusBarPrefs,
+    taskFeatureSettings,
     explorerOptions,
     explorerWidth,
     editorPanelOpen,
@@ -650,6 +660,7 @@ function App() {
     const nextDisplayName = normalizeLabel(typeof appSettings.displayName === 'string' ? appSettings.displayName : '') || 'Max'
     const nextSidebarOpen = toBoolean(appSettings.sidebarOpen, true)
     const nextStatusBarPrefs = toStatusBarPrefsFromSettings(appSettings.statusBarPrefs)
+    const nextTaskFeatureSettings = toTaskFeatureSettingsFromSettings(appSettings.taskFeatureSettings)
     const nextExplorerOptions = toExplorerOptionsFromSettings(appSettings.explorerOptions)
     const nextExplorerWidth = toBoundedNumber(appSettings.explorerWidth, 300, 220, 520)
     const nextEditorPanelOpen = toBoolean(appSettings.editorPanelOpen, true)
@@ -663,11 +674,13 @@ function App() {
     setDisplayName(nextDisplayName)
     setSidebarOpen(nextSidebarOpen)
     setStatusBarPrefs(nextStatusBarPrefs)
+    setTaskFeatureSettings(nextTaskFeatureSettings)
     setExplorerOptions(nextExplorerOptions)
     setSavedTheme(nextTheme)
     setSavedDisplayName(nextDisplayName)
     setSavedSidebarOpen(nextSidebarOpen)
     setSavedStatusBarPrefs(nextStatusBarPrefs)
+    setSavedTaskFeatureSettings(nextTaskFeatureSettings)
     setSavedExplorerOptions(nextExplorerOptions)
     setExplorerWidth(nextExplorerWidth)
     setEditorPanelOpen(nextEditorPanelOpen)
@@ -1176,6 +1189,7 @@ function App() {
       setSavedDisplayName(displayName)
       setSavedSidebarOpen(sidebarOpen)
       setSavedStatusBarPrefs({ ...statusBarPrefs })
+      setSavedTaskFeatureSettings({ ...taskFeatureSettings })
       setSavedExplorerOptions({ ...explorerOptions })
       setMessage('Einstellungen gespeichert.')
       setError('')
@@ -1191,6 +1205,7 @@ function App() {
     setDisplayName(savedDisplayName)
     setSidebarOpen(savedSidebarOpen)
     setStatusBarPrefs({ ...savedStatusBarPrefs })
+    setTaskFeatureSettings({ ...savedTaskFeatureSettings })
     setExplorerOptions({ ...savedExplorerOptions })
     setMessage('Nicht gespeicherte Einstellungen verworfen.')
   }
@@ -1571,6 +1586,24 @@ function App() {
       setParsedTasks([])
       setMessage(`Capture gespeichert (${response.noteId}).`)
       await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const openOrCreateTodayDaily = async (): Promise<void> => {
+    const todayIso = toLocalIsoDate()
+    try {
+      const response = await apiRequest<{ date: string; notePath: string; title?: string; created: boolean; counts: VaultCounts }>(
+        backendUrl,
+        `/daily/open-today?date=${encodeURIComponent(todayIso)}`,
+        { method: 'POST' }
+      )
+      setCounts(response.counts)
+      setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geoeffnet: ${response.date}`)
+      setError('')
+      await Promise.all([runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
+      await openNoteInCurrentEditor(response.notePath, response.title || response.date)
     } catch (caught) {
       setError(String(caught))
     }
@@ -2283,6 +2316,8 @@ function App() {
         tagDraft={tagDraft}
         relatedInputOpen={relatedInputOpen}
         relatedDraft={relatedDraft}
+        taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling}
+        taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement}
         taskFieldErrors={taskFieldErrors}
         formatTimestamp={toGermanTimestamp}
         onTitleChange={(nextTitle) => {
@@ -3528,10 +3563,12 @@ function App() {
           sidebarOpen={sidebarOpen}
           explorerOptions={explorerOptions}
           statusBarPrefs={statusBarPrefs}
+          taskFeatureSettings={taskFeatureSettings}
           settingsDirty={settingsDirty}
           setSidebarOpen={setSidebarOpen}
           setExplorerOptions={setExplorerOptions}
           setStatusBarPrefs={setStatusBarPrefs}
+          setTaskFeatureSettings={setTaskFeatureSettings}
           onDisplayNameChange={(nextRawValue) => setDisplayName(normalizeLabel(nextRawValue) || 'Max')}
           onThemeChange={setThemeMode}
           onSave={() => {
@@ -3596,8 +3633,10 @@ function App() {
           tasks={tasks}
           todos={todos}
           notes={allNotes}
+          noteBasePath={vaultPath}
           filters={focusDashboardFilters}
           mitIds={focusMitIds}
+          taskFeatureSettings={taskFeatureSettings}
           onFiltersChange={setFocusDashboardFilters}
           onSaveMit={saveFocusMit}
           onQuickCaptureTodo={quickCaptureFocusTodo}
@@ -3790,6 +3829,7 @@ function App() {
             vaultPath={vaultPath}
             onOpenNoteInTab={openNoteInTab}
             onOpenNoteInCurrentEditor={openNoteInCurrentEditor}
+            onOpenOrCreateTodayDaily={openOrCreateTodayDaily}
             onCreateExplorerFile={createExplorerFile}
             onCreateExplorerTask={createExplorerTask}
             onCreateExplorerFolder={createExplorerFolder}

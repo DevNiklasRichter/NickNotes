@@ -20,6 +20,8 @@ type NotePropertiesPanelProps = {
   tagDraft: string
   relatedInputOpen: boolean
   relatedDraft: string
+  taskAdvancedHandlingEnabled: boolean
+  taskTimeManagementEnabled: boolean
   taskFieldErrors?: { estimate_minutes?: string; follow_up_date?: string }
   formatTimestamp: (value: string) => string
   onTitleChange: (next: string) => void
@@ -65,6 +67,8 @@ export function NotePropertiesPanel({
   tagDraft,
   relatedInputOpen,
   relatedDraft,
+  taskAdvancedHandlingEnabled,
+  taskTimeManagementEnabled,
   taskFieldErrors,
   formatTimestamp,
   onTitleChange,
@@ -322,157 +326,165 @@ export function NotePropertiesPanel({
               ) : null}
             </div>
 
-            <span className="property-key">Estimate</span>
-            <div className="property-value-stack">
-              <div className="property-value-inline">
-                <input
-                  className="property-number-input"
-                  type="number"
-                  min={1}
-                  step={5}
-                  value={estimateDraft}
-                  onChange={(event) => {
-                    setEstimateDraft(event.target.value)
-                  }}
-                  onBlur={() => {
-                    onEstimateMinutesChange(estimateDraft)
-                  }}
-                  onKeyDown={onTaskInputKeyDown}
-                  placeholder="z. B. 30"
-                />
-                {document.frontmatter.estimate_minutes ? (
-                  <button
-                    type="button"
-                    className="property-chip add"
-                    onClick={() => {
-                      setEstimateDraft('')
-                      onEstimateMinutesChange('')
+            {taskTimeManagementEnabled ? (
+              <>
+                <span className="property-key">Estimate</span>
+                <div className="property-value-stack">
+                  <div className="property-value-inline">
+                    <input
+                      className="property-number-input"
+                      type="number"
+                      min={1}
+                      step={5}
+                      value={estimateDraft}
+                      onChange={(event) => {
+                        setEstimateDraft(event.target.value)
+                      }}
+                      onBlur={() => {
+                        onEstimateMinutesChange(estimateDraft)
+                      }}
+                      onKeyDown={onTaskInputKeyDown}
+                      placeholder="z. B. 30"
+                    />
+                    {document.frontmatter.estimate_minutes ? (
+                      <button
+                        type="button"
+                        className="property-chip add"
+                        onClick={() => {
+                          setEstimateDraft('')
+                          onEstimateMinutesChange('')
+                        }}
+                        title="Schaetzung entfernen"
+                      >
+                        x
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="property-chip-row">
+                    {estimatePresets.map((preset) => (
+                      <button
+                        key={`estimate-${preset}`}
+                        type="button"
+                        className="property-chip property-chip-action"
+                        onClick={() => {
+                          const value = String(preset)
+                          setEstimateDraft(value)
+                          onEstimateMinutesChange(value)
+                        }}
+                      >
+                        {preset}m
+                      </button>
+                    ))}
+                  </div>
+                  {taskFieldErrors?.estimate_minutes ? <span className="property-inline-error">{taskFieldErrors.estimate_minutes}</span> : null}
+                </div>
+              </>
+            ) : null}
+
+            {taskAdvancedHandlingEnabled ? (
+              <>
+                <span className="property-key">Blocked By</span>
+                <div className="property-value-inline">
+                  <input
+                    className="property-text-input"
+                    list={blockerDatalistId}
+                    value={blockedByIdsDraft}
+                    onChange={(event) => {
+                      setBlockedByIdsDraft(event.target.value)
                     }}
-                    title="Schaetzung entfernen"
-                  >
-                    x
-                  </button>
-                ) : null}
-              </div>
-              <div className="property-chip-row">
-                {estimatePresets.map((preset) => (
-                  <button
-                    key={`estimate-${preset}`}
-                    type="button"
-                    className="property-chip property-chip-action"
-                    onClick={() => {
-                      const value = String(preset)
-                      setEstimateDraft(value)
-                      onEstimateMinutesChange(value)
+                    onBlur={() => {
+                      onBlockedByIdsChange(blockedByIdsDraft)
                     }}
-                  >
-                    {preset}m
-                  </button>
-                ))}
-              </div>
-              {taskFieldErrors?.estimate_minutes ? <span className="property-inline-error">{taskFieldErrors.estimate_minutes}</span> : null}
-            </div>
+                    onKeyDown={onTaskInputKeyDown}
+                    placeholder="Task-IDs, mit Komma trennen"
+                  />
+                  <datalist id={blockerDatalistId}>
+                    {taskIdOptions.map((taskId) => (
+                      <option key={taskId} value={taskId} />
+                    ))}
+                  </datalist>
+                </div>
 
-            <span className="property-key">Blocked By</span>
-            <div className="property-value-inline">
-              <input
-                className="property-text-input"
-                list={blockerDatalistId}
-                value={blockedByIdsDraft}
-                onChange={(event) => {
-                  setBlockedByIdsDraft(event.target.value)
-                }}
-                onBlur={() => {
-                  onBlockedByIdsChange(blockedByIdsDraft)
-                }}
-                onKeyDown={onTaskInputKeyDown}
-                placeholder="Task-IDs, mit Komma trennen"
-              />
-              <datalist id={blockerDatalistId}>
-                {taskIdOptions.map((taskId) => (
-                  <option key={taskId} value={taskId} />
-                ))}
-              </datalist>
-            </div>
-
-            <span className="property-key">Waiting For</span>
-            <div className="property-value-inline">
-              <input
-                className="property-text-input"
-                value={waitingForDraft}
-                onChange={(event) => {
-                  setWaitingForDraft(event.target.value)
-                }}
-                onBlur={() => {
-                  onWaitingForChange(waitingForDraft)
-                }}
-                onKeyDown={onTaskInputKeyDown}
-                placeholder="z. B. Rueckmeldung Team"
-              />
-            </div>
-
-            <span className="property-key">Follow-up</span>
-            <div className="property-value-stack">
-              <div className="property-value-inline">
-                <input
-                  className="property-date-input"
-                  type="date"
-                  value={followUpDateDraft}
-                  onChange={(event) => {
-                    setFollowUpDateDraft(event.target.value)
-                  }}
-                  onBlur={() => {
-                    onFollowUpDateChange(followUpDateDraft)
-                  }}
-                />
-                {document.frontmatter.follow_up_date ? (
-                  <button
-                    type="button"
-                    className="property-chip add"
-                    onClick={() => {
-                      setFollowUpDateDraft('')
-                      onFollowUpDateChange('')
+                <span className="property-key">Waiting For</span>
+                <div className="property-value-inline">
+                  <input
+                    className="property-text-input"
+                    value={waitingForDraft}
+                    onChange={(event) => {
+                      setWaitingForDraft(event.target.value)
                     }}
-                    title="Follow-up entfernen"
-                  >
-                    x
-                  </button>
-                ) : null}
-              </div>
-              {taskFieldErrors?.follow_up_date ? <span className="property-inline-error">{taskFieldErrors.follow_up_date}</span> : null}
-            </div>
+                    onBlur={() => {
+                      onWaitingForChange(waitingForDraft)
+                    }}
+                    onKeyDown={onTaskInputKeyDown}
+                    placeholder="z. B. Rueckmeldung Team"
+                  />
+                </div>
 
-            <span className="property-key">Blocked Reason</span>
-            <div className="property-value-inline">
-              <textarea
-                className="property-textarea-input"
-                rows={2}
-                value={blockedReasonDraft}
-                onChange={(event) => {
-                  setBlockedReasonDraft(event.target.value)
-                }}
-                onBlur={() => {
-                  onBlockedReasonChange(blockedReasonDraft)
-                }}
-                placeholder="Warum blockiert?"
-              />
-            </div>
+                <span className="property-key">Follow-up</span>
+                <div className="property-value-stack">
+                  <div className="property-value-inline">
+                    <input
+                      className="property-date-input"
+                      type="date"
+                      value={followUpDateDraft}
+                      onChange={(event) => {
+                        setFollowUpDateDraft(event.target.value)
+                      }}
+                      onBlur={() => {
+                        onFollowUpDateChange(followUpDateDraft)
+                      }}
+                    />
+                    {document.frontmatter.follow_up_date ? (
+                      <button
+                        type="button"
+                        className="property-chip add"
+                        onClick={() => {
+                          setFollowUpDateDraft('')
+                          onFollowUpDateChange('')
+                        }}
+                        title="Follow-up entfernen"
+                      >
+                        x
+                      </button>
+                    ) : null}
+                  </div>
+                  {taskFieldErrors?.follow_up_date ? <span className="property-inline-error">{taskFieldErrors.follow_up_date}</span> : null}
+                </div>
 
-            <span className="property-key">Next Action</span>
-            <div className="property-value-inline">
-              <textarea
-                className="property-textarea-input"
-                rows={2}
-                value={nextActionHintDraft}
-                onChange={(event) => {
-                  setNextActionHintDraft(event.target.value)
-                }}
-                onBlur={() => {
-                  onNextActionHintChange(nextActionHintDraft)
-                }}
-                placeholder="Naechster konkreter Schritt"
-              />
-            </div>
+                <span className="property-key">Blocked Reason</span>
+                <div className="property-value-inline">
+                  <textarea
+                    className="property-textarea-input"
+                    rows={2}
+                    value={blockedReasonDraft}
+                    onChange={(event) => {
+                      setBlockedReasonDraft(event.target.value)
+                    }}
+                    onBlur={() => {
+                      onBlockedReasonChange(blockedReasonDraft)
+                    }}
+                    placeholder="Warum blockiert?"
+                  />
+                </div>
+
+                <span className="property-key">Next Action</span>
+                <div className="property-value-inline">
+                  <textarea
+                    className="property-textarea-input"
+                    rows={2}
+                    value={nextActionHintDraft}
+                    onChange={(event) => {
+                      setNextActionHintDraft(event.target.value)
+                    }}
+                    onBlur={() => {
+                      onNextActionHintChange(nextActionHintDraft)
+                    }}
+                    placeholder="Naechster konkreter Schritt"
+                  />
+                </div>
+              </>
+            ) : null}
           </>
         ) : null}
 

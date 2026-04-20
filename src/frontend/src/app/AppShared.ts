@@ -246,12 +246,22 @@ export type StatusBarPrefs = {
   showStateMessage: boolean
 }
 
+export type TaskFeatureSettings = {
+  advancedTaskHandling: boolean
+  taskTimeManagement: boolean
+}
+
 export const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefs = {
   showNoteBaseName: true,
   showOpenTasks: true,
   showDueToday: false,
   showTotalNotes: false,
   showStateMessage: true,
+}
+
+export const DEFAULT_TASK_FEATURE_SETTINGS: TaskFeatureSettings = {
+  advancedTaskHandling: false,
+  taskTimeManagement: false,
 }
 
 export const DEFAULT_EXPLORER_OPTIONS: ExplorerOptions = {
@@ -598,6 +608,10 @@ export function areExplorerOptionsEqual(left: ExplorerOptions, right: ExplorerOp
   )
 }
 
+export function areTaskFeatureSettingsEqual(left: TaskFeatureSettings, right: TaskFeatureSettings): boolean {
+  return left.advancedTaskHandling === right.advancedTaskHandling && left.taskTimeManagement === right.taskTimeManagement
+}
+
 export function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
@@ -624,6 +638,17 @@ export function toStatusBarPrefsFromSettings(value: unknown): StatusBarPrefs {
     showDueToday: source.showDueToday ?? DEFAULT_STATUS_BAR_PREFS.showDueToday,
     showTotalNotes: source.showTotalNotes ?? DEFAULT_STATUS_BAR_PREFS.showTotalNotes,
     showStateMessage: source.showStateMessage ?? DEFAULT_STATUS_BAR_PREFS.showStateMessage,
+  }
+}
+
+export function toTaskFeatureSettingsFromSettings(value: unknown): TaskFeatureSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...DEFAULT_TASK_FEATURE_SETTINGS }
+  }
+  const source = value as Partial<TaskFeatureSettings>
+  return {
+    advancedTaskHandling: source.advancedTaskHandling ?? DEFAULT_TASK_FEATURE_SETTINGS.advancedTaskHandling,
+    taskTimeManagement: source.taskTimeManagement ?? DEFAULT_TASK_FEATURE_SETTINGS.taskTimeManagement,
   }
 }
 

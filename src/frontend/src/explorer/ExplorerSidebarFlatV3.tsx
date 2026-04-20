@@ -23,6 +23,7 @@ type ExplorerSidebarProps = {
   onWidthChange: (nextWidth: number) => void
   onOpenFile: (path: string, title?: string) => Promise<void>
   onPreviewFile: (path: string, title?: string) => Promise<void>
+  onOpenOrCreateTodayDaily: () => Promise<void>
   onCreateFile: (parentFolderKey: string, title: string) => Promise<void>
   onCreateTask: (parentFolderKey: string, title: string) => Promise<void>
   onCreateFolder: (parentFolderKey: string, name: string) => Promise<void>
@@ -338,6 +339,7 @@ export function ExplorerSidebar({
   width,
   onWidthChange,
   onOpenFile,
+  onOpenOrCreateTodayDaily,
   onCreateFile,
   onCreateTask,
   onCreateFolder,
@@ -888,6 +890,10 @@ export function ExplorerSidebar({
     await onCreateFolder(parentFolderKey, name)
   }, [onCreateFolder, resolveSelectedFolderKey, suggestSequentialName])
 
+  const runOpenOrCreateTodayDaily = useCallback(async () => {
+    await onOpenOrCreateTodayDaily()
+  }, [onOpenOrCreateTodayDaily])
+
   const collectFolderNodeIds = useCallback((rootNode: ExplorerNode): string[] => {
     if (rootNode.type !== 'folder') {
       return []
@@ -1398,6 +1404,16 @@ export function ExplorerSidebar({
                 </div>
               ) : null}
             </div>
+            <button
+              className="icon-button compact"
+              onClick={() => {
+                void runOpenOrCreateTodayDaily()
+              }}
+              disabled={!vaultLoaded}
+              title="Daily Note oeffnen oder anlegen"
+            >
+              <LucideNamedIcon name="CalendarDays" className="row-action-icon" size={14} />
+            </button>
           </div>
 
           <h3>Notizen</h3>

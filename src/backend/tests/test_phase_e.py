@@ -231,6 +231,71 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIn("unknownBlockerTaskCount", stats)
         self.assertIn("unknownBlockerReferenceCount", stats)
 
+    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
+    def test_daily_open_today_endpoint_creates_then_reuses_daily(self) -> None:
+        backend_api.state.close()
+        client = TestClient(backend_api.app)
+        open_response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        self.assertEqual(open_response.status_code, 200)
+
+        first = client.post("/daily/open-today?date=2026-04-20")
+        self.assertEqual(first.status_code, 200)
+        first_payload = first.json()
+        self.assertTrue(bool(first_payload.get("created")))
+        self.assertEqual(str(first_payload.get("date", "")), "2026-04-20")
+        self.assertEqual(str(first_payload.get("title", "")), "2026-04-20")
+        first_path = str(first_payload.get("notePath", "")).strip()
+        self.assertTrue(first_path.endswith("2026-04-20.md"))
+        meta, body = parse_markdown(Path(first_path))
+        self.assertEqual(str(meta.get("title", "")), "2026-04-20")
+        self.assertTrue(body.startswith("# 2026-04-20"))
+        self.assertNotIn("# Daily 2026-04-20", body)
+
+        second = client.post("/daily/open-today?date=2026-04-20")
+        self.assertEqual(second.status_code, 200)
+        second_payload = second.json()
+        self.assertFalse(bool(second_payload.get("created")))
+        self.assertEqual(str(second_payload.get("notePath", "")).strip(), first_path)
+
+    def test_daily_note_creation_and_legacy_notes_folder_migration(self) -> None:
+        created = self.vault.create_note_in_group(group_key=self.vault.daily_root_name, title="New Note", indexer=self.indexer)
+        created_path = Path(created["note_path"])
+        created_relative = created_path.relative_to(self.vault.vault_path)
+        self.assertEqual(created_relative.parts[0], self.vault.daily_root_name)
+        self.assertEqual(len(created_relative.parts), 2)
+
+        legacy_notes_dir = self.vault.daily_root_path / "notes"
+        legacy_notes_dir.mkdir(parents=True, exist_ok=True)
+        legacy_note_path = legacy_notes_dir / "2026-04-21.md"
+        legacy_note_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_legacy_daily_migration",
+                    "node_id": "note_legacy_daily_migration",
+                    "title": "2026-04-21",
+                    "type": "note",
+                    "created_at": "2026-04-21T08:00:00",
+                    "updated_at": "2026-04-21T08:00:00",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "# 2026-04-21",
+            ),
+            encoding="utf-8",
+        )
+
+        self.indexer.close()
+        self.vault.ensure_structure()
+        self.indexer = VaultIndexer(self.vault.db_path)
+        self.indexer.reindex_vault(self.vault.vault_path)
+
+        self.assertTrue((self.vault.daily_root_path / "2026-04-21.md").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

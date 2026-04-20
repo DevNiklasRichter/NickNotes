@@ -5,9 +5,11 @@ import {
   taskPriorityLabel,
   taskStatusClassName,
   taskStatusLabel,
+  getRelativeVaultPath,
   toLocalIsoDate,
   type FocusDashboardFilters,
   type SearchRow,
+  type TaskFeatureSettings,
   type TaskRow,
   type TodoRow,
 } from '../app/AppShared'
@@ -26,8 +28,10 @@ type FocusDashboardCanvasProps = {
   tasks: TaskRow[]
   todos: TodoRow[]
   notes: SearchRow[]
+  noteBasePath: string
   filters: FocusDashboardFilters
   mitIds: string[]
+  taskFeatureSettings: TaskFeatureSettings
   onFiltersChange: (next: FocusDashboardFilters) => void
   onSaveMit: (nextMitIds: string[]) => Promise<string[]>
   onQuickCaptureTodo: (rawText: string) => Promise<void>
@@ -73,6 +77,17 @@ function focusItemMetaLabel(item: FocusPrimaryItem): string {
 
 function cleanNoteTitle(rawTitle: string): string {
   return rawTitle.replace(/\.md$/i, '')
+}
+
+function toNoteRelativeDisplayPath(path: string, noteBasePath: string): string {
+  return getRelativeVaultPath(path, noteBasePath).replace(/\\/g, '/').replace(/\.md$/i, '')
+}
+
+function toMarkedRelativeNotePath(path: string, noteBasePath: string): string {
+  return toNoteRelativeDisplayPath(path, noteBasePath)
+    .split('/')
+    .filter(Boolean)
+    .join(' / ')
 }
 
 function noteTypeIcon(noteType: string): string {
@@ -143,13 +158,26 @@ type FocusItemCardProps = {
   selected: boolean
   overdue?: boolean
   focusMode: FocusDashboardMode
+  showAdvancedTaskSignals: boolean
+  showTaskTimeManagement: boolean
   mitBusy: boolean
   onSelect: (itemKey: string) => void
   onToggleMit: (item: FocusPrimaryItem) => void
   onOpenOrigin: (item: FocusPrimaryItem) => void
 }
 
-function FocusItemCard({ item, selected, overdue = false, focusMode, mitBusy, onSelect, onToggleMit, onOpenOrigin }: FocusItemCardProps) {
+function FocusItemCard({
+  item,
+  selected,
+  overdue = false,
+  focusMode,
+  showAdvancedTaskSignals,
+  showTaskTimeManagement,
+  mitBusy,
+  onSelect,
+  onToggleMit,
+  onOpenOrigin,
+}: FocusItemCardProps) {
   const canOpen = Boolean(item.path)
   const mitActionDisabled = mitBusy || (!item.isMit && !item.canAddToMit)
   const mitActionTitle = item.isMit
@@ -180,12 +208,14 @@ function FocusItemCard({ item, selected, overdue = false, focusMode, mitBusy, on
               {taskPriorityLabel(item.priority || 'medium')}
             </span>
           ) : null}
-          {item.kind === 'task' && item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
+          {showTaskTimeManagement && item.kind === 'task' && item.estimateMinutes !== null ? (
+            <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span>
+          ) : null}
           {item.isDone ? <span className="focus-context-badge-chip">Erledigt</span> : null}
-          {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
-          {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
-          {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
-          {item.unknownBlockerCount > 0 ? (
+          {showAdvancedTaskSignals && item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
+          {showAdvancedTaskSignals && item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
+          {showAdvancedTaskSignals && item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
+          {showAdvancedTaskSignals && item.unknownBlockerCount > 0 ? (
             <span className="focus-context-badge-chip">
               {item.unknownBlockerCount} unbekannter Blocker
             </span>
@@ -193,9 +223,9 @@ function FocusItemCard({ item, selected, overdue = false, focusMode, mitBusy, on
         </div>
         <strong>{item.title}</strong>
         <p>{focusItemMetaLabel(item)}</p>
-        {item.waitingFor ? <p className="focus-item-secondary">Warten auf: {truncateText(item.waitingFor, 56)}</p> : null}
-        {item.blockedReason ? <p className="focus-item-secondary">Blocker: {truncateText(item.blockedReason, 56)}</p> : null}
-        {item.nextActionHint ? <p className="focus-item-secondary">Naechster Schritt: {truncateText(item.nextActionHint, 72)}</p> : null}
+        {showAdvancedTaskSignals && item.waitingFor ? <p className="focus-item-secondary">Warten auf: {truncateText(item.waitingFor, 56)}</p> : null}
+        {showAdvancedTaskSignals && item.blockedReason ? <p className="focus-item-secondary">Blocker: {truncateText(item.blockedReason, 56)}</p> : null}
+        {showAdvancedTaskSignals && item.nextActionHint ? <p className="focus-item-secondary">Naechster Schritt: {truncateText(item.nextActionHint, 72)}</p> : null}
         {item.contextBadgeCount > 0 ? (
           <div className="focus-context-badge-row">
             <span className="focus-context-badge-chip">Kontext {item.contextBadgeCount}</span>
@@ -236,8 +266,10 @@ export function FocusDashboardCanvas({
   tasks,
   todos,
   notes,
+  noteBasePath,
   filters,
   mitIds,
+  taskFeatureSettings,
   onFiltersChange,
   onSaveMit,
   onQuickCaptureTodo,
@@ -256,9 +288,13 @@ export function FocusDashboardCanvas({
         filters,
         todayIso,
         mitIds,
+        taskFeatureSettings,
       }),
-    [filters, mitIds, notes, tasks, todayIso, todos]
+    [filters, mitIds, notes, taskFeatureSettings, tasks, todayIso, todos]
   )
+
+  const showAdvancedTaskSignals = taskFeatureSettings.advancedTaskHandling
+  const showTaskTimeManagement = taskFeatureSettings.taskTimeManagement
 
   const selectableItems = useMemo(
     () => dedupeByKey([...data.mitItems, ...data.overdueItems, ...data.blockedItems, ...data.waitingItems, ...data.followUpTodayItems, ...data.focusItems, ...data.candidateItems]),
@@ -389,28 +425,28 @@ export function FocusDashboardCanvas({
   )
   const planningHintEntries = useMemo(() => {
     const entries: Array<{ key: string; label: string; count: number }> = []
-    if (data.planningHints.focusWithoutEstimateCount > 0) {
+    if (showTaskTimeManagement && data.planningHints.focusWithoutEstimateCount > 0) {
       entries.push({
         key: 'focus_without_estimate',
         label: 'Fokus ohne Schaetzung',
         count: data.planningHints.focusWithoutEstimateCount,
       })
     }
-    if (data.planningHints.mitWithoutEstimateCount > 0) {
+    if (showTaskTimeManagement && data.planningHints.mitWithoutEstimateCount > 0) {
       entries.push({
         key: 'mit_without_estimate',
         label: 'MIT ohne Schaetzung',
         count: data.planningHints.mitWithoutEstimateCount,
       })
     }
-    if (data.planningHints.waitingWithoutFollowUpCount > 0) {
+    if (showAdvancedTaskSignals && data.planningHints.waitingWithoutFollowUpCount > 0) {
       entries.push({
         key: 'waiting_without_followup',
         label: 'Waiting ohne Follow-up',
         count: data.planningHints.waitingWithoutFollowUpCount,
       })
     }
-    if (data.planningHints.unknownBlockerTaskCount > 0) {
+    if (showAdvancedTaskSignals && data.planningHints.unknownBlockerTaskCount > 0) {
       entries.push({
         key: 'unknown_blockers',
         label: 'Tasks mit unbekanntem Blocker',
@@ -418,7 +454,14 @@ export function FocusDashboardCanvas({
       })
     }
     return entries
-  }, [data.planningHints.focusWithoutEstimateCount, data.planningHints.mitWithoutEstimateCount, data.planningHints.unknownBlockerTaskCount, data.planningHints.waitingWithoutFollowUpCount])
+  }, [
+    data.planningHints.focusWithoutEstimateCount,
+    data.planningHints.mitWithoutEstimateCount,
+    data.planningHints.unknownBlockerTaskCount,
+    data.planningHints.waitingWithoutFollowUpCount,
+    showAdvancedTaskSignals,
+    showTaskTimeManagement,
+  ])
 
   return (
     <div className="focus-canvas">
@@ -461,15 +504,17 @@ export function FocusDashboardCanvas({
         <p>
           Modus: {data.focusMode} | Query: {filters.query.trim() || 'keine'} | Auto-Fokus: {totalAutoFocusItems} | MIT: {data.mitItems.length}/3
         </p>
-        <div className={`focus-capacity-strip focus-capacity-${data.capacityStatus}`}>
-          <strong>
-            Kapazitaet: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
-          </strong>
-          <span>{data.capacityMessage}</span>
-          <span>
-            MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schaetzung {data.withoutEstimateCount}
-          </span>
-        </div>
+        {showTaskTimeManagement ? (
+          <div className={`focus-capacity-strip focus-capacity-${data.capacityStatus}`}>
+            <strong>
+              Kapazitaet: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
+            </strong>
+            <span>{data.capacityMessage}</span>
+            <span>
+              MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schaetzung {data.withoutEstimateCount}
+            </span>
+          </div>
+        ) : null}
 
         <div className="focus-capture-inline">
           <label className="focus-capture-label" htmlFor="focus-quick-capture">
@@ -511,31 +556,43 @@ export function FocusDashboardCanvas({
           <span className="focus-metric-label">Offene Todos</span>
           <strong>{data.openTodoCount}</strong>
         </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Blockiert</span>
-          <strong>{data.blockedTaskCount}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Waiting For</span>
-          <strong>{data.waitingTaskCount}</strong>
-          <span className="focus-metric-subtext">Follow-up heute: {data.followUpTodayCount}</span>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Dauer heute</span>
-          <strong>{data.todayEstimatedMinutes > 0 ? `${data.todayEstimatedMinutes}m` : '-'}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Dauer MIT</span>
-          <strong>{data.mitEstimatedMinutes > 0 ? `${data.mitEstimatedMinutes}m` : '-'}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Dauer Fokus</span>
-          <strong>{data.focusEstimatedMinutes > 0 ? `${data.focusEstimatedMinutes}m` : '-'}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Ohne Schaetzung</span>
-          <strong>{data.withoutEstimateCount}</strong>
-        </article>
+        {showAdvancedTaskSignals ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Blockiert</span>
+            <strong>{data.blockedTaskCount}</strong>
+          </article>
+        ) : null}
+        {showAdvancedTaskSignals ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Waiting For</span>
+            <strong>{data.waitingTaskCount}</strong>
+            <span className="focus-metric-subtext">Follow-up heute: {data.followUpTodayCount}</span>
+          </article>
+        ) : null}
+        {showTaskTimeManagement ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Dauer heute</span>
+            <strong>{data.todayEstimatedMinutes > 0 ? `${data.todayEstimatedMinutes}m` : '-'}</strong>
+          </article>
+        ) : null}
+        {showTaskTimeManagement ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Dauer MIT</span>
+            <strong>{data.mitEstimatedMinutes > 0 ? `${data.mitEstimatedMinutes}m` : '-'}</strong>
+          </article>
+        ) : null}
+        {showTaskTimeManagement ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Dauer Fokus</span>
+            <strong>{data.focusEstimatedMinutes > 0 ? `${data.focusEstimatedMinutes}m` : '-'}</strong>
+          </article>
+        ) : null}
+        {showTaskTimeManagement ? (
+          <article className="focus-metric-card">
+            <span className="focus-metric-label">Ohne Schaetzung</span>
+            <strong>{data.withoutEstimateCount}</strong>
+          </article>
+        ) : null}
         <article className="focus-metric-card">
           <span className="focus-metric-label">Done heute</span>
           <strong>{data.doneToday}</strong>
@@ -561,6 +618,8 @@ export function FocusDashboardCanvas({
                   item={item}
                   selected={selectedItem?.key === item.key}
                   focusMode={data.focusMode}
+                  showAdvancedTaskSignals={showAdvancedTaskSignals}
+                  showTaskTimeManagement={showTaskTimeManagement}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -622,6 +681,8 @@ export function FocusDashboardCanvas({
                   selected={selectedItem?.key === item.key}
                   overdue
                   focusMode={data.focusMode}
+                  showAdvancedTaskSignals={showAdvancedTaskSignals}
+                  showTaskTimeManagement={showTaskTimeManagement}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -646,6 +707,8 @@ export function FocusDashboardCanvas({
                   item={item}
                   selected={selectedItem?.key === item.key}
                   focusMode={data.focusMode}
+                  showAdvancedTaskSignals={showAdvancedTaskSignals}
+                  showTaskTimeManagement={showTaskTimeManagement}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -670,6 +733,8 @@ export function FocusDashboardCanvas({
                   item={item}
                   selected={selectedItem?.key === item.key}
                   focusMode={data.focusMode}
+                  showAdvancedTaskSignals={showAdvancedTaskSignals}
+                  showTaskTimeManagement={showTaskTimeManagement}
                   mitBusy={mitBusyKey === item.key}
                   onSelect={setSelectedKey}
                   onToggleMit={(target) => {
@@ -683,48 +748,50 @@ export function FocusDashboardCanvas({
         </div>
 
         <div className="focus-panel-stack">
-          <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
-            <header className="focus-panel-header">
-              <h3>Naechste sinnvolle Schritte</h3>
-              <span>{data.nextActionItems.length}</span>
-            </header>
-            {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
-            <ul className="focus-note-list">
-              {data.nextActionItems.map((entry) => {
-                const item = toNextActionEntry(entry)
-                return (
-                <li key={`next-action-${item.key}`} className="focus-note-row">
-                  <button
-                    className="focus-blocking-row-main"
-                    onClick={() => {
-                      setSelectedKey(item.key)
-                    }}
-                  >
-                    <span className="focus-note-row-title">{item.title}</span>
-                    <span className="focus-context-badge-row">
-                      {item.nextActionHint ? <span className="focus-context-badge-chip">{truncateText(item.nextActionHint, 54)}</span> : null}
-                      {entry.reasons.map((reason) => (
-                        <span key={`${item.key}-${reason}`} className="focus-context-badge-chip">
-                          {reason}
-                        </span>
-                      ))}
-                    </span>
-                  </button>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => {
-                      openItemOrigin(item)
-                    }}
-                    disabled={!item.path}
-                    title="Ursprung oeffnen"
-                  >
-                    <LucideNamedIcon name="ArrowUpRight" size={14} />
-                  </button>
-                </li>
-                )
-              })}
-            </ul>
-          </section>
+          {showAdvancedTaskSignals ? (
+            <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
+              <header className="focus-panel-header">
+                <h3>Naechste sinnvolle Schritte</h3>
+                <span>{data.nextActionItems.length}</span>
+              </header>
+              {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
+              <ul className="focus-note-list">
+                {data.nextActionItems.map((entry) => {
+                  const item = toNextActionEntry(entry)
+                  return (
+                  <li key={`next-action-${item.key}`} className="focus-note-row">
+                    <button
+                      className="focus-blocking-row-main"
+                      onClick={() => {
+                        setSelectedKey(item.key)
+                      }}
+                    >
+                      <span className="focus-note-row-title">{item.title}</span>
+                      <span className="focus-context-badge-row">
+                        {item.nextActionHint ? <span className="focus-context-badge-chip">{truncateText(item.nextActionHint, 54)}</span> : null}
+                        {entry.reasons.map((reason) => (
+                          <span key={`${item.key}-${reason}`} className="focus-context-badge-chip">
+                            {reason}
+                          </span>
+                        ))}
+                      </span>
+                    </button>
+                    <button
+                      className="icon-button compact muted"
+                      onClick={() => {
+                        openItemOrigin(item)
+                      }}
+                      disabled={!item.path}
+                      title="Ursprung oeffnen"
+                    >
+                      <LucideNamedIcon name="ArrowUpRight" size={14} />
+                    </button>
+                  </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ) : null}
 
           <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
             <header className="focus-panel-header">
@@ -769,6 +836,7 @@ export function FocusDashboardCanvas({
                 <h3>Daily Trail</h3>
                 <span>{data.dailyTrailItems.length}</span>
               </header>
+              <p className="focus-context-subtitle">Daily Notes der letzten Tage.</p>
               {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
               <ul className="focus-note-list">
                 {data.dailyTrailItems.map((dailyItem) => (
@@ -793,70 +861,76 @@ export function FocusDashboardCanvas({
             </section>
           ) : null}
 
-          <section className="focus-panel focus-panel-blocking">
-            <header className="focus-panel-header">
-              <h3>Blockiert / Warten auf</h3>
-              <span>{blockingSectionItems.length}</span>
-            </header>
-            <p className="focus-context-subtitle">
-              Blockiert: {data.blockedTaskCount} | Waiting: {data.waitingTaskCount} | Follow-up heute: {data.followUpTodayCount}
-            </p>
-            {blockingSectionItems.length === 0 ? <p className="empty-copy">Keine offenen Blocker oder Waiting-Themen.</p> : null}
-            <ul className="focus-note-list">
-              {blockingSectionItems.map((item) => (
-                <li key={`blocking-${item.key}`} className="focus-note-row">
-                  <button
-                    className="focus-blocking-row-main"
-                    onClick={() => {
-                      setSelectedKey(item.key)
-                    }}
-                  >
-                    <span className="focus-note-row-title">{item.title}</span>
-                    <span className="focus-context-badge-row">
-                      {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
-                      {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
-                      {item.unknownBlockerCount > 0 ? <span className="focus-context-badge-chip">{item.unknownBlockerCount} unbekannt</span> : null}
-                      {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
-                      {item.estimateMinutes !== null ? <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span> : null}
-                    </span>
-                  </button>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => {
-                      openItemOrigin(item)
-                    }}
-                    disabled={!item.path}
-                    title="Ursprung oeffnen"
-                  >
-                    <LucideNamedIcon name="ArrowUpRight" size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="focus-panel focus-panel-hints">
-            <header className="focus-panel-header">
-              <h3>Planungshinweise</h3>
-              <span>{planningHintEntries.length}</span>
-            </header>
-            {planningHintEntries.length === 0 ? <p className="empty-copy">Keine offenen Hygiene-Hinweise.</p> : null}
-            {planningHintEntries.length > 0 ? (
+          {showAdvancedTaskSignals ? (
+            <section className="focus-panel focus-panel-blocking">
+              <header className="focus-panel-header">
+                <h3>Blockiert / Warten auf</h3>
+                <span>{blockingSectionItems.length}</span>
+              </header>
+              <p className="focus-context-subtitle">
+                Blockiert: {data.blockedTaskCount} | Waiting: {data.waitingTaskCount} | Follow-up heute: {data.followUpTodayCount}
+              </p>
+              {blockingSectionItems.length === 0 ? <p className="empty-copy">Keine offenen Blocker oder Waiting-Themen.</p> : null}
               <ul className="focus-note-list">
-                {planningHintEntries.map((hint) => (
-                  <li key={`hint-${hint.key}`} className="focus-note-row">
-                    <div className="focus-note-row-main">
-                      <span className="focus-note-row-title">{hint.label}</span>
-                    </div>
-                    <span className="focus-context-badge-chip">{hint.count}</span>
+                {blockingSectionItems.map((item) => (
+                  <li key={`blocking-${item.key}`} className="focus-note-row">
+                    <button
+                      className="focus-blocking-row-main"
+                      onClick={() => {
+                        setSelectedKey(item.key)
+                      }}
+                    >
+                      <span className="focus-note-row-title">{item.title}</span>
+                      <span className="focus-context-badge-row">
+                        {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
+                        {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
+                        {item.unknownBlockerCount > 0 ? <span className="focus-context-badge-chip">{item.unknownBlockerCount} unbekannt</span> : null}
+                        {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
+                        {showTaskTimeManagement && item.estimateMinutes !== null ? (
+                          <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                    <button
+                      className="icon-button compact muted"
+                      onClick={() => {
+                        openItemOrigin(item)
+                      }}
+                      disabled={!item.path}
+                      title="Ursprung oeffnen"
+                    >
+                      <LucideNamedIcon name="ArrowUpRight" size={14} />
+                    </button>
                   </li>
                 ))}
               </ul>
-            ) : null}
-            {data.planningHints.unknownBlockerReferenceCount > 0 ? (
-              <p className="focus-context-subtitle">Unbekannte Blocker-Referenzen: {data.planningHints.unknownBlockerReferenceCount}</p>
-            ) : null}
-          </section>
+            </section>
+          ) : null}
+
+          {showAdvancedTaskSignals || showTaskTimeManagement ? (
+            <section className="focus-panel focus-panel-hints">
+              <header className="focus-panel-header">
+                <h3>Planungshinweise</h3>
+                <span>{planningHintEntries.length}</span>
+              </header>
+              {planningHintEntries.length === 0 ? <p className="empty-copy">Keine offenen Hygiene-Hinweise.</p> : null}
+              {planningHintEntries.length > 0 ? (
+                <ul className="focus-note-list">
+                  {planningHintEntries.map((hint) => (
+                    <li key={`hint-${hint.key}`} className="focus-note-row">
+                      <div className="focus-note-row-main">
+                        <span className="focus-note-row-title">{hint.label}</span>
+                      </div>
+                      <span className="focus-context-badge-chip">{hint.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {showAdvancedTaskSignals && data.planningHints.unknownBlockerReferenceCount > 0 ? (
+                <p className="focus-context-subtitle">Unbekannte Blocker-Referenzen: {data.planningHints.unknownBlockerReferenceCount}</p>
+              ) : null}
+            </section>
+          ) : null}
 
           {data.focusMode !== 'context' ? (
             <section className="focus-panel">
@@ -864,6 +938,7 @@ export function FocusDashboardCanvas({
                 <h3>Daily Trail</h3>
                 <span>{data.dailyTrailItems.length}</span>
               </header>
+              <p className="focus-context-subtitle">Daily Notes der letzten Tage.</p>
               {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
               <ul className="focus-note-list">
                 {data.dailyTrailItems.map((dailyItem) => (
@@ -893,12 +968,13 @@ export function FocusDashboardCanvas({
               <h3>Notizen heute</h3>
               <span>{data.notesToday.length}</span>
             </header>
+            <p className="focus-context-subtitle">Notizen, die heute bearbeitet wurden.</p>
             <ul className="focus-note-list">
               {data.notesToday.length === 0 ? <li className="empty-copy">Heute noch keine Notizen.</li> : null}
               {data.notesToday.map((note) => (
                 <li key={`${note.id}:${note.path}`} className="focus-note-row">
                   <div className="focus-note-row-main">
-                    <span className="focus-note-row-title">{cleanNoteTitle(note.title)}</span>
+                    <span className="focus-note-row-title">{toMarkedRelativeNotePath(note.path, noteBasePath)}</span>
                     <span className="focus-note-row-time">{toGermanTimestamp(note.updated_at)}</span>
                   </div>
                   <button

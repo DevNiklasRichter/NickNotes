@@ -4,6 +4,7 @@ import json
 import mimetypes
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -343,6 +344,7 @@ class VaultManager:
                 encoding="utf-8",
             )
 
+        self._migrate_legacy_daily_notes_folder()
         self._migrate_legacy_inbox()
 
     def _configure_root_paths(self) -> None:
@@ -468,8 +470,7 @@ class VaultManager:
         note_type: str = "note",
         status: str = "open",
     ) -> dict[str, Any]:
-        clean_key = group_key.replace("\\", "/").strip().strip("/")
-        root_dir = self._resolve_group_path(clean_key)
+        root_dir = self._resolve_group_path(group_key)
         if self._is_tag_path(root_dir):
             raise ValueError("In Tag-Notes koennen keine neuen Notizen angelegt werden.")
 
@@ -479,7 +480,7 @@ class VaultManager:
         note_id = make_task_id(now) if kind == "task" else make_note_id(now)
         safe_stem = self._safe_entry_name(clean_title) or note_id
 
-        note_dir = root_dir / "notes" if self._is_daily_group_key(clean_key) else root_dir
+        note_dir = root_dir
         note_dir.mkdir(parents=True, exist_ok=True)
         note_path = self._next_available_note_path(note_dir, safe_stem)
         normalized_status = _normalize_task_status(status)
@@ -629,8 +630,7 @@ class VaultManager:
         if self._is_system_path(target_group):
             raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
 
-        clean_target_key = target_group_key.replace("\\", "/").strip().strip("/")
-        target_dir = target_group / "notes" if self._is_daily_group_key(clean_target_key) else target_group
+        target_dir = target_group
         target_dir.mkdir(parents=True, exist_ok=True)
 
         destination = target_dir / file_path.name
@@ -657,8 +657,7 @@ class VaultManager:
         if self._is_system_path(target_group):
             raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
 
-        clean_target_key = target_group_key.replace("\\", "/").strip().strip("/")
-        target_dir = target_group / "notes" if self._is_daily_group_key(clean_target_key) else target_group
+        target_dir = target_group
         target_dir.mkdir(parents=True, exist_ok=True)
 
         resolved_sources: list[Path] = []
@@ -1701,6 +1700,32 @@ class VaultManager:
             "mit_ids": _normalize_mit_ids(meta.get("mit", [])),
         }
 
+    def ensure_daily_note(self, day_iso: str | None, indexer: VaultIndexer) -> dict[str, Any]:
+        day = _normalize_daily_day(day_iso)
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        daily_path = self.daily_root_path / f"{day}.md"
+        existed = daily_path.exists()
+        daily_path = self._ensure_daily_note(day, now_iso)
+        if not existed:
+            indexer.reindex_markdown_file(self.vault_path, daily_path)
+
+        title = day
+        try:
+            meta, _body = parse_markdown(daily_path)
+            parsed_title = str(meta.get("title", "")).strip()
+            if parsed_title:
+                title = parsed_title
+        except Exception:
+            # If parsing fails for any reason, still return a stable fallback title.
+            pass
+
+        return {
+            "date": day,
+            "note_path": daily_path,
+            "title": title,
+            "created": not existed,
+        }
+
     def set_daily_mit(self, day_iso: str | None, mit_ids: list[str], indexer: VaultIndexer) -> dict[str, Any]:
         day = _normalize_daily_day(day_iso)
         now_iso = datetime.now().isoformat(timespec="seconds")
@@ -1749,7 +1774,7 @@ class VaultManager:
         if body.strip():
             next_body = body.rstrip() + "\n" + todo_line + "\n"
         else:
-            next_body = f"# Daily {day}\n\n{todo_line}\n"
+            next_body = f"# {day}\n\n{todo_line}\n"
 
         daily_path.write_text(dump_markdown(meta, next_body), encoding="utf-8")
         indexer.reindex_markdown_file(self.vault_path, daily_path)
@@ -1877,11 +1902,12 @@ class VaultManager:
         fm = {
             "id": f"daily_{day_iso}",
             "type": "daily",
+            "title": day_iso,
             "created_at": f"{day_iso}T00:00:00",
             "updated_at": updated_at,
             "tags": [],
         }
-        body = f"# Daily {day_iso}\n"
+        body = f"# {day_iso}\n"
         daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
         return daily_path
 
@@ -2106,6 +2132,82 @@ class VaultManager:
 
         try:
             shutil.rmtree(inbox_path)
+        except OSError:
+            pass
+
+    def _migrate_legacy_daily_notes_folder(self) -> None:
+        legacy_notes_path = self.daily_root_path / "notes"
+        if not legacy_notes_path.exists() or not legacy_notes_path.is_dir():
+            return
+
+        moved_paths: list[tuple[str, str]] = []
+        for source_path in sorted(legacy_notes_path.rglob("*.md")):
+            if not source_path.is_file():
+                continue
+
+            target_path = self.daily_root_path / source_path.name
+            suffix = 2
+            while target_path.exists():
+                target_path = self.daily_root_path / f"{source_path.stem}_{suffix}{source_path.suffix}"
+                suffix += 1
+
+            moved = False
+            try:
+                source_path.rename(target_path)
+                moved = True
+            except OSError:
+                try:
+                    source_path.chmod(0o666)
+                except OSError:
+                    pass
+                try:
+                    shutil.copy2(source_path, target_path)
+                    for _ in range(3):
+                        try:
+                            source_path.chmod(0o666)
+                        except OSError:
+                            pass
+                        try:
+                            source_path.unlink(missing_ok=True)
+                            break
+                        except OSError:
+                            time.sleep(0.05)
+                    moved = True
+                except OSError:
+                    continue
+
+            if not moved:
+                continue
+            moved_paths.append(
+                (
+                    source_path.relative_to(self.vault_path).as_posix(),
+                    target_path.relative_to(self.vault_path).as_posix(),
+                )
+            )
+
+        if moved_paths:
+            for markdown_path in self._iter_markdown_files_for_tag_updates():
+                content = markdown_path.read_text(encoding="utf-8")
+                updated = content
+                for old_path, new_path in moved_paths:
+                    updated = updated.replace(old_path, new_path)
+                    updated = updated.replace(f"/{old_path}", f"/{new_path}")
+                if updated != content:
+                    markdown_path.write_text(updated, encoding="utf-8")
+
+        for directory in sorted(legacy_notes_path.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            if not directory.is_dir():
+                continue
+            try:
+                if any(directory.iterdir()):
+                    continue
+                directory.rmdir()
+            except OSError:
+                continue
+
+        try:
+            if not any(legacy_notes_path.iterdir()):
+                legacy_notes_path.rmdir()
         except OSError:
             pass
 
@@ -2343,13 +2445,6 @@ class VaultManager:
             "tasks",
             ".media",
         }
-
-    def _is_daily_group_key(self, key: str) -> bool:
-        clean_key = key.replace("\\", "/").strip().strip("/")
-        if not clean_key:
-            return False
-        root = clean_key.split("/", 1)[0]
-        return root in {self.daily_root_name, "01_daily", "daily"}
 
     def _resolve_note_file(self, note_path: str) -> Path:
         candidate = Path(note_path).expanduser()

@@ -430,6 +430,19 @@ def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/daily/open-today")
+def open_or_create_daily(date: str | None = None) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    state = vault.ensure_daily_note(day_iso=date, indexer=indexer)
+    return {
+        "date": state["date"],
+        "notePath": str(state["note_path"]),
+        "title": state["title"],
+        "created": bool(state["created"]),
+        "counts": _counts(indexer),
+    }
+
+
 @app.get("/focus/dashboard")
 def get_focus_dashboard(date: str | None = None) -> dict[str, Any]:
     vault, indexer = _require_loaded()
