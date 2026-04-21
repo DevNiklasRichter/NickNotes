@@ -855,11 +855,21 @@ class VaultIndexer:
             )
             todo_timeline_rows = [dict(row) for row in cur.fetchall()]
 
+            note_meta_by_key: dict[str, dict[str, str]] = {}
             top_notes_by_key: dict[str, dict[str, Any]] = {}
+            top_tasks_by_key: dict[str, dict[str, Any]] = {}
+            completed_task_rows: list[dict[str, Any]] = []
+            completed_todo_rows: list[dict[str, Any]] = []
+
+            def _normalize_note_type(raw: Any) -> str:
+                return str(raw or "note").strip().lower().replace("-", "_")
 
             def _upsert_top_note(path: str, *, title: str | None = None, note_type: str | None = None, updated_at: str | None = None) -> dict[str, Any] | None:
                 clean_path = str(path or "").strip()
                 if not clean_path:
+                    return None
+                normalized_type = _normalize_note_type(note_type)
+                if normalized_type == "task":
                     return None
                 key = clean_path.replace("\\", "/").lower()
                 existing = top_notes_by_key.get(key)
@@ -868,19 +878,42 @@ class VaultIndexer:
                     existing = {
                         "path": clean_path,
                         "title": (title or "").strip() or fallback_title,
-                        "note_type": (note_type or "").strip() or "note",
+                        "note_type": "note",
                         "updated_at": (updated_at or "").strip() or "",
                         "activity_events": 0,
                         "note_events": 0,
-                        "task_events": 0,
                         "todo_events": 0,
                     }
                     top_notes_by_key[key] = existing
                 else:
                     if title and not str(existing.get("title", "")).strip():
                         existing["title"] = title.strip()
-                    if note_type and not str(existing.get("note_type", "")).strip():
-                        existing["note_type"] = note_type.strip()
+                    if updated_at and str(updated_at) > str(existing.get("updated_at", "")):
+                        existing["updated_at"] = str(updated_at)
+                return existing
+
+            def _upsert_top_task(path: str, *, title: str | None = None, updated_at: str | None = None) -> dict[str, Any] | None:
+                clean_path = str(path or "").strip()
+                if not clean_path:
+                    return None
+                key = clean_path.replace("\\", "/").lower()
+                existing = top_tasks_by_key.get(key)
+                if existing is None:
+                    fallback_title = Path(clean_path).stem or "Task"
+                    existing = {
+                        "path": clean_path,
+                        "title": (title or "").strip() or fallback_title,
+                        "updated_at": (updated_at or "").strip() or "",
+                        "activity_events": 0,
+                        "created_events": 0,
+                        "done_events": 0,
+                        "updated_events": 0,
+                        "todo_events": 0,
+                    }
+                    top_tasks_by_key[key] = existing
+                else:
+                    if title and not str(existing.get("title", "")).strip():
+                        existing["title"] = title.strip()
                     if updated_at and str(updated_at) > str(existing.get("updated_at", "")):
                         existing["updated_at"] = str(updated_at)
                 return existing
@@ -900,11 +933,23 @@ class VaultIndexer:
                 """,
                 (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
             )
-            for row in cur.fetchall():
+            for raw_row in cur.fetchall():
+                row = dict(raw_row)
+                path = str(row["path"] or "").strip()
+                if not path:
+                    continue
+                key = path.replace("\\", "/").lower()
+                normalized_type = _normalize_note_type(row.get("note_type"))
+                note_meta_by_key[key] = {
+                    "path": path,
+                    "title": str(row.get("title") or "").strip(),
+                    "note_type": normalized_type,
+                    "updated_at": str(row.get("updated_at") or "").strip(),
+                }
                 entry = _upsert_top_note(
-                    str(row["path"] or ""),
+                    path,
                     title=str(row["title"] or ""),
-                    note_type=str(row["note_type"] or "note"),
+                    note_type=normalized_type,
                     updated_at=str(row["updated_at"] or ""),
                 )
                 if entry is None:
@@ -916,44 +961,52 @@ class VaultIndexer:
             cur.execute(
                 """
                 SELECT
-                  path,
-                  MAX(updated_at) AS last_updated,
-                  SUM(CASE WHEN substr(created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
-                  SUM(CASE WHEN status = 'done' AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
-                  SUM(CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
-                FROM tasks
-                WHERE path IS NOT NULL AND path <> ''
-                GROUP BY path;
+                  t.path,
+                  COALESCE(MAX(n.title), MAX(t.title), '') AS title,
+                  MAX(t.updated_at) AS last_updated,
+                  SUM(CASE WHEN substr(t.created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
+                  SUM(CASE WHEN t.status = 'done' AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN substr(t.updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                FROM tasks t
+                LEFT JOIN notes n ON lower(replace(n.path, '\\', '/')) = lower(replace(t.path, '\\', '/'))
+                WHERE t.path IS NOT NULL AND t.path <> ''
+                GROUP BY t.path;
                 """,
                 (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
             )
-            for row in cur.fetchall():
+            for raw_row in cur.fetchall():
+                row = dict(raw_row)
                 created_hits = int(row["created_hits"] or 0)
                 done_hits = int(row["done_hits"] or 0)
                 updated_hits = int(row["updated_hits"] or 0)
                 task_events = created_hits + done_hits + updated_hits
                 if task_events <= 0:
                     continue
-                entry = _upsert_top_note(
+                entry = _upsert_top_task(
                     str(row["path"] or ""),
-                    note_type="task",
+                    title=str(row["title"] or ""),
                     updated_at=str(row["last_updated"] or ""),
                 )
                 if entry is None:
                     continue
-                entry["task_events"] += task_events
+                entry["created_events"] += created_hits
+                entry["done_events"] += done_hits
+                entry["updated_events"] += updated_hits
                 entry["activity_events"] += task_events
 
             cur.execute(
                 """
                 SELECT
-                  note_path,
-                  MAX(updated_at) AS last_updated,
-                  SUM(CASE WHEN substr(COALESCE(created_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
-                  SUM(CASE WHEN checked = 1 AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
-                  SUM(CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
-                FROM todos
-                GROUP BY note_path;
+                  t.note_path,
+                  MAX(t.updated_at) AS last_updated,
+                  MAX(COALESCE(n.title, '')) AS note_title,
+                  MAX(COALESCE(n.note_type, 'note')) AS note_type,
+                  SUM(CASE WHEN substr(COALESCE(t.created_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
+                  SUM(CASE WHEN t.checked = 1 AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN substr(t.updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                FROM todos t
+                LEFT JOIN notes n ON n.id = t.note_id
+                GROUP BY t.note_path;
                 """,
                 (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
             )
@@ -964,14 +1017,65 @@ class VaultIndexer:
                 todo_events = created_hits + done_hits + updated_hits
                 if todo_events <= 0:
                     continue
-                entry = _upsert_top_note(
-                    str(row["note_path"] or ""),
-                    updated_at=str(row["last_updated"] or ""),
-                )
-                if entry is None:
+
+                path = str(row["note_path"] or "").strip()
+                if not path:
                     continue
-                entry["todo_events"] += todo_events
-                entry["activity_events"] += todo_events
+                key = path.replace("\\", "/").lower()
+                meta = note_meta_by_key.get(key) or {}
+                note_type = _normalize_note_type(meta.get("note_type") or row.get("note_type") or "note")
+                title = str(meta.get("title") or row.get("note_title") or "").strip()
+                last_updated = str(row["last_updated"] or meta.get("updated_at") or "")
+                if note_type == "task":
+                    entry = _upsert_top_task(path, title=title, updated_at=last_updated)
+                    if entry is None:
+                        continue
+                    entry["todo_events"] += todo_events
+                    entry["activity_events"] += todo_events
+                else:
+                    entry = _upsert_top_note(path, title=title, note_type=note_type, updated_at=last_updated)
+                    if entry is None:
+                        continue
+                    entry["todo_events"] += todo_events
+                    entry["activity_events"] += todo_events
+
+            completed_limit = max(6, safe_top_limit + 2)
+            cur.execute(
+                """
+                SELECT
+                  t.path,
+                  COALESCE(n.title, t.title, '') AS title,
+                  COALESCE(t.completed_at, t.updated_at) AS completed_at,
+                  COALESCE(n.note_type, 'task') AS note_type
+                FROM tasks t
+                LEFT JOIN notes n ON lower(replace(n.path, '\\', '/')) = lower(replace(t.path, '\\', '/'))
+                WHERE t.status = 'done'
+                  AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ?
+                ORDER BY COALESCE(t.completed_at, t.updated_at) DESC
+                LIMIT ?;
+                """,
+                (start_iso, end_iso, completed_limit),
+            )
+            completed_task_rows = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                  t.note_path,
+                  COALESCE(n.title, '') AS note_title,
+                  COALESCE(n.note_type, 'note') AS note_type,
+                  t.raw_text,
+                  COALESCE(t.completed_at, t.updated_at) AS completed_at
+                FROM todos t
+                LEFT JOIN notes n ON n.id = t.note_id
+                WHERE t.checked = 1
+                  AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ?
+                ORDER BY COALESCE(t.completed_at, t.updated_at) DESC
+                LIMIT ?;
+                """,
+                (start_iso, end_iso, completed_limit * 2),
+            )
+            completed_todo_rows = [dict(row) for row in cur.fetchall()]
 
         def _task_is_open_on_day(row: dict[str, Any], day_iso: str) -> bool:
             created_day = _to_iso_day_value(row.get("created_at")) or _to_iso_day_value(row.get("updated_at"))
@@ -1058,7 +1162,6 @@ class VaultIndexer:
                     "updated_at": str(entry.get("updated_at", "")),
                     "activity_events": int(entry.get("activity_events", 0)),
                     "note_events": int(entry.get("note_events", 0)),
-                    "task_events": int(entry.get("task_events", 0)),
                     "todo_events": int(entry.get("todo_events", 0)),
                 }
                 for entry in top_notes_by_key.values()
@@ -1067,6 +1170,63 @@ class VaultIndexer:
             key=lambda item: (int(item["activity_events"]), str(item["updated_at"]), str(item["title"]).lower()),
             reverse=True,
         )[:safe_top_limit]
+
+        top_tasks = sorted(
+            (
+                {
+                    "path": str(entry.get("path", "")),
+                    "title": str(entry.get("title", "")),
+                    "updated_at": str(entry.get("updated_at", "")),
+                    "activity_events": int(entry.get("activity_events", 0)),
+                    "created_events": int(entry.get("created_events", 0)),
+                    "done_events": int(entry.get("done_events", 0)),
+                    "updated_events": int(entry.get("updated_events", 0)),
+                    "todo_events": int(entry.get("todo_events", 0)),
+                }
+                for entry in top_tasks_by_key.values()
+                if int(entry.get("activity_events", 0)) > 0
+            ),
+            key=lambda item: (int(item["activity_events"]), str(item["updated_at"]), str(item["title"]).lower()),
+            reverse=True,
+        )[:safe_top_limit]
+
+        completed_items: list[dict[str, Any]] = []
+        for row in completed_task_rows:
+            path = str(row.get("path") or "").strip()
+            if not path:
+                continue
+            completed_items.append(
+                {
+                    "kind": "task",
+                    "path": path,
+                    "title": str(row.get("title") or Path(path).stem or "Task"),
+                    "note_type": str(row.get("note_type") or "task"),
+                    "completed_at": str(row.get("completed_at") or ""),
+                }
+            )
+
+        for row in completed_todo_rows:
+            path = str(row.get("note_path") or "").strip()
+            if not path:
+                continue
+            key = path.replace("\\", "/").lower()
+            meta = note_meta_by_key.get(key) or {}
+            todo_title = str(row.get("raw_text") or "").strip() or str(row.get("note_title") or "") or "Todo"
+            completed_items.append(
+                {
+                    "kind": "todo",
+                    "path": path,
+                    "title": todo_title,
+                    "note_type": str(meta.get("note_type") or row.get("note_type") or "note"),
+                    "completed_at": str(row.get("completed_at") or ""),
+                }
+            )
+
+        completed_items = sorted(
+            completed_items,
+            key=lambda item: str(item.get("completed_at", "")),
+            reverse=True,
+        )[: max(6, safe_top_limit + 2)]
 
         return {
             "period": {
@@ -1101,6 +1261,8 @@ class VaultIndexer:
             },
             "series": series,
             "top_notes": top_notes,
+            "top_tasks": top_tasks,
+            "completed_items": completed_items,
         }
 
     def reindex_vault(self, vault_path: Path) -> dict[str, int]:

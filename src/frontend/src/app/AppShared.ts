@@ -174,11 +174,11 @@ export type ReviewWeekly = {
 }
 
 export type ReviewDashboardWindow = 'today' | '7d' | '30d' | '90d'
-export type ReviewDashboardChartMode = 'throughput' | 'backlog'
+export type ReviewBacklogMode = 'grouped' | 'stacked'
 
 export type ReviewDashboardFilters = {
   window: ReviewDashboardWindow
-  chartMode: ReviewDashboardChartMode
+  backlogMode: ReviewBacklogMode
 }
 
 export type ReviewDashboardRiskLevel = 'low' | 'medium' | 'high'
@@ -201,8 +201,28 @@ export type ReviewDashboardTopNote = {
   updated_at: string
   activity_events: number
   note_events: number
-  task_events: number
   todo_events: number
+}
+
+export type ReviewDashboardTopTask = {
+  path: string
+  title: string
+  updated_at: string
+  activity_events: number
+  created_events: number
+  done_events: number
+  updated_events: number
+  todo_events: number
+}
+
+export type ReviewDashboardCompletedItemKind = 'task' | 'todo'
+
+export type ReviewDashboardCompletedItem = {
+  kind: ReviewDashboardCompletedItemKind
+  path: string
+  title: string
+  note_type: string
+  completed_at: string
 }
 
 export type ReviewDashboardResponse = {
@@ -238,6 +258,8 @@ export type ReviewDashboardResponse = {
   }
   series: ReviewDashboardSeriesPoint[]
   top_notes: ReviewDashboardTopNote[]
+  top_tasks: ReviewDashboardTopTask[]
+  completed_items: ReviewDashboardCompletedItem[]
 }
 
 export type BackendState = {
@@ -310,7 +332,7 @@ export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
 
 export const DEFAULT_REVIEW_DASHBOARD_FILTERS: ReviewDashboardFilters = {
   window: '30d',
-  chartMode: 'throughput',
+  backlogMode: 'stacked',
 }
 
 export type StatusBarPrefs = {

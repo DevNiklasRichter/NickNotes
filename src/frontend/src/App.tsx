@@ -113,8 +113,6 @@ import type {
   TodoRow,
   SearchRow,
   MediaUploadResponse,
-  ReviewDaily,
-  ReviewWeekly,
   BackendState,
   ThemeMode,
   SidebarView,
@@ -165,9 +163,6 @@ function App() {
   const [explorerFiles, setExplorerFiles] = useState<SearchRow[]>([])
   const [explorerFilterQuery, setExplorerFilterQuery] = useState('')
   const [explorerContentMatchPathKeys, setExplorerContentMatchPathKeys] = useState<Set<string>>(new Set())
-
-  const [daily, setDaily] = useState<ReviewDaily | null>(null)
-  const [weekly, setWeekly] = useState<ReviewWeekly | null>(null)
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -602,18 +597,18 @@ function App() {
       return
     }
 
-    const todayIso = toLocalIsoDate()
-    const reviewDays = toReviewWindowDays(reviewDashboardFilters.window)
-    const [summary, dashboard] = await Promise.all([
-      apiRequest<{ daily: ReviewDaily; weekly: ReviewWeekly }>(backendUrl, '/review'),
-      apiRequest<ReviewDashboardResponse>(
+    try {
+      const todayIso = toLocalIsoDate()
+      const reviewDays = toReviewWindowDays(reviewDashboardFilters.window)
+      const dashboard = await apiRequest<ReviewDashboardResponse>(
         backendUrl,
         `/review/dashboard?days=${reviewDays}&top=10&day=${encodeURIComponent(todayIso)}`
-      ),
-    ])
-    setDaily(summary.daily)
-    setWeekly(summary.weekly)
-    setReviewDashboardData(dashboard)
+      )
+      setReviewDashboardData(dashboard)
+    } catch (caught) {
+      setError(String(caught))
+      setReviewDashboardData(null)
+    }
   }
 
   useEffect(() => {
@@ -4034,11 +4029,8 @@ function App() {
             onOpenReviewDashboard={() => {
               openReviewDashboardTab()
             }}
-            daily={daily}
-            weekly={weekly}
             reviewFilters={reviewDashboardFilters}
             onReviewFiltersChange={setReviewDashboardFilters}
-            reviewDashboardData={reviewDashboardData}
             onRefreshReview={() => {
               void refreshReview()
             }}

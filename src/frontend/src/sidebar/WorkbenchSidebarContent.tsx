@@ -21,10 +21,7 @@ import {
   type TodoPromotionFilterValue,
   type TodoStatusFilterValue,
   type TaskRow,
-  type ReviewDaily,
   type ReviewDashboardFilters,
-  type ReviewDashboardResponse,
-  type ReviewWeekly,
 } from '../app/AppShared'
 import { filterTaskRows, toTaskDashboardTodayIso } from '../tasks/taskDashboardModel'
 
@@ -55,11 +52,8 @@ type WorkbenchSidebarContentProps = {
   onOpenTaskDashboard: () => void
   onOpenFocusDashboard: () => void
   onOpenReviewDashboard: () => void
-  daily: ReviewDaily | null
-  weekly: ReviewWeekly | null
   reviewFilters: ReviewDashboardFilters
   onReviewFiltersChange: (next: ReviewDashboardFilters) => void
-  reviewDashboardData: ReviewDashboardResponse | null
   onRefreshReview: () => void
   mergedTagGroups: TagGroupDefinition[]
   expandedFolders: Record<string, boolean>
@@ -162,11 +156,8 @@ export function WorkbenchSidebarContent({
   onOpenTaskDashboard,
   onOpenFocusDashboard,
   onOpenReviewDashboard,
-  daily,
-  weekly,
   reviewFilters,
   onReviewFiltersChange,
-  reviewDashboardData,
   onRefreshReview,
   mergedTagGroups,
   expandedFolders,
@@ -1560,18 +1551,10 @@ export function WorkbenchSidebarContent({
   }
 
   if (sidebarView === 'review') {
-    const kpis = reviewDashboardData?.kpis
     return (
       <div className="explorer-shell todo-explorer-shell">
         <header className="explorer-toolbar todo-sidebar-toolbar">
           <div className="explorer-toolbar-top">
-            <div className="explorer-toolbar-left">
-              <div className="explorer-sort-anchor">
-                <button className="icon-button compact" disabled={!vaultLoaded} title="Review-Filter">
-                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
-                </button>
-              </div>
-            </div>
             <h3>Review</h3>
             <div className="explorer-toolbar-right">
               <button
@@ -1625,76 +1608,7 @@ export function WorkbenchSidebarContent({
                 </select>
               </label>
             </div>
-            <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Chart</span>
-              <label className="todo-grouping-select">
-                <select
-                  value={reviewFilters.chartMode}
-                  onChange={(event) =>
-                    onReviewFiltersChange({
-                      ...reviewFilters,
-                      chartMode: event.target.value as ReviewDashboardFilters['chartMode'],
-                    })
-                  }
-                >
-                  <option value="throughput">Durchsatz</option>
-                  <option value="backlog">Backlog</option>
-                </select>
-              </label>
-            </div>
           </div>
-        </section>
-
-        <section className="todo-sidebar-section review-sidebar-kpi-section">
-          <h4>Quick KPIs</h4>
-          {kpis ? (
-            <div className="review-sidebar-kpi-grid">
-              <p>
-                <strong>{kpis.open_total_now}</strong> offen
-              </p>
-              <p>
-                <strong>{kpis.done_work_period}</strong> erledigt
-              </p>
-              <p>
-                <strong>{kpis.new_work_period}</strong> neu
-              </p>
-              <p>
-                <strong>{kpis.overdue_open_tasks}</strong> ueberfaellig
-              </p>
-            </div>
-          ) : (
-            <p className="empty-copy">Keine KPI-Daten.</p>
-          )}
-        </section>
-
-        <section className="todo-sidebar-section">
-          <h4>Daily</h4>
-          {daily ? (
-            <>
-              <p>Datum: {daily.date}</p>
-              <p>Neue Notizen: {daily.new_notes}</p>
-              <p>Offene Tasks: {daily.open_tasks}</p>
-              <p>Heute erledigt: {daily.done_today}</p>
-            </>
-          ) : (
-            <p className="empty-copy">Keine Daily-Daten.</p>
-          )}
-        </section>
-
-        <section className="todo-sidebar-section">
-          <h4>Weekly</h4>
-          {weekly ? (
-            <>
-              <p>
-                Zeitraum: {weekly.from} bis {weekly.to}
-              </p>
-              <p>Notizen gesamt: {weekly.notes_total}</p>
-              <p>Tasks offen: {weekly.tasks_open}</p>
-              <p>Tasks erledigt: {weekly.tasks_done}</p>
-            </>
-          ) : (
-            <p className="empty-copy">Keine Weekly-Daten.</p>
-          )}
         </section>
       </div>
     )

@@ -287,6 +287,8 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIn("risk", payload)
         self.assertIn("series", payload)
         self.assertIn("top_notes", payload)
+        self.assertIn("top_tasks", payload)
+        self.assertIn("completed_items", payload)
 
         period = payload.get("period") or {}
         self.assertEqual(int(period.get("days", 0)), 30)

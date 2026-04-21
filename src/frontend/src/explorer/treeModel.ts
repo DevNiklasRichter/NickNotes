@@ -39,6 +39,17 @@ const PROTECTED_ROOTS = new Set([
 ])
 const FIXED_ROOT_ORDER: string[] = ['daily', 'tags', 'tasks']
 const FIXED_ROOT_RANK = new Map(FIXED_ROOT_ORDER.map((token, index) => [token, index]))
+const FIXED_SCOPE_ALPHA = new Set(['tags', 'tasks'])
+
+function toDateSortKey(name: string): number {
+  const match = String(name || '').match(/(\d{4}-\d{2}-\d{2})/)
+  const iso = match?.[1] ?? ''
+  if (!iso) {
+    return 0
+  }
+  const ms = new Date(`${iso}T00:00:00`).getTime()
+  return Number.isFinite(ms) ? ms : 0
+}
 
 function toRootToken(groupKey: string): string {
   const clean = normalizeGroupKey(groupKey)
@@ -59,6 +70,19 @@ function toNodeGroupKey(node: MutableExplorerNode): string {
     return ''
   }
   return normalizeGroupKey(node.normalizedKey || node.path)
+}
+
+function toNodeRootScope(node: MutableExplorerNode): string {
+  if (node.type === 'folder') {
+    const folderKey = toNodeGroupKey(node)
+    if (folderKey) {
+      return toRootToken(folderKey)
+    }
+  }
+  if (node.parentKey) {
+    return toRootToken(node.parentKey)
+  }
+  return ''
 }
 
 function toFixedRootRank(groupKey: string): number {
@@ -160,6 +184,9 @@ function compareNodes(
   options: ExplorerOptions,
   folderOrder: Record<string, string[]>
 ): number {
+  const siblingScope = left.parentKey ? toRootToken(left.parentKey) : ''
+  const hasFixedScopeSorting = siblingScope === 'daily' || siblingScope === 'tags' || siblingScope === 'tasks'
+
   if (left.type === 'folder' && right.type === 'folder' && left.parentKey === right.parentKey) {
     const leftKey = toNodeGroupKey(left)
     const rightKey = toNodeGroupKey(right)
@@ -171,18 +198,42 @@ function compareNodes(
       }
     }
 
-    const leftPinned = Boolean(left.favorite)
-    const rightPinned = Boolean(right.favorite)
-    if (leftPinned !== rightPinned) {
-      return leftPinned ? -1 : 1
-    }
-
-    if (options.sortMode === 'manual') {
-      const leftIndex = toFolderOrderIndex(left.parentKey, leftKey, folderOrder)
-      const rightIndex = toFolderOrderIndex(right.parentKey, rightKey, folderOrder)
-      if (leftIndex !== rightIndex) {
-        return leftIndex - rightIndex
+    if (!hasFixedScopeSorting) {
+      const leftPinned = Boolean(left.favorite)
+      const rightPinned = Boolean(right.favorite)
+      if (leftPinned !== rightPinned) {
+        return leftPinned ? -1 : 1
       }
+
+      if (options.sortMode === 'manual') {
+        const leftIndex = toFolderOrderIndex(left.parentKey, leftKey, folderOrder)
+        const rightIndex = toFolderOrderIndex(right.parentKey, rightKey, folderOrder)
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex
+        }
+      }
+    }
+  }
+
+  const leftScope = toNodeRootScope(left)
+  const rightScope = toNodeRootScope(right)
+  if (leftScope && leftScope === rightScope) {
+    if (FIXED_SCOPE_ALPHA.has(leftScope)) {
+      if (left.type !== right.type) {
+        return left.type === 'folder' ? -1 : 1
+      }
+      return left.name.localeCompare(right.name, 'de')
+    }
+    if (leftScope === 'daily') {
+      const leftDate = toDateSortKey(left.name)
+      const rightDate = toDateSortKey(right.name)
+      if (leftDate !== rightDate) {
+        return rightDate - leftDate
+      }
+      if (left.type !== right.type) {
+        return left.type === 'folder' ? -1 : 1
+      }
+      return left.name.localeCompare(right.name, 'de')
     }
   }
 
