@@ -91,6 +91,8 @@ class PhaseEBackendTests(unittest.TestCase):
         todo_id = str(target["id"])
         self.assertFalse(bool(target.get("checked")))
         self.assertIsNone(target.get("completed_at"))
+        created_at = str(target.get("created_at", "")).strip()
+        self.assertTrue(created_at)
 
         self.vault.toggle_todo(todo_id=todo_id, indexer=self.indexer, checked=True)
         checked_todo = self.indexer.get_todo(todo_id)
@@ -98,6 +100,7 @@ class PhaseEBackendTests(unittest.TestCase):
         assert checked_todo is not None
         self.assertTrue(bool(checked_todo.get("checked")))
         self.assertTrue(str(checked_todo.get("completed_at", "")).strip())
+        self.assertEqual(str(checked_todo.get("created_at", "")).strip(), created_at)
 
         self.vault.toggle_todo(todo_id=todo_id, indexer=self.indexer, checked=False)
         unchecked_todo = self.indexer.get_todo(todo_id)
@@ -105,6 +108,7 @@ class PhaseEBackendTests(unittest.TestCase):
         assert unchecked_todo is not None
         self.assertFalse(bool(unchecked_todo.get("checked")))
         self.assertIsNone(unchecked_todo.get("completed_at"))
+        self.assertEqual(str(unchecked_todo.get("created_at", "")).strip(), created_at)
 
     @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
     def test_compute_done_today_counts_uses_completed_at_and_fallback(self) -> None:
@@ -256,6 +260,47 @@ class PhaseEBackendTests(unittest.TestCase):
         second_payload = second.json()
         self.assertFalse(bool(second_payload.get("created")))
         self.assertEqual(str(second_payload.get("notePath", "")).strip(), first_path)
+
+    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
+    def test_review_dashboard_endpoint_returns_timeseries_payload(self) -> None:
+        now = datetime(2026, 4, 20, 9, 0, 0)
+        self.vault._create_task_file(
+            task_id="tk_review_dashboard_open",
+            note_id="note_review_dashboard_open",
+            task=ParsedTask(title="Review endpoint task", status="open", priority="M"),
+            now=now,
+            indexer=self.indexer,
+        )
+        self.vault.add_quick_todo_to_daily(text="Review endpoint todo", indexer=self.indexer, day_iso="2026-04-20")
+
+        backend_api.state.close()
+        client = TestClient(backend_api.app)
+        open_response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        self.assertEqual(open_response.status_code, 200)
+
+        response = client.get("/review/dashboard?days=30&day=2026-04-21&top=5")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+
+        self.assertIn("period", payload)
+        self.assertIn("kpis", payload)
+        self.assertIn("risk", payload)
+        self.assertIn("series", payload)
+        self.assertIn("top_notes", payload)
+
+        period = payload.get("period") or {}
+        self.assertEqual(int(period.get("days", 0)), 30)
+        series = payload.get("series") or []
+        self.assertEqual(len(series), 30)
+
+        kpis = payload.get("kpis") or {}
+        self.assertIn("open_tasks_now", kpis)
+        self.assertIn("open_todos_now", kpis)
+        self.assertIn("completion_ratio", kpis)
+        self.assertIn("backlog_delta", kpis)
+
+        risk = payload.get("risk") or {}
+        self.assertIn(str(risk.get("level", "")), {"low", "medium", "high"})
 
     def test_daily_note_creation_and_legacy_notes_folder_migration(self) -> None:
         created = self.vault.create_note_in_group(group_key=self.vault.daily_root_name, title="New Note", indexer=self.indexer)

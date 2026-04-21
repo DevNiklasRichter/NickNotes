@@ -6,6 +6,7 @@ import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 import {
   DEFAULT_FOCUS_DASHBOARD_FILTERS,
+  DEFAULT_REVIEW_DASHBOARD_FILTERS,
   DEFAULT_TASK_DASHBOARD_FILTERS,
   TASK_STATUS_OPTIONS,
   TASK_STATUS_COLORS,
@@ -21,6 +22,8 @@ import {
   type TodoStatusFilterValue,
   type TaskRow,
   type ReviewDaily,
+  type ReviewDashboardFilters,
+  type ReviewDashboardResponse,
   type ReviewWeekly,
 } from '../app/AppShared'
 import { filterTaskRows, toTaskDashboardTodayIso } from '../tasks/taskDashboardModel'
@@ -51,8 +54,12 @@ type WorkbenchSidebarContentProps = {
   onOpenTodoDashboard: () => void
   onOpenTaskDashboard: () => void
   onOpenFocusDashboard: () => void
+  onOpenReviewDashboard: () => void
   daily: ReviewDaily | null
   weekly: ReviewWeekly | null
+  reviewFilters: ReviewDashboardFilters
+  onReviewFiltersChange: (next: ReviewDashboardFilters) => void
+  reviewDashboardData: ReviewDashboardResponse | null
   onRefreshReview: () => void
   mergedTagGroups: TagGroupDefinition[]
   expandedFolders: Record<string, boolean>
@@ -154,8 +161,12 @@ export function WorkbenchSidebarContent({
   onOpenTodoDashboard,
   onOpenTaskDashboard,
   onOpenFocusDashboard,
+  onOpenReviewDashboard,
   daily,
   weekly,
+  reviewFilters,
+  onReviewFiltersChange,
+  reviewDashboardData,
   onRefreshReview,
   mergedTagGroups,
   expandedFolders,
@@ -1050,6 +1061,10 @@ export function WorkbenchSidebarContent({
     onFocusFiltersChange({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
   }
 
+  const resetReviewFilters = () => {
+    onReviewFiltersChange({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
+  }
+
   if (sidebarView === 'vault') {
     return (
       <div className="sidebar-content">
@@ -1545,16 +1560,114 @@ export function WorkbenchSidebarContent({
   }
 
   if (sidebarView === 'review') {
+    const kpis = reviewDashboardData?.kpis
     return (
-      <div className="sidebar-content">
-        <div className="sidebar-header-row">
-          <h3>Review</h3>
-          <button onClick={onRefreshReview} disabled={!vaultLoaded}>
-            Aktualisieren
-          </button>
-        </div>
+      <div className="explorer-shell todo-explorer-shell">
+        <header className="explorer-toolbar todo-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <div className="explorer-toolbar-left">
+              <div className="explorer-sort-anchor">
+                <button className="icon-button compact" disabled={!vaultLoaded} title="Review-Filter">
+                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
+                </button>
+              </div>
+            </div>
+            <h3>Review</h3>
+            <div className="explorer-toolbar-right">
+              <button
+                className="icon-button compact"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRefreshReview()
+                }}
+                disabled={!vaultLoaded}
+                title="Review aktualisieren"
+              >
+                <LucideNamedIcon name="RefreshCw" size={14} />
+              </button>
+            </div>
+          </div>
+        </header>
 
-        <section className="review-card">
+        <button className="todo-open-dashboard-button" onClick={onOpenReviewDashboard} disabled={!vaultLoaded}>
+          Dashboard oeffnen
+        </button>
+
+        <section className="todo-sidebar-section">
+          <div className="todo-section-header">
+            <h4>Filter</h4>
+            <button
+              className="icon-button compact muted todo-section-reset-button"
+              onClick={resetReviewFilters}
+              title="Review-Filter zuruecksetzen"
+              aria-label="Review-Filter zuruecksetzen"
+            >
+              <LucideNamedIcon name="FilterX" size={13} />
+            </button>
+          </div>
+          <div className="todo-filter-rows">
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Zeitraum</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={reviewFilters.window}
+                  onChange={(event) =>
+                    onReviewFiltersChange({
+                      ...reviewFilters,
+                      window: event.target.value as ReviewDashboardFilters['window'],
+                    })
+                  }
+                >
+                  <option value="today">Heute</option>
+                  <option value="7d">7 Tage</option>
+                  <option value="30d">30 Tage</option>
+                  <option value="90d">90 Tage</option>
+                </select>
+              </label>
+            </div>
+            <div className="todo-filter-row">
+              <span className="todo-filter-row-label">Chart</span>
+              <label className="todo-grouping-select">
+                <select
+                  value={reviewFilters.chartMode}
+                  onChange={(event) =>
+                    onReviewFiltersChange({
+                      ...reviewFilters,
+                      chartMode: event.target.value as ReviewDashboardFilters['chartMode'],
+                    })
+                  }
+                >
+                  <option value="throughput">Durchsatz</option>
+                  <option value="backlog">Backlog</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section className="todo-sidebar-section review-sidebar-kpi-section">
+          <h4>Quick KPIs</h4>
+          {kpis ? (
+            <div className="review-sidebar-kpi-grid">
+              <p>
+                <strong>{kpis.open_total_now}</strong> offen
+              </p>
+              <p>
+                <strong>{kpis.done_work_period}</strong> erledigt
+              </p>
+              <p>
+                <strong>{kpis.new_work_period}</strong> neu
+              </p>
+              <p>
+                <strong>{kpis.overdue_open_tasks}</strong> ueberfaellig
+              </p>
+            </div>
+          ) : (
+            <p className="empty-copy">Keine KPI-Daten.</p>
+          )}
+        </section>
+
+        <section className="todo-sidebar-section">
           <h4>Daily</h4>
           {daily ? (
             <>
@@ -1568,7 +1681,7 @@ export function WorkbenchSidebarContent({
           )}
         </section>
 
-        <section className="review-card">
+        <section className="todo-sidebar-section">
           <h4>Weekly</h4>
           {weekly ? (
             <>

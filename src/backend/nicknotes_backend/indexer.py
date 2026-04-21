@@ -118,6 +118,7 @@ class VaultIndexer:
                   links_json TEXT NOT NULL,
                   promoted INTEGER NOT NULL DEFAULT 0,
                   promoted_task_id TEXT,
+                  created_at TEXT NOT NULL,
                   completed_at TEXT,
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
@@ -162,10 +163,16 @@ class VaultIndexer:
         cur.execute("PRAGMA table_info(todos);")
         columns = {str(row["name"]) for row in cur.fetchall()}
         migrations: list[str] = []
+        needs_created_backfill = False
+        if "created_at" not in columns:
+            migrations.append("ALTER TABLE todos ADD COLUMN created_at TEXT;")
+            needs_created_backfill = True
         if "completed_at" not in columns:
             migrations.append("ALTER TABLE todos ADD COLUMN completed_at TEXT;")
         for statement in migrations:
             cur.execute(statement)
+        if needs_created_backfill:
+            cur.execute("UPDATE todos SET created_at = COALESCE(created_at, updated_at, datetime('now'));")
 
     def clear_all(self) -> None:
         with self._lock:
@@ -335,7 +342,7 @@ class VaultIndexer:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                SELECT id, checked, completed_at
+                SELECT id, checked, created_at, completed_at
                 FROM todos
                 WHERE note_id = ?;
                 """,
@@ -346,7 +353,9 @@ class VaultIndexer:
             cur.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
             for todo in todos:
                 previous_row = existing_by_id.get(todo.id) or {}
+                previous_created_at = _normalize_iso_timestamp(previous_row.get("created_at"))
                 previous_completed_at = _normalize_iso_timestamp(previous_row.get("completed_at"))
+                created_at = previous_created_at or _normalize_iso_timestamp(updated_at) or datetime.now().isoformat(timespec="seconds")
                 if todo.checked:
                     completed_at = previous_completed_at or (updated_at or datetime.now().isoformat(timespec="seconds"))
                 else:
@@ -356,9 +365,9 @@ class VaultIndexer:
                     INSERT INTO todos(
                       id, note_id, note_path, line_no, block_ref, checked, raw_text,
                       explicit_tags_json, inherited_tags_json, links_json,
-                      promoted, promoted_task_id, completed_at, updated_at
+                      promoted, promoted_task_id, created_at, completed_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                     """,
                     (
                         todo.id,
@@ -373,6 +382,7 @@ class VaultIndexer:
                         json.dumps(todo.links, ensure_ascii=False),
                         1 if todo.promoted else 0,
                         todo.promoted_task_id,
+                        created_at,
                         _normalize_iso_timestamp(completed_at),
                         updated_at,
                     ),
@@ -397,6 +407,7 @@ class VaultIndexer:
                   t.links_json,
                   t.promoted,
                   t.promoted_task_id,
+                  t.created_at,
                   t.completed_at,
                   t.updated_at,
                   n.title AS note_title
@@ -426,6 +437,7 @@ class VaultIndexer:
                   t.links_json,
                   t.promoted,
                   t.promoted_task_id,
+                  t.created_at,
                   t.completed_at,
                   t.updated_at,
                   n.title AS note_title
@@ -725,6 +737,372 @@ class VaultIndexer:
             "tasks_done": done_week,
         }
 
+    def review_dashboard(self, end_day: date, window_days: int = 30, top_notes_limit: int = 8) -> dict[str, Any]:
+        safe_window = max(1, min(int(window_days), 120))
+        safe_top_limit = max(3, min(int(top_notes_limit), 20))
+        start_day = end_day - timedelta(days=safe_window - 1)
+        start_iso = start_day.isoformat()
+        end_iso = end_day.isoformat()
+
+        def _to_daily_count_map(cur: sqlite3.Cursor, query: str, args: tuple[Any, ...]) -> dict[str, int]:
+            cur.execute(query, args)
+            result: dict[str, int] = {}
+            for row in cur.fetchall():
+                day = str(row["day"] or "").strip()
+                if not day:
+                    continue
+                result[day] = int(row["cnt"] or 0)
+            return result
+
+        with self._lock:
+            cur = self.conn.cursor()
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM tasks WHERE status <> 'done';")
+            open_tasks_now = int(cur.fetchone()["cnt"])
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM todos WHERE checked = 0;")
+            open_todos_now = int(cur.fetchone()["cnt"])
+
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM tasks
+                WHERE status <> 'done'
+                  AND due_date IS NOT NULL
+                  AND due_date <> ''
+                  AND substr(due_date, 1, 10) < ?;
+                """,
+                (end_iso,),
+            )
+            overdue_open_tasks = int(cur.fetchone()["cnt"])
+
+            notes_by_day = _to_daily_count_map(
+                cur,
+                """
+                SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt
+                FROM notes
+                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
+                GROUP BY day;
+                """,
+                (start_iso, end_iso),
+            )
+            tasks_created_by_day = _to_daily_count_map(
+                cur,
+                """
+                SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt
+                FROM tasks
+                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
+                GROUP BY day;
+                """,
+                (start_iso, end_iso),
+            )
+            tasks_done_by_day = _to_daily_count_map(
+                cur,
+                """
+                SELECT substr(COALESCE(completed_at, updated_at), 1, 10) AS day, COUNT(*) AS cnt
+                FROM tasks
+                WHERE status = 'done'
+                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?
+                GROUP BY day;
+                """,
+                (start_iso, end_iso),
+            )
+            todos_created_by_day = _to_daily_count_map(
+                cur,
+                """
+                SELECT substr(COALESCE(created_at, updated_at), 1, 10) AS day, COUNT(*) AS cnt
+                FROM todos
+                WHERE substr(COALESCE(created_at, updated_at), 1, 10) BETWEEN ? AND ?
+                GROUP BY day;
+                """,
+                (start_iso, end_iso),
+            )
+            todos_done_by_day = _to_daily_count_map(
+                cur,
+                """
+                SELECT substr(COALESCE(completed_at, updated_at), 1, 10) AS day, COUNT(*) AS cnt
+                FROM todos
+                WHERE checked = 1
+                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?
+                GROUP BY day;
+                """,
+                (start_iso, end_iso),
+            )
+
+            cur.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM notes
+                WHERE substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                """,
+                (start_iso, end_iso),
+            )
+            notes_updated_period = int(cur.fetchone()["cnt"])
+
+            cur.execute(
+                """
+                SELECT status, created_at, updated_at, completed_at
+                FROM tasks;
+                """
+            )
+            task_timeline_rows = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT checked, created_at, updated_at, completed_at
+                FROM todos;
+                """
+            )
+            todo_timeline_rows = [dict(row) for row in cur.fetchall()]
+
+            top_notes_by_key: dict[str, dict[str, Any]] = {}
+
+            def _upsert_top_note(path: str, *, title: str | None = None, note_type: str | None = None, updated_at: str | None = None) -> dict[str, Any] | None:
+                clean_path = str(path or "").strip()
+                if not clean_path:
+                    return None
+                key = clean_path.replace("\\", "/").lower()
+                existing = top_notes_by_key.get(key)
+                if existing is None:
+                    fallback_title = Path(clean_path).stem or "Note"
+                    existing = {
+                        "path": clean_path,
+                        "title": (title or "").strip() or fallback_title,
+                        "note_type": (note_type or "").strip() or "note",
+                        "updated_at": (updated_at or "").strip() or "",
+                        "activity_events": 0,
+                        "note_events": 0,
+                        "task_events": 0,
+                        "todo_events": 0,
+                    }
+                    top_notes_by_key[key] = existing
+                else:
+                    if title and not str(existing.get("title", "")).strip():
+                        existing["title"] = title.strip()
+                    if note_type and not str(existing.get("note_type", "")).strip():
+                        existing["note_type"] = note_type.strip()
+                    if updated_at and str(updated_at) > str(existing.get("updated_at", "")):
+                        existing["updated_at"] = str(updated_at)
+                return existing
+
+            cur.execute(
+                """
+                SELECT
+                  path,
+                  title,
+                  note_type,
+                  updated_at,
+                  CASE WHEN substr(created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END AS created_hit,
+                  CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END AS updated_hit
+                FROM notes
+                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
+                   OR substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                """,
+                (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
+            )
+            for row in cur.fetchall():
+                entry = _upsert_top_note(
+                    str(row["path"] or ""),
+                    title=str(row["title"] or ""),
+                    note_type=str(row["note_type"] or "note"),
+                    updated_at=str(row["updated_at"] or ""),
+                )
+                if entry is None:
+                    continue
+                note_events = int(row["created_hit"] or 0) + int(row["updated_hit"] or 0)
+                entry["note_events"] += note_events
+                entry["activity_events"] += note_events
+
+            cur.execute(
+                """
+                SELECT
+                  path,
+                  MAX(updated_at) AS last_updated,
+                  SUM(CASE WHEN substr(created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
+                  SUM(CASE WHEN status = 'done' AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                FROM tasks
+                WHERE path IS NOT NULL AND path <> ''
+                GROUP BY path;
+                """,
+                (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
+            )
+            for row in cur.fetchall():
+                created_hits = int(row["created_hits"] or 0)
+                done_hits = int(row["done_hits"] or 0)
+                updated_hits = int(row["updated_hits"] or 0)
+                task_events = created_hits + done_hits + updated_hits
+                if task_events <= 0:
+                    continue
+                entry = _upsert_top_note(
+                    str(row["path"] or ""),
+                    note_type="task",
+                    updated_at=str(row["last_updated"] or ""),
+                )
+                if entry is None:
+                    continue
+                entry["task_events"] += task_events
+                entry["activity_events"] += task_events
+
+            cur.execute(
+                """
+                SELECT
+                  note_path,
+                  MAX(updated_at) AS last_updated,
+                  SUM(CASE WHEN substr(COALESCE(created_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
+                  SUM(CASE WHEN checked = 1 AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                FROM todos
+                GROUP BY note_path;
+                """,
+                (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
+            )
+            for row in cur.fetchall():
+                created_hits = int(row["created_hits"] or 0)
+                done_hits = int(row["done_hits"] or 0)
+                updated_hits = int(row["updated_hits"] or 0)
+                todo_events = created_hits + done_hits + updated_hits
+                if todo_events <= 0:
+                    continue
+                entry = _upsert_top_note(
+                    str(row["note_path"] or ""),
+                    updated_at=str(row["last_updated"] or ""),
+                )
+                if entry is None:
+                    continue
+                entry["todo_events"] += todo_events
+                entry["activity_events"] += todo_events
+
+        def _task_is_open_on_day(row: dict[str, Any], day_iso: str) -> bool:
+            created_day = _to_iso_day_value(row.get("created_at")) or _to_iso_day_value(row.get("updated_at"))
+            if not created_day or created_day > day_iso:
+                return False
+            status = str(row.get("status", "")).strip().lower().replace("-", "_")
+            if status != "done":
+                return True
+            done_day = _to_iso_day_value(row.get("completed_at")) or _to_iso_day_value(row.get("updated_at"))
+            if not done_day:
+                return False
+            return day_iso < done_day
+
+        def _todo_is_open_on_day(row: dict[str, Any], day_iso: str) -> bool:
+            created_day = _to_iso_day_value(row.get("created_at")) or _to_iso_day_value(row.get("updated_at"))
+            if not created_day or created_day > day_iso:
+                return False
+            checked = bool(row.get("checked"))
+            if not checked:
+                return True
+            done_day = _to_iso_day_value(row.get("completed_at")) or _to_iso_day_value(row.get("updated_at"))
+            if not done_day:
+                return False
+            return day_iso < done_day
+
+        series: list[dict[str, int | str]] = []
+        cursor_day = start_day
+        while cursor_day <= end_day:
+            day_iso = cursor_day.isoformat()
+            open_tasks = sum(1 for row in task_timeline_rows if _task_is_open_on_day(row, day_iso))
+            open_todos = sum(1 for row in todo_timeline_rows if _todo_is_open_on_day(row, day_iso))
+            series.append(
+                {
+                    "date": day_iso,
+                    "new_notes": int(notes_by_day.get(day_iso, 0)),
+                    "new_tasks": int(tasks_created_by_day.get(day_iso, 0)),
+                    "completed_tasks": int(tasks_done_by_day.get(day_iso, 0)),
+                    "new_todos": int(todos_created_by_day.get(day_iso, 0)),
+                    "completed_todos": int(todos_done_by_day.get(day_iso, 0)),
+                    "open_tasks": open_tasks,
+                    "open_todos": open_todos,
+                }
+            )
+            cursor_day += timedelta(days=1)
+
+        new_notes_period = sum(int(point["new_notes"]) for point in series)
+        new_tasks_period = sum(int(point["new_tasks"]) for point in series)
+        new_todos_period = sum(int(point["new_todos"]) for point in series)
+        done_tasks_period = sum(int(point["completed_tasks"]) for point in series)
+        done_todos_period = sum(int(point["completed_todos"]) for point in series)
+
+        new_work_period = new_tasks_period + new_todos_period
+        done_work_period = done_tasks_period + done_todos_period
+        completion_ratio = (done_work_period / new_work_period) if new_work_period > 0 else 1.0
+
+        backlog_start = int(series[0]["open_tasks"]) + int(series[0]["open_todos"]) if series else 0
+        backlog_end = int(series[-1]["open_tasks"]) + int(series[-1]["open_todos"]) if series else 0
+        backlog_delta = backlog_end - backlog_start
+        open_total_now = open_tasks_now + open_todos_now
+
+        risk_reasons: list[str] = []
+        if backlog_delta >= max(3, int(new_work_period * 0.2) + 1):
+            risk_reasons.append("Backlog steigt im gewaehlten Zeitraum.")
+        if completion_ratio < 0.75 and new_work_period >= 4:
+            risk_reasons.append("Erledigungsquote liegt unter 75%.")
+        if overdue_open_tasks >= 5:
+            risk_reasons.append("Viele offene ueberfaellige Tasks.")
+        if open_total_now >= 30:
+            risk_reasons.append("Hoher aktueller Gesamt-Backlog.")
+
+        if overdue_open_tasks >= 8 or (backlog_delta >= 10 and completion_ratio < 0.7) or len(risk_reasons) >= 3:
+            risk_level = "high"
+        elif risk_reasons:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        top_notes = sorted(
+            (
+                {
+                    "path": str(entry.get("path", "")),
+                    "title": str(entry.get("title", "")),
+                    "note_type": str(entry.get("note_type", "note")),
+                    "updated_at": str(entry.get("updated_at", "")),
+                    "activity_events": int(entry.get("activity_events", 0)),
+                    "note_events": int(entry.get("note_events", 0)),
+                    "task_events": int(entry.get("task_events", 0)),
+                    "todo_events": int(entry.get("todo_events", 0)),
+                }
+                for entry in top_notes_by_key.values()
+                if int(entry.get("activity_events", 0)) > 0
+            ),
+            key=lambda item: (int(item["activity_events"]), str(item["updated_at"]), str(item["title"]).lower()),
+            reverse=True,
+        )[:safe_top_limit]
+
+        return {
+            "period": {
+                "from": start_iso,
+                "to": end_iso,
+                "days": safe_window,
+            },
+            "kpis": {
+                "open_tasks_now": open_tasks_now,
+                "open_todos_now": open_todos_now,
+                "open_total_now": open_total_now,
+                "overdue_open_tasks": overdue_open_tasks,
+                "new_notes_period": new_notes_period,
+                "notes_updated_period": notes_updated_period,
+                "new_tasks_period": new_tasks_period,
+                "new_todos_period": new_todos_period,
+                "new_work_period": new_work_period,
+                "done_tasks_period": done_tasks_period,
+                "done_todos_period": done_todos_period,
+                "done_work_period": done_work_period,
+                "completion_ratio": round(completion_ratio, 4),
+                "backlog_start": backlog_start,
+                "backlog_end": backlog_end,
+                "backlog_delta": backlog_delta,
+            },
+            "risk": {
+                "level": risk_level,
+                "reasons": risk_reasons,
+                "backlog_delta": backlog_delta,
+                "completion_ratio": round(completion_ratio, 4),
+                "overdue_open_tasks": overdue_open_tasks,
+            },
+            "series": series,
+            "top_notes": top_notes,
+        }
+
     def reindex_vault(self, vault_path: Path) -> dict[str, int]:
         self.clear_all()
         notes_indexed = 0
@@ -941,6 +1319,16 @@ def _normalize_related_value(raw: str) -> str:
     return clean.strip()
 
 
+def _to_iso_day_value(raw: Any) -> str:
+    timestamp = _normalize_iso_timestamp(raw)
+    if timestamp:
+        return timestamp[:10]
+    clean = str(raw or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean):
+        return clean
+    return ""
+
+
 def _normalize_iso_date(raw: Any) -> str | None:
     clean = str(raw or "").strip()
     if not clean:
@@ -1088,6 +1476,7 @@ def _safe_json_list(raw_value: Any) -> list[str]:
 
 
 def _hydrate_todo_row(row: dict[str, Any]) -> dict[str, Any]:
+    created_at = _normalize_iso_timestamp(row.get("created_at"))
     completed_at = _normalize_iso_timestamp(row.get("completed_at"))
     checked = bool(row.get("checked"))
     if not checked:
@@ -1106,6 +1495,7 @@ def _hydrate_todo_row(row: dict[str, Any]) -> dict[str, Any]:
         "links": _safe_json_list(row.get("links_json")),
         "promoted": bool(row.get("promoted")),
         "promoted_task_id": row.get("promoted_task_id"),
+        "created_at": created_at,
         "completed_at": completed_at,
         "updated_at": row.get("updated_at") or "",
     }

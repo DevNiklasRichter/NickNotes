@@ -69,6 +69,7 @@ export type TodoRow = {
   links: string[]
   promoted: boolean
   promoted_task_id: string | null
+  created_at?: string | null
   completed_at?: string | null
   updated_at: string
 }
@@ -172,6 +173,73 @@ export type ReviewWeekly = {
   tasks_done: number
 }
 
+export type ReviewDashboardWindow = 'today' | '7d' | '30d' | '90d'
+export type ReviewDashboardChartMode = 'throughput' | 'backlog'
+
+export type ReviewDashboardFilters = {
+  window: ReviewDashboardWindow
+  chartMode: ReviewDashboardChartMode
+}
+
+export type ReviewDashboardRiskLevel = 'low' | 'medium' | 'high'
+
+export type ReviewDashboardSeriesPoint = {
+  date: string
+  new_notes: number
+  new_tasks: number
+  completed_tasks: number
+  new_todos: number
+  completed_todos: number
+  open_tasks: number
+  open_todos: number
+}
+
+export type ReviewDashboardTopNote = {
+  path: string
+  title: string
+  note_type: string
+  updated_at: string
+  activity_events: number
+  note_events: number
+  task_events: number
+  todo_events: number
+}
+
+export type ReviewDashboardResponse = {
+  period: {
+    from: string
+    to: string
+    days: number
+  }
+  kpis: {
+    open_tasks_now: number
+    open_todos_now: number
+    open_total_now: number
+    overdue_open_tasks: number
+    new_notes_period: number
+    notes_updated_period: number
+    new_tasks_period: number
+    new_todos_period: number
+    new_work_period: number
+    done_tasks_period: number
+    done_todos_period: number
+    done_work_period: number
+    completion_ratio: number
+    backlog_start: number
+    backlog_end: number
+    backlog_delta: number
+  }
+  risk: {
+    level: ReviewDashboardRiskLevel
+    reasons: string[]
+    backlog_delta: number
+    completion_ratio: number
+    overdue_open_tasks: number
+  }
+  series: ReviewDashboardSeriesPoint[]
+  top_notes: ReviewDashboardTopNote[]
+}
+
 export type BackendState = {
   vaultLoaded: boolean
   vaultPath?: string
@@ -181,7 +249,7 @@ export type BackendState = {
 
 export type ThemeMode = 'light' | 'dark'
 export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard' | 'focus_dashboard'
+export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard' | 'focus_dashboard' | 'review_dashboard'
 
 export type NoteTab = {
   id: string
@@ -207,6 +275,7 @@ export const SETTINGS_TAB_PATH = '__nicknotes_settings__'
 export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
+export const REVIEW_DASHBOARD_TAB_PATH = '__nicknotes_review_dashboard__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',
@@ -237,6 +306,11 @@ export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
   scope: 'today',
   mode: 'execution',
   maxItems: 12,
+}
+
+export const DEFAULT_REVIEW_DASHBOARD_FILTERS: ReviewDashboardFilters = {
+  window: '30d',
+  chartMode: 'throughput',
 }
 
 export type StatusBarPrefs = {

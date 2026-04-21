@@ -460,14 +460,16 @@ export function EditorWorkspaceLayout({
                       tab.kind === 'note' ||
                       tab.kind === 'todo_dashboard' ||
                       tab.kind === 'task_dashboard' ||
-                      tab.kind === 'focus_dashboard'
+                      tab.kind === 'focus_dashboard' ||
+                      tab.kind === 'review_dashboard'
                     }
                     onDragStart={(event) => {
                       if (
                         tab.kind !== 'note' &&
                         tab.kind !== 'todo_dashboard' &&
                         tab.kind !== 'task_dashboard' &&
-                        tab.kind !== 'focus_dashboard'
+                        tab.kind !== 'focus_dashboard' &&
+                        tab.kind !== 'review_dashboard'
                       ) {
                         event.preventDefault()
                         return

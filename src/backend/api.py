@@ -751,6 +751,20 @@ def get_review() -> dict[str, Any]:
     }
 
 
+@app.get("/review/dashboard")
+def get_review_dashboard(days: int = 30, day: str | None = None, top: int = 8) -> dict[str, Any]:
+    _vault, indexer = _require_loaded()
+    day_iso = _normalize_iso_day_param(day)
+    try:
+        end_day = datetime.fromisoformat(day_iso).date()
+    except ValueError:
+        end_day = date.today()
+
+    safe_days = max(1, min(int(days), 120))
+    safe_top = max(3, min(int(top), 20))
+    return indexer.review_dashboard(end_day=end_day, window_days=safe_days, top_notes_limit=safe_top)
+
+
 @app.get("/ui-settings")
 def get_ui_settings() -> dict[str, Any]:
     vault, _indexer = _require_loaded()

@@ -20,6 +20,7 @@ import { SettingsEditorPanel } from './settings/SettingsEditorPanel'
 import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas'
 import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas'
 import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas'
+import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -49,6 +50,7 @@ import {
   TODO_DASHBOARD_TAB_PATH,
   TASK_DASHBOARD_TAB_PATH,
   FOCUS_DASHBOARD_TAB_PATH,
+  REVIEW_DASHBOARD_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_TASK_FEATURE_SETTINGS,
   DEFAULT_EXPLORER_OPTIONS,
@@ -56,6 +58,7 @@ import {
   DEFAULT_TODO_DASHBOARD_FILTERS,
   DEFAULT_TASK_DASHBOARD_FILTERS,
   DEFAULT_FOCUS_DASHBOARD_FILTERS,
+  DEFAULT_REVIEW_DASHBOARD_FILTERS,
   TAG_COLOR_PRESETS,
   TASK_STATUS_OPTIONS,
   TASK_PRIORITY_OPTIONS,
@@ -119,6 +122,8 @@ import type {
   TodoDashboardFilters,
   TaskDashboardFilters,
   FocusDashboardFilters,
+  ReviewDashboardFilters,
+  ReviewDashboardResponse,
   FocusDashboardAggregateResponse,
   EditorTabContextMenuState,
   StatusBarPrefs,
@@ -151,6 +156,8 @@ function App() {
   const [taskDashboardFilters, setTaskDashboardFilters] = useState<TaskDashboardFilters>({ ...DEFAULT_TASK_DASHBOARD_FILTERS })
   const [todoDashboardFilters, setTodoDashboardFilters] = useState<TodoDashboardFilters>({ ...DEFAULT_TODO_DASHBOARD_FILTERS })
   const [focusDashboardFilters, setFocusDashboardFilters] = useState<FocusDashboardFilters>({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
+  const [reviewDashboardFilters, setReviewDashboardFilters] = useState<ReviewDashboardFilters>({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
+  const [reviewDashboardData, setReviewDashboardData] = useState<ReviewDashboardResponse | null>(null)
   const [focusMitIds, setFocusMitIds] = useState<string[]>([])
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
@@ -577,15 +584,45 @@ function App() {
     }
   }
 
+  const toReviewWindowDays = (windowValue: ReviewDashboardFilters['window']): number => {
+    if (windowValue === 'today') {
+      return 1
+    }
+    if (windowValue === '7d') {
+      return 7
+    }
+    if (windowValue === '90d') {
+      return 90
+    }
+    return 30
+  }
+
   const refreshReview = async (force = false) => {
     if (!vaultLoaded && !force) {
       return
     }
 
-    const response = await apiRequest<{ daily: ReviewDaily; weekly: ReviewWeekly }>(backendUrl, '/review')
-    setDaily(response.daily)
-    setWeekly(response.weekly)
+    const todayIso = toLocalIsoDate()
+    const reviewDays = toReviewWindowDays(reviewDashboardFilters.window)
+    const [summary, dashboard] = await Promise.all([
+      apiRequest<{ daily: ReviewDaily; weekly: ReviewWeekly }>(backendUrl, '/review'),
+      apiRequest<ReviewDashboardResponse>(
+        backendUrl,
+        `/review/dashboard?days=${reviewDays}&top=10&day=${encodeURIComponent(todayIso)}`
+      ),
+    ])
+    setDaily(summary.daily)
+    setWeekly(summary.weekly)
+    setReviewDashboardData(dashboard)
   }
+
+  useEffect(() => {
+    if (!vaultLoaded) {
+      return
+    }
+    void refreshReview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vaultLoaded, reviewDashboardFilters.window])
 
   const refreshFocusAggregate = async (force = false) => {
     if (!vaultLoaded && !force) {
@@ -1087,6 +1124,9 @@ function App() {
       if (tab.kind === 'focus_dashboard') {
         return 'Target'
       }
+      if (tab.kind === 'review_dashboard') {
+        return 'BarChart3'
+      }
       return 'Circle'
     }
     const pathKey = normalizeFilePathKey(tab.path)
@@ -1391,6 +1431,45 @@ function App() {
     })
   }
 
+  const openReviewDashboardTab = () => {
+    if (vaultLoaded) {
+      void refreshReview()
+    }
+    const existing = findTabByPath(REVIEW_DASHBOARD_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
+    if (existing) {
+      setEditorPanelOpen(true)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
+      return
+    }
+
+    const nextTabId = createTabId()
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        id: nextTabId,
+        kind: 'review_dashboard',
+        path: REVIEW_DASHBOARD_TAB_PATH,
+        title: 'Review Dashboard',
+        content: '',
+        loading: false,
+        dirty: false,
+      },
+    ])
+    setEditorPanelOpen(true)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
   const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     const paneId = findPaneByTabId(workspaceStateRef.current, tab.id)
     if (!paneId) {
@@ -1474,7 +1553,12 @@ function App() {
     if (targetTab.kind === 'settings') {
       return saveSettings()
     }
-    if (targetTab.kind === 'todo_dashboard' || targetTab.kind === 'task_dashboard' || targetTab.kind === 'focus_dashboard') {
+    if (
+      targetTab.kind === 'todo_dashboard' ||
+      targetTab.kind === 'task_dashboard' ||
+      targetTab.kind === 'focus_dashboard' ||
+      targetTab.kind === 'review_dashboard'
+    ) {
       return true
     }
     return saveNoteTab(path)
@@ -3777,6 +3861,22 @@ function App() {
       )
     }
 
+    if (paneTab.kind === 'review_dashboard') {
+      return (
+        <ReviewDashboardCanvas
+          data={reviewDashboardData}
+          filters={reviewDashboardFilters}
+          onFiltersChange={setReviewDashboardFilters}
+          onOpenNotePath={(path, title, noteType) => {
+            if (!path) {
+              return
+            }
+            void openNoteInTab(path, title, { initialNoteType: noteType === 'task' ? 'task' : 'note' })
+          }}
+        />
+      )
+    }
+
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
     const isReadOnlyNote = Boolean(paneTab.readOnly)
     const readOnlyTitle = normalizeLabel(document.frontmatter.title) || paneTab.title || toNoteDisplayName(paneTab.path)
@@ -3931,8 +4031,14 @@ function App() {
             onOpenFocusDashboard={() => {
               openFocusDashboardTab()
             }}
+            onOpenReviewDashboard={() => {
+              openReviewDashboardTab()
+            }}
             daily={daily}
             weekly={weekly}
+            reviewFilters={reviewDashboardFilters}
+            onReviewFiltersChange={setReviewDashboardFilters}
+            reviewDashboardData={reviewDashboardData}
             onRefreshReview={() => {
               void refreshReview()
             }}
