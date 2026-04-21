@@ -444,8 +444,8 @@ class VaultManager:
             raise ValueError("Group name contains no valid filename characters")
 
         parent_path = self._resolve_group_path(parent_key)
-        if self._is_tag_path(parent_path):
-            raise ValueError("In Tag-Notes koennen keine neuen Gruppen angelegt werden.")
+        if self._is_creation_locked_path(parent_path):
+            raise ValueError("In daily-, tags- und tasks-Ordnern koennen keine neuen Gruppen angelegt werden.")
 
         candidate = token
         suffix = 2
@@ -471,8 +471,8 @@ class VaultManager:
         status: str = "open",
     ) -> dict[str, Any]:
         root_dir = self._resolve_group_path(group_key)
-        if self._is_tag_path(root_dir):
-            raise ValueError("In Tag-Notes koennen keine neuen Notizen angelegt werden.")
+        if self._is_creation_locked_path(root_dir):
+            raise ValueError("In daily-, tags- und tasks-Ordnern koennen keine neuen Notizen oder Tasks angelegt werden.")
 
         kind = _normalize_note_type(note_type)
         now = datetime.now()
@@ -2288,13 +2288,14 @@ class VaultManager:
 
     def _group_payload(self, directory: Path, favorites: set[str]) -> dict[str, Any]:
         key = self._to_group_key(directory)
+        creation_locked = self._is_creation_locked_path(directory)
         return {
             "key": key,
             "label": self._label_from_group_dir(directory.name),
             "path": str(directory),
             "favorite": key in favorites,
-            "canCreateNotes": not self._is_tag_path(directory),
-            "canCreateGroups": not self._is_tag_path(directory),
+            "canCreateNotes": not creation_locked,
+            "canCreateGroups": not creation_locked,
             "canDelete": not self._is_protected_root(key),
         }
 
@@ -2337,6 +2338,16 @@ class VaultManager:
             return True
         except ValueError:
             return False
+
+    def _is_tasks_path(self, directory: Path) -> bool:
+        try:
+            directory.resolve().relative_to(self.tasks_root_path.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _is_creation_locked_path(self, directory: Path) -> bool:
+        return self._is_daily_path(directory) or self._is_tag_path(directory) or self._is_tasks_path(directory)
 
     def _label_from_group_dir(self, directory_name: str) -> str:
         trimmed = directory_name.strip()

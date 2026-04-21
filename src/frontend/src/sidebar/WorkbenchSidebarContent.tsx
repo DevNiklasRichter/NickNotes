@@ -1641,6 +1641,7 @@ export function WorkbenchSidebarContent({
       vaultPath={vaultPath}
       groups={noteGroups}
       files={explorerRows}
+      tasks={tasks}
       activeFilePath={activeNotePath}
       dirtyFilePaths={dirtyFilePaths}
       width={explorerWidth}

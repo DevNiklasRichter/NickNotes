@@ -301,7 +301,8 @@ function matchesQuery(node: MutableExplorerNode, query: string, contentMatchFile
     if (nodeName.replace(/\.md$/i, '').includes(query)) {
       return true
     }
-    return contentMatchFilePathKeys.has(normalizeFilePathKey(node.path))
+    const contentPath = node.linkTargetPath || node.path
+    return contentMatchFilePathKeys.has(normalizeFilePathKey(contentPath))
   }
   return false
 }
@@ -408,8 +409,8 @@ export function buildExplorerTree({
       updatedAt: undefined,
       updatedAtMs: 0,
       favorite: group?.favorite ?? false,
-      canCreateNotes: group?.canCreateNotes ?? !['tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
-      canCreateGroups: group?.canCreateGroups ?? !['tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
+      canCreateNotes: group?.canCreateNotes ?? !['daily', 'tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
+      canCreateGroups: group?.canCreateGroups ?? !['daily', 'tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
       canDelete: group?.canDelete ?? !PROTECTED_ROOTS.has(cleanKey),
       parentId: parentNode?.id ?? null,
       parentKey,
@@ -441,22 +442,30 @@ export function buildExplorerTree({
     }
 
     const fileName = relativePath.includes('/') ? relativePath.slice(relativePath.lastIndexOf('/') + 1) : relativePath
+    const displayName = typeof file.display_name === 'string' ? file.display_name.trim() : ''
+    const effectiveName = displayName || fileName
+    const linkTargetPath = typeof file.link_target_path === 'string' ? file.link_target_path.trim() : ''
+    const isVirtualLink = Boolean(file.is_virtual_link || linkTargetPath)
     const parentKey = relativePath.includes('/') ? relativePath.slice(0, relativePath.lastIndexOf('/')) : ''
     const parentNode = parentKey ? ensureFolder(parentKey) : null
 
     const nodeId = toNodeId('file', file.path)
-    fileNodeIdByPath.set(file.path, nodeId)
+    if (!isVirtualLink) {
+      fileNodeIdByPath.set(file.path, nodeId)
+    }
 
     const node: MutableExplorerNode = {
       id: nodeId,
-      name: fileName,
+      name: effectiveName,
       path: file.path,
       type: 'file',
       noteType: file.note_type,
+      linkTargetPath: linkTargetPath || undefined,
+      isVirtualLink,
       children: [],
       expanded: false,
       selected: false,
-      hidden: isHiddenEntry(fileName) || !isMarkdownFile(fileName),
+      hidden: isHiddenEntry(effectiveName) || (!isMarkdownFile(effectiveName) && !isMarkdownFile(fileName)),
       updatedAt: file.updated_at,
       updatedAtMs: toTimestampMs(file.updated_at),
       noteCount: 1,

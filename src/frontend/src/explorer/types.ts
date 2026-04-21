@@ -21,6 +21,9 @@ export type ExplorerSourceFile = {
   note_type: string
   updated_at: string
   path: string
+  display_name?: string
+  link_target_path?: string
+  is_virtual_link?: boolean
 }
 
 export type ExplorerNode = {
@@ -36,6 +39,8 @@ export type ExplorerNode = {
   modified?: boolean
   gitStatus?: ExplorerGitStatus
   updatedAt?: string
+  linkTargetPath?: string
+  isVirtualLink?: boolean
   favorite?: boolean
   canCreateNotes?: boolean
   canCreateGroups?: boolean

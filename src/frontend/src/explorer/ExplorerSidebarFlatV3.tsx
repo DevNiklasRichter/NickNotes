@@ -17,6 +17,13 @@ type ExplorerSidebarProps = {
   vaultPath: string
   groups: ExplorerSourceGroup[]
   files: ExplorerSourceFile[]
+  tasks: Array<{
+    id: string
+    title: string
+    status: string
+    path: string | null
+    updated_at?: string
+  }>
   activeFilePath: string
   dirtyFilePaths: Set<string>
   width: number
@@ -105,6 +112,21 @@ function normalizeRootToken(groupKey: string): string {
 function isPinnedRoot(groupKey: string): boolean {
   const clean = normalizeGroupKey(groupKey)
   return !clean.includes('/') && ROOT_TOKEN_SET.has(normalizeRootToken(clean))
+}
+
+function isCreateLockedFolderKey(folderKey: string): boolean {
+  const clean = normalizeGroupKey(folderKey)
+  if (!clean) {
+    return false
+  }
+  return ROOT_TOKEN_SET.has(normalizeRootToken(clean))
+}
+
+function createLockedReason(folderKey: string): string {
+  if (!isCreateLockedFolderKey(folderKey)) {
+    return ''
+  }
+  return 'In daily, tags und tasks koennen keine neuen Ordner, Notizen oder Tasks angelegt werden.'
 }
 
 function isInputEventTarget(target: EventTarget | null): boolean {
@@ -233,6 +255,40 @@ function normalizeFilePathKey(path: string): string {
   return path.replace(/\\/g, '/').trim().toLowerCase()
 }
 
+function toTaskStatusToken(rawStatus: string): string {
+  const clean = String(rawStatus || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return clean || 'open'
+}
+
+function toSafeTaskToken(raw: string): string {
+  const clean = normalizeLabel(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return clean || 'task'
+}
+
+function toTaskLinkDisplayName(rawTitle: string, fallback: string): string {
+  const cleanTitle = normalizeLabel(rawTitle).replace(/[\\/:*?"<>|]+/g, ' ').trim()
+  const base = cleanTitle || fallback || 'Task'
+  return /\.md$/i.test(base) ? base : `${base}.md`
+}
+
+function isReadonlyLinkFile(node: ExplorerNode): boolean {
+  return node.type === 'file' && Boolean(node.isVirtualLink || node.linkTargetPath)
+}
+
+function resolveOpenPath(node: ExplorerNode): string {
+  if (node.type !== 'file') {
+    return node.path
+  }
+  return node.linkTargetPath || node.path
+}
+
 function slugifyForDuplicateCheck(raw: string): string {
   return normalizeLabel(raw)
     .toLowerCase()
@@ -334,6 +390,7 @@ export function ExplorerSidebar({
   vaultPath,
   groups,
   files,
+  tasks,
   activeFilePath,
   dirtyFilePaths,
   width,
@@ -401,6 +458,86 @@ export function ExplorerSidebar({
     }
     return ROOT_TOKENS.map((token) => byToken.get(token) ?? '').filter(Boolean)
   }, [groups])
+
+  const tasksRootKey = useMemo(() => {
+    for (const group of groups) {
+      const cleanKey = normalizeGroupKey(group.key)
+      if (!cleanKey || cleanKey.includes('/')) {
+        continue
+      }
+      if (normalizeRootToken(cleanKey) === 'tasks') {
+        return cleanKey
+      }
+    }
+    return 'tasks'
+  }, [groups])
+
+  const filesWithTaskLinks = useMemo(() => {
+    if (!vaultLoaded || tasks.length === 0) {
+      return files
+    }
+
+    const usedRelativePaths = new Set<string>()
+    for (const file of files) {
+      const relative = normalizeGroupKey(toRelativePath(file.path, vaultPath))
+      if (relative) {
+        usedRelativePaths.add(relative.toLowerCase())
+      }
+    }
+
+    const seenTargetPaths = new Set<string>()
+    const virtualTaskFiles: ExplorerSourceFile[] = []
+
+    for (const task of tasks) {
+      const targetPath = typeof task.path === 'string' ? task.path.trim() : ''
+      if (!targetPath) {
+        continue
+      }
+      const targetKey = normalizeFilePathKey(targetPath)
+      if (!targetKey || seenTargetPaths.has(targetKey)) {
+        continue
+      }
+      seenTargetPaths.add(targetKey)
+
+      const statusToken = toTaskStatusToken(task.status)
+      const targetRelativePath = normalizeGroupKey(toRelativePath(targetPath, vaultPath))
+      const expectedStatusPrefix = `${tasksRootKey}/${statusToken}`.toLowerCase()
+      if (
+        targetRelativePath &&
+        (targetRelativePath.toLowerCase() === expectedStatusPrefix || targetRelativePath.toLowerCase().startsWith(`${expectedStatusPrefix}/`))
+      ) {
+        continue
+      }
+      const baseToken = toSafeTaskToken(task.id || task.title || targetPath)
+      let relativePath = `${tasksRootKey}/${statusToken}/${baseToken}.md`
+      let suffix = 2
+      while (usedRelativePaths.has(relativePath.toLowerCase())) {
+        relativePath = `${tasksRootKey}/${statusToken}/${baseToken}_${suffix}.md`
+        suffix += 1
+      }
+      usedRelativePaths.add(relativePath.toLowerCase())
+
+      const fallbackTitle = targetPath.includes('/')
+        ? targetPath.slice(targetPath.lastIndexOf('/') + 1).replace(/\.md$/i, '').trim()
+        : targetPath.replace(/\.md$/i, '').trim()
+
+      virtualTaskFiles.push({
+        id: `task_link_${task.id || baseToken}_${virtualTaskFiles.length + 1}`,
+        title: task.title || fallbackTitle || 'Task',
+        note_type: 'task',
+        updated_at: typeof task.updated_at === 'string' ? task.updated_at : '',
+        path: relativePath,
+        display_name: toTaskLinkDisplayName(task.title || '', fallbackTitle || 'Task'),
+        link_target_path: targetPath,
+        is_virtual_link: true,
+      })
+    }
+
+    if (virtualTaskFiles.length === 0) {
+      return files
+    }
+    return [...files, ...virtualTaskFiles]
+  }, [files, tasks, tasksRootKey, vaultLoaded, vaultPath])
 
   useEffect(() => {
     actionDialogRef.current = actionDialog
@@ -476,7 +613,7 @@ export function ExplorerSidebar({
     () =>
       buildExplorerTree({
         groups,
-        files,
+        files: filesWithTaskLinks,
         vaultPath,
         options,
         folderOrder,
@@ -492,7 +629,7 @@ export function ExplorerSidebar({
       contentMatchFilePathKeys,
       dirtyFilePaths,
       expandedNodes,
-      files,
+      filesWithTaskLinks,
       filterQuery,
       folderOrder,
       groups,
@@ -695,6 +832,17 @@ export function ExplorerSidebar({
   }, [revealFilePath, revealRequestId, revealPathInTree])
 
   const selectedNode = useMemo(() => tree.visibleNodes.find((entry) => entry.node.selected)?.node ?? null, [tree.visibleNodes])
+  const selectedFolderKeyForCreate = useMemo(() => {
+    if (!selectedNode) {
+      return ''
+    }
+    return getParentFolderKey(selectedNode, tree.parentById, tree.nodeById)
+  }, [selectedNode, tree.nodeById, tree.parentById])
+  const selectedCreateLockReason = createLockedReason(selectedFolderKeyForCreate)
+  const createActionsDisabledReason = !vaultLoaded
+    ? 'Keine NoteBase geladen'
+    : selectedCreateLockReason
+  const createActionsDisabled = Boolean(createActionsDisabledReason)
 
   const resolveNodeIconName = useCallback(
     (node: ExplorerNode): string => {
@@ -874,18 +1022,27 @@ export function ExplorerSidebar({
 
   const runCreateFile = useCallback(async () => {
     const parentFolderKey = resolveSelectedFolderKey()
+    if (isCreateLockedFolderKey(parentFolderKey)) {
+      return
+    }
     const name = suggestSequentialName(parentFolderKey, 'New Note')
     await onCreateFile(parentFolderKey, name)
   }, [onCreateFile, resolveSelectedFolderKey, suggestSequentialName])
 
   const runCreateTask = useCallback(async () => {
     const parentFolderKey = resolveSelectedFolderKey()
+    if (isCreateLockedFolderKey(parentFolderKey)) {
+      return
+    }
     const name = suggestSequentialName(parentFolderKey, 'New Task')
     await onCreateTask(parentFolderKey, name)
   }, [onCreateTask, resolveSelectedFolderKey, suggestSequentialName])
 
   const runCreateFolder = useCallback(async () => {
     const parentFolderKey = resolveSelectedFolderKey()
+    if (isCreateLockedFolderKey(parentFolderKey)) {
+      return
+    }
     const name = suggestSequentialName(parentFolderKey, 'New Folder')
     await onCreateFolder(parentFolderKey, name)
   }, [onCreateFolder, resolveSelectedFolderKey, suggestSequentialName])
@@ -1024,6 +1181,9 @@ export function ExplorerSidebar({
   const doDrop = useCallback(
     async (source: ExplorerNode, target: ExplorerNode, position: DropPosition) => {
       if (source.type === 'file') {
+        if (isReadonlyLinkFile(source)) {
+          return
+        }
         const targetKey = resolveFileDropTargetKey(target, position)
         const sourceParentId = tree.parentById.get(source.id) ?? null
         const sourceParentNode = sourceParentId ? tree.nodeById.get(sourceParentId) : null
@@ -1084,7 +1244,7 @@ export function ExplorerSidebar({
         const pathsToMove: string[] = []
         for (const fileNodeId of orderedDraggedFileNodeIds) {
           const sourceNode = tree.nodeById.get(fileNodeId)
-          if (!sourceNode || sourceNode.type !== 'file') {
+          if (!sourceNode || sourceNode.type !== 'file' || isReadonlyLinkFile(sourceNode)) {
             continue
           }
           const sourceParentId = tree.parentById.get(sourceNode.id) ?? null
@@ -1136,6 +1296,9 @@ export function ExplorerSidebar({
   }, [])
 
   const contextNode = contextMenu?.target === 'node' ? tree.nodeById.get(contextMenu.nodeId) ?? null : null
+  const contextCreateLockReason = contextNode?.type === 'folder' ? createLockedReason(contextNode.path) : ''
+  const contextCreateLocked = Boolean(contextCreateLockReason)
+  const contextReadonlyLinkFile = contextNode?.type === 'file' ? isReadonlyLinkFile(contextNode) : false
   const iconPickerCurrentIconName = useMemo(() => {
     if (!iconPicker) {
       return ''
@@ -1164,6 +1327,9 @@ export function ExplorerSidebar({
       }
       setContextMenu(null)
       const folderKey = normalizeGroupKey(node.path)
+      if (isCreateLockedFolderKey(folderKey)) {
+        return
+      }
       const name = suggestSequentialName(folderKey, 'New Note')
       await onCreateFile(folderKey, name)
     },
@@ -1177,6 +1343,9 @@ export function ExplorerSidebar({
       }
       setContextMenu(null)
       const folderKey = normalizeGroupKey(node.path)
+      if (isCreateLockedFolderKey(folderKey)) {
+        return
+      }
       const name = suggestSequentialName(folderKey, 'New Task')
       await onCreateTask(folderKey, name)
     },
@@ -1190,6 +1359,9 @@ export function ExplorerSidebar({
       }
       setContextMenu(null)
       const folderKey = normalizeGroupKey(node.path)
+      if (isCreateLockedFolderKey(folderKey)) {
+        return
+      }
       const name = suggestSequentialName(folderKey, 'New Folder')
       await onCreateFolder(folderKey, name)
     },
@@ -1208,6 +1380,9 @@ export function ExplorerSidebar({
           return
         }
         await onRenameFolder(normalizeGroupKey(node.path), name)
+        return
+      }
+      if (isReadonlyLinkFile(node)) {
         return
       }
       const current = rowName(node)
@@ -1237,6 +1412,9 @@ export function ExplorerSidebar({
           return
         }
         await onDeleteFolder(normalizeGroupKey(node.path))
+        return
+      }
+      if (isReadonlyLinkFile(node)) {
         return
       }
 
@@ -1419,36 +1597,42 @@ export function ExplorerSidebar({
           <h3>Notizen</h3>
 
           <div className="explorer-toolbar-right">
-            <button
-              className="icon-button compact"
-              onClick={() => {
-                void runCreateFile()
-              }}
-              disabled={!vaultLoaded}
-              title="Neue Notiz"
-            >
-              <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
-            </button>
-            <button
-              className="icon-button compact"
-              onClick={() => {
-                void runCreateTask()
-              }}
-              disabled={!vaultLoaded}
-              title="New Task"
-            >
-              <LucideNamedIcon name="CheckSquare" className="row-action-icon" size={14} />
-            </button>
-            <button
-              className="icon-button compact"
-              onClick={() => {
-                void runCreateFolder()
-              }}
-              disabled={!vaultLoaded}
-              title="Neuer Ordner"
-            >
-              <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
-            </button>
+            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neue Notiz'}>
+              <button
+                className="icon-button compact"
+                onClick={() => {
+                  void runCreateFile()
+                }}
+                disabled={createActionsDisabled}
+                aria-label="Neue Notiz"
+              >
+                <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
+              </button>
+            </span>
+            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neue Task'}>
+              <button
+                className="icon-button compact"
+                onClick={() => {
+                  void runCreateTask()
+                }}
+                disabled={createActionsDisabled}
+                aria-label="Neue Task"
+              >
+                <LucideNamedIcon name="CheckSquare" className="row-action-icon" size={14} />
+              </button>
+            </span>
+            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neuer Ordner'}>
+              <button
+                className="icon-button compact"
+                onClick={() => {
+                  void runCreateFolder()
+                }}
+                disabled={createActionsDisabled}
+                aria-label="Neuer Ordner"
+              >
+                <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
+              </button>
+            </span>
           </div>
         </div>
 
@@ -1525,7 +1709,7 @@ export function ExplorerSidebar({
         {tree.visibleNodes.map((entry) => {
           const node = entry.node
           const dropPos = dropIndicator?.nodeId === node.id ? dropIndicator.position : null
-          const canDrag = node.type === 'file' || (node.canDelete !== false && !isPinnedRoot(node.path))
+          const canDrag = node.type === 'file' ? !isReadonlyLinkFile(node) : (node.canDelete !== false && !isPinnedRoot(node.path))
           const isFileSelected = node.type === 'file' && selectedFileNodeIds.has(node.id)
           const isRowSelected = node.type === 'file' ? isFileSelected : node.selected
           const countInfo = folderFileCounts.get(node.id)
@@ -1548,9 +1732,13 @@ export function ExplorerSidebar({
                     const selectionSource = selectedFileNodeIds.has(node.id) ? selectedFileNodeIds : new Set([node.id])
                     const draggedFileIds = Array.from(selectionSource).filter((nodeId) => {
                       const selectedNode = tree.nodeById.get(nodeId)
-                      return selectedNode?.type === 'file'
+                      return selectedNode?.type === 'file' && !isReadonlyLinkFile(selectedNode)
                     })
                     if (draggedFileIds.length === 0) {
+                      if (isReadonlyLinkFile(node)) {
+                        event.preventDefault()
+                        return
+                      }
                       draggedFileIds.push(node.id)
                     }
                     const dragSet = new Set(draggedFileIds)
@@ -1610,7 +1798,7 @@ export function ExplorerSidebar({
                     toggleExpand(node)
                   } else {
                     selectSingleFile(node.id)
-                    void onOpenFile(node.path, node.name)
+                    void onOpenFile(resolveOpenPath(node), node.name)
                   }
                 }}
                 onContextMenu={(event: ReactMouseEvent<HTMLDivElement>) => {
@@ -1692,7 +1880,7 @@ export function ExplorerSidebar({
             {contextMenu.target === 'node' && contextNode ? (
               <>
                 {contextNode.type === 'file' ? (
-                  <button className="context-menu-item" onClick={() => { void onOpenFile(contextNode.path, contextNode.name); setContextMenu(null) }}>
+                  <button className="context-menu-item" onClick={() => { void onOpenFile(resolveOpenPath(contextNode), contextNode.name); setContextMenu(null) }}>
                     <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
                     <span>Datei oeffnen</span>
                   </button>
@@ -1700,6 +1888,8 @@ export function ExplorerSidebar({
                 {contextNode.type === 'folder' ? (
                   <button
                     className="context-menu-item"
+                    disabled={contextCreateLocked}
+                    title={contextCreateLocked ? contextCreateLockReason : 'Neue Datei'}
                     onClick={() => {
                       void createFileInFolderFromContext(contextNode)
                     }}
@@ -1711,6 +1901,8 @@ export function ExplorerSidebar({
                 {contextNode.type === 'folder' ? (
                   <button
                     className="context-menu-item"
+                    disabled={contextCreateLocked}
+                    title={contextCreateLocked ? contextCreateLockReason : 'Neue Task'}
                     onClick={() => {
                       void createTaskInFolderFromContext(contextNode)
                     }}
@@ -1722,6 +1914,8 @@ export function ExplorerSidebar({
                 {contextNode.type === 'folder' ? (
                   <button
                     className="context-menu-item"
+                    disabled={contextCreateLocked}
+                    title={contextCreateLocked ? contextCreateLockReason : 'Neuer Ordner'}
                     onClick={() => {
                       void createFolderInFolderFromContext(contextNode)
                     }}
@@ -1732,6 +1926,8 @@ export function ExplorerSidebar({
                 ) : null}
                 <button
                   className="context-menu-item"
+                  disabled={contextReadonlyLinkFile}
+                  title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht umbenannt werden.' : 'Umbenennen'}
                   onClick={() => {
                     void renameNodeFromContext(contextNode)
                   }}
@@ -1751,7 +1947,8 @@ export function ExplorerSidebar({
                 ) : null}
                 <button
                   className="context-menu-item danger"
-                  disabled={contextNode.type === 'folder' && contextNode.canDelete === false}
+                  disabled={(contextNode.type === 'folder' && contextNode.canDelete === false) || contextReadonlyLinkFile}
+                  title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht geloescht werden.' : 'Loeschen'}
                   onClick={() => {
                     void deleteNodeFromContext(contextNode)
                   }}
