@@ -28,6 +28,8 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
 DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
 TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
 TASK_PRIORITIES = ("low", "medium", "high")
+TASK_LINK_NOTE_TYPE = "task_link"
+TASK_LINK_INDEX_VERSION = 1
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
@@ -105,6 +107,20 @@ def _normalize_task_priority(raw: str) -> str:
     if clean in {"l", "low"}:
         return "low"
     return clean if clean in TASK_PRIORITIES else "medium"
+
+
+def _task_status_folder_token(raw: str) -> str:
+    clean = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    clean = re.sub(r"[^a-z0-9_]+", "_", clean)
+    clean = re.sub(r"_+", "_", clean).strip("_")
+    return clean or "open"
+
+
+def _task_link_token(raw: str) -> str:
+    clean = _normalize_label(str(raw or "")).lower()
+    clean = re.sub(r"[^a-z0-9]+", "_", clean)
+    clean = re.sub(r"_+", "_", clean).strip("_")
+    return clean or "task"
 
 
 def _normalize_due_date(raw: str) -> str:
@@ -296,8 +312,7 @@ class VaultManager:
         self.system_path = self._ensure_system_directory()
         self._configure_root_paths()
 
-        (self.tasks_root_path / "open").mkdir(parents=True, exist_ok=True)
-        (self.tasks_root_path / "done").mkdir(parents=True, exist_ok=True)
+        self._ensure_task_status_folders()
         self.media_root_path.mkdir(parents=True, exist_ok=True)
         self.system_path.mkdir(parents=True, exist_ok=True)
 
@@ -365,6 +380,50 @@ class VaultManager:
         self.tag_groups_path = self.system_path / "tag_groups.json"
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
         self.ui_settings_path = self.system_path / "ui_settings.json"
+        self.task_status_links_path = self.system_path / "task_status_links.json"
+
+    def _ensure_task_status_folders(self) -> None:
+        self.tasks_root_path.mkdir(parents=True, exist_ok=True)
+        for status in TASK_STATUSES:
+            folder = self.tasks_root_path / _task_status_folder_token(status)
+            folder.mkdir(parents=True, exist_ok=True)
+
+    def _read_task_status_link_index(self) -> dict[str, str]:
+        if not self.task_status_links_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.task_status_links_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        raw_version = payload.get("version")
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            version = 0
+        if version != TASK_LINK_INDEX_VERSION:
+            return {}
+        raw_links = payload.get("links", {})
+        if not isinstance(raw_links, dict):
+            return {}
+        next_links: dict[str, str] = {}
+        for raw_task_id, raw_relative in raw_links.items():
+            task_id = str(raw_task_id or "").strip()
+            relative = str(raw_relative or "").replace("\\", "/").strip().strip("/")
+            if task_id and relative:
+                next_links[task_id] = relative
+        return next_links
+
+    def _write_task_status_link_index(self, mapping: dict[str, str]) -> None:
+        links = {str(task_id): str(relative).replace("\\", "/").strip().strip("/") for task_id, relative in mapping.items()}
+        payload = {
+            "version": TASK_LINK_INDEX_VERSION,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "links": links,
+        }
+        self.system_path.mkdir(parents=True, exist_ok=True)
+        self.task_status_links_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _pick_root_name(self, preferred: str, legacy: str) -> str:
         if (self.vault_path / preferred).is_dir():
@@ -511,6 +570,14 @@ class VaultManager:
         note_path.write_text(note_content, encoding="utf-8")
 
         indexer.reindex_markdown_file(self.vault_path, note_path)
+        if kind == "task":
+            self.sync_task_status_link(
+                task_id=note_id,
+                title=clean_title,
+                status=normalized_status,
+                task_path=str(note_path),
+                indexer=indexer,
+            )
         return {"note_id": note_id, "note_path": note_path, "title": clean_title}
 
     def create_task_in_group(self, group_key: str, title: str, indexer: VaultIndexer, status: str = "open") -> dict[str, Any]:
@@ -571,6 +638,7 @@ class VaultManager:
         source.rename(destination)
         self._remap_favorites(source_key, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
+        self.rebuild_task_status_links(indexer)
         return self._group_payload(destination, set(self._read_favorite_folders()))
 
     def delete_note_group(self, group_key: str, indexer: VaultIndexer) -> None:
@@ -584,9 +652,11 @@ class VaultManager:
         shutil.rmtree(target)
         self._remove_favorite_path(relative)
         indexer.reindex_vault(self.vault_path)
+        self.rebuild_task_status_links(indexer)
 
     def rename_note_file(self, note_path: str, new_name: str, indexer: VaultIndexer) -> Path:
         file_path = self._resolve_note_file(note_path)
+        previous_task_payload = self._task_link_payload_from_file(file_path)
         clean_name = _normalize_label(new_name)
         if not clean_name:
             raise ValueError("File name cannot be empty")
@@ -620,10 +690,30 @@ class VaultManager:
 
         indexer.remove_projection_for_path(str(file_path))
         indexer.reindex_markdown_file(self.vault_path, destination)
+        next_task_payload = self._task_link_payload_from_file(destination)
+        previous_task_id = previous_task_payload["task_id"] if previous_task_payload else ""
+        next_task_id = next_task_payload["task_id"] if next_task_payload else ""
+        if previous_task_payload and (not next_task_payload or previous_task_id != next_task_id):
+            self.sync_task_status_link(
+                task_id=previous_task_id,
+                title=previous_task_payload["title"],
+                status=previous_task_payload["status"],
+                task_path="",
+                indexer=indexer,
+            )
+        if next_task_payload:
+            self.sync_task_status_link(
+                task_id=next_task_payload["task_id"],
+                title=next_task_payload["title"],
+                status=next_task_payload["status"],
+                task_path=str(destination),
+                indexer=indexer,
+            )
         return destination
 
     def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
         file_path = self._resolve_note_file(note_path)
+        task_payload = self._task_link_payload_from_file(file_path)
         target_group = self._resolve_group_path(target_group_key)
         if self._is_tag_path(target_group):
             raise ValueError("Notizen koennen nicht in den Tag-Bereich verschoben werden.")
@@ -645,6 +735,14 @@ class VaultManager:
         file_path.rename(destination)
         indexer.remove_projection_for_path(str(file_path))
         indexer.reindex_markdown_file(self.vault_path, destination)
+        if task_payload:
+            self.sync_task_status_link(
+                task_id=task_payload["task_id"],
+                title=task_payload["title"],
+                status=task_payload["status"],
+                task_path=str(destination),
+                indexer=indexer,
+            )
         return destination
 
     def move_note_files(self, note_paths: list[str], target_group_key: str, indexer: VaultIndexer) -> list[dict[str, str]]:
@@ -672,7 +770,11 @@ class VaultManager:
 
         moved_entries: list[dict[str, str]] = []
         changed = False
+        task_payloads_by_source: dict[str, dict[str, str]] = {}
         for file_path in resolved_sources:
+            payload = self._task_link_payload_from_file(file_path)
+            if payload:
+                task_payloads_by_source[str(file_path)] = payload
             destination = target_dir / file_path.name
             if destination != file_path:
                 suffix = 2
@@ -696,14 +798,33 @@ class VaultManager:
                 if from_path and from_path != moved_path:
                     indexer.remove_projection_for_path(from_path)
                 if moved_path:
-                    indexer.reindex_markdown_file(self.vault_path, Path(moved_path))
+                    moved_file = Path(moved_path)
+                    indexer.reindex_markdown_file(self.vault_path, moved_file)
+                    payload = task_payloads_by_source.get(from_path, None)
+                    if payload:
+                        self.sync_task_status_link(
+                            task_id=payload["task_id"],
+                            title=payload["title"],
+                            status=payload["status"],
+                            task_path=str(moved_file),
+                            indexer=indexer,
+                        )
         return moved_entries
 
     def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
         file_path = self._resolve_note_file(note_path)
+        task_payload = self._task_link_payload_from_file(file_path)
         file_path.unlink(missing_ok=False)
         self._cleanup_orphan_media_assets()
         indexer.remove_projection_for_path(str(file_path))
+        if task_payload:
+            self.sync_task_status_link(
+                task_id=task_payload["task_id"],
+                title=task_payload["title"],
+                status=task_payload["status"],
+                task_path="",
+                indexer=indexer,
+            )
 
     def add_note_media_asset(
         self,
@@ -1091,12 +1212,251 @@ class VaultManager:
         task_state_changed = previous_status != next_status
         tag_rebuild_required = path_changed or title_changed or type_changed or tags_changed or task_state_changed
 
+        previous_task_payload = self._task_link_payload_from_meta(Path(previous_path), previous_meta)
+        next_task_payload = self._task_link_payload_from_meta(final_path, meta)
+        previous_task_id = previous_task_payload["task_id"] if previous_task_payload else ""
+        next_task_id = next_task_payload["task_id"] if next_task_payload else ""
+        if previous_task_payload and (not next_task_payload or previous_task_id != next_task_id):
+            self.sync_task_status_link(
+                task_id=previous_task_id,
+                title=previous_task_payload["title"],
+                status=previous_task_payload["status"],
+                task_path="",
+                indexer=indexer,
+            )
+        if next_task_payload:
+            self.sync_task_status_link(
+                task_id=next_task_payload["task_id"],
+                title=next_task_payload["title"],
+                status=next_task_payload["status"],
+                task_path=str(final_path),
+                indexer=indexer,
+            )
+
         return {
             "path": final_path,
             "title": str(meta.get("title", final_path.stem)),
             "meta": meta,
             "tag_rebuild_required": tag_rebuild_required,
         }
+
+    def _task_link_payload_from_meta(self, note_path: Path, meta: dict[str, Any]) -> dict[str, str] | None:
+        note_type = _normalize_note_type(str(meta.get("type", "note")))
+        if note_type != "task":
+            return None
+        task_id = str(meta.get("id", "")).strip() or str(meta.get("node_id", "")).strip() or note_path.stem
+        if not task_id:
+            return None
+        title = _normalize_label(str(meta.get("title", "")).strip()) or note_path.stem or task_id
+        status = str(meta.get("status", "open")).strip() or "open"
+        return {
+            "task_id": task_id,
+            "title": title,
+            "status": status,
+        }
+
+    def _task_link_payload_from_file(self, note_path: Path) -> dict[str, str] | None:
+        try:
+            meta, _body = parse_markdown(note_path)
+        except OSError:
+            return None
+        return self._task_link_payload_from_meta(note_path, meta)
+
+    def _is_task_link_note_for_task(self, file_path: Path, task_id: str) -> bool:
+        if not file_path.exists() or not file_path.is_file():
+            return False
+        try:
+            meta, _body = parse_markdown(file_path)
+        except OSError:
+            return False
+        note_type = str(meta.get("type", "")).strip().lower().replace("-", "_")
+        if note_type != TASK_LINK_NOTE_TYPE:
+            return False
+        linked_task_id = str(meta.get("task_id", "")).strip()
+        return linked_task_id == task_id
+
+    def _remove_task_status_link_file(self, file_path: Path, indexer: VaultIndexer) -> None:
+        try:
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        indexer.remove_projection_for_path(str(file_path))
+
+    def sync_task_status_link(
+        self,
+        *,
+        task_id: str,
+        title: str,
+        status: str,
+        task_path: str,
+        indexer: VaultIndexer,
+        index_mapping: dict[str, str] | None = None,
+        persist_index: bool = True,
+    ) -> None:
+        clean_task_id = str(task_id or "").strip()
+        if not clean_task_id:
+            return
+
+        links = index_mapping if index_mapping is not None else self._read_task_status_link_index()
+        previous_relative = str(links.get(clean_task_id, "")).replace("\\", "/").strip().strip("/")
+        previous_path = (self.vault_path / previous_relative).resolve() if previous_relative else None
+
+        clean_target = str(task_path or "").strip()
+        if not clean_target:
+            if previous_path is not None:
+                self._remove_task_status_link_file(previous_path, indexer)
+            links.pop(clean_task_id, None)
+            if persist_index and index_mapping is None:
+                self._write_task_status_link_index(links)
+            return
+
+        try:
+            target_file = Path(clean_target).expanduser().resolve()
+        except OSError:
+            target_file = Path(clean_target)
+        if not target_file.exists() or not target_file.is_file():
+            if previous_path is not None:
+                self._remove_task_status_link_file(previous_path, indexer)
+            links.pop(clean_task_id, None)
+            if persist_index and index_mapping is None:
+                self._write_task_status_link_index(links)
+            return
+
+        self._ensure_task_status_folders()
+        status_token = _task_status_folder_token(status)
+        status_dir = self.tasks_root_path / status_token
+        status_dir.mkdir(parents=True, exist_ok=True)
+
+        # If the task itself already lives in the matching status folder, no link file is needed.
+        if self._is_same_or_descendant(status_dir, target_file):
+            if previous_path is not None:
+                self._remove_task_status_link_file(previous_path, indexer)
+            links.pop(clean_task_id, None)
+            if persist_index and index_mapping is None:
+                self._write_task_status_link_index(links)
+            return
+
+        candidate: Path | None = None
+        if previous_path is not None and previous_path.parent == status_dir and self._is_task_link_note_for_task(previous_path, clean_task_id):
+            candidate = previous_path
+        else:
+            base_token = _task_link_token(clean_task_id or title or target_file.stem)
+            candidate = status_dir / f"{base_token}.md"
+            suffix = 2
+            while candidate.exists() and not self._is_task_link_note_for_task(candidate, clean_task_id):
+                candidate = status_dir / f"{base_token}_{suffix}.md"
+                suffix += 1
+
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        created_at = now_iso
+        if candidate.exists():
+            try:
+                existing_meta, _existing_body = parse_markdown(candidate)
+                existing_created = str(existing_meta.get("created_at", "")).strip()
+                if existing_created:
+                    created_at = existing_created
+            except OSError:
+                pass
+
+        safe_title = _normalize_label(title) or target_file.stem or clean_task_id
+        try:
+            target_relative = target_file.resolve().relative_to(self.vault_path.resolve()).as_posix()
+        except ValueError:
+            target_relative = target_file.as_posix()
+        target_posix = target_file.as_posix()
+        frontmatter = {
+            "id": f"task_link_{clean_task_id}",
+            "node_id": f"task_link_{clean_task_id}",
+            "type": TASK_LINK_NOTE_TYPE,
+            "title": safe_title,
+            "task_id": clean_task_id,
+            "task_status": status_token,
+            "task_path": target_posix,
+            "task_path_relative": target_relative,
+            "created_at": created_at,
+            "updated_at": now_iso,
+            "tags": [],
+            "tags_auto": [],
+        }
+        body = (
+            f"# {safe_title}\n\n"
+            f"- Original Task: [{safe_title}]({target_posix})\n"
+            f"- Status: `{status_token}`\n"
+        )
+        candidate.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        indexer.reindex_markdown_file(self.vault_path, candidate)
+
+        if previous_path is not None and previous_path != candidate:
+            self._remove_task_status_link_file(previous_path, indexer)
+
+        links[clean_task_id] = candidate.resolve().relative_to(self.vault_path.resolve()).as_posix()
+        if persist_index and index_mapping is None:
+            self._write_task_status_link_index(links)
+
+    def bootstrap_task_status_links(self, indexer: VaultIndexer) -> None:
+        self._ensure_task_status_folders()
+        if self.task_status_links_path.exists():
+            existing = self._read_task_status_link_index()
+            if existing:
+                return
+            if indexer.list_tasks(include_done=True):
+                self.rebuild_task_status_links(indexer)
+            else:
+                self._write_task_status_link_index({})
+            return
+
+        links: dict[str, str] = {}
+        for row in indexer.list_tasks(include_done=True):
+            task_id = str(row.get("id", "")).strip()
+            if not task_id:
+                continue
+            title = _normalize_label(str(row.get("title", "")).strip()) or task_id
+            status = str(row.get("status", "open")).strip() or "open"
+            task_path = str(row.get("path", "")).strip()
+            self.sync_task_status_link(
+                task_id=task_id,
+                title=title,
+                status=status,
+                task_path=task_path,
+                indexer=indexer,
+                index_mapping=links,
+                persist_index=False,
+            )
+        self._write_task_status_link_index(links)
+
+    def rebuild_task_status_links(self, indexer: VaultIndexer) -> None:
+        self._ensure_task_status_folders()
+        links = self._read_task_status_link_index()
+        seen_task_ids: set[str] = set()
+        for row in indexer.list_tasks(include_done=True):
+            task_id = str(row.get("id", "")).strip()
+            if not task_id:
+                continue
+            seen_task_ids.add(task_id)
+            title = _normalize_label(str(row.get("title", "")).strip()) or task_id
+            status = str(row.get("status", "open")).strip() or "open"
+            task_path = str(row.get("path", "")).strip()
+            self.sync_task_status_link(
+                task_id=task_id,
+                title=title,
+                status=status,
+                task_path=task_path,
+                indexer=indexer,
+                index_mapping=links,
+                persist_index=False,
+            )
+
+        for task_id in list(links.keys()):
+            if task_id in seen_task_ids:
+                continue
+            stale_relative = str(links.get(task_id, "")).replace("\\", "/").strip().strip("/")
+            if stale_relative:
+                stale_path = (self.vault_path / stale_relative).resolve()
+                self._remove_task_status_link_file(stale_path, indexer)
+            links.pop(task_id, None)
+
+        self._write_task_status_link_index(links)
 
     def toggle_todo(self, todo_id: str, indexer: VaultIndexer, checked: bool | None = None) -> dict[str, Any]:
         todo = indexer.get_todo(todo_id)
@@ -1879,6 +2239,13 @@ class VaultManager:
             parsed=task_for_index,
             created_at=ts,
             updated_at=ts,
+        )
+        self.sync_task_status_link(
+            task_id=task_id,
+            title=task.title,
+            status=task.status,
+            task_path=str(task_path),
+            indexer=indexer,
         )
         return task_path
 

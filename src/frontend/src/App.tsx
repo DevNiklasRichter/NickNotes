@@ -664,7 +664,7 @@ function App() {
     if (!vaultLoaded && !force) {
       return
     }
-    await Promise.allSettled([refreshNoteGroups(force), refreshAllNotes(force), refreshExplorerFiles(force)])
+    await Promise.allSettled([refreshTasks(force), refreshNoteGroups(force), refreshAllNotes(force), refreshExplorerFiles(force)])
   }
 
   const refreshWorkspaceData = async (force = false) => {
@@ -672,6 +672,7 @@ function App() {
       return
     }
     await Promise.allSettled([
+      refreshTasks(force),
       refreshFocusAggregate(force),
       runSearch(searchQuery, force),
       refreshReview(force),

@@ -246,6 +246,11 @@ def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
     )
 
     indexed = indexer.reindex_vault(vault_path)
+    try:
+        vault.bootstrap_task_status_links(indexer)
+    except OSError:
+        # Task-Link bootstrap is best-effort and should not block opening the NoteBase.
+        pass
     tag_groups = vault.sync_tag_groups_with_index(indexer)
     state.vault = vault
     state.indexer = indexer
@@ -280,6 +285,7 @@ def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
 def reindex_vault() -> dict[str, Any]:
     vault, indexer = _require_loaded()
     indexed = indexer.reindex_vault(vault.vault_path)
+    vault.rebuild_task_status_links(indexer)
     tag_groups = vault.sync_tag_groups_with_index(indexer)
     return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups}
 
@@ -484,7 +490,7 @@ def promote_todo(todo_id: str) -> dict[str, Any]:
 
 @app.post("/tasks/{task_id}/done")
 def mark_task_done(task_id: str) -> dict[str, Any]:
-    _vault, indexer = _require_loaded()
+    vault, indexer = _require_loaded()
 
     rows = [r for r in indexer.list_tasks(include_done=True) if r["id"] == task_id]
     if not rows:
@@ -559,6 +565,13 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
         parsed=parsed,
         created_at=str(meta.get("created_at", meta["updated_at"])),
         updated_at=str(meta["updated_at"]),
+    )
+    vault.sync_task_status_link(
+        task_id=str(task_id),
+        title=parsed.title,
+        status="done",
+        task_path=str(done_path),
+        indexer=indexer,
     )
 
     return {"done": True, "taskId": task_id}
