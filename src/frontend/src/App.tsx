@@ -108,7 +108,6 @@ import {
 import type {
   VaultCounts,
   Suggestion,
-  ParsedTask,
   TaskRow,
   TodoRow,
   SearchRow,
@@ -130,6 +129,9 @@ import type {
   NoteGroup,
 } from './app/AppShared'
 
+const CAPTURE_PREVIEW_IDLE_MS = 1200
+const CAPTURE_PREVIEW_MIN_CHARS = 3
+
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -137,6 +139,8 @@ function App() {
   const explorerViewSaveTimerRef = useRef<number | null>(null)
   const appLayoutSaveTimerRef = useRef<number | null>(null)
   const workspaceGridRef = useRef<HTMLDivElement | null>(null)
+  const capturePreviewRequestSeqRef = useRef(0)
+  const capturePreviewLastTextRef = useRef('')
   const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
 
@@ -147,7 +151,8 @@ function App() {
   const [captureText, setCaptureText] = useState('')
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [selectedTagKeys, setSelectedTagKeys] = useState<string[]>([])
-  const [parsedTasks, setParsedTasks] = useState<ParsedTask[]>([])
+  const [todoCandidates, setTodoCandidates] = useState<string[]>([])
+  const [selectedTodoTexts, setSelectedTodoTexts] = useState<string[]>([])
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [todos, setTodos] = useState<TodoRow[]>([])
@@ -167,6 +172,11 @@ function App() {
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [displayName, setDisplayName] = useState('Max')
+  const [createNoteBaseDialogOpen, setCreateNoteBaseDialogOpen] = useState(false)
+  const [createNoteBaseParentPath, setCreateNoteBaseParentPath] = useState('')
+  const [createNoteBaseName, setCreateNoteBaseName] = useState('')
+  const [createNoteBaseDisplayName, setCreateNoteBaseDisplayName] = useState('Max')
+  const [createNoteBasePending, setCreateNoteBasePending] = useState(false)
   const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
   const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS })
   const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
@@ -808,6 +818,11 @@ function App() {
     return true
   }
 
+  const isMissingNoteBasePathError = (value: unknown): boolean => {
+    const text = String(value || '').toLowerCase()
+    return text.includes('notebase path not found') || text.includes('path not found') || text.includes('enoent')
+  }
+
   const loadState = async () => {
     try {
       const state = await apiRequest<BackendState>(backendUrl, '/state')
@@ -820,6 +835,7 @@ function App() {
         setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
         setExplorerViewSeed(null)
         setExplorerViewSeedId((prev) => prev + 1)
+        let missingRememberedPathHandled = false
         const rememberedPath = getStoredLastNoteBasePath()
         if (rememberedPath && !autoOpenTriedRef.current) {
           autoOpenTriedRef.current = true
@@ -828,10 +844,20 @@ function App() {
             await openVaultAtPath(rememberedPath, 'Letzte NoteBase automatisch geladen.')
             return
           } catch (autoOpenError) {
-            setError(String(autoOpenError))
+            if (isMissingNoteBasePathError(autoOpenError)) {
+              clearStoredLastNoteBasePath()
+              setVaultPath('')
+              setError('')
+              setMessage('Letzte NoteBase nicht gefunden. Bitte waehle eine NoteBase aus.')
+              missingRememberedPathHandled = true
+            } else {
+              setError(String(autoOpenError))
+            }
           }
         }
-        setMessage('Keine NoteBase geladen.')
+        if (!missingRememberedPathHandled) {
+          setMessage('Keine NoteBase geladen.')
+        }
         return
       }
 
@@ -891,16 +917,30 @@ function App() {
       return
     }
 
-    if (!captureText.trim()) {
+    const normalizedCapture = captureText.trim()
+    if (!normalizedCapture) {
       setSuggestions([])
       setSelectedTagKeys([])
-      setParsedTasks([])
+      setTodoCandidates([])
+      setSelectedTodoTexts([])
+      capturePreviewLastTextRef.current = ''
+      capturePreviewRequestSeqRef.current += 1
+      return
+    }
+
+    if (normalizedCapture.length < CAPTURE_PREVIEW_MIN_CHARS) {
+      setSuggestions([])
+      setSelectedTagKeys([])
+      setTodoCandidates([])
+      setSelectedTodoTexts([])
+      capturePreviewLastTextRef.current = ''
+      capturePreviewRequestSeqRef.current += 1
       return
     }
 
     const timeout = window.setTimeout(() => {
-      void previewCapture(captureText)
-    }, 260)
+      void previewCapture(normalizedCapture)
+    }, CAPTURE_PREVIEW_IDLE_MS)
 
     return () => {
       window.clearTimeout(timeout)
@@ -920,6 +960,7 @@ function App() {
   }, [settingsDirty])
 
   const chosenTags = useMemo(() => new Set(selectedTagKeys), [selectedTagKeys])
+  const chosenTodos = useMemo(() => new Set(selectedTodoTexts), [selectedTodoTexts])
 
   const sortedNotes = useMemo(() => {
     return [...searchResults].sort((left, right) => {
@@ -1181,52 +1222,107 @@ function App() {
     return window.nicknotes.selectDirectory()
   }
 
-  const createVault = async () => {
+  const deriveParentDirectory = (path: string): string => {
+    const cleanPath = normalizeLabel(path).replace(/[\\/]+$/g, '')
+    if (!cleanPath) {
+      return ''
+    }
+    const splitIndex = Math.max(cleanPath.lastIndexOf('/'), cleanPath.lastIndexOf('\\'))
+    if (splitIndex < 0) {
+      return ''
+    }
+    const parent = cleanPath.slice(0, splitIndex)
+    if (/^[A-Za-z]:$/i.test(parent)) {
+      return `${parent}\\`
+    }
+    return parent
+  }
+
+  const suggestNoteBaseName = (name: string): string => {
+    const cleanName = normalizeLabel(name)
+    if (!cleanName) {
+      return 'NeueNoteBase'
+    }
+    return `${cleanName}NoteBase`
+  }
+
+  const closeCreateNoteBaseDialog = () => {
+    if (createNoteBasePending) {
+      return
+    }
+    setCreateNoteBaseDialogOpen(false)
+  }
+
+  const createVault = () => {
+    setCreateNoteBaseParentPath(deriveParentDirectory(vaultPath))
+    setCreateNoteBaseDisplayName(displayName)
+    setCreateNoteBaseName(suggestNoteBaseName(displayName))
+    setCreateNoteBaseDialogOpen(true)
+  }
+
+  const chooseCreateNoteBaseParentDirectory = async () => {
     try {
       setError('')
-      const parentPath = await pickDirectory()
-      if (!parentPath) {
+      const selectedPath = await pickDirectory()
+      if (!selectedPath) {
         return
       }
+      setCreateNoteBaseParentPath(selectedPath)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
 
-      const preferredName = window.prompt('Wie sollen wir dich nennen?', displayName)?.trim()
-      const effectiveName = normalizeLabel(preferredName || '') || displayName
-      if (preferredName) {
-        setDisplayName(effectiveName)
-      }
+  const submitCreateNoteBaseDialog = async () => {
+    const parentPath = normalizeLabel(createNoteBaseParentPath)
+    const name = normalizeLabel(createNoteBaseName)
+    const nextDisplayName = normalizeLabel(createNoteBaseDisplayName)
+    if (!parentPath) {
+      setError('Bitte zuerst einen Speicherort fuer die neue NoteBase auswaehlen.')
+      return
+    }
+    if (!name) {
+      setError('Bitte einen Namen fuer die neue NoteBase eingeben.')
+      return
+    }
+    if (/[\\/]/.test(name) || name === '.' || name === '..') {
+      setError('Der NoteBase-Name darf keine Pfadtrenner enthalten.')
+      return
+    }
 
-      const name = window.prompt('Name der neuen NoteBase:', `${effectiveName}NoteBase`)?.trim()
-      if (!name) {
-        return
-      }
-
+    try {
+      setError('')
+      setCreateNoteBasePending(true)
       const response = await apiRequest<{
         vaultPath: string
         noteBasePath?: string
         counts: VaultCounts
         tagGroups?: unknown
-      }>(
-        backendUrl,
-        '/notebase/create',
-        {
-          method: 'POST',
-          body: JSON.stringify({ parentPath, name }),
-        }
-      )
+      }>(backendUrl, '/notebase/create', {
+        method: 'POST',
+        body: JSON.stringify({ parentPath, name }),
+      })
 
-      setVaultPath(response.noteBasePath ?? response.vaultPath)
+      const loadedPath = response.noteBasePath ?? response.vaultPath
+      setVaultPath(loadedPath)
       setVaultLoaded(true)
       setCounts(response.counts)
       uiSettingsReadyRef.current = false
-      storeLastNoteBasePath(response.noteBasePath ?? response.vaultPath)
+      storeLastNoteBasePath(loadedPath)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
-      setMessage(`Neue NoteBase erstellt: ${response.noteBasePath ?? response.vaultPath}`)
+      if (nextDisplayName) {
+        setDisplayName(nextDisplayName)
+      }
+      setCreateNoteBaseDialogOpen(false)
+      setMessage(`Neue NoteBase erstellt: ${loadedPath}`)
       await loadUiSettings()
       await refreshWorkspaceData(true)
     } catch (caught) {
       setError(String(caught))
+    } finally {
+      setCreateNoteBasePending(false)
     }
   }
 
@@ -1560,7 +1656,20 @@ function App() {
   }
 
   const renameNoteBase = async () => {
-    const newName = normalizeLabel(window.prompt('Neuer Name fuer die NoteBase', noteBaseName) ?? '')
+    const renameDialog = await openTagActionDialog({
+      kind: 'input',
+      title: 'NoteBase umbenennen',
+      message: 'Neuen Namen festlegen',
+      initialValue: noteBaseName,
+      actions: [
+        { id: 'confirm', label: 'Speichern', tone: 'primary' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (renameDialog.actionId !== 'confirm') {
+      return
+    }
+    const newName = normalizeLabel(renameDialog.value)
     if (!newName || newName === noteBaseName) {
       return
     }
@@ -1600,12 +1709,28 @@ function App() {
   }
 
   const deleteNoteBase = async () => {
-    if (!window.confirm(`Soll die NoteBase "${noteBaseName}" wirklich mit allen Dateien geloescht werden?`)) {
+    const confirmed = await askTagChoice(
+      'NoteBase loeschen',
+      `Soll die NoteBase "${noteBaseName}" wirklich mit allen Dateien geloescht werden?`,
+      [{ id: 'delete', label: 'Loeschen', tone: 'danger' }]
+    )
+    if (confirmed !== 'delete') {
       return
     }
-    const secondCheck = normalizeLabel(
-      window.prompt('Bitte "LOESCHEN" eingeben, um das vollstaendige Loeschen zu bestaetigen.', '') ?? ''
-    )
+    const secondCheckDialog = await openTagActionDialog({
+      kind: 'input',
+      title: 'Loeschen bestaetigen',
+      message: 'Bitte "LOESCHEN" eingeben, um das vollstaendige Loeschen zu bestaetigen.',
+      initialValue: '',
+      actions: [
+        { id: 'confirm', label: 'Endgueltig loeschen', tone: 'danger' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (secondCheckDialog.actionId !== 'confirm') {
+      return
+    }
+    const secondCheck = normalizeLabel(secondCheckDialog.value)
     if (secondCheck.toUpperCase() !== 'LOESCHEN') {
       setMessage('Loeschen abgebrochen.')
       return
@@ -1627,7 +1752,8 @@ function App() {
       setSearchResults([])
       setSuggestions([])
       setSelectedTagKeys([])
-      setParsedTasks([])
+      setTodoCandidates([])
+      setSelectedTodoTexts([])
       setOpenTabs([])
       dispatchWorkspace({ type: 'RESET' })
       setCustomTagGroups([])
@@ -1647,17 +1773,33 @@ function App() {
       return
     }
 
+    const normalizedText = text.trim()
+    if (normalizedText.length < CAPTURE_PREVIEW_MIN_CHARS) {
+      return
+    }
+    if (capturePreviewLastTextRef.current === normalizedText) {
+      return
+    }
+
+    const requestSeq = capturePreviewRequestSeqRef.current + 1
+    capturePreviewRequestSeqRef.current = requestSeq
+
     try {
       const response = await apiRequest<{
         suggestions: Suggestion[]
-        tasks: ParsedTask[]
+        todos: string[]
       }>(backendUrl, '/capture/preview', {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: normalizedText }),
       })
 
+      if (requestSeq !== capturePreviewRequestSeqRef.current) {
+        return
+      }
+
+      capturePreviewLastTextRef.current = normalizedText
       setSuggestions(response.suggestions)
-      setParsedTasks(response.tasks)
+      setTodoCandidates(response.todos)
 
       setSelectedTagKeys((prev) => {
         const previous = new Set(prev)
@@ -1669,9 +1811,30 @@ function App() {
         }
         return next
       })
-    } catch (caught) {
-      setError(String(caught))
+      setSelectedTodoTexts((prev) => {
+        if (response.todos.length === 0) {
+          return []
+        }
+        if (prev.length === 0) {
+          return [...response.todos]
+        }
+        const previous = new Set(prev)
+        const next = response.todos.filter((item) => previous.has(item))
+        return next.length > 0 ? next : [...response.todos]
+      })
+    } catch {
+      if (requestSeq !== capturePreviewRequestSeqRef.current) {
+        return
+      }
     }
+  }
+
+  const toggleCaptureTag = (tagKey: string) => {
+    setSelectedTagKeys((prev) => (prev.includes(tagKey) ? prev.filter((item) => item !== tagKey) : [...prev, tagKey]))
+  }
+
+  const toggleCaptureTodo = (todoText: string) => {
+    setSelectedTodoTexts((prev) => (prev.includes(todoText) ? prev.filter((item) => item !== todoText) : [...prev, todoText]))
   }
 
   const saveCapture = async () => {
@@ -1681,7 +1844,7 @@ function App() {
         return
       }
 
-      const response = await apiRequest<{ counts: VaultCounts; noteId: string }>(
+      const response = await apiRequest<{ counts: VaultCounts; date: string; notePath: string; todoCount: number }>(
         backendUrl,
         '/capture/save',
         {
@@ -1689,6 +1852,7 @@ function App() {
           body: JSON.stringify({
             text,
             selectedTagKeys,
+            selectedTodoTexts,
           }),
         }
       )
@@ -1697,9 +1861,10 @@ function App() {
       setCaptureText('')
       setSuggestions([])
       setSelectedTagKeys([])
-      setParsedTasks([])
-      setMessage(`Capture gespeichert (${response.noteId}).`)
-      await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups()])
+      setTodoCandidates([])
+      setSelectedTodoTexts([])
+      setMessage(`Quick Capture in Daily ${response.date} gespeichert (${response.todoCount} To-dos).`)
+      await Promise.all([refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups(), refreshExplorerSidebarData()])
     } catch (caught) {
       setError(String(caught))
     }
@@ -3712,7 +3877,7 @@ function App() {
     setSidebarOpen(true)
   }
 
-  const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       void saveCapture()
@@ -3936,6 +4101,96 @@ function App() {
       </div>
     </div>
   )
+  const createNoteBaseDialog = createNoteBaseDialogOpen ? (
+    <div
+      className="modal-overlay"
+      onClick={() => {
+        closeCreateNoteBaseDialog()
+      }}
+    >
+      <aside
+        className="create-notebase-modal"
+        onClick={(event) => {
+          event.stopPropagation()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            closeCreateNoteBaseDialog()
+          }
+        }}
+      >
+        <header className="sidebar-header-row">
+          <h3>Neue NoteBase anlegen</h3>
+        </header>
+        <p className="muted-copy">Lege Name, Speicherort und Anrede fuer die neue NoteBase fest.</p>
+        <form
+          className="create-notebase-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submitCreateNoteBaseDialog()
+          }}
+        >
+          <label className="create-notebase-label" htmlFor="create-notebase-display-name">
+            Anrede
+          </label>
+          <input
+            id="create-notebase-display-name"
+            value={createNoteBaseDisplayName}
+            onChange={(event) => {
+              setCreateNoteBaseDisplayName(normalizeLabel(event.target.value))
+            }}
+            placeholder="z. B. Max"
+            autoFocus
+          />
+
+          <label className="create-notebase-label" htmlFor="create-notebase-name">
+            NoteBase-Name
+          </label>
+          <input
+            id="create-notebase-name"
+            value={createNoteBaseName}
+            onChange={(event) => {
+              setCreateNoteBaseName(normalizeLabel(event.target.value))
+            }}
+            placeholder="z. B. MeineNoteBase"
+          />
+
+          <label className="create-notebase-label" htmlFor="create-notebase-parent-path">
+            Speicherort
+          </label>
+          <div className="create-notebase-path-row">
+            <input
+              id="create-notebase-parent-path"
+              value={createNoteBaseParentPath}
+              onChange={(event) => {
+                setCreateNoteBaseParentPath(event.target.value)
+              }}
+              placeholder="Ordner fuer die neue NoteBase"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                void chooseCreateNoteBaseParentDirectory()
+              }}
+              disabled={createNoteBasePending}
+            >
+              Ordner waehlen
+            </button>
+          </div>
+
+          <div className="create-notebase-modal-actions">
+            <button type="button" onClick={closeCreateNoteBaseDialog} disabled={createNoteBasePending}>
+              Abbrechen
+            </button>
+            <button type="submit" className="primary" disabled={createNoteBasePending}>
+              {createNoteBasePending ? 'Wird angelegt ...' : 'NoteBase anlegen'}
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  ) : null
 
   if (!vaultLoaded) {
     return (
@@ -3970,6 +4225,7 @@ function App() {
             </div>
           </div>
         </div>
+        {createNoteBaseDialog}
       </div>
     )
   }
@@ -4179,20 +4435,68 @@ function App() {
                 </div>
               </div>
               <div className="capture-panel-body">
-                <p className="capture-meta">Vorschlaege {suggestions.length} | Tags {chosenTags.size} | Tasks erkannt {parsedTasks.length}</p>
+                <p className="capture-meta">Vorschlaege {suggestions.length} | Tags {chosenTags.size} | To-dos erkannt {todoCandidates.length}</p>
+                {suggestions.length > 0 ? (
+                  <div className="capture-suggestion-section">
+                    <span className="capture-suggestion-label">Tag-Vorschlaege</span>
+                    <div className="capture-chip-list">
+                      {suggestions.map((item) => {
+                        const selected = chosenTags.has(item.key)
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            className={`capture-chip ${selected ? 'selected' : ''}`}
+                            onClick={() => {
+                              toggleCaptureTag(item.key)
+                            }}
+                            title={`${item.category}:${item.slug}`}
+                          >
+                            {selected ? '[x] ' : '[ ] '}
+                            {item.displayName} ({item.category})
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {todoCandidates.length > 0 ? (
+                  <div className="capture-suggestion-section">
+                    <span className="capture-suggestion-label">To-do-Vorschlaege</span>
+                    <div className="capture-chip-list">
+                      {todoCandidates.map((todoText) => {
+                        const selected = chosenTodos.has(todoText)
+                        return (
+                          <button
+                            key={todoText}
+                            type="button"
+                            className={`capture-chip todo ${selected ? 'selected' : ''}`}
+                            onClick={() => {
+                              toggleCaptureTodo(todoText)
+                            }}
+                            title={todoText}
+                          >
+                            {selected ? '[x] ' : '[ ] '}
+                            {todoText}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <input
+                  <textarea
                     value={captureText}
                     onChange={(event) => setCaptureText(event.target.value)}
                     onKeyDown={onQuickCaptureKeyDown}
-                    placeholder="Gedanke eingeben und Enter druecken"
+                    placeholder="Notiz erfassen und optional To-do nennen (Enter speichert, Shift+Enter fuer Zeilenumbruch)"
+                    rows={4}
                   />
                   <button onClick={() => void saveCapture()} disabled={!captureText.trim()}>
                     Senden
                   </button>
                 </div>
-                <div className="capture-result">{error ? <span className="state-error">{error}</span> : <span>{message}</span>}</div>
               </div>
             </section>
           ) : null}
@@ -4265,6 +4569,7 @@ function App() {
         setDialog={setTagActionDialog}
         onClose={closeTagActionDialog}
       />
+      {createNoteBaseDialog}
 
         </div>
       </div>

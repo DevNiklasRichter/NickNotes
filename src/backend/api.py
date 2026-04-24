@@ -74,6 +74,7 @@ class CapturePreviewRequest(BaseModel):
 class CaptureSaveRequest(BaseModel):
     text: str
     selected_tag_keys: list[str] = Field(default_factory=list, alias="selectedTagKeys")
+    selected_todo_texts: list[str] = Field(default_factory=list, alias="selectedTodoTexts")
 
 
 class FocusMitUpdateRequest(BaseModel):
@@ -354,15 +355,17 @@ def delete_notebase(req: NoteBaseDeleteRequest) -> dict[str, Any]:
 
 @app.post("/capture/preview")
 def preview_capture(req: CapturePreviewRequest) -> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    merged, parsed_tasks = _compute_capture(req.text, indexer)
+    vault, indexer = _require_loaded()
+    merged, parsed_todos = _compute_capture(req.text, vault, indexer)
     auto_count = sum(1 for item in merged if item.auto_apply or item.source == "explicit")
     return {
         "suggestions": [_tag_payload(item) for item in merged],
-        "tasks": [_task_payload(item) for item in parsed_tasks],
+        "todos": parsed_todos,
+        "tasks": [],
         "stats": {
             "tags": len(merged),
-            "tasks": len(parsed_tasks),
+            "todos": len(parsed_todos),
+            "tasks": 0,
             "auto": auto_count,
         },
     }
@@ -376,22 +379,25 @@ def save_capture(req: CaptureSaveRequest) -> dict[str, Any]:
     if not text:
         raise HTTPException(status_code=400, detail="Capture text is empty")
 
-    merged, parsed_tasks = _compute_capture(text, indexer)
+    merged, parsed_todos = _compute_capture(text, vault, indexer)
     selected_keys = set(req.selected_tag_keys)
     selected_tags = [tag for tag in merged if tag.key in selected_keys]
+    selected_todos = _normalize_todo_selection(req.selected_todo_texts, fallback=parsed_todos)
 
     result = vault.save_capture(
         text=text,
         selected_tags=selected_tags,
-        tasks=parsed_tasks,
+        todos=selected_todos,
         indexer=indexer,
     )
 
     return {
         "saved": True,
         "noteId": result["note_id"],
+        "date": result["date"],
         "notePath": str(result["note_path"]),
-        "taskIds": result["task_ids"],
+        "todoTexts": result["todo_texts"],
+        "todoCount": len(result["todo_texts"]),
         "counts": _counts(indexer),
     }
 
@@ -1070,20 +1076,81 @@ def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
     return state.vault, state.indexer
 
 
-def _compute_capture(text: str, indexer: VaultIndexer) -> tuple[list[TagSuggestion], list[ParsedTask]]:
+def _compute_capture(text: str, vault: VaultManager, indexer: VaultIndexer) -> tuple[list[TagSuggestion], list[str]]:
     clean_text = text.strip()
     if not clean_text:
         return [], []
 
-    known_tags = indexer.get_all_tags()
+    known_tags = _known_tags_for_capture(vault, indexer)
     parsed = state.parser.parse(clean_text, known_tags)
     merged = parsed.merged_suggestions()
+    todo_candidates = state.parser.parse_todos(clean_text)
 
     if state.openai and state.openai.cfg.enabled:
         ai_suggestions = state.openai.suggest_tags(clean_text, known_tags)
         merged = _merge_suggestions(merged, ai_suggestions)
 
-    return merged, parsed.parsed_tasks
+    return merged, todo_candidates
+
+
+def _known_tags_for_capture(vault: VaultManager, indexer: VaultIndexer) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, str]] = {}
+
+    def add_tag(category: str, slug: str, display_name: str) -> None:
+        clean_category = str(category or "").strip().lower()
+        clean_slug = str(slug or "").strip().lower()
+        clean_display = str(display_name or "").strip() or clean_slug
+        if not clean_category or not clean_slug:
+            return
+        key = f"{clean_category}:{clean_slug}"
+        if key not in by_key:
+            by_key[key] = {
+                "category": clean_category,
+                "slug": clean_slug,
+                "display_name": clean_display,
+            }
+            return
+        if clean_display:
+            by_key[key]["display_name"] = clean_display
+
+    for row in indexer.get_all_tags():
+        add_tag(
+            category=str(row.get("category", "")),
+            slug=str(row.get("slug", "")),
+            display_name=str(row.get("display_name", "")),
+        )
+
+    for group in vault.read_tag_groups():
+        group_id = str(group.get("id", "")).strip()
+        tags = group.get("tags", [])
+        if not isinstance(tags, list):
+            continue
+        for tag in tags:
+            if not isinstance(tag, dict):
+                continue
+            add_tag(
+                category=group_id,
+                slug=str(tag.get("id", "")).strip(),
+                display_name=str(tag.get("displayName", "")).strip() or str(tag.get("id", "")).strip(),
+            )
+
+    return sorted(by_key.values(), key=lambda item: (item["category"], item["display_name"], item["slug"]))
+
+
+def _normalize_todo_selection(selected: list[str], fallback: list[str]) -> list[str]:
+    source = selected if selected else fallback
+    clean: list[str] = []
+    seen: set[str] = set()
+    for raw_item in source:
+        value = " ".join(str(raw_item or "").strip().split())
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(value)
+    return clean
 
 
 def _merge_suggestions(base: list[TagSuggestion], extra: list[TagSuggestion]) -> list[TagSuggestion]:

@@ -431,6 +431,19 @@ function addSyntaxVisibilityRange(
   addRange(entries, from, to, isActive ? visibleDeco : mutedDeco)
 }
 
+function extendRangeToFollowingWhitespace(doc: EditorState['doc'], from: number, to: number): number {
+  const line = doc.lineAt(from)
+  let cursor = to
+  while (cursor < line.to) {
+    const char = doc.sliceString(cursor, cursor + 1)
+    if (char !== ' ' && char !== '\t') {
+      break
+    }
+    cursor += 1
+  }
+  return cursor
+}
+
 function intersectsSelection(from: number, to: number, selections: readonly SelectionRange[]): boolean {
   return selections.some((selection) => {
     if (selection.from === selection.to) {
@@ -719,7 +732,8 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
         if (node.name === 'HeaderMark') {
           const owner = ancestorRange(node.node, HEADING_OWNER_NAMES)
           const isActive = owner ? intersectsSelection(owner.from, owner.to, selections) : intersectsSelection(node.from, node.to, selections)
-          addSyntaxVisibilityRange(entries, node.from, node.to, isActive)
+          const syntaxTo = isActive ? node.to : extendRangeToFollowingWhitespace(doc, node.from, node.to)
+          addSyntaxVisibilityRange(entries, node.from, syntaxTo, isActive)
           return
         }
 

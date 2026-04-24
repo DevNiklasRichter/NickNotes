@@ -78,6 +78,118 @@ def _normalize_tag_key(raw: str) -> str:
     return f"{group_slug}:{tag_slug}"
 
 
+def _tag_ref_for_suggestion(tag: TagSuggestion) -> tuple[str, str, str]:
+    group_slug = slugify(str(tag.category))
+    tag_slug = slugify(str(tag.slug))
+    if not group_slug or not tag_slug:
+        return "", "", ""
+    key = f"{group_slug}:{tag_slug}"
+    inline_ref = f"{{tag:{group_slug}/{tag_slug}}}"
+    display_name = _normalize_label(str(tag.display_name or "").replace("_", " ").replace("-", " "))
+    if not display_name:
+        display_name = tag_slug.replace("_", " ")
+    return key, inline_ref, display_name
+
+
+def _replace_text_outside_inline_tags(text: str, pattern: re.Pattern[str], replacement: str) -> str:
+    if not text:
+        return text
+
+    inline_ranges = [(match.start(), match.end()) for match in INLINE_TAG_PATTERN.finditer(text)]
+
+    def intersects_inline_tag(start: int, end: int) -> bool:
+        for range_start, range_end in inline_ranges:
+            if start < range_end and end > range_start:
+                return True
+        return False
+
+    parts: list[str] = []
+    cursor = 0
+    changed = False
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        if start < cursor:
+            continue
+        if intersects_inline_tag(start, end):
+            continue
+        parts.append(text[cursor:start])
+        parts.append(replacement)
+        cursor = end
+        changed = True
+
+    if not changed:
+        return text
+
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _apply_capture_tag_replacements(text: str, selected_tags: list[TagSuggestion]) -> str:
+    if not text or not selected_tags:
+        return text
+
+    tag_rows: list[dict[str, Any]] = []
+    first_token_counts: dict[str, int] = {}
+    seen_keys: set[str] = set()
+
+    for tag in selected_tags:
+        key, inline_ref, display_name = _tag_ref_for_suggestion(tag)
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        aliases: list[str] = []
+        if display_name:
+            aliases.append(display_name)
+
+        slug_alias = " ".join(str(tag.slug).replace("-", " ").replace("_", " ").split())
+        if slug_alias and all(existing.casefold() != slug_alias.casefold() for existing in aliases):
+            aliases.append(slug_alias)
+
+        first_token = ""
+        if display_name:
+            token = display_name.split(" ", 1)[0].strip()
+            if len(token) >= 3:
+                first_token = token
+                lowered = token.casefold()
+                first_token_counts[lowered] = first_token_counts.get(lowered, 0) + 1
+
+        tag_rows.append(
+            {
+                "inline_ref": inline_ref,
+                "aliases": aliases,
+                "first_token": first_token,
+            }
+        )
+
+    replaced_text = text
+    for row in tag_rows:
+        aliases = [str(alias).strip() for alias in row["aliases"] if str(alias).strip()]
+        first_token = str(row["first_token"] or "").strip()
+        if first_token:
+            lowered = first_token.casefold()
+            if first_token_counts.get(lowered, 0) == 1 and all(existing.casefold() != lowered for existing in aliases):
+                aliases.append(first_token)
+
+        deduped_aliases: list[str] = []
+        seen_aliases: set[str] = set()
+        for alias in sorted(aliases, key=lambda value: (-len(value), value.casefold())):
+            key = alias.casefold()
+            if key in seen_aliases:
+                continue
+            seen_aliases.add(key)
+            deduped_aliases.append(alias)
+
+        for alias in deduped_aliases:
+            alias_pattern = re.compile(
+                rf"(?<![A-Za-z0-9_]){re.escape(alias)}(?![A-Za-z0-9_])",
+                flags=re.IGNORECASE,
+            )
+            replaced_text = _replace_text_outside_inline_tags(replaced_text, alias_pattern, str(row["inline_ref"]))
+
+    return replaced_text
+
+
 def _ensure_string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         items = [value]
@@ -333,14 +445,8 @@ class VaultManager:
             )
 
         if not self.read_tag_groups():
-            defaults = [
-                {"id": "person", "displayName": "Person", "color": "#4f8cff", "tags": []},
-                {"id": "project", "displayName": "Project", "color": "#2fba7a", "tags": []},
-                {"id": "customer", "displayName": "Customer", "color": "#ff8a4f", "tags": []},
-                {"id": "machine-no", "displayName": "Machine No", "color": "#7a78ff", "tags": []},
-                {"id": "machine-type", "displayName": "Machine Type", "color": "#d26cf5", "tags": []},
-            ]
-            self._write_tag_groups(defaults)
+            # New NoteBases should start without pre-created tag groups.
+            self._write_tag_groups([])
 
         if not self.favorite_folders_path.exists():
             self._write_favorite_folders([self.daily_root_name, self.tag_root_name, self.tasks_root_name])
@@ -2003,50 +2109,51 @@ class VaultManager:
         self,
         text: str,
         selected_tags: list[TagSuggestion],
-        tasks: list[ParsedTask],
+        todos: list[str],
         indexer: VaultIndexer,
     ) -> dict[str, Any]:
         now = datetime.now()
-        note_id = make_note_id(now)
         created_at = now.isoformat(timespec="seconds")
+        day = f"{now:%Y-%m-%d}"
+        todo_lines = [value for value in (" ".join(raw.strip().split()) for raw in todos) if value]
+        clean_text = text.strip()
+        if not clean_text:
+            raise ValueError("Capture text is empty")
+        capture_text = _apply_capture_tag_replacements(clean_text, selected_tags)
 
-        note_dir = self.daily_root_path / "captures" / f"{now:%Y-%m-%d}"
-        note_dir.mkdir(parents=True, exist_ok=True)
-        note_path = note_dir / f"{note_id}.md"
+        note_path = self._ensure_daily_note(day, created_at)
+        meta, body = parse_markdown(note_path)
+        if not str(meta.get("id", "")).strip():
+            meta["id"] = f"daily_{day}"
+        if not str(meta.get("type", "")).strip():
+            meta["type"] = "daily"
+        if not str(meta.get("created_at", "")).strip():
+            meta["created_at"] = f"{day}T00:00:00"
+        meta["tags"] = _ensure_string_list(meta.get("tags", []))
+        meta["updated_at"] = created_at
 
-        tag_keys = sorted({tag.key for tag in selected_tags})
-        frontmatter = {
-            "id": note_id,
-            "node_id": note_id,
-            "title": text.strip().splitlines()[0][:120] if text.strip() else note_id,
-            "type": "capture",
-            "created_at": created_at,
-            "updated_at": created_at,
-            "tags": tag_keys,
-            "tags_auto": [],
-            "related": [],
-            "related_auto": [],
-        }
-        note_path.write_text(dump_markdown(frontmatter, text), encoding="utf-8")
+        block_lines = [f"**Quick Capture** {now:%H:%M}", "", capture_text]
+        if todo_lines:
+            block_lines.append("")
+            block_lines.extend(f"- [ ] {todo}" for todo in todo_lines)
+        block = "\n".join(block_lines).strip()
 
-        title = text.strip().splitlines()[0][:120] if text.strip() else note_id
+        next_body = body.rstrip()
+        if next_body:
+            next_body = f"{next_body}\n\n{block}\n"
+        else:
+            next_body = f"{block}\n"
+        note_path.write_text(dump_markdown(meta, next_body), encoding="utf-8")
         indexer.reindex_markdown_file(self.vault_path, note_path)
-
-        task_ids = []
-        for parsed_task in tasks:
-            task_id = make_task_id()
-            task_ids.append(task_id)
-            self._create_task_file(task_id, note_id, parsed_task, now, indexer)
-
-        self._append_to_daily(note_path, note_id, title, created_at, tag_keys)
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
 
         return {
-            "note_id": note_id,
+            "note_id": str(meta.get("id", f"daily_{day}")),
+            "date": day,
             "note_path": note_path,
-            "task_ids": task_ids,
+            "todo_texts": todo_lines,
         }
 
     def get_daily_mit(self, day_iso: str | None = None) -> dict[str, Any]:

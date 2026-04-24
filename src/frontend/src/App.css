@@ -3093,16 +3093,27 @@
 }
 
 .code-editor-host .cm-md-syntax-token {
-  transition: opacity 0.16s ease, color 0.16s ease;
-  opacity: 0;
+  transition: opacity 0.16s ease, color 0.16s ease, font-size 0.16s ease;
 }
 
 .code-editor-host .cm-md-syntax-visible {
   opacity: 0.9;
+  font-size: inherit;
+  letter-spacing: normal;
 }
 
 .code-editor-host .cm-md-syntax-muted {
   opacity: 0;
+  font-size: 0;
+  letter-spacing: 0;
+}
+
+.code-editor-host .cm-md-syntax-muted:not(.cm-md-list-mark):not(.cm-md-quote-mark):not(.cm-md-task-marker) {
+  display: none !important;
+}
+
+.code-editor-host .cm-md-syntax-visible:not(.cm-md-list-mark):not(.cm-md-quote-mark):not(.cm-md-task-marker) {
+  display: inline !important;
 }
 
 .code-editor-host .cm-md-list-mark,
@@ -3383,8 +3394,9 @@
 
 .capture-panel-body {
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   gap: 0.55rem;
   padding: 0.58rem;
   overflow: auto;
@@ -3404,46 +3416,89 @@
 
 .capture-input-wrap {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.5rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0.45rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-contrast);
-  padding: 0.1rem 0.15rem;
+  padding: 0.22rem 0.22rem 0.22rem 0.15rem;
 }
 
 .capture-prompt {
   font-weight: 700;
   color: var(--accent);
-  padding: 0 0.25rem;
+  align-self: start;
+  padding: 0.34rem 0.25rem 0 0.25rem;
 }
 
-.capture-input-wrap input {
+.capture-input-wrap textarea {
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  padding: 0.45rem 0.2rem;
+  padding: 0.34rem 0.2rem;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  resize: none;
+  overflow: auto;
+  line-height: 1.45;
+  font-family: inherit;
 }
 
-.capture-input-wrap input:focus-visible {
+.capture-input-wrap textarea:focus-visible {
   border: none;
   box-shadow: none;
 }
 
 .capture-input-wrap button {
   margin: 0.15rem;
+  align-self: flex-end;
 }
 
-.capture-result {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-contrast);
-  padding: 0.45rem 0.5rem;
-  font-size: 0.8rem;
+.capture-suggestion-section {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.32rem;
+}
+
+.capture-suggestion-label {
+  font-size: 0.72rem;
   color: var(--muted);
-  align-content: start;
+  letter-spacing: 0.02em;
+}
+
+.capture-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.capture-chip {
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.2;
+  padding: 0.18rem 0.52rem;
+  cursor: pointer;
+}
+
+.capture-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.capture-chip.selected {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+
+.capture-chip.todo {
+  border-style: dashed;
 }
 
 .bottom-dock {
@@ -3568,6 +3623,60 @@
   gap: 0.7rem;
   position: relative;
   z-index: 1201;
+}
+
+.create-notebase-modal {
+  width: min(640px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.7rem;
+  position: relative;
+  z-index: 1201;
+}
+
+.create-notebase-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.create-notebase-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.create-notebase-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+}
+
+.create-notebase-path-row input {
+  min-width: 0;
+}
+
+.create-notebase-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.create-notebase-modal-actions .primary {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+@media (max-width: 720px) {
+  .create-notebase-path-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tag-form-grid {
@@ -3946,7 +4055,6 @@ button:disabled {
 }
 
 .capture-input-wrap,
-.capture-result,
 .task-item,
 .review-card {
   border-radius: 11px;

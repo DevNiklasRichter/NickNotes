@@ -8,7 +8,8 @@ from pathlib import Path
 
 from src.backend.nicknotes_backend.indexer import VaultIndexer
 from src.backend.nicknotes_backend.markdown_io import dump_markdown, parse_markdown, parse_markdown_text
-from src.backend.nicknotes_backend.models import ParsedTask
+from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
+from src.backend.nicknotes_backend.parser import CaptureParser
 from src.backend.nicknotes_backend.vault import VaultManager
 
 try:
@@ -109,6 +110,46 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertFalse(bool(unchecked_todo.get("checked")))
         self.assertIsNone(unchecked_todo.get("completed_at"))
         self.assertEqual(str(unchecked_todo.get("created_at", "")).strip(), created_at)
+
+    def test_capture_parser_extracts_todos_from_checkbox_and_inline_text(self) -> None:
+        parser = CaptureParser()
+        text = "Bananen sind ungesund. Als To-do dann keine Bananen mehr kaufen.\n- [ ] Milch kaufen"
+        todos = parser.parse_todos(text)
+        self.assertIn("keine Bananen mehr kaufen", todos)
+        self.assertIn("Milch kaufen", todos)
+
+    def test_save_capture_appends_quick_capture_block_to_daily(self) -> None:
+        selected_tags = [
+            TagSuggestion(
+                category="person",
+                slug="max-muster",
+                display_name="Max Muster",
+                confidence=0.91,
+                source="context",
+                auto_apply=True,
+            )
+        ]
+        result = self.vault.save_capture(
+            text="Max sagt: Bananen sind ungesund und als To-do keine Bananen mehr kaufen.",
+            selected_tags=selected_tags,
+            todos=["keine Bananen mehr kaufen"],
+            indexer=self.indexer,
+        )
+
+        note_path = Path(result["note_path"])
+        self.assertTrue(note_path.exists())
+        self.assertEqual(note_path.parent, self.vault.daily_root_path)
+        self.assertEqual(result["todo_texts"], ["keine Bananen mehr kaufen"])
+
+        _meta, body = parse_markdown(note_path)
+        self.assertIn("**Quick Capture** ", body)
+        self.assertIn("Bananen sind ungesund", body)
+        self.assertIn("- [ ] keine Bananen mehr kaufen", body)
+        self.assertIn("{tag:person/max-muster}", body)
+
+        self.assertEqual(len(self.indexer.list_tasks()), 0)
+        todos = self.indexer.list_todos()
+        self.assertTrue(any(str(item.get("raw_text", "")).strip() == "keine Bananen mehr kaufen" for item in todos))
 
     @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
     def test_compute_done_today_counts_uses_completed_at_and_fallback(self) -> None:
