@@ -4,20 +4,15 @@ type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'r
 
 type ActivityRailProps = {
   sidebarView: SidebarView
-  settingsTabOpen: boolean
   onOpenSidebarView: (view: SidebarView) => void
   onOpenSettings: () => void
 }
 
-export function ActivityRail({ sidebarView, settingsTabOpen, onOpenSidebarView, onOpenSettings }: ActivityRailProps) {
+export function ActivityRail({ sidebarView, onOpenSidebarView, onOpenSettings }: ActivityRailProps) {
   return (
     <aside className="activity-rail">
-      <div className="rail-brand">
-        <span className="rail-logo">NN</span>
-        <div className="rail-brand-copy">
-          <strong>NickNotes</strong>
-          <span>Workspace</span>
-        </div>
+      <div className="rail-header">
+        <span className="rail-header-title">Workspace</span>
       </div>
 
       <div className="rail-menu">
@@ -67,7 +62,7 @@ export function ActivityRail({ sidebarView, settingsTabOpen, onOpenSidebarView, 
 
       <div className="rail-spacer" />
 
-      <button className={settingsTabOpen ? 'active' : ''} onClick={onOpenSettings} title="Einstellungen" aria-label="Einstellungen">
+      <button onClick={onOpenSettings} title="Einstellungen" aria-label="Einstellungen">
         <span className="rail-glyph">
           <LucideNamedIcon name="Settings" size={14} />
         </span>

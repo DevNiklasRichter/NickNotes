@@ -1103,7 +1103,6 @@ function App() {
   }, [dirtyPathKey])
 
   const noteBaseName = useMemo(() => (vaultPath ? getPathTail(vaultPath) : 'Keine NoteBase'), [vaultPath])
-  const settingsTabOpen = openTabs.some((tab) => tab.path === SETTINGS_TAB_PATH)
   const tabContextTarget = tabContextMenu ? tabsById[tabContextMenu.tabId] ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
@@ -3928,11 +3927,19 @@ function App() {
   }
 
   const showCaptureInline = capturePanelOpen && capturePinned
+  const windowTitlebar = (
+    <div className="window-titlebar">
+      <div className="window-titlebar-brand" aria-label="NickNotes">
+        <span className="window-titlebar-logo">NN</span>
+        <span className="window-titlebar-title">NickNotes</span>
+      </div>
+    </div>
+  )
 
   if (!vaultLoaded) {
     return (
       <div className="window-frame">
-        <div className="window-titlebar" aria-hidden="true" />
+        {windowTitlebar}
         <div className="window-content">
           <div className="launch-shell">
             <div className="launch-card">
@@ -3968,12 +3975,11 @@ function App() {
 
   return (
     <div className="window-frame">
-      <div className="window-titlebar" aria-hidden="true" />
+      {windowTitlebar}
       <div className="window-content">
         <div className="workbench-shell">
       <ActivityRail
         sidebarView={sidebarView}
-        settingsTabOpen={settingsTabOpen}
         onOpenSidebarView={openSidebarView}
         onOpenSettings={openSettingsTab}
       />
