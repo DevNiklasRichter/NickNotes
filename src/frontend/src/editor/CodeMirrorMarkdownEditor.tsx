@@ -73,6 +73,17 @@ type PaletteState =
         anchor: PaletteAnchor
       }
     }
+  | {
+      mode: 'link-browse'
+      query: string
+      selectedIndex: number
+      pathParts: string[]
+      context: {
+        from: number
+        to: number
+        anchor: PaletteAnchor
+      }
+    }
 
 export type MarkdownEditorApi = {
   insertText: (text: string) => void
@@ -83,6 +94,14 @@ export type MarkdownEditorApi = {
   runCommand: (commandId: MarkdownCommandId) => boolean
 }
 
+export type MarkdownLinkTarget = {
+  path: string
+  title: string
+  target: string
+  relativePath: string
+  noteType: 'note' | 'task'
+}
+
 type CodeMirrorMarkdownEditorProps = {
   value: string
   theme: 'light' | 'dark'
@@ -90,6 +109,7 @@ type CodeMirrorMarkdownEditorProps = {
   backendUrl?: string
   readOnly?: boolean
   tagGroups: TagGroupDefinition[]
+  linkTargets?: MarkdownLinkTarget[]
   searchHighlightQuery?: string
   className?: string
   embeddedInScroll?: boolean
@@ -108,6 +128,7 @@ type SlashMatch = {
 
 const LOCAL_ECHO_TTL_MS = 2000
 const LOCAL_ECHO_MAX_ITEMS = 12
+const EXPLORER_MULTI_DRAG_MIME = 'application/x-nicknotes-explorer-files'
 
 const codeLanguages = [
   LanguageDescription.of({
@@ -266,6 +287,55 @@ function extractImageFiles(fileList: FileList | null | undefined): File[] {
   })
 }
 
+function normalizeDraggedPath(value: string): string {
+  return value.trim().replace(/\\/g, '/').replace(/\.md$/i, '').toLowerCase()
+}
+
+function readDraggedNotePaths(dataTransfer: DataTransfer | null | undefined): string[] {
+  if (!dataTransfer) {
+    return []
+  }
+
+  const paths: string[] = []
+  const addPath = (value: string) => {
+    const clean = value.trim()
+    if (clean && !paths.includes(clean)) {
+      paths.push(clean)
+    }
+  }
+
+  const multiRaw = dataTransfer.getData(EXPLORER_MULTI_DRAG_MIME)
+  if (multiRaw) {
+    try {
+      const parsed = JSON.parse(multiRaw) as unknown
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (typeof entry === 'string') {
+            addPath(entry)
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed external drag data.
+    }
+  }
+
+  addPath(dataTransfer.getData('application/x-note-path'))
+  addPath(dataTransfer.getData('application/x-open-tab-path'))
+  return paths
+}
+
+function resolveDroppedLinkTarget(path: string, targets: readonly MarkdownLinkTarget[]): string | null {
+  const cleanPath = normalizeDraggedPath(path)
+  if (!cleanPath) {
+    return null
+  }
+  const match = targets.find((target) => {
+    return normalizeDraggedPath(target.path) === cleanPath || normalizeDraggedPath(target.relativePath) === cleanPath
+  })
+  return match?.target ?? null
+}
+
 type PaletteItem =
   | {
       kind: 'tag-root'
@@ -273,8 +343,23 @@ type PaletteItem =
       description: string
     }
   | {
+      kind: 'link-root'
+      title: string
+      description: string
+    }
+  | {
       kind: 'command'
       command: MarkdownCommand
+    }
+  | {
+      kind: 'link-folder'
+      name: string
+      pathParts: string[]
+      count: number
+    }
+  | {
+      kind: 'note-link'
+      target: MarkdownLinkTarget
     }
   | {
       kind: 'tag-group'
@@ -291,6 +376,72 @@ type PaletteItem =
       tag: TagDefinition
     }
 
+function splitLinkTargetPath(target: MarkdownLinkTarget): string[] {
+  const raw = (target.relativePath || target.target || target.title).replace(/\.md$/i, '')
+  return raw
+    .split(/[\\/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function linkTargetSearchText(target: MarkdownLinkTarget): string {
+  return `${target.title} ${target.target} ${target.relativePath} ${target.path} ${target.noteType}`.toLowerCase()
+}
+
+function buildLinkPaletteItems(targets: readonly MarkdownLinkTarget[], pathParts: readonly string[], query: string): PaletteItem[] {
+  const cleanQuery = query.trim().toLowerCase()
+  if (cleanQuery) {
+    return targets
+      .filter((target) => linkTargetSearchText(target).includes(cleanQuery))
+      .slice()
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
+      .map<PaletteItem>((target) => ({ kind: 'note-link', target }))
+  }
+
+  const folders = new Map<string, { pathParts: string[]; count: number }>()
+  const notes: MarkdownLinkTarget[] = []
+
+  for (const target of targets) {
+    const parts = splitLinkTargetPath(target)
+    const isInFolder =
+      parts.length > pathParts.length &&
+      pathParts.every((part, index) => parts[index]?.toLowerCase() === part.toLowerCase())
+    if (!isInFolder) {
+      continue
+    }
+
+    if (parts.length > pathParts.length + 1) {
+      const folderName = parts[pathParts.length]
+      const key = folderName.toLowerCase()
+      const existing = folders.get(key)
+      if (existing) {
+        existing.count += 1
+      } else {
+        folders.set(key, { pathParts: [...pathParts, folderName], count: 1 })
+      }
+      continue
+    }
+
+    notes.push(target)
+  }
+
+  const folderItems = Array.from(folders.entries())
+    .sort((left, right) => left[0].localeCompare(right[0], 'de', { sensitivity: 'base' }))
+    .map<PaletteItem>(([, folder]) => ({
+      kind: 'link-folder',
+      name: folder.pathParts[folder.pathParts.length - 1] ?? '',
+      pathParts: folder.pathParts,
+      count: folder.count,
+    }))
+
+  const noteItems = notes
+    .slice()
+    .sort((left, right) => left.title.localeCompare(right.title, 'de', { sensitivity: 'base' }))
+    .map<PaletteItem>((target) => ({ kind: 'note-link', target }))
+
+  return [...folderItems, ...noteItems]
+}
+
 export function CodeMirrorMarkdownEditor({
   value,
   theme,
@@ -298,6 +449,7 @@ export function CodeMirrorMarkdownEditor({
   backendUrl = '',
   readOnly = false,
   tagGroups,
+  linkTargets = [],
   searchHighlightQuery = '',
   className = '',
   embeddedInScroll = false,
@@ -313,6 +465,7 @@ export function CodeMirrorMarkdownEditor({
   const editorRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onInsertImageAssetRef = useRef(onInsertImageAsset)
+  const linkTargetsRef = useRef(linkTargets)
   const syncingRef = useRef(false)
   const pendingDocRef = useRef<string | null>(null)
   const onChangeFrameRef = useRef<number | null>(null)
@@ -349,12 +502,26 @@ export function CodeMirrorMarkdownEditor({
                 )
                 .map<PaletteItem>((tag) => ({ kind: 'tag-direct', group, tag }))
             )
+      const linkRootItem: PaletteItem = {
+        kind: 'link-root',
+        title: 'Link',
+        description: 'Verlinkt eine Notiz oder Task per [[...]].',
+      }
+      const tagRootItem: PaletteItem = {
+        kind: 'tag-root',
+        title: 'Tag',
+        description: 'Fuegt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
+      }
+      const rootItems =
+        slashQuery && 'link'.startsWith(slashQuery)
+          ? [linkRootItem]
+          : slashQuery && 'tag'.startsWith(slashQuery)
+            ? [tagRootItem]
+            : slashQuery
+              ? []
+              : [linkRootItem, tagRootItem]
       return [
-        {
-          kind: 'tag-root',
-          title: 'Tag',
-          description: 'Fuegt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
-        },
+        ...rootItems,
         ...directTagItems,
         ...filterMarkdownCommands(paletteState.query).map<PaletteItem>((command) => ({ kind: 'command', command })),
       ]
@@ -388,6 +555,10 @@ export function CodeMirrorMarkdownEditor({
       return [...groupItems, ...directTagItems]
     }
 
+    if (paletteState.mode === 'link-browse') {
+      return buildLinkPaletteItems(linkTargets, paletteState.pathParts, paletteState.query)
+    }
+
     const query = paletteState.query.trim().toLowerCase()
     const tags = paletteState.group.tags
     if (!query) {
@@ -396,7 +567,7 @@ export function CodeMirrorMarkdownEditor({
     return tags
       .filter((tag) => `${tag.id} ${tag.displayName}`.toLowerCase().includes(query))
       .map<PaletteItem>((tag) => ({ kind: 'tag', group: paletteState.group, tag }))
-  }, [paletteState, tagGroups])
+  }, [linkTargets, paletteState, tagGroups])
 
   const paletteItemsRef = useRef<PaletteItem[]>([])
 
@@ -469,7 +640,17 @@ export function CodeMirrorMarkdownEditor({
   }, [onInsertImageAsset])
 
   useEffect(() => {
-    if (!paletteState || (paletteState.mode !== 'palette' && paletteState.mode !== 'tag-group' && paletteState.mode !== 'tag-item')) {
+    linkTargetsRef.current = linkTargets
+  }, [linkTargets])
+
+  useEffect(() => {
+    if (
+      !paletteState ||
+      (paletteState.mode !== 'palette' &&
+        paletteState.mode !== 'tag-group' &&
+        paletteState.mode !== 'tag-item' &&
+        paletteState.mode !== 'link-browse')
+    ) {
       return
     }
     window.requestAnimationFrame(() => {
@@ -549,6 +730,17 @@ export function CodeMirrorMarkdownEditor({
       })
     }
 
+    const insertWikiLinkSyntax = (view: EditorView, from: number, to: number, target: string): void => {
+      const syntax = `[[${target}]]`
+      const cursor = from + syntax.length
+      view.dispatch({
+        changes: { from, to, insert: syntax },
+        selection: { anchor: cursor, head: cursor },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+    }
+
     const applyPaletteCommand = (indexOverride?: number): boolean => {
       const current = paletteStateRef.current
       const view = editorRef.current
@@ -595,6 +787,49 @@ export function CodeMirrorMarkdownEditor({
             anchor: current.anchor,
           },
         })
+        return true
+      }
+
+      if (item.kind === 'link-root') {
+        if (current.mode !== 'slash') {
+          return false
+        }
+        setPaletteState({
+          mode: 'link-browse',
+          query: '',
+          selectedIndex: 0,
+          pathParts: [],
+          context: {
+            from: current.from,
+            to: current.to,
+            anchor: current.anchor,
+          },
+        })
+        return true
+      }
+
+      if (item.kind === 'link-folder') {
+        if (current.mode !== 'link-browse') {
+          return false
+        }
+        setPaletteState({
+          ...current,
+          query: '',
+          selectedIndex: 0,
+          pathParts: item.pathParts,
+        })
+        return true
+      }
+
+      if (item.kind === 'note-link') {
+        if (current.mode !== 'link-browse' && current.mode !== 'slash') {
+          return false
+        }
+        const from = current.mode === 'slash' ? current.from : current.context.from
+        const to = current.mode === 'slash' ? current.to : current.context.to
+        insertWikiLinkSyntax(view, from, to, item.target.target)
+        setPaletteState(null)
+        view.focus()
         return true
       }
 
@@ -737,6 +972,38 @@ export function CodeMirrorMarkdownEditor({
       return inserted
     }
 
+    const insertDraggedNoteLinks = (view: EditorView, dataTransfer: DataTransfer | null, position?: number): boolean => {
+      if (view.state.facet(EditorState.readOnly)) {
+        return false
+      }
+      const paths = readDraggedNotePaths(dataTransfer)
+      if (paths.length === 0) {
+        return false
+      }
+      const targets = paths
+        .map((path) => resolveDroppedLinkTarget(path, linkTargetsRef.current))
+        .filter((target): target is string => Boolean(target))
+      const uniqueTargets = Array.from(new Set(targets))
+      if (uniqueTargets.length === 0) {
+        return false
+      }
+
+      const insert = uniqueTargets.map((target) => `[[${target}]]`).join(' ')
+      const selection = view.state.selection.main
+      const insertAt =
+        typeof position === 'number'
+          ? Math.max(0, Math.min(position, view.state.doc.length))
+          : selection.from
+      view.dispatch({
+        changes: { from: insertAt, to: selection.empty ? insertAt : selection.to, insert },
+        selection: { anchor: insertAt + insert.length },
+        scrollIntoView: true,
+        userEvent: 'input.drop',
+      })
+      view.focus()
+      return true
+    }
+
     const instance = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -805,6 +1072,16 @@ export function CodeMirrorMarkdownEditor({
             ...searchKeymap,
           ]),
           EditorView.domEventHandlers({
+            dragover: (event) => {
+              if (readDraggedNotePaths(event.dataTransfer).length === 0) {
+                return false
+              }
+              event.preventDefault()
+              if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = 'copy'
+              }
+              return true
+            },
             paste: (event, view) => {
               if (view.state.facet(EditorState.readOnly)) {
                 event.preventDefault()
@@ -821,6 +1098,11 @@ export function CodeMirrorMarkdownEditor({
             drop: (event, view) => {
               if (view.state.facet(EditorState.readOnly)) {
                 event.preventDefault()
+                return true
+              }
+              if (insertDraggedNoteLinks(view, event.dataTransfer)) {
+                event.preventDefault()
+                event.stopPropagation()
                 return true
               }
               const imageFiles = extractImageFiles(event.dataTransfer?.files)
@@ -969,7 +1251,13 @@ export function CodeMirrorMarkdownEditor({
   }, [value])
 
   const onPaletteInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (!paletteState || (paletteState.mode !== 'palette' && paletteState.mode !== 'tag-group' && paletteState.mode !== 'tag-item')) {
+    if (
+      !paletteState ||
+      (paletteState.mode !== 'palette' &&
+        paletteState.mode !== 'tag-group' &&
+        paletteState.mode !== 'tag-item' &&
+        paletteState.mode !== 'link-browse')
+    ) {
       return
     }
 
@@ -1021,6 +1309,15 @@ export function CodeMirrorMarkdownEditor({
         })
         return
       }
+      if (paletteState.mode === 'link-browse' && paletteState.pathParts.length > 0) {
+        setPaletteState({
+          ...paletteState,
+          query: '',
+          selectedIndex: 0,
+          pathParts: paletteState.pathParts.slice(0, -1),
+        })
+        return
+      }
       setPaletteState(null)
       editorRef.current?.focus()
       return
@@ -1066,6 +1363,49 @@ export function CodeMirrorMarkdownEditor({
         selectedIndex: 0,
         context: { from: current.from, to: current.to, anchor: current.anchor },
       })
+      return
+    }
+    if (item.kind === 'link-root') {
+      if (current.mode !== 'slash') {
+        return
+      }
+      setPaletteState({
+        mode: 'link-browse',
+        query: '',
+        selectedIndex: 0,
+        pathParts: [],
+        context: { from: current.from, to: current.to, anchor: current.anchor },
+      })
+      return
+    }
+    if (item.kind === 'link-folder') {
+      if (current.mode !== 'link-browse') {
+        return
+      }
+      setPaletteState({
+        ...current,
+        query: '',
+        selectedIndex: 0,
+        pathParts: item.pathParts,
+      })
+      return
+    }
+    if (item.kind === 'note-link') {
+      if (current.mode !== 'link-browse' && current.mode !== 'slash') {
+        return
+      }
+      const from = current.mode === 'slash' ? current.from : current.context.from
+      const to = current.mode === 'slash' ? current.to : current.context.to
+      const syntax = `[[${item.target.target}]]`
+      const cursor = from + syntax.length
+      view.dispatch({
+        changes: { from, to, insert: syntax },
+        selection: { anchor: cursor, head: cursor },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+      setPaletteState(null)
+      view.focus()
       return
     }
     if (item.kind === 'tag-group') {
@@ -1116,7 +1456,12 @@ export function CodeMirrorMarkdownEditor({
     }
   }
 
-  const isAnchoredPalette = paletteState && (paletteState.mode === 'slash' || paletteState.mode === 'tag-group' || paletteState.mode === 'tag-item')
+  const isAnchoredPalette =
+    paletteState &&
+    (paletteState.mode === 'slash' ||
+      paletteState.mode === 'tag-group' ||
+      paletteState.mode === 'tag-item' ||
+      paletteState.mode === 'link-browse')
   const paletteLeft = isAnchoredPalette
     ? paletteState.mode === 'slash'
       ? paletteState.anchor.left
@@ -1162,7 +1507,9 @@ export function CodeMirrorMarkdownEditor({
                     ? 'Befehl suchen (z. B. task, code, link)'
                     : paletteState.mode === 'tag-group'
                       ? 'Tag-Gruppe oder Tag suchen'
-                      : 'Tag suchen'
+                      : paletteState.mode === 'link-browse'
+                        ? 'Notiz, Task oder Datei suchen'
+                        : 'Tag suchen'
                 }
               />
             </div>
@@ -1175,6 +1522,9 @@ export function CodeMirrorMarkdownEditor({
               Gruppe: {paletteState.group.displayName} ({paletteState.group.id})
             </div>
           ) : null}
+          {paletteState.mode === 'link-browse' && paletteState.pathParts.length > 0 ? (
+            <div className="editor-command-slash-meta">{paletteState.pathParts.join(' / ')}</div>
+          ) : null}
 
           <div className="editor-command-list" role="listbox" aria-label="Markdown-Befehle">
             {paletteItems.length === 0 ? <div className="editor-command-empty">Kein passender Eintrag.</div> : null}
@@ -1184,27 +1534,45 @@ export function CodeMirrorMarkdownEditor({
                   ? item.command.title
                   : item.kind === 'tag-root'
                     ? item.title
-                    : item.kind === 'tag-group'
-                      ? item.group.displayName
-                      : `${item.tag.displayName}`
+                    : item.kind === 'link-root'
+                      ? item.title
+                      : item.kind === 'link-folder'
+                        ? item.name
+                        : item.kind === 'note-link'
+                          ? item.target.title
+                          : item.kind === 'tag-group'
+                            ? item.group.displayName
+                            : `${item.tag.displayName}`
               const description =
                 item.kind === 'command'
                   ? item.command.description
                   : item.kind === 'tag-root'
                     ? item.description
-                    : item.kind === 'tag-group'
-                      ? `${item.group.id} • ${item.group.tags.length} Tags`
-                      : `${item.group.displayName} (${item.group.id}) • {tag:${item.group.id}/${item.tag.id}}`
+                    : item.kind === 'link-root'
+                      ? item.description
+                      : item.kind === 'link-folder'
+                        ? `${item.count} Eintraege`
+                        : item.kind === 'note-link'
+                          ? `${item.target.noteType === 'task' ? 'Task' : 'Notiz'} - [[${item.target.target}]]`
+                          : item.kind === 'tag-group'
+                            ? `${item.group.id} Ã¢â‚¬Â¢ ${item.group.tags.length} Tags`
+                            : `${item.group.displayName} (${item.group.id}) Ã¢â‚¬Â¢ {tag:${item.group.id}/${item.tag.id}}`
               const key =
                 item.kind === 'command'
                   ? item.command.id
                   : item.kind === 'tag-root'
                     ? 'tag-root'
-                    : item.kind === 'tag-group'
-                      ? `group-${item.group.id}`
-                      : item.kind === 'tag-direct'
-                        ? `tag-direct-${item.group.id}-${item.tag.id}`
-                        : `tag-${item.group.id}-${item.tag.id}`
+                    : item.kind === 'link-root'
+                      ? 'link-root'
+                      : item.kind === 'link-folder'
+                        ? `link-folder-${item.pathParts.join('/')}`
+                        : item.kind === 'note-link'
+                          ? `note-link-${item.target.path}`
+                          : item.kind === 'tag-group'
+                            ? `group-${item.group.id}`
+                            : item.kind === 'tag-direct'
+                              ? `tag-direct-${item.group.id}-${item.tag.id}`
+                              : `tag-${item.group.id}-${item.tag.id}`
 
               return (
                 <button
@@ -1225,10 +1593,12 @@ export function CodeMirrorMarkdownEditor({
 
           <div className="editor-command-footnote">
             {paletteState.mode === 'slash'
-              ? '↑ ↓ waehlen • Enter ausfuehren • Esc schliessen'
+              ? 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'
+              : paletteState.mode === 'link-browse'
+                ? 'Pfeiltasten waehlen - Enter oeffnen/einfuegen - Esc zurueck'
               : paletteState.mode === 'tag-item'
-                ? '↑ ↓ waehlen • Enter einfuegen • Esc zurueck'
-                : '↑ ↓ waehlen • Enter ausfuehren • Esc schliessen'}
+                ? 'Pfeiltasten waehlen - Enter einfuegen - Esc zurueck'
+                : 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'}
           </div>
         </div>
       ) : null}

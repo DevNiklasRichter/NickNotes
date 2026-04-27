@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
-import type { MarkdownEditorApi } from './editor/CodeMirrorMarkdownEditor'
+import type { MarkdownEditorApi, MarkdownLinkTarget } from './editor/CodeMirrorMarkdownEditor'
 import { NotePropertiesPanel } from './editor/NotePropertiesPanel'
 import {
   parseNoteDocument,
@@ -1057,12 +1057,12 @@ function App() {
 
   const wikiTitleCounts = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const row of linkIndexRows) {
+    for (const row of explorerRows) {
       const key = normalizeWikiLookup(toNoteDisplayName(row.path))
       counts.set(key, (counts.get(key) ?? 0) + 1)
     }
     return counts
-  }, [linkIndexRows])
+  }, [explorerRows])
 
   const noteGroupsByKey = useMemo(() => {
     const byKey = new Map<string, NoteGroup>()
@@ -1214,6 +1214,20 @@ function App() {
     }
     return Array.from(values).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }))
   }, [linkIndexRows, toWikiTargetForRow])
+  const markdownLinkTargets = useMemo<MarkdownLinkTarget[]>(() => {
+    return explorerRows
+      .map((row) => {
+        const relativePath = getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
+        return {
+          path: row.path,
+          title: normalizeLabel(row.title) || toNoteDisplayName(row.path),
+          target: toWikiTargetForRow(row),
+          relativePath: relativePath || toNoteDisplayName(row.path),
+          noteType: normalizeNoteTypeValue(row.note_type),
+        }
+      })
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
+  }, [explorerRows, toWikiTargetForRow, vaultPath])
 
   const pickDirectory = async (): Promise<string | null> => {
     if (!window.nicknotes?.selectDirectory) {
@@ -2245,14 +2259,14 @@ function App() {
   }
 
   const openWikiLinkInEditor = useCallback(
-    (rawTarget: string, paneId?: PaneId, currentPath?: string) => {
+    (rawTarget: string, paneId?: PaneId) => {
       const normalizedTarget = normalizeRelatedCandidate(rawTarget)
       if (!normalizedTarget) {
         return
       }
 
       const lookup = normalizeWikiLookup(normalizedTarget)
-      const relativeMatches = linkIndexRows.filter((row) => {
+      const relativeMatches = explorerRows.filter((row) => {
         const relativePath = getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
         return normalizeWikiLookup(relativePath) === lookup
       })
@@ -2260,7 +2274,7 @@ function App() {
       const titleMatches =
         relativeMatches.length > 0
           ? relativeMatches
-          : linkIndexRows.filter((row) => normalizeWikiLookup(toNoteDisplayName(row.path)) === lookup)
+          : explorerRows.filter((row) => normalizeWikiLookup(toNoteDisplayName(row.path)) === lookup)
 
       if (titleMatches.length === 0) {
         setMessage(`Wiki-Link nicht gefunden: ${normalizedTarget}`)
@@ -2276,15 +2290,12 @@ function App() {
         return
       }
 
-      const replacePath =
-        currentPath && normalizeFilePathKey(currentPath) !== normalizeFilePathKey(match.path) ? currentPath : ''
       void openNoteInTab(match.path, match.title || toNoteDisplayName(match.path), {
         initialNoteType: normalizeNoteTypeValue(match.note_type),
         targetPane: paneId ?? workspaceStateRef.current.lastFocusedPane,
-        replacePath,
       })
     },
-    [linkIndexRows, openNoteInTab, vaultPath]
+    [explorerRows, openNoteInTab, vaultPath]
   )
 
   const revealActiveNoteInExplorer = () => {
@@ -4061,6 +4072,7 @@ function App() {
             backendUrl={backendUrl}
             readOnly={isReadOnlyNote}
             tagGroups={mergedTagGroups}
+            linkTargets={markdownLinkTargets}
             searchHighlightQuery={explorerFilterQuery}
             onChange={(nextContent) => {
               if (isReadOnlyNote) {
@@ -4080,7 +4092,7 @@ function App() {
               return uploadImageForNote(paneTab.path, file)
             }}
             onOpenWikiLink={(target) => {
-              openWikiLinkInEditor(target, paneId, paneTab.path)
+              openWikiLinkInEditor(target, paneId)
             }}
             onOpenTagReference={(groupId, tagId) => {
               void openTagOverviewByReference(`${groupId}:${tagId}`, { targetPane: paneId })

@@ -56,6 +56,7 @@ const inlineTagSourceDeco = Decoration.mark({ class: 'cm-md-inline-tag-source' }
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
 const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)((?:\s*\{[^}\n]*\})*)/g
+const INLINE_MARKDOWN_LINK_PATTERN = /(^|[^!])\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const EMPTY_TAG_LOOKUP = buildTagLookup([])
 
@@ -239,6 +240,35 @@ class InlineImageWidget extends WidgetType {
   }
 }
 
+class MarkdownLinkWidget extends WidgetType {
+  readonly text: string
+  readonly url: string
+
+  constructor(text: string, url: string) {
+    super()
+    this.text = text
+    this.url = url
+  }
+
+  eq(other: MarkdownLinkWidget): boolean {
+    return other.text === this.text && other.url === this.url
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-md-markdown-link-widget'
+    element.dataset.url = this.url
+    element.textContent = this.text
+    element.title = this.url
+    element.setAttribute('role', 'link')
+    return element
+  }
+
+  ignoreEvent(): boolean {
+    return false
+  }
+}
+
 type ParsedInlineTag = {
   from: number
   to: number
@@ -254,6 +284,13 @@ type ParsedInlineImage = {
   source: string
   width: number | null
   height: number | null
+}
+
+type ParsedMarkdownLink = {
+  from: number
+  to: number
+  text: string
+  url: string
 }
 
 type ParsedWikiLink = {
@@ -365,6 +402,31 @@ function parseInlineImagesInLine(lineText: string, lineFrom: number): ParsedInli
   return matches
 }
 
+function parseMarkdownLinksInLine(lineText: string, lineFrom: number): ParsedMarkdownLink[] {
+  const matches: ParsedMarkdownLink[] = []
+  INLINE_MARKDOWN_LINK_PATTERN.lastIndex = 0
+  let result = INLINE_MARKDOWN_LINK_PATTERN.exec(lineText)
+
+  while (result) {
+    const full = result[0] ?? ''
+    const prefixLength = result[1]?.length ?? 0
+    const text = (result[2] ?? '').trim()
+    const url = extractMarkdownTarget(result[3] ?? '')
+    if (full && text && url) {
+      const from = lineFrom + result.index + prefixLength
+      matches.push({
+        from,
+        to: lineFrom + result.index + full.length,
+        text,
+        url,
+      })
+    }
+    result = INLINE_MARKDOWN_LINK_PATTERN.exec(lineText)
+  }
+
+  return matches
+}
+
 function parseWikiLinksInLine(lineText: string, lineFrom: number): ParsedWikiLink[] {
   const matches: ParsedWikiLink[] = []
   WIKILINK_PATTERN.lastIndex = 0
@@ -445,6 +507,15 @@ function extendRangeToFollowingWhitespace(doc: EditorState['doc'], from: number,
 }
 
 function intersectsSelection(from: number, to: number, selections: readonly SelectionRange[]): boolean {
+  return selections.some((selection) => {
+    if (selection.from === selection.to) {
+      return selection.from >= from && selection.from <= to
+    }
+    return selection.from < to && selection.to > from
+  })
+}
+
+function intersectsMarkdownLink(from: number, to: number, selections: readonly SelectionRange[]): boolean {
   return selections.some((selection) => {
     if (selection.from === selection.to) {
       return selection.from >= from && selection.from <= to
@@ -636,6 +707,40 @@ function decorateInlineImages(
   }
 }
 
+function decorateMarkdownLinks(entries: DecorationEntry[], view: EditorView, selections: readonly SelectionRange[]): void {
+  const processedLines = new Set<number>()
+  for (const range of view.visibleRanges) {
+    const end = Math.max(range.from, range.to - 1)
+    let line = view.state.doc.lineAt(range.from)
+    const endLine = view.state.doc.lineAt(end).number
+
+    while (true) {
+      if (!processedLines.has(line.number)) {
+        const links = parseMarkdownLinksInLine(line.text, line.from)
+        for (const link of links) {
+          if (intersectsMarkdownLink(link.from, link.to, selections)) {
+            continue
+          }
+          addRange(
+            entries,
+            link.from,
+            link.to,
+            Decoration.replace({
+              widget: new MarkdownLinkWidget(link.text, link.url),
+            })
+          )
+        }
+        processedLines.add(line.number)
+      }
+
+      if (line.number >= endLine) {
+        break
+      }
+      line = view.state.doc.line(line.number + 1)
+    }
+  }
+}
+
 function decorateWikiLinks(entries: DecorationEntry[], view: EditorView): void {
   const processedLines = new Set<number>()
   for (const range of view.visibleRanges) {
@@ -720,11 +825,12 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
 
         if (node.name === 'Link') {
           const { firstMark, secondMark, urlRange } = resolveLinkRanges(node.node)
+          const isActive = intersectsSelection(node.from, node.to, selections)
           if (firstMark && secondMark && firstMark.to < secondMark.from) {
             addRange(entries, firstMark.to, secondMark.from, linkTextDeco)
           }
           if (urlRange) {
-            addRange(entries, urlRange.from, urlRange.to, linkUrlDeco)
+            addRange(entries, urlRange.from, urlRange.to, isActive ? linkUrlDeco : syntaxMutedDeco)
           }
           return
         }
@@ -777,6 +883,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
   decorateTaskLines(entries, view, lineClassSeen, selections)
   decorateInlineTags(entries, view, selections, tagLookup)
   decorateInlineImages(entries, view, selections, options)
+  decorateMarkdownLinks(entries, view, selections)
   decorateWikiLinks(entries, view)
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
@@ -799,6 +906,103 @@ function findLinkUrlAtPosition(state: EditorState, position: number): string | n
     cursor = cursor.parent
   }
   return null
+}
+
+function findMarkdownLinkUrlAtPosition(state: EditorState, position: number): string | null {
+  if (position < 0 || position > state.doc.length) {
+    return null
+  }
+
+  const line = state.doc.lineAt(position)
+  const pattern = /(^|[^!])\[([^\]\n]+)\]\(([^)\n]+)\)/g
+  let match = pattern.exec(line.text)
+  while (match) {
+    const prefixLength = match[1]?.length ?? 0
+    const full = match[0] ?? ''
+    const from = line.from + match.index + prefixLength
+    const to = line.from + match.index + full.length
+    if (position >= from && position <= to) {
+      return extractMarkdownTarget(match[3] ?? '')
+    }
+    match = pattern.exec(line.text)
+  }
+
+  return null
+}
+
+function findLinkUrlFromPointerEvent(view: EditorView, event: MouseEvent | PointerEvent): string {
+  const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
+  if (typeof position !== 'number') {
+    return ''
+  }
+  return (findMarkdownLinkUrlAtPosition(view.state, position) ?? findLinkUrlAtPosition(view.state, position) ?? '').trim()
+}
+
+function normalizeExternalUrl(rawUrl: string): string {
+  const cleanUrl = rawUrl.trim()
+  if (/^(https?:\/\/|mailto:|file:\/\/)/i.test(cleanUrl)) {
+    return cleanUrl
+  }
+  if (/^(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:[/?#].*)?$/i.test(cleanUrl)) {
+    return `https://${cleanUrl}`
+  }
+  return ''
+}
+
+function openExternalUrl(url: string): void {
+  const normalizedUrl = normalizeExternalUrl(url)
+  if (!normalizedUrl) {
+    return
+  }
+  if (window.nicknotes?.openExternalUrl) {
+    void window.nicknotes.openExternalUrl(normalizedUrl)
+    return
+  }
+  window.open(normalizedUrl, '_blank', 'noopener,noreferrer')
+}
+
+function openLinkFromPointerEvent(view: EditorView, event: MouseEvent | PointerEvent): boolean {
+  if (event.button !== 0) {
+    return false
+  }
+
+  const target = event.target
+  const widget = target instanceof HTMLElement ? target.closest<HTMLElement>('.cm-md-markdown-link-widget') : null
+  const rawUrl = widget?.dataset.url ?? findLinkUrlFromPointerEvent(view, event)
+  const url = normalizeExternalUrl(rawUrl)
+  if (!url) {
+    return false
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  openExternalUrl(url)
+  return true
+}
+
+function openWikiLinkFromPointerEvent(
+  view: EditorView,
+  event: MouseEvent | PointerEvent,
+  onOpenWikiLink: ((target: string) => void) | undefined
+): boolean {
+  if (event.button !== 0 || !onOpenWikiLink) {
+    return false
+  }
+
+  const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
+  if (typeof position !== 'number') {
+    return false
+  }
+
+  const wikiTarget = findWikiLinkTargetAtPosition(view.state, position)
+  if (!wikiTarget) {
+    return false
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  onOpenWikiLink(wikiTarget)
+  return true
 }
 
 function normalizeWikiLinkTarget(raw: string): string {
@@ -1024,25 +1228,30 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
       pointerdown: (event, view) => {
-        if (event.button !== 0) {
-          return false
+        if (openLinkFromPointerEvent(view, event)) {
+          return true
         }
+        if (openWikiLinkFromPointerEvent(view, event, options.onOpenWikiLink)) {
+          return true
+        }
+
         const target = event.target
         if (!(target instanceof HTMLElement)) {
           return false
         }
         const resizeHandle = target.closest<HTMLElement>('.cm-md-image-handle')
-        if (!resizeHandle) {
-          return false
+        if (resizeHandle) {
+          const imageWidget = resizeHandle.closest<HTMLElement>('.cm-md-image-widget')
+          if (!imageWidget) {
+            return false
+          }
+          event.preventDefault()
+          event.stopPropagation()
+          view.focus()
+          return startImageResize(view, imageWidget, resizeHandle, event)
         }
-        const imageWidget = resizeHandle.closest<HTMLElement>('.cm-md-image-widget')
-        if (!imageWidget) {
-          return false
-        }
-        event.preventDefault()
-        event.stopPropagation()
-        view.focus()
-        return startImageResize(view, imageWidget, resizeHandle, event)
+
+        return false
       },
       dblclick: (event, view) => {
         if (event.button !== 0) {
@@ -1119,41 +1328,7 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
           }
         }
 
-        if (event.button !== 0) {
-          return false
-        }
-
-        let position = -1
-        try {
-          position = view.posAtDOM(target, 0)
-        } catch {
-          return false
-        }
-
-        if (position < 0) {
-          return false
-        }
-
-        const wikiTarget = findWikiLinkTargetAtPosition(view.state, position)
-        if (wikiTarget && options.onOpenWikiLink) {
-          event.preventDefault()
-          event.stopPropagation()
-          options.onOpenWikiLink(wikiTarget)
-          return true
-        }
-
-        if (!event.metaKey && !event.ctrlKey) {
-          return false
-        }
-
-        const url = findLinkUrlAtPosition(view.state, position)?.trim() ?? ''
-        if (!url || !/^(https?:\/\/|mailto:|file:\/\/)/i.test(url)) {
-          return false
-        }
-
-        event.preventDefault()
-        window.open(url, '_blank', 'noopener,noreferrer')
-        return true
+        return false
       },
     }),
   ]

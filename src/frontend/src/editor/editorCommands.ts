@@ -14,7 +14,7 @@ export type MarkdownCommandId =
   | 'code-block-ts'
   | 'code-block-js'
   | 'code-block-text'
-  | 'link'
+  | 'hyperlink'
   | 'divider'
 
 export type MarkdownCommand = {
@@ -111,10 +111,10 @@ export const markdownCommands: readonly MarkdownCommand[] = [
     keywords: ['codeblock', 'plain', 'text', 'fenced'],
   },
   {
-    id: 'link',
-    title: 'Link',
+    id: 'hyperlink',
+    title: 'Hyperlink',
     description: 'Fuegt einen Markdown-Link ein [Text](URL).',
-    keywords: ['link', 'url', 'hyperlink'],
+    keywords: ['url', 'web', 'markdown-link'],
   },
   {
     id: 'divider',
@@ -237,7 +237,7 @@ export function runMarkdownCommand(view: EditorView, commandId: MarkdownCommandI
     case 'code-block-text':
       insertCodeFence(view, '', context)
       return true
-    case 'link':
+    case 'hyperlink':
       insertLink(view, context)
       return true
     case 'divider':

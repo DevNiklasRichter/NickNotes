@@ -2982,6 +2982,15 @@
   cursor: pointer;
 }
 
+.code-editor-host .cm-md-markdown-link-widget {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 78%, transparent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: pointer;
+}
+
 .code-editor-host .cm-md-wikilink {
   cursor: pointer;
 }

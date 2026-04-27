@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -197,6 +197,15 @@ app.whenReady().then(() => {
 
   ipcMain.handle('backend:url', async () => {
     return `http://127.0.0.1:${BACKEND_PORT}`
+  })
+
+  ipcMain.handle('shell:openExternal', async (_event, url) => {
+    const cleanUrl = typeof url === 'string' ? url.trim() : ''
+    if (!/^(https?:\/\/|mailto:|file:\/\/)/i.test(cleanUrl)) {
+      return { ok: false }
+    }
+    await shell.openExternal(cleanUrl)
+    return { ok: true }
   })
 
   ipcMain.handle('window:set-theme', async (_event, theme) => {

@@ -1755,12 +1755,14 @@ export function ExplorerSidebar({
                       .filter(Boolean)
                     if (draggedPaths.length > 0) {
                       event.dataTransfer.setData(EXPLORER_MULTI_DRAG_MIME, JSON.stringify(draggedPaths))
+                      event.dataTransfer.setData('application/x-note-path', draggedPaths[0])
+                      event.dataTransfer.setData('application/x-note-title', node.name)
                     }
                   } else {
                     setDraggingFileNodeIds(() => new Set())
+                    event.dataTransfer.setData('text/plain', node.id)
                   }
-                  event.dataTransfer.effectAllowed = 'move'
-                  event.dataTransfer.setData('text/plain', node.id)
+                  event.dataTransfer.effectAllowed = node.type === 'file' ? 'copyMove' : 'move'
                 }}
                 onDragEnd={() => {
                   setDraggingNodeId(null)
