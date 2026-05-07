@@ -461,7 +461,8 @@ export function EditorWorkspaceLayout({
                       tab.kind === 'todo_dashboard' ||
                       tab.kind === 'task_dashboard' ||
                       tab.kind === 'focus_dashboard' ||
-                      tab.kind === 'review_dashboard'
+                      tab.kind === 'review_dashboard' ||
+                      tab.kind === 'graph_dashboard'
                     }
                     onDragStart={(event) => {
                       if (
@@ -469,7 +470,8 @@ export function EditorWorkspaceLayout({
                         tab.kind !== 'todo_dashboard' &&
                         tab.kind !== 'task_dashboard' &&
                         tab.kind !== 'focus_dashboard' &&
-                        tab.kind !== 'review_dashboard'
+                        tab.kind !== 'review_dashboard' &&
+                        tab.kind !== 'graph_dashboard'
                       ) {
                         event.preventDefault()
                         return

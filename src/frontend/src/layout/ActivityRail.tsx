@@ -1,6 +1,6 @@
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 
-type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
+type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review' | 'graph'
 
 type ActivityRailProps = {
   sidebarView: SidebarView
@@ -57,6 +57,12 @@ export function ActivityRail({ sidebarView, onOpenSidebarView, onOpenSettings }:
             <LucideNamedIcon name="BarChart3" size={14} />
           </span>
           <span className="rail-label">Review</span>
+        </button>
+        <button className={sidebarView === 'graph' ? 'active' : ''} onClick={() => onOpenSidebarView('graph')} title="Graph">
+          <span className="rail-glyph">
+            <LucideNamedIcon name="Network" size={14} />
+          </span>
+          <span className="rail-label">Graph</span>
         </button>
       </div>
 

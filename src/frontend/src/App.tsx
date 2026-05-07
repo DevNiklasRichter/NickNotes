@@ -21,6 +21,7 @@ import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas'
 import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas'
 import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas'
 import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas'
+import { GraphDashboardCanvas } from './graph/GraphDashboardCanvas'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -51,6 +52,7 @@ import {
   TASK_DASHBOARD_TAB_PATH,
   FOCUS_DASHBOARD_TAB_PATH,
   REVIEW_DASHBOARD_TAB_PATH,
+  GRAPH_DASHBOARD_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_TASK_FEATURE_SETTINGS,
   DEFAULT_EXPLORER_OPTIONS,
@@ -1163,6 +1165,9 @@ function App() {
       if (tab.kind === 'review_dashboard') {
         return 'BarChart3'
       }
+      if (tab.kind === 'graph_dashboard') {
+        return 'Network'
+      }
       return 'Circle'
     }
     const pathKey = normalizeFilePathKey(tab.path)
@@ -1575,6 +1580,42 @@ function App() {
     })
   }
 
+  const openGraphDashboardTab = () => {
+    const existing = findTabByPath(GRAPH_DASHBOARD_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
+    if (existing) {
+      setEditorPanelOpen(true)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
+      return
+    }
+
+    const nextTabId = createTabId()
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        id: nextTabId,
+        kind: 'graph_dashboard',
+        path: GRAPH_DASHBOARD_TAB_PATH,
+        title: 'Graph Preview',
+        content: '',
+        loading: false,
+        dirty: false,
+      },
+    ])
+    setEditorPanelOpen(true)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
   const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     const paneId = findPaneByTabId(workspaceStateRef.current, tab.id)
     if (!paneId) {
@@ -1662,7 +1703,8 @@ function App() {
       targetTab.kind === 'todo_dashboard' ||
       targetTab.kind === 'task_dashboard' ||
       targetTab.kind === 'focus_dashboard' ||
-      targetTab.kind === 'review_dashboard'
+      targetTab.kind === 'review_dashboard' ||
+      targetTab.kind === 'graph_dashboard'
     ) {
       return true
     }
@@ -4048,6 +4090,10 @@ function App() {
       )
     }
 
+    if (paneTab.kind === 'graph_dashboard') {
+      return <GraphDashboardCanvas backendUrl={backendUrl} vaultLoaded={vaultLoaded} />
+    }
+
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
     const isReadOnlyNote = Boolean(paneTab.readOnly)
     const readOnlyTitle = normalizeLabel(document.frontmatter.title) || paneTab.title || toNoteDisplayName(paneTab.path)
@@ -4303,6 +4349,9 @@ function App() {
             }}
             onOpenReviewDashboard={() => {
               openReviewDashboardTab()
+            }}
+            onOpenGraphDashboard={() => {
+              openGraphDashboardTab()
             }}
             reviewFilters={reviewDashboardFilters}
             onReviewFiltersChange={setReviewDashboardFilters}

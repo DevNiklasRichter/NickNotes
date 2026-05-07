@@ -262,6 +262,82 @@ export type ReviewDashboardResponse = {
   completed_items: ReviewDashboardCompletedItem[]
 }
 
+export type GraphNodeType = 'note' | 'task' | 'tag' | 'tagGroup'
+export type GraphEdgeType = 'link' | 'tagUsage' | 'backlink' | 'sharedTag'
+export type GraphMode = 'link' | 'tag' | 'focus' | 'debug'
+
+export type GraphNode = {
+  id: string
+  type: GraphNodeType
+  label: string
+  path?: string
+  group?: string
+  tag?: string
+}
+
+export type GraphEdge = {
+  id: string
+  source: string
+  target: string
+  type: GraphEdgeType
+  weight: number
+  reasons: string[]
+}
+
+export type GraphFileEntry = {
+  id: string
+  type: 'note' | 'task'
+  title: string
+  hash: string
+  mtime: string
+  tags: string[]
+  links: string[]
+}
+
+export type GraphDiagnostic = {
+  type: string
+  severity: string
+  message: string
+  path?: string
+  target?: string
+  tag?: string
+}
+
+export type GraphIndex = {
+  version: number
+  updated_at: string
+  source: {
+    tag_groups_hash?: string
+    note_base_relative?: boolean
+    [key: string]: unknown
+  }
+  files: Record<string, GraphFileEntry>
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  diagnostics: GraphDiagnostic[]
+}
+
+export type GraphFilters = {
+  showNotes: boolean
+  showTasks: boolean
+  showTags: boolean
+  showLinkEdges: boolean
+  showTagUsageEdges: boolean
+  showDiagnostics: boolean
+  minimumEdgeWeight: number
+  searchText: string
+}
+
+export type GraphState = {
+  version?: number
+  updated_at?: string
+  activeMode: GraphMode
+  filters: GraphFilters
+  layout?: Record<string, unknown>
+  viewport?: Record<string, unknown>
+  positions?: Record<string, unknown>
+}
+
 export type BackendState = {
   vaultLoaded: boolean
   vaultPath?: string
@@ -270,8 +346,15 @@ export type BackendState = {
 }
 
 export type ThemeMode = 'light' | 'dark'
-export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
-export type NoteTabKind = 'note' | 'settings' | 'todo_dashboard' | 'task_dashboard' | 'focus_dashboard' | 'review_dashboard'
+export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review' | 'graph'
+export type NoteTabKind =
+  | 'note'
+  | 'settings'
+  | 'todo_dashboard'
+  | 'task_dashboard'
+  | 'focus_dashboard'
+  | 'review_dashboard'
+  | 'graph_dashboard'
 
 export type NoteTab = {
   id: string
@@ -298,6 +381,7 @@ export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
 export const REVIEW_DASHBOARD_TAB_PATH = '__nicknotes_review_dashboard__'
+export const GRAPH_DASHBOARD_TAB_PATH = '__nicknotes_graph_dashboard__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',

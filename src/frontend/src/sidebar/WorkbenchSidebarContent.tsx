@@ -25,7 +25,7 @@ import {
 } from '../app/AppShared'
 import { filterTaskRows, toTaskDashboardTodayIso } from '../tasks/taskDashboardModel'
 
-type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review'
+type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review' | 'graph'
 
 type WorkbenchSidebarContentProps = {
   sidebarView: SidebarView
@@ -52,6 +52,7 @@ type WorkbenchSidebarContentProps = {
   onOpenTaskDashboard: () => void
   onOpenFocusDashboard: () => void
   onOpenReviewDashboard: () => void
+  onOpenGraphDashboard: () => void
   reviewFilters: ReviewDashboardFilters
   onReviewFiltersChange: (next: ReviewDashboardFilters) => void
   onRefreshReview: () => void
@@ -156,6 +157,7 @@ export function WorkbenchSidebarContent({
   onOpenTaskDashboard,
   onOpenFocusDashboard,
   onOpenReviewDashboard,
+  onOpenGraphDashboard,
   reviewFilters,
   onReviewFiltersChange,
   onRefreshReview,
@@ -1609,6 +1611,32 @@ export function WorkbenchSidebarContent({
               </label>
             </div>
           </div>
+        </section>
+      </div>
+    )
+  }
+
+  if (sidebarView === 'graph') {
+    return (
+      <div className="explorer-shell todo-explorer-shell">
+        <header className="explorer-toolbar todo-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <h3>Graph</h3>
+            <div className="explorer-toolbar-right">
+              <button className="icon-button compact" onClick={onOpenGraphDashboard} disabled={!vaultLoaded} title="Graph-Ansicht oeffnen">
+                <LucideNamedIcon name="Network" size={14} />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <button className="todo-open-dashboard-button" onClick={onOpenGraphDashboard} disabled={!vaultLoaded}>
+          Graph oeffnen
+        </button>
+
+        <section className="todo-sidebar-section">
+          <h4>Phase 2</h4>
+          <p className="muted-copy">Preview fuer Graph-Index, Filter, Diagnostics und manuellen Rebuild.</p>
         </section>
       </div>
     )
