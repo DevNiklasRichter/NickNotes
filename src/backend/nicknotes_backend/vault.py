@@ -487,6 +487,8 @@ class VaultManager:
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
         self.ui_settings_path = self.system_path / "ui_settings.json"
         self.task_status_links_path = self.system_path / "task_status_links.json"
+        self.graph_index_path = self.system_path / "graph-index.json"
+        self.graph_state_path = self.system_path / "graph-state.json"
 
     def _ensure_task_status_folders(self) -> None:
         self.tasks_root_path.mkdir(parents=True, exist_ok=True)

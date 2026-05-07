@@ -11,12 +11,14 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
+from .nicknotes_backend.graph_index import build_graph_index
+from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
@@ -801,6 +803,32 @@ def update_ui_settings(req: UiSettingsUpdateRequest) -> dict[str, Any]:
 def get_tag_groups() -> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"groups": vault.read_tag_groups()}
+
+
+@app.get("/graph-index")
+def get_graph_index() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"index": read_graph_index(vault.graph_index_path).to_dict()}
+
+
+@app.post("/graph-index/rebuild")
+def rebuild_graph_index() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
+    write_graph_index(vault.graph_index_path, index)
+    return {"index": index.to_dict()}
+
+
+@app.get("/graph-state")
+def get_graph_state() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"state": read_graph_state(vault.graph_state_path)}
+
+
+@app.put("/graph-state")
+def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return {"state": write_graph_state(vault.graph_state_path, state_payload)}
 
 
 @app.get("/tags/overview")
