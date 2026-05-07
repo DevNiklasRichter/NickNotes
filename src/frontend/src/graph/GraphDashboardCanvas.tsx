@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { GraphEdge, GraphFilters, GraphIndex, GraphMode, GraphNode, GraphState } from '../app/AppShared'
+import type { GraphEdge, GraphFilters, GraphIndex, GraphMode, GraphNode, GraphState, GraphViewMode } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import { GraphNetworkView } from './GraphNetworkView'
 import {
   DEFAULT_GRAPH_FILTERS,
   DEFAULT_GRAPH_STATE,
@@ -14,6 +15,7 @@ import {
 type GraphDashboardCanvasProps = {
   backendUrl: string
   vaultLoaded: boolean
+  onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
 }
 
 type PositionedNode = GraphNode & {
@@ -23,9 +25,10 @@ type PositionedNode = GraphNode & {
 
 const GRAPH_PREVIEW_LIMIT = 80
 
-export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboardCanvasProps) {
+export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }: GraphDashboardCanvasProps) {
   const [index, setIndex] = useState<GraphIndex | null>(null)
   const [mode, setMode] = useState<GraphMode>(DEFAULT_GRAPH_STATE.activeMode)
+  const [viewMode, setViewMode] = useState<GraphViewMode>(DEFAULT_GRAPH_STATE.viewMode ?? 'graph')
   const [filters, setFilters] = useState<GraphFilters>({ ...DEFAULT_GRAPH_FILTERS })
   const [loading, setLoading] = useState(false)
   const [rebuilding, setRebuilding] = useState(false)
@@ -45,6 +48,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboard
       const [nextIndex, nextState] = await Promise.all([fetchGraphIndex(backendUrl), fetchGraphState(backendUrl)])
       setIndex(nextIndex)
       setMode(nextState.activeMode)
+      setViewMode(nextState.viewMode ?? 'graph')
       setFilters(nextState.filters)
       setStateLoaded(true)
     } catch (caught) {
@@ -74,6 +78,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboard
     saveTimerRef.current = window.setTimeout(() => {
       const nextState: GraphState = {
         activeMode: mode,
+        viewMode,
         filters,
       }
       setSavingState(true)
@@ -90,7 +95,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboard
         window.clearTimeout(saveTimerRef.current)
       }
     }
-  }, [backendUrl, filters, mode, stateLoaded, vaultLoaded])
+  }, [backendUrl, filters, mode, stateLoaded, vaultLoaded, viewMode])
 
   const filtered = useMemo(() => filterGraph(index, mode, filters), [filters, index, mode])
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
@@ -166,6 +171,13 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboard
 
       <section className="graph-toolbar">
         <label>
+          <span>Ansicht</span>
+          <select value={viewMode} onChange={(event) => setViewMode(event.target.value as GraphViewMode)}>
+            <option value="graph">Graph</option>
+            <option value="debug">Debug</option>
+          </select>
+        </label>
+        <label>
           <span>Modus</span>
           <select value={mode} onChange={(event) => setMode(event.target.value as GraphMode)}>
             <option value="debug">Debug</option>
@@ -209,56 +221,67 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded }: GraphDashboard
 
       {error ? <p className="graph-error">{error}</p> : null}
       {loading ? <p className="empty-copy">Graph wird geladen ...</p> : null}
+      {filtered.nodes.length > 450 || filtered.edges.length > 900 ? (
+        <p className="graph-warning">
+          Viele sichtbare Elemente ({filtered.nodes.length} Nodes, {filtered.edges.length} Edges). Filter oder Suche halten die Ansicht reaktionsfreudiger.
+        </p>
+      ) : null}
 
-      <GraphPreview nodes={previewNodes} edges={previewEdges} />
+      {viewMode === 'graph' ? (
+        <GraphNetworkView nodes={filtered.nodes} edges={filtered.edges} searchText={filters.searchText} onOpenNodePath={onOpenNodePath} />
+      ) : (
+        <GraphPreview nodes={previewNodes} edges={previewEdges} />
+      )}
 
-      <div className="graph-data-grid">
-        <section className="graph-panel">
-          <header>
-            <h3>Knoten</h3>
-            <span>{filtered.nodes.length}</span>
-          </header>
-          <div className="graph-table graph-node-table">
-            {filtered.nodes.map((node) => (
-              <article key={node.id} className="graph-row">
-                <div>
-                  <strong>{node.label || node.id}</strong>
-                  <span>{node.id}</span>
-                </div>
-                <span className={`graph-pill ${node.type}`}>{node.type}</span>
-                <span>{node.path || node.group || '-'}</span>
-                <span>{node.tag || '-'}</span>
-              </article>
-            ))}
-            {filtered.nodes.length === 0 ? <p className="empty-copy">Keine Knoten fuer den aktuellen Filter.</p> : null}
-          </div>
-        </section>
+      {viewMode === 'debug' ? (
+        <div className="graph-data-grid">
+          <section className="graph-panel">
+            <header>
+              <h3>Knoten</h3>
+              <span>{filtered.nodes.length}</span>
+            </header>
+            <div className="graph-table graph-node-table">
+              {filtered.nodes.map((node) => (
+                <article key={node.id} className="graph-row">
+                  <div>
+                    <strong>{node.label || node.id}</strong>
+                    <span>{node.id}</span>
+                  </div>
+                  <span className={`graph-pill ${node.type}`}>{node.type}</span>
+                  <span>{node.path || node.group || '-'}</span>
+                  <span>{node.tag || '-'}</span>
+                </article>
+              ))}
+              {filtered.nodes.length === 0 ? <p className="empty-copy">Keine Knoten fuer den aktuellen Filter.</p> : null}
+            </div>
+          </section>
 
-        <section className="graph-panel">
-          <header>
-            <h3>Kanten</h3>
-            <span>{filtered.edges.length}</span>
-          </header>
-          <div className="graph-table graph-edge-table">
-            {filtered.edges.map((edge) => (
-              <article key={edge.id} className="graph-row">
-                <div>
-                  <strong>{labelForNode(nodeById.get(edge.source), edge.source)}</strong>
-                  <span>{edge.source}</span>
-                </div>
-                <div>
-                  <strong>{labelForNode(nodeById.get(edge.target), edge.target)}</strong>
-                  <span>{edge.target}</span>
-                </div>
-                <span className={`graph-pill edge-${edge.type}`}>{edge.type}</span>
-                <span>{edge.weight}</span>
-                <span>{edge.reasons.join(', ') || '-'}</span>
-              </article>
-            ))}
-            {filtered.edges.length === 0 ? <p className="empty-copy">Keine Kanten fuer den aktuellen Filter.</p> : null}
-          </div>
-        </section>
-      </div>
+          <section className="graph-panel">
+            <header>
+              <h3>Kanten</h3>
+              <span>{filtered.edges.length}</span>
+            </header>
+            <div className="graph-table graph-edge-table">
+              {filtered.edges.map((edge) => (
+                <article key={edge.id} className="graph-row">
+                  <div>
+                    <strong>{labelForNode(nodeById.get(edge.source), edge.source)}</strong>
+                    <span>{edge.source}</span>
+                  </div>
+                  <div>
+                    <strong>{labelForNode(nodeById.get(edge.target), edge.target)}</strong>
+                    <span>{edge.target}</span>
+                  </div>
+                  <span className={`graph-pill edge-${edge.type}`}>{edge.type}</span>
+                  <span>{edge.weight}</span>
+                  <span>{edge.reasons.join(', ') || '-'}</span>
+                </article>
+              ))}
+              {filtered.edges.length === 0 ? <p className="empty-copy">Keine Kanten fuer den aktuellen Filter.</p> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {filters.showDiagnostics ? (
         <section className="graph-panel graph-diagnostics-panel">

@@ -6,6 +6,7 @@ import {
   type GraphMode,
   type GraphNode,
   type GraphState,
+  type GraphViewMode,
 } from '../app/AppShared'
 
 export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
@@ -21,6 +22,7 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
 
 export const DEFAULT_GRAPH_STATE: GraphState = {
   activeMode: 'debug',
+  viewMode: 'graph',
   filters: { ...DEFAULT_GRAPH_FILTERS },
 }
 
@@ -62,6 +64,7 @@ export function normalizeGraphState(value: unknown): GraphState {
     version: typeof source.version === 'number' ? source.version : undefined,
     updated_at: typeof source.updated_at === 'string' ? source.updated_at : undefined,
     activeMode,
+    viewMode: toGraphViewMode(source.viewMode),
     filters: normalizeGraphFilters(source.filters),
     layout: toObjectRecord(source.layout),
     viewport: toObjectRecord(source.viewport),
@@ -159,6 +162,10 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
 
 function toGraphMode(value: unknown): GraphMode {
   return value === 'link' || value === 'tag' || value === 'focus' || value === 'debug' ? value : DEFAULT_GRAPH_STATE.activeMode
+}
+
+function toGraphViewMode(value: unknown): GraphViewMode {
+  return value === 'graph' || value === 'debug' ? value : 'graph'
 }
 
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {

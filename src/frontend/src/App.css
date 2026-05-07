@@ -3853,6 +3853,7 @@
 .graph-toolbar,
 .graph-filter-panel,
 .graph-preview-panel,
+.graph-network-shell,
 .graph-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3898,6 +3899,147 @@
   background: var(--error-bg);
   color: var(--error-text);
   padding: 0.65rem 0.75rem;
+}
+
+.graph-warning {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, #d3a33a 55%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #d3a33a 10%, var(--surface));
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+}
+
+.graph-network-shell {
+  min-width: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.graph-network-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.graph-network-toolbar h3,
+.graph-network-toolbar p {
+  margin: 0;
+}
+
+.graph-network-toolbar p {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.graph-network-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.graph-network-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 0.75rem;
+}
+
+.graph-network-canvas-wrap {
+  min-width: 0;
+  height: min(62vh, 680px);
+  min-height: 420px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--line) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line) 26%, transparent) 1px, transparent 1px),
+    color-mix(in srgb, var(--bg-layer-1) 88%, var(--surface));
+  background-size: 26px 26px;
+}
+
+.graph-network-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-network-hover {
+  max-width: min(420px, calc(100% - 1.4rem));
+  position: absolute;
+  left: 0.7rem;
+  bottom: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: var(--text);
+  padding: 0.42rem 0.55rem;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+.graph-network-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.graph-selection-panel {
+  min-width: 0;
+  align-self: stretch;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-contrast) 72%, transparent);
+  padding: 0.75rem;
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+}
+
+.graph-selection-panel h3 {
+  margin: 0;
+}
+
+.graph-selection-detail,
+.graph-selection-block {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.graph-selection-detail span,
+.graph-selection-block span {
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.graph-selection-detail strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+}
+
+.graph-selection-block ul {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.graph-selection-block li {
+  overflow-wrap: anywhere;
 }
 
 .graph-preview-panel {
@@ -4067,6 +4209,14 @@
   .graph-edge-table .graph-row,
   .graph-diagnostic-row {
     grid-template-columns: 1fr;
+  }
+
+  .graph-network-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .graph-network-canvas-wrap {
+    height: 460px;
   }
 }
 

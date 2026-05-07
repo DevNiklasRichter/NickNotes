@@ -265,6 +265,7 @@ export type ReviewDashboardResponse = {
 export type GraphNodeType = 'note' | 'task' | 'tag' | 'tagGroup'
 export type GraphEdgeType = 'link' | 'tagUsage' | 'backlink' | 'sharedTag'
 export type GraphMode = 'link' | 'tag' | 'focus' | 'debug'
+export type GraphViewMode = 'graph' | 'debug'
 
 export type GraphNode = {
   id: string
@@ -332,6 +333,7 @@ export type GraphState = {
   version?: number
   updated_at?: string
   activeMode: GraphMode
+  viewMode?: GraphViewMode
   filters: GraphFilters
   layout?: Record<string, unknown>
   viewport?: Record<string, unknown>

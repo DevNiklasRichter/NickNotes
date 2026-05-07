@@ -134,6 +134,19 @@ import type {
 const CAPTURE_PREVIEW_IDLE_MS = 1200
 const CAPTURE_PREVIEW_MIN_CHARS = 3
 
+function resolveGraphNodePath(path: string, vaultPath: string): string {
+  const cleanPath = normalizeLabel(path)
+  if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
+    return cleanPath
+  }
+  const cleanVaultPath = normalizeLabel(vaultPath).replace(/[\\/]+$/, '')
+  if (!cleanVaultPath) {
+    return cleanPath
+  }
+  const relativePath = cleanPath.replace(/^[\\/]+/, '').replace(/\//g, '\\')
+  return `${cleanVaultPath}\\${relativePath}`
+}
+
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -4091,7 +4104,20 @@ function App() {
     }
 
     if (paneTab.kind === 'graph_dashboard') {
-      return <GraphDashboardCanvas backendUrl={backendUrl} vaultLoaded={vaultLoaded} />
+      return (
+        <GraphDashboardCanvas
+          backendUrl={backendUrl}
+          vaultLoaded={vaultLoaded}
+          onOpenNodePath={(path, title, noteType) => {
+            const cleanPath = normalizeLabel(path)
+            if (!cleanPath) {
+              return
+            }
+            const resolvedPath = resolveGraphNodePath(cleanPath, vaultPath)
+            void openNoteInTab(resolvedPath, title, { initialNoteType: noteType })
+          }}
+        />
+      )
     }
 
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
