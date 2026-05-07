@@ -8,7 +8,7 @@ from typing import Any
 from .graph_index import GRAPH_INDEX_VERSION, GraphDiagnostic, GraphIndex, graph_index_from_dict
 
 
-GRAPH_STATE_VERSION = 1
+GRAPH_STATE_VERSION = 2
 
 
 def read_graph_index(path: Path) -> GraphIndex:
@@ -54,21 +54,28 @@ def default_graph_state() -> dict[str, Any]:
 
 
 def read_graph_state(path: Path) -> dict[str, Any]:
+    default = default_graph_state()
     if not path.exists():
-        return default_graph_state()
+        return default
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return default_graph_state()
+        return default
     if not isinstance(payload, dict):
-        return default_graph_state()
+        return default
     try:
         version = int(payload.get("version", 0) or 0)
     except (TypeError, ValueError):
         version = 0
-    if version != GRAPH_STATE_VERSION:
-        return default_graph_state()
-    return payload
+    if version < 1 or version > GRAPH_STATE_VERSION:
+        return default
+    merged = {**default, **payload}
+    merged["version"] = GRAPH_STATE_VERSION
+    merged["filters"] = payload.get("filters") if isinstance(payload.get("filters"), dict) else default["filters"]
+    merged["layout"] = payload.get("layout") if isinstance(payload.get("layout"), dict) else default["layout"]
+    merged["viewport"] = payload.get("viewport") if isinstance(payload.get("viewport"), dict) else default["viewport"]
+    merged["positions"] = payload.get("positions") if isinstance(payload.get("positions"), dict) else default["positions"]
+    return merged
 
 
 def write_graph_state(path: Path, state: dict[str, Any]) -> dict[str, Any]:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.backend.nicknotes_backend.graph_index import build_graph_index, update_graph_index_for_file
 from src.backend.nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
+from src.backend.nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from src.backend.nicknotes_backend.markdown_io import dump_markdown
 from src.backend.nicknotes_backend.vault import VaultManager
 
@@ -369,15 +370,31 @@ class GraphIndexTests(unittest.TestCase):
                 "viewport": {"zoom": 1.5, "pan": {"x": 12, "y": -4}},
             },
         )
-        self.assertEqual(saved["version"], 1)
+        self.assertEqual(saved["version"], 2)
         loaded = read_graph_state(self.vault.graph_state_path)
         self.assertEqual(loaded["activeMode"], "tag")
         self.assertEqual(loaded["filters"]["minimumWeight"], 2)
 
         self.vault.graph_state_path.write_text("[]", encoding="utf-8")
         fallback = read_graph_state(self.vault.graph_state_path)
-        self.assertEqual(fallback["version"], 1)
+        self.assertEqual(fallback["version"], 2)
         self.assertEqual(fallback["activeMode"], "link")
+
+    def test_graph_state_migrates_legacy_payload_and_watcher_ignores_system(self) -> None:
+        self.vault.graph_state_path.write_text('{"version":1,"activeMode":"focus","filters":{},"positions":{"file:a":{"x":1,"y":2}}}', encoding="utf-8")
+        migrated = read_graph_state(self.vault.graph_state_path)
+        self.assertEqual(migrated["version"], 2)
+        self.assertEqual(migrated["activeMode"], "focus")
+        self.assertEqual(migrated["positions"]["file:a"]["x"], 1)
+
+        note = self.vault_path / "notes" / "visible.md"
+        system_note = self.vault.system_path / "hidden.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("# Visible", encoding="utf-8")
+        system_note.write_text("# Hidden", encoding="utf-8")
+        snapshot = graph_watcher_snapshot(self.vault_path)
+        self.assertIn(note.resolve(), snapshot)
+        self.assertNotIn(system_note.resolve(), snapshot)
 
 
 if __name__ == "__main__":

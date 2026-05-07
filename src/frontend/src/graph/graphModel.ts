@@ -6,7 +6,9 @@ import {
   type GraphIndexStatus,
   type GraphMode,
   type GraphNode,
+  type GraphNodePosition,
   type GraphState,
+  type GraphViewport,
   type GraphViewMode,
 } from '../app/AppShared'
 
@@ -27,6 +29,8 @@ export const DEFAULT_GRAPH_STATE: GraphState = {
   activeMode: 'debug',
   viewMode: 'graph',
   filters: { ...DEFAULT_GRAPH_FILTERS },
+  viewport: { zoom: 1, pan: { x: 0, y: 0 } },
+  positions: {},
 }
 
 export type FilteredGraph = {
@@ -74,8 +78,8 @@ export function normalizeGraphState(value: unknown): GraphState {
     viewMode: toGraphViewMode(source.viewMode),
     filters: normalizeGraphFilters(source.filters),
     layout: toObjectRecord(source.layout),
-    viewport: toObjectRecord(source.viewport),
-    positions: toObjectRecord(source.positions),
+    viewport: normalizeGraphViewport(source.viewport),
+    positions: normalizeGraphPositions(source.positions),
   }
 }
 
@@ -215,4 +219,37 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined
   }
   return value as Record<string, unknown>
+}
+
+function normalizeGraphViewport(value: unknown): GraphViewport {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return DEFAULT_GRAPH_STATE.viewport ?? { zoom: 1, pan: { x: 0, y: 0 } }
+  }
+  const source = value as Record<string, unknown>
+  const panSource = source.pan && typeof source.pan === 'object' && !Array.isArray(source.pan) ? (source.pan as Record<string, unknown>) : {}
+  return {
+    zoom: typeof source.zoom === 'number' && Number.isFinite(source.zoom) ? Math.max(0.08, Math.min(3, source.zoom)) : 1,
+    pan: {
+      x: typeof panSource.x === 'number' && Number.isFinite(panSource.x) ? panSource.x : 0,
+      y: typeof panSource.y === 'number' && Number.isFinite(panSource.y) ? panSource.y : 0,
+    },
+  }
+}
+
+function normalizeGraphPositions(value: unknown): Record<string, GraphNodePosition> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  const result: Record<string, GraphNodePosition> = {}
+  for (const [nodeId, rawPosition] of Object.entries(value as Record<string, unknown>)) {
+    if (!rawPosition || typeof rawPosition !== 'object' || Array.isArray(rawPosition)) {
+      continue
+    }
+    const position = rawPosition as Record<string, unknown>
+    if (typeof position.x !== 'number' || typeof position.y !== 'number' || !Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+      continue
+    }
+    result[nodeId] = { x: position.x, y: position.y }
+  }
+  return result
 }

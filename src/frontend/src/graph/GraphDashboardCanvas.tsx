@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { GraphEdge, GraphFilters, GraphIndex, GraphIndexStatus, GraphMode, GraphNode, GraphState, GraphViewMode } from '../app/AppShared'
+import type {
+  GraphEdge,
+  GraphFilters,
+  GraphIndex,
+  GraphIndexStatus,
+  GraphMode,
+  GraphNode,
+  GraphNodePosition,
+  GraphState,
+  GraphViewMode,
+  GraphViewport,
+} from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import { GraphNetworkView } from './GraphNetworkView'
 import {
@@ -16,6 +27,8 @@ import {
 type GraphDashboardCanvasProps = {
   backendUrl: string
   vaultLoaded: boolean
+  graphUpdateToken?: number
+  latestGraphStatus?: GraphIndexStatus | null
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
 }
 
@@ -25,8 +38,9 @@ type PositionedNode = GraphNode & {
 }
 
 const GRAPH_PREVIEW_LIMIT = 80
+const DEFAULT_GRAPH_VIEWPORT: GraphViewport = { zoom: 1, pan: { x: 0, y: 0 } }
 
-export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }: GraphDashboardCanvasProps) {
+export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken = 0, latestGraphStatus, onOpenNodePath }: GraphDashboardCanvasProps) {
   const [index, setIndex] = useState<GraphIndex | null>(null)
   const [mode, setMode] = useState<GraphMode>(DEFAULT_GRAPH_STATE.activeMode)
   const [viewMode, setViewMode] = useState<GraphViewMode>(DEFAULT_GRAPH_STATE.viewMode ?? 'graph')
@@ -37,8 +51,13 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
   const [stateLoaded, setStateLoaded] = useState(false)
   const [graphStatus, setGraphStatus] = useState<GraphIndexStatus | null>(null)
   const [focusNodeId, setFocusNodeId] = useState('')
+  const [positions, setPositions] = useState<Record<string, GraphNodePosition>>({})
+  const [viewport, setViewport] = useState<GraphViewport>(DEFAULT_GRAPH_VIEWPORT)
+  const [layoutVersion, setLayoutVersion] = useState(0)
+  const [graphStale, setGraphStale] = useState(false)
   const [error, setError] = useState('')
   const saveTimerRef = useRef<number | null>(null)
+  const seenGraphUpdateTokenRef = useRef(graphUpdateToken)
 
   const loadGraph = async () => {
     if (!vaultLoaded) {
@@ -57,7 +76,10 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
       setMode(nextState.activeMode)
       setViewMode(nextState.viewMode ?? 'graph')
       setFilters(nextState.filters)
+      setPositions(nextState.positions ?? {})
+      setViewport(nextState.viewport ?? DEFAULT_GRAPH_VIEWPORT)
       setGraphStatus(nextStatus)
+      setGraphStale(false)
       setStateLoaded(true)
     } catch (caught) {
       setError(`Graph konnte nicht geladen werden: ${String(caught)}`)
@@ -88,6 +110,8 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         activeMode: mode,
         viewMode,
         filters,
+        positions,
+        viewport,
       }
       setSavingState(true)
       saveGraphState(backendUrl, nextState)
@@ -103,7 +127,37 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         window.clearTimeout(saveTimerRef.current)
       }
     }
-  }, [backendUrl, filters, mode, stateLoaded, vaultLoaded, viewMode])
+  }, [backendUrl, filters, mode, positions, stateLoaded, vaultLoaded, viewMode, viewport])
+
+  useEffect(() => {
+    if (!graphUpdateToken || !vaultLoaded || seenGraphUpdateTokenRef.current === graphUpdateToken) {
+      return
+    }
+    seenGraphUpdateTokenRef.current = graphUpdateToken
+    if (latestGraphStatus) {
+      setGraphStatus(latestGraphStatus)
+    }
+    setGraphStale(true)
+  }, [graphUpdateToken, latestGraphStatus, vaultLoaded])
+
+  useEffect(() => {
+    if (!vaultLoaded || !stateLoaded) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      fetchGraphIndexStatus(backendUrl)
+        .then((nextStatus) => {
+          setGraphStatus(nextStatus)
+          if (index?.updated_at && nextStatus.updated_at && nextStatus.updated_at !== index.updated_at) {
+            setGraphStale(true)
+          }
+        })
+        .catch(() => {
+          // Status polling must not disturb the graph view.
+        })
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [backendUrl, index?.updated_at, stateLoaded, vaultLoaded])
 
   const filtered = useMemo(() => filterGraph(index, mode, filters, focusNodeId), [filters, focusNodeId, index, mode])
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
@@ -127,6 +181,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
       const rebuilt = await rebuildGraphIndex(backendUrl)
       setIndex(rebuilt)
       setGraphStatus(await fetchGraphIndexStatus(backendUrl))
+      setGraphStale(false)
     } catch (caught) {
       setError(`Graph-Rebuild ist fehlgeschlagen: ${String(caught)}`)
     } finally {
@@ -137,6 +192,16 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
   const resetFilters = () => {
     setMode('debug')
     setFilters({ ...DEFAULT_GRAPH_FILTERS })
+  }
+
+  const resetLayoutState = () => {
+    setPositions({})
+    setViewport(DEFAULT_GRAPH_VIEWPORT)
+    setLayoutVersion((current) => current + 1)
+  }
+
+  const rerunLayout = () => {
+    setLayoutVersion((current) => current + 1)
   }
 
   const renderCheckbox = (key: keyof GraphFilters, label: string) => {
@@ -181,10 +246,20 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         <section className="graph-status-strip">
           <span>{graphStatus.available ? 'Index verfuegbar' : 'Index nicht verfuegbar'}</span>
           <span>{graphStatus.is_updating ? 'Update laeuft' : 'Update idle'}</span>
+          <span>{graphStatus.watcher_enabled ? 'Watcher aktiv' : 'Watcher aus'}</span>
           <span>{graphStatus.node_count} Nodes</span>
           <span>{graphStatus.edge_count} Edges</span>
           <span>{graphStatus.diagnostic_count} Diagnostics</span>
+          {graphStatus.last_external_update ? <span>Extern: {graphStatus.last_external_update}</span> : null}
           {graphStatus.last_error ? <strong>{graphStatus.last_error}</strong> : null}
+        </section>
+      ) : null}
+      {graphStale ? (
+        <section className="graph-update-banner">
+          <span>Graph wurde aktualisiert.</span>
+          <button className="muted graph-reset-button" onClick={() => void loadGraph()} disabled={loading || rebuilding}>
+            Jetzt aktualisieren
+          </button>
         </section>
       ) : null}
 
@@ -226,6 +301,12 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         <button className="muted graph-reset-button" onClick={resetFilters}>
           Filter zuruecksetzen
         </button>
+        <button className="muted graph-reset-button" onClick={resetLayoutState}>
+          Layout zuruecksetzen
+        </button>
+        <button className="muted graph-reset-button" onClick={rerunLayout}>
+          Layout neu berechnen
+        </button>
       </section>
 
       <section className="graph-filter-panel">
@@ -248,14 +329,30 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
           Viele sichtbare Elemente ({filtered.nodes.length} Nodes, {filtered.edges.length} Edges). Filter oder Suche halten die Ansicht reaktionsfreudiger.
         </p>
       ) : null}
+      {index && (filtered.nodes.length > 300 || filtered.edges.length > 800) ? (
+        <p className="graph-warning">
+          Grosser Graph: {index.nodes.length - filtered.nodes.length} Nodes und {index.edges.length - filtered.edges.length} Edges sind aktuell ausgeblendet.
+          Focus-Modus oder deaktivierte SharedTag-Edges sind fuer diese Groesse meist angenehmer.
+        </p>
+      ) : null}
 
       {viewMode === 'graph' ? (
         <GraphNetworkView
           nodes={filtered.nodes}
           edges={filtered.edges}
           searchText={filters.searchText}
+          positions={positions}
+          viewport={viewport}
+          layoutVersion={layoutVersion}
           onOpenNodePath={onOpenNodePath}
           onSelectNode={setFocusNodeId}
+          onPositionsChange={setPositions}
+          onViewportChange={setViewport}
+          onShowNeighbors={(nodeId) => {
+            setFocusNodeId(nodeId)
+            setMode('focus')
+          }}
+          onClearSelection={() => setFocusNodeId('')}
         />
       ) : (
         <GraphPreview nodes={previewNodes} edges={previewEdges} />

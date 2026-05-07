@@ -1,15 +1,22 @@
 import cytoscape from 'cytoscape'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Core, ElementDefinition, EventObject, StylesheetStyle } from 'cytoscape'
-import type { GraphEdge, GraphNode } from '../app/AppShared'
+import type { GraphEdge, GraphNode, GraphNodePosition, GraphViewport } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 
 type GraphNetworkViewProps = {
   nodes: GraphNode[]
   edges: GraphEdge[]
   searchText: string
+  positions: Record<string, GraphNodePosition>
+  viewport: GraphViewport
+  layoutVersion: number
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
   onSelectNode?: (nodeId: string) => void
+  onPositionsChange?: (positions: Record<string, GraphNodePosition>) => void
+  onViewportChange?: (viewport: GraphViewport) => void
+  onShowNeighbors?: (nodeId: string) => void
+  onClearSelection?: () => void
 }
 
 type SelectedGraphItem =
@@ -20,12 +27,27 @@ type SelectedGraphItem =
 const LARGE_GRAPH_NODE_WARNING = 450
 const LARGE_GRAPH_EDGE_WARNING = 900
 
-export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onSelectNode }: GraphNetworkViewProps) {
+export function GraphNetworkView({
+  nodes,
+  edges,
+  searchText,
+  positions,
+  viewport,
+  layoutVersion,
+  onOpenNodePath,
+  onSelectNode,
+  onPositionsChange,
+  onViewportChange,
+  onShowNeighbors,
+  onClearSelection,
+}: GraphNetworkViewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cyRef = useRef<Core | null>(null)
   const [selected, setSelected] = useState<SelectedGraphItem>(null)
   const [hoverText, setHoverText] = useState('')
   const [initError, setInitError] = useState('')
+  const applyingViewportRef = useRef(false)
+  const lastLayoutVersionRef = useRef(layoutVersion)
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
   const connectedEdgesByNode = useMemo(() => {
     const map = new Map<string, GraphEdge[]>()
@@ -84,6 +106,7 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
         if (event.target === cy) {
           setSelected(null)
           onSelectNodeRef.current?.('')
+          onClearSelectionRef.current?.()
         }
       })
 
@@ -109,6 +132,18 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
       cy.on('mouseout', 'node, edge', () => {
         setHoverText('')
       })
+
+      cy.on('dragfree', 'node', () => {
+        onPositionsChangeRef.current?.(collectPositions(cy))
+      })
+
+      cy.on('zoom pan', () => {
+        if (applyingViewportRef.current) {
+          return
+        }
+        const pan = cy.pan()
+        onViewportChangeRef.current?.({ zoom: cy.zoom(), pan: { x: pan.x, y: pan.y } })
+      })
     } catch (caught) {
       setInitError(`Cytoscape konnte nicht initialisiert werden: ${String(caught)}`)
     }
@@ -123,6 +158,11 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
   const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
   const onOpenNodePathRef = useLatest(onOpenNodePath)
   const onSelectNodeRef = useLatest(onSelectNode)
+  const onPositionsChangeRef = useLatest(onPositionsChange)
+  const onViewportChangeRef = useLatest(onViewportChange)
+  const onShowNeighborsRef = useLatest(onShowNeighbors)
+  const onClearSelectionRef = useLatest(onClearSelection)
+  const viewportRef = useLatest(viewport)
 
   useEffect(() => {
     const cy = cyRef.current
@@ -133,12 +173,22 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
       cy.batch(() => {
         cy.elements().remove()
         cy.add(elements)
+        applyStoredPositions(cy, positions)
       })
-      runLayout(cy, largeGraph)
+      const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positions)
+      lastLayoutVersionRef.current = layoutVersion
+      if (shouldRunLayout) {
+        runLayout(cy, largeGraph, () => {
+          onPositionsChangeRef.current?.(collectPositions(cy))
+          applyViewport(cy, viewportRef.current, applyingViewportRef)
+        })
+      } else {
+        applyViewport(cy, viewportRef.current, applyingViewportRef)
+      }
     } catch (caught) {
       setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`)
     }
-  }, [elements, largeGraph])
+  }, [elements, largeGraph, layoutVersion, nodes, positions])
 
   const fitGraph = () => {
     cyRef.current?.fit(undefined, 36)
@@ -158,7 +208,9 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
     if (!cy) {
       return
     }
-    runLayout(cy, largeGraph)
+    runLayout(cy, largeGraph, () => {
+      onPositionsChangeRef.current?.(collectPositions(cy))
+    })
   }
 
   return (
@@ -192,18 +244,54 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onS
           {hoverText ? <div className="graph-network-hover">{hoverText}</div> : null}
           {nodes.length === 0 ? <p className="graph-network-empty">Keine Knoten im aktuellen Filter.</p> : null}
         </div>
-        <GraphSelectionPanel selected={selected} />
+        <GraphSelectionPanel
+          selected={selected}
+          onOpenNodePath={onOpenNodePath}
+          onShowNeighbors={(nodeId) => onShowNeighborsRef.current?.(nodeId)}
+          onFocusNode={(nodeId) => {
+            onSelectNodeRef.current?.(nodeId)
+            onShowNeighborsRef.current?.(nodeId)
+          }}
+          onClearSelection={() => {
+            setSelected(null)
+            onSelectNodeRef.current?.('')
+            onClearSelectionRef.current?.()
+          }}
+        />
+      </div>
+      <div className="graph-legend" aria-label="Graph Legende">
+        <span><i className="legend-node note" /> Note</span>
+        <span><i className="legend-node task" /> Task</span>
+        <span><i className="legend-node tag" /> Tag</span>
+        <span><i className="legend-edge link" /> Link</span>
+        <span><i className="legend-edge backlink" /> Backlink</span>
+        <span><i className="legend-edge sharedTag" /> SharedTag</span>
       </div>
     </section>
   )
 }
 
-function GraphSelectionPanel({ selected }: { selected: SelectedGraphItem }) {
+function GraphSelectionPanel({
+  selected,
+  onOpenNodePath,
+  onShowNeighbors,
+  onFocusNode,
+  onClearSelection,
+}: {
+  selected: SelectedGraphItem
+  onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
+  onShowNeighbors: (nodeId: string) => void
+  onFocusNode: (nodeId: string) => void
+  onClearSelection: () => void
+}) {
   if (!selected) {
     return (
       <aside className="graph-selection-panel">
         <h3>Details</h3>
         <p className="empty-copy">Knoten oder Kante auswaehlen.</p>
+        <button className="muted graph-reset-button" onClick={onClearSelection}>
+          Auswahl zuruecksetzen
+        </button>
       </aside>
     )
   }
@@ -224,6 +312,9 @@ function GraphSelectionPanel({ selected }: { selected: SelectedGraphItem }) {
             ))}
           </ul>
         </div>
+        <button className="muted graph-reset-button" onClick={onClearSelection}>
+          Auswahl zuruecksetzen
+        </button>
       </aside>
     )
   }
@@ -238,6 +329,29 @@ function GraphSelectionPanel({ selected }: { selected: SelectedGraphItem }) {
       <Detail label="Links" value={String(selected.connectedEdges.filter((edge) => edge.type === 'link' && edge.source === selected.node.id).length)} />
       <Detail label="Backlinks" value={String(selected.connectedEdges.filter((edge) => edge.type === 'backlink' && edge.source === selected.node.id).length)} />
       <Detail label="Shared Tags" value={String(selected.connectedEdges.filter((edge) => edge.type === 'sharedTag').length)} />
+      <div className="graph-selection-actions">
+        {selected.node.path && (selected.node.type === 'note' || selected.node.type === 'task') ? (
+          <button
+            className="primary graph-reset-button"
+            onClick={() => {
+              if (selected.node.path && (selected.node.type === 'note' || selected.node.type === 'task')) {
+                onOpenNodePath?.(selected.node.path, selected.node.label, selected.node.type)
+              }
+            }}
+          >
+            Notiz oeffnen
+          </button>
+        ) : null}
+        <button className="muted graph-reset-button" onClick={() => onShowNeighbors(selected.node.id)}>
+          Nur Nachbarn anzeigen
+        </button>
+        <button className="muted graph-reset-button" onClick={() => onFocusNode(selected.node.id)}>
+          Fokus auf diesen Node
+        </button>
+        <button className="muted graph-reset-button" onClick={onClearSelection}>
+          Auswahl zuruecksetzen
+        </button>
+      </div>
       <div className="graph-selection-block">
         <span>Wichtigste Verbindungen</span>
         <ul>
@@ -316,7 +430,48 @@ function matchesNode(node: GraphNode, query: string): boolean {
   return [node.id, node.label, node.path, node.group, node.tag].some((value) => String(value ?? '').toLowerCase().includes(query))
 }
 
-function runLayout(cy: Core, largeGraph: boolean) {
+function hasEnoughStoredPositions(nodes: GraphNode[], positions: Record<string, GraphNodePosition>): boolean {
+  if (nodes.length === 0) {
+    return true
+  }
+  const positioned = nodes.filter((node) => positions[node.id]).length
+  return positioned / nodes.length >= 0.7
+}
+
+function applyStoredPositions(cy: Core, positions: Record<string, GraphNodePosition>) {
+  cy.nodes().forEach((node, index) => {
+    const position = positions[node.id()]
+    if (position) {
+      node.position(position)
+      return
+    }
+    const angle = (index / Math.max(1, cy.nodes().length)) * Math.PI * 2
+    node.position({ x: Math.cos(angle) * 160, y: Math.sin(angle) * 160 })
+  })
+}
+
+function collectPositions(cy: Core): Record<string, GraphNodePosition> {
+  const next: Record<string, GraphNodePosition> = {}
+  cy.nodes().forEach((node) => {
+    const position = node.position()
+    next[node.id()] = { x: Math.round(position.x), y: Math.round(position.y) }
+  })
+  return next
+}
+
+function applyViewport(cy: Core, viewport: GraphViewport, applyingViewportRef: { current: boolean }) {
+  applyingViewportRef.current = true
+  try {
+    cy.zoom(viewport.zoom)
+    cy.pan(viewport.pan)
+  } finally {
+    window.setTimeout(() => {
+      applyingViewportRef.current = false
+    }, 0)
+  }
+}
+
+function runLayout(cy: Core, largeGraph: boolean, onDone?: () => void) {
   const layout = cy.layout({
     name: 'cose',
     animate: !largeGraph,
@@ -331,6 +486,9 @@ function runLayout(cy: Core, largeGraph: boolean) {
     gravity: 1,
     numIter: largeGraph ? 900 : 1600,
   })
+  if (onDone) {
+    layout.one('layoutstop', onDone)
+  }
   layout.run()
 }
 

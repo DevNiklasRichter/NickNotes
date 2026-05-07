@@ -3871,6 +3871,17 @@
   white-space: nowrap;
 }
 
+.graph-update-banner {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .graph-toolbar,
 .graph-filter-panel,
 .graph-preview-panel,
@@ -4061,6 +4072,60 @@
 
 .graph-selection-block li {
   overflow-wrap: anywhere;
+}
+
+.graph-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.graph-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.legend-node {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-node.task {
+  border-color: #d3a33a;
+  border-radius: 3px;
+}
+
+.legend-node.tag {
+  border-color: #2fba7a;
+  transform: rotate(45deg);
+}
+
+.legend-edge {
+  width: 22px;
+  border-top: 2px solid #7aa2ff;
+  display: inline-block;
+}
+
+.legend-edge.backlink {
+  border-color: #9eb3d1;
+  border-top-style: dashed;
+}
+
+.legend-edge.sharedTag {
+  border-color: #32b67a;
+  opacity: 0.6;
 }
 
 .graph-preview-panel {

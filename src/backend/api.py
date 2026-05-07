@@ -7,6 +7,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -20,6 +22,7 @@ from pydantic import BaseModel, Field
 from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
 from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update_graph_index_for_file
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
+from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
@@ -34,6 +37,8 @@ logger = logging.getLogger(__name__)
 class GraphRuntimeStatus:
     is_updating: bool = False
     last_error: str | None = None
+    watcher_enabled: bool = False
+    last_external_update: str | None = None
 
 
 @dataclass
@@ -43,13 +48,40 @@ class RuntimeState:
     parser: CaptureParser = field(default_factory=CaptureParser)
     openai: OpenAISuggester | None = None
     graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
+    watcher_stop: threading.Event | None = None
+    watcher_thread: threading.Thread | None = None
 
     def close(self) -> None:
+        self.stop_graph_watcher()
         if self.indexer:
             self.indexer.close()
             self.indexer = None
         self.vault = None
         self.openai = None
+        self.graph_status = GraphRuntimeStatus()
+
+    def start_graph_watcher(self) -> None:
+        if not self.vault or not self.indexer or self.watcher_thread:
+            return
+        stop_event = threading.Event()
+        self.watcher_stop = stop_event
+        self.graph_status.watcher_enabled = True
+        self.watcher_thread = threading.Thread(
+            target=_graph_watcher_loop,
+            args=(self, self.vault, self.indexer, stop_event),
+            name="nicknotes-graph-watcher",
+            daemon=True,
+        )
+        self.watcher_thread.start()
+
+    def stop_graph_watcher(self) -> None:
+        if self.watcher_stop:
+            self.watcher_stop.set()
+        if self.watcher_thread and self.watcher_thread.is_alive():
+            self.watcher_thread.join(timeout=2)
+        self.watcher_stop = None
+        self.watcher_thread = None
+        self.graph_status.watcher_enabled = False
 
 
 state = RuntimeState()
@@ -269,6 +301,7 @@ def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
     state.vault = vault
     state.indexer = indexer
     state.openai = openai
+    state.start_graph_watcher()
 
     return {
         "vaultPath": str(vault_path),
@@ -902,7 +935,38 @@ def _graph_index_status(vault: VaultManager, index: GraphIndex | None = None) ->
         "diagnostic_count": len(loaded.diagnostics),
         "is_updating": state.graph_status.is_updating,
         "last_error": state.graph_status.last_error,
+        "watcher_enabled": state.graph_status.watcher_enabled,
+        "last_external_update": state.graph_status.last_external_update,
     }
+
+
+def _graph_watcher_loop(runtime: RuntimeState, vault: VaultManager, indexer: VaultIndexer, stop_event: threading.Event) -> None:
+    snapshot = graph_watcher_snapshot(vault.vault_path)
+    pending: dict[Path, float] = {}
+    while not stop_event.wait(2.0):
+        try:
+            current = graph_watcher_snapshot(vault.vault_path)
+            changed_paths = {path for path, stamp in current.items() if snapshot.get(path) != stamp}
+            deleted_paths = set(snapshot) - set(current)
+            now = time.monotonic()
+            for path in changed_paths | deleted_paths:
+                pending[path] = now
+            ready = [path for path, first_seen in pending.items() if now - first_seen >= 1.2]
+            if not ready:
+                snapshot = current
+                continue
+            for path in sorted(ready, key=lambda item: item.as_posix().lower()):
+                pending.pop(path, None)
+                if path.exists():
+                    indexer.reindex_markdown_file(vault.vault_path, path)
+                else:
+                    indexer.remove_projection_for_path(str(path))
+                _update_graph_after_note_save(vault=vault, saved_path=path, previous_path=path, tag_groups=None)
+                runtime.graph_status.last_external_update = datetime.now().isoformat(timespec="seconds")
+            snapshot = current
+        except Exception as exc:
+            runtime.graph_status.last_error = str(exc)
+            logger.exception("Graph watcher update failed.")
 
 
 @app.get("/graph-state")

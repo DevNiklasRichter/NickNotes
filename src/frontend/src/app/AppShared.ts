@@ -331,6 +331,16 @@ export type GraphFilters = {
   searchText: string
 }
 
+export type GraphNodePosition = {
+  x: number
+  y: number
+}
+
+export type GraphViewport = {
+  zoom: number
+  pan: GraphNodePosition
+}
+
 export type GraphState = {
   version?: number
   updated_at?: string
@@ -338,8 +348,8 @@ export type GraphState = {
   viewMode?: GraphViewMode
   filters: GraphFilters
   layout?: Record<string, unknown>
-  viewport?: Record<string, unknown>
-  positions?: Record<string, unknown>
+  viewport?: GraphViewport
+  positions?: Record<string, GraphNodePosition>
 }
 
 export type GraphIndexStatus = {
@@ -350,6 +360,8 @@ export type GraphIndexStatus = {
   diagnostic_count: number
   is_updating: boolean
   last_error: string | null
+  watcher_enabled?: boolean
+  last_external_update?: string | null
 }
 
 export type BackendState = {

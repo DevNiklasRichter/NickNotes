@@ -129,6 +129,7 @@ import type {
   TaskFeatureSettings,
   UiSettingsPayload,
   NoteGroup,
+  GraphIndexStatus,
 } from './app/AppShared'
 
 const CAPTURE_PREVIEW_IDLE_MS = 1200
@@ -220,6 +221,8 @@ function App() {
   const [explorerRevealRequestId, setExplorerRevealRequestId] = useState(0)
   const [customTagGroups, setCustomTagGroups] = useState<TagGroupDefinition[]>([])
   const [noteGroups, setNoteGroups] = useState<NoteGroup[]>([])
+  const [graphUpdateToken, setGraphUpdateToken] = useState(0)
+  const [latestGraphStatus, setLatestGraphStatus] = useState<GraphIndexStatus | null>(null)
 
   const [openTabs, setOpenTabs] = useState<NoteTab[]>([])
   const openTabsRef = useRef<NoteTab[]>([])
@@ -1658,7 +1661,7 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ counts: VaultCounts; path: string; title?: string; tagGroups?: unknown }>(
+      const response = await apiRequest<{ counts: VaultCounts; path: string; title?: string; tagGroups?: unknown; graphStatus?: GraphIndexStatus }>(
         backendUrl,
         '/notes/save',
         {
@@ -1669,6 +1672,10 @@ function App() {
       setCounts(response.counts)
       if (response.tagGroups) {
         setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      if (response.graphStatus) {
+        setLatestGraphStatus(response.graphStatus)
+        setGraphUpdateToken((current) => current + 1)
       }
       const savedPath = (response.path || targetTab.path || '').trim()
       if (savedPath && savedPath !== targetTab.path) {
@@ -4108,6 +4115,8 @@ function App() {
         <GraphDashboardCanvas
           backendUrl={backendUrl}
           vaultLoaded={vaultLoaded}
+          graphUpdateToken={graphUpdateToken}
+          latestGraphStatus={latestGraphStatus}
           onOpenNodePath={(path, title, noteType) => {
             const cleanPath = normalizeLabel(path)
             if (!cleanPath) {
