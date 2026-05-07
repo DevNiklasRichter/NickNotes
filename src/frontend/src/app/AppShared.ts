@@ -323,7 +323,9 @@ export type GraphFilters = {
   showTasks: boolean
   showTags: boolean
   showLinkEdges: boolean
+  showBacklinkEdges: boolean
   showTagUsageEdges: boolean
+  showSharedTagEdges: boolean
   showDiagnostics: boolean
   minimumEdgeWeight: number
   searchText: string

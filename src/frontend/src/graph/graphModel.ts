@@ -15,7 +15,9 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
   showTasks: true,
   showTags: true,
   showLinkEdges: true,
+  showBacklinkEdges: true,
   showTagUsageEdges: true,
+  showSharedTagEdges: false,
   showDiagnostics: true,
   minimumEdgeWeight: 0,
   searchText: '',
@@ -77,7 +79,7 @@ export function normalizeGraphState(value: unknown): GraphState {
   }
 }
 
-export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: GraphFilters): FilteredGraph {
+export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: GraphFilters, focusNodeId = ''): FilteredGraph {
   if (!index) {
     return { nodes: [], edges: [] }
   }
@@ -86,8 +88,14 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
   if ((mode === 'debug' || mode === 'link') && filters.showLinkEdges) {
     edgeTypes.add('link')
   }
+  if ((mode === 'debug' || mode === 'link' || mode === 'focus') && filters.showBacklinkEdges) {
+    edgeTypes.add('backlink')
+  }
   if ((mode === 'debug' || mode === 'tag') && filters.showTagUsageEdges) {
     edgeTypes.add('tagUsage')
+  }
+  if ((mode === 'debug' || mode === 'focus') && filters.showSharedTagEdges) {
+    edgeTypes.add('sharedTag')
   }
 
   const nodes = index.nodes.filter((node) => {
@@ -117,7 +125,10 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
     return visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
   })
 
-  return { nodes, edges }
+  if (mode !== 'focus') {
+    return { nodes, edges }
+  }
+  return applyFocusLimit(nodes, edges, focusNodeId)
 }
 
 function normalizeGraphIndex(value: unknown): GraphIndex {
@@ -155,7 +166,9 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
     showTasks: source.showTasks ?? DEFAULT_GRAPH_FILTERS.showTasks,
     showTags: source.showTags ?? DEFAULT_GRAPH_FILTERS.showTags,
     showLinkEdges: source.showLinkEdges ?? DEFAULT_GRAPH_FILTERS.showLinkEdges,
+    showBacklinkEdges: source.showBacklinkEdges ?? DEFAULT_GRAPH_FILTERS.showBacklinkEdges,
     showTagUsageEdges: source.showTagUsageEdges ?? DEFAULT_GRAPH_FILTERS.showTagUsageEdges,
+    showSharedTagEdges: source.showSharedTagEdges ?? DEFAULT_GRAPH_FILTERS.showSharedTagEdges,
     showDiagnostics: source.showDiagnostics ?? DEFAULT_GRAPH_FILTERS.showDiagnostics,
     minimumEdgeWeight:
       typeof source.minimumEdgeWeight === 'number' && Number.isFinite(source.minimumEdgeWeight)
@@ -163,6 +176,30 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
         : DEFAULT_GRAPH_FILTERS.minimumEdgeWeight,
     searchText: typeof source.searchText === 'string' ? source.searchText : DEFAULT_GRAPH_FILTERS.searchText,
   }
+}
+
+function applyFocusLimit(nodes: GraphNode[], edges: GraphEdge[], focusNodeId: string): FilteredGraph {
+  const fileNodes = nodes.filter((node) => node.type === 'note' || node.type === 'task')
+  const focusNode = nodes.find((node) => node.id === focusNodeId) ?? fileNodes[0] ?? nodes[0]
+  if (!focusNode) {
+    return { nodes: [], edges: [] }
+  }
+  const focusEdges = edges
+    .filter((edge) => edge.source === focusNode.id || edge.target === focusNode.id)
+    .sort((left, right) => right.weight - left.weight || left.type.localeCompare(right.type))
+    .slice(0, 120)
+  const nodeIds = new Set<string>([focusNode.id])
+  for (const edge of focusEdges) {
+    nodeIds.add(edge.source)
+    nodeIds.add(edge.target)
+    if (nodeIds.size >= 100) {
+      break
+    }
+  }
+  const limitedNodes = nodes.filter((node) => nodeIds.has(node.id)).slice(0, 100)
+  const limitedIds = new Set(limitedNodes.map((node) => node.id))
+  const limitedEdges = focusEdges.filter((edge) => limitedIds.has(edge.source) && limitedIds.has(edge.target))
+  return { nodes: limitedNodes, edges: limitedEdges }
 }
 
 function toGraphMode(value: unknown): GraphMode {

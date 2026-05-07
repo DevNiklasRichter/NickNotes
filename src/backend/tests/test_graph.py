@@ -34,6 +34,12 @@ class GraphIndexTests(unittest.TestCase):
                     "color": "#2fba7a",
                     "tags": [{"id": "known", "displayName": "Known"}],
                 },
+                {
+                    "id": "person",
+                    "displayName": "Person",
+                    "color": "#d3a33a",
+                    "tags": [{"id": "max", "displayName": "Max"}],
+                },
             ]
         )
 
@@ -257,6 +263,102 @@ class GraphIndexTests(unittest.TestCase):
         diagnostics = payload["diagnostics"]
         self.assertFalse(any(item["type"] == "unresolvedLink" and item.get("path") == "notes/first.md" for item in diagnostics))
         self.assertFalse(any(item["type"] == "unknownTag" and item.get("path") == "notes/first.md" for item in diagnostics))
+
+    def test_backlinks_and_shared_tag_edges_are_derived(self) -> None:
+        first = self.vault_path / "notes" / "first.md"
+        second = self.vault_path / "notes" / "second.md"
+        third = self.vault_path / "notes" / "third.md"
+        first.parent.mkdir(parents=True, exist_ok=True)
+
+        first.write_text(
+            dump_markdown(
+                {
+                    "id": "note_first",
+                    "node_id": "note_first",
+                    "title": "First Note",
+                    "type": "note",
+                    "tags": ["project:alpha", "person:max"],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "Links to [[notes/second]].",
+            ),
+            encoding="utf-8",
+        )
+        second.write_text(
+            dump_markdown(
+                {
+                    "id": "note_second",
+                    "node_id": "note_second",
+                    "title": "Second Note",
+                    "type": "note",
+                    "tags": ["project:alpha", "person:max"],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "# Second Note",
+            ),
+            encoding="utf-8",
+        )
+        third.write_text(
+            dump_markdown(
+                {
+                    "id": "note_third",
+                    "node_id": "note_third",
+                    "title": "Third Note",
+                    "type": "note",
+                    "tags": ["topic:known"],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "# Third Note",
+            ),
+            encoding="utf-8",
+        )
+
+        payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
+        edges = payload["edges"]
+        backlink_edges = [edge for edge in edges if edge["type"] == "backlink"]
+        self.assertTrue(any(edge["source"] == "file:note_second" and edge["target"] == "file:note_first" and edge["weight"] == 4 for edge in backlink_edges))
+
+        shared_edges = [edge for edge in edges if edge["type"] == "sharedTag"]
+        self.assertEqual(len(shared_edges), 1)
+        shared = shared_edges[0]
+        self.assertEqual({shared["source"], shared["target"]}, {"file:note_first", "file:note_second"})
+        self.assertEqual(shared["weight"], 6)
+        self.assertIn("Shared tag project:alpha", shared["reasons"])
+        self.assertIn("Shared tag person:max", shared["reasons"])
+
+        edge_ids = [edge["id"] for edge in edges]
+        self.assertEqual(len(edge_ids), len(set(edge_ids)))
+
+    def test_shared_tag_edges_use_tag_buckets_for_sparse_graphs(self) -> None:
+        notes_dir = self.vault_path / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        for index_value in range(80):
+            note = notes_dir / f"note-{index_value}.md"
+            note.write_text(
+                dump_markdown(
+                    {
+                        "id": f"note_{index_value}",
+                        "node_id": f"note_{index_value}",
+                        "title": f"Note {index_value}",
+                        "type": "note",
+                        "tags": [f"topic:unique-{index_value}"],
+                        "tags_auto": [],
+                        "related": [],
+                        "related_auto": [],
+                    },
+                    f"# Note {index_value}",
+                ),
+                encoding="utf-8",
+            )
+
+        payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
+        self.assertEqual([edge for edge in payload["edges"] if edge["type"] == "sharedTag"], [])
 
     def test_graph_state_roundtrip_and_corrupt_fallback(self) -> None:
         saved = write_graph_state(

@@ -9,6 +9,7 @@ type GraphNetworkViewProps = {
   edges: GraphEdge[]
   searchText: string
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
+  onSelectNode?: (nodeId: string) => void
 }
 
 type SelectedGraphItem =
@@ -19,7 +20,7 @@ type SelectedGraphItem =
 const LARGE_GRAPH_NODE_WARNING = 450
 const LARGE_GRAPH_EDGE_WARNING = 900
 
-export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath }: GraphNetworkViewProps) {
+export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath, onSelectNode }: GraphNetworkViewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cyRef = useRef<Core | null>(null)
   const [selected, setSelected] = useState<SelectedGraphItem>(null)
@@ -70,6 +71,7 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath }: G
           .map((edge) => nodeByIdRef.current.get(edge.source === nodeId ? edge.target : edge.source))
           .filter((item): item is GraphNode => Boolean(item))
         setSelected({ kind: 'node', node, connectedEdges, neighbors })
+        onSelectNodeRef.current?.(nodeId)
       })
 
       cy.on('tap', 'edge', (event) => {
@@ -81,6 +83,7 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath }: G
       cy.on('tap', (event) => {
         if (event.target === cy) {
           setSelected(null)
+          onSelectNodeRef.current?.('')
         }
       })
 
@@ -119,6 +122,7 @@ export function GraphNetworkView({ nodes, edges, searchText, onOpenNodePath }: G
   const edgeByIdRef = useLatest(useMemo(() => new Map(edges.map((edge) => [edge.id, edge])), [edges]))
   const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
   const onOpenNodePathRef = useLatest(onOpenNodePath)
+  const onSelectNodeRef = useLatest(onSelectNode)
 
   useEffect(() => {
     const cy = cyRef.current
@@ -231,6 +235,23 @@ function GraphSelectionPanel({ selected }: { selected: SelectedGraphItem }) {
       <Detail label="Typ" value={selected.node.type} />
       <Detail label="Pfad" value={selected.node.path || '-'} />
       <Detail label="ID" value={selected.node.id} />
+      <Detail label="Links" value={String(selected.connectedEdges.filter((edge) => edge.type === 'link' && edge.source === selected.node.id).length)} />
+      <Detail label="Backlinks" value={String(selected.connectedEdges.filter((edge) => edge.type === 'backlink' && edge.source === selected.node.id).length)} />
+      <Detail label="Shared Tags" value={String(selected.connectedEdges.filter((edge) => edge.type === 'sharedTag').length)} />
+      <div className="graph-selection-block">
+        <span>Wichtigste Verbindungen</span>
+        <ul>
+          {selected.connectedEdges
+            .slice()
+            .sort((left, right) => right.weight - left.weight)
+            .slice(0, 12)
+            .map((edge) => {
+              const neighborId = edge.source === selected.node.id ? edge.target : edge.source
+              const neighbor = selected.neighbors.find((item) => item.id === neighborId)
+              return <li key={edge.id}>{edge.type}: {neighbor?.label || neighborId} ({edge.weight})</li>
+            })}
+        </ul>
+      </div>
       <div className="graph-selection-block">
         <span>Nachbarn</span>
         <ul>
@@ -402,6 +423,27 @@ const cytoscapeStyles: StylesheetStyle[] = [
       'target-arrow-color': '#45c58a',
       width: 'mapData(weight, 1, 8, 0.8, 3)',
       opacity: 0.62,
+    },
+  },
+  {
+    selector: 'edge.backlink',
+    style: {
+      'line-color': '#9eb3d1',
+      'target-arrow-color': '#9eb3d1',
+      'line-style': 'dashed',
+      width: 'mapData(weight, 1, 8, 1, 4)',
+      opacity: 0.58,
+    },
+  },
+  {
+    selector: 'edge.sharedTag',
+    style: {
+      'line-color': '#32b67a',
+      'target-arrow-shape': 'none',
+      'curve-style': 'unbundled-bezier',
+      'control-point-distance': 18,
+      width: 'mapData(weight, 2, 10, 1, 5)',
+      opacity: 0.46,
     },
   },
   {

@@ -201,6 +201,8 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
                 reason=f"WikiLink [[{link['raw']}]]",
             )
 
+    _add_derived_file_edges(edges_by_id, files)
+
     return GraphIndex(
         version=GRAPH_INDEX_VERSION,
         updated_at=datetime.now().isoformat(timespec="seconds"),
@@ -247,7 +249,7 @@ def update_graph_index_for_file(
     edges_by_id = {
         edge.id: edge
         for edge in index.edges
-        if edge.source not in old_file_ids and (edge.target not in old_file_ids or edge.target in {current_file_entry.id if current_file_entry else ""})
+        if edge.type not in {"backlink", "sharedTag"} and edge.source not in old_file_ids
     }
     diagnostics = [
         item
@@ -474,6 +476,8 @@ def _finalize_incremental_index(
     edges_by_id: dict[str, GraphEdge],
     diagnostics: list[GraphDiagnostic],
 ) -> GraphIndex:
+    edges_by_id = {edge_id: edge for edge_id, edge in edges_by_id.items() if edge.type not in {"backlink", "sharedTag"}}
+    _add_derived_file_edges(edges_by_id, files)
     _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
     return GraphIndex(
         version=GRAPH_INDEX_VERSION,
@@ -495,6 +499,68 @@ def _prune_orphan_tag_nodes(nodes_by_id: dict[str, GraphNode], edges_by_id: dict
     for node_id, node in list(nodes_by_id.items()):
         if node.type == "tag" and node_id not in referenced:
             nodes_by_id.pop(node_id, None)
+
+
+def _add_derived_file_edges(edges_by_id: dict[str, GraphEdge], files: dict[str, GraphFileEntry]) -> None:
+    file_ids = {entry.id for entry in files.values() if entry.id and entry.type in {"note", "task"}}
+    for edge in list(edges_by_id.values()):
+        if edge.type != "link" or edge.source not in file_ids or edge.target not in file_ids:
+            continue
+        reason = edge.reasons[0] if edge.reasons else f"Link from {edge.source}"
+        _add_edge(
+            edges_by_id,
+            source=edge.target,
+            target=edge.source,
+            edge_type="backlink",
+            weight=4,
+            reason=f"Backlink from {reason}",
+        )
+
+    shared_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    tag_to_files: dict[str, list[str]] = {}
+    for entry in files.values():
+        if not entry.id or entry.type not in {"note", "task"}:
+            continue
+        for tag_key in entry.tags:
+            tag_to_files.setdefault(tag_key, []).append(entry.id)
+
+    for tag_key, ids in tag_to_files.items():
+        unique_ids = sorted(set(ids))
+        if len(unique_ids) < 2:
+            continue
+        tag_weight = _shared_tag_weight(tag_key)
+        for left_index, left_id in enumerate(unique_ids[:-1]):
+            for right_id in unique_ids[left_index + 1 :]:
+                pair = (left_id, right_id) if left_id < right_id else (right_id, left_id)
+                bucket = shared_by_pair.setdefault(pair, {"weight": 0, "reasons": []})
+                bucket["weight"] += tag_weight
+                bucket["reasons"].append(f"Shared tag {tag_key}")
+
+    for (source, target), payload in shared_by_pair.items():
+        weight = int(payload["weight"])
+        reasons = list(payload["reasons"])
+        if len(reasons) > 1:
+            weight += 1
+        if weight < 2:
+            continue
+        for reason in reasons:
+            _add_edge(
+                edges_by_id,
+                source=source,
+                target=target,
+                edge_type="sharedTag",
+                weight=weight,
+                reason=reason,
+            )
+
+
+def _shared_tag_weight(tag_key: str) -> int:
+    group = tag_key.split(":", 1)[0]
+    if group == "project":
+        return 3
+    if group == "person":
+        return 2
+    return 1
 
 
 def _known_tag_map(tag_groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:

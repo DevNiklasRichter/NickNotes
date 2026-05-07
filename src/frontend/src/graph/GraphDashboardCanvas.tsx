@@ -36,6 +36,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
   const [savingState, setSavingState] = useState(false)
   const [stateLoaded, setStateLoaded] = useState(false)
   const [graphStatus, setGraphStatus] = useState<GraphIndexStatus | null>(null)
+  const [focusNodeId, setFocusNodeId] = useState('')
   const [error, setError] = useState('')
   const saveTimerRef = useRef<number | null>(null)
 
@@ -104,7 +105,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
     }
   }, [backendUrl, filters, mode, stateLoaded, vaultLoaded, viewMode])
 
-  const filtered = useMemo(() => filterGraph(index, mode, filters), [filters, index, mode])
+  const filtered = useMemo(() => filterGraph(index, mode, filters, focusNodeId), [filters, focusNodeId, index, mode])
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
   const diagnostics = useMemo(() => (filters.showDiagnostics ? index?.diagnostics ?? [] : []), [filters.showDiagnostics, index])
   const fileCount = index ? Object.keys(index.files).length : 0
@@ -232,8 +233,11 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         {renderCheckbox('showTasks', 'Tasks')}
         {renderCheckbox('showTags', 'Tags')}
         {renderCheckbox('showLinkEdges', 'Link-Edges')}
+        {renderCheckbox('showBacklinkEdges', 'Backlink-Edges')}
         {renderCheckbox('showTagUsageEdges', 'TagUsage-Edges')}
+        {renderCheckbox('showSharedTagEdges', 'SharedTag-Edges')}
         {renderCheckbox('showDiagnostics', 'Diagnostics')}
+        {mode === 'focus' ? <span className="graph-save-state">Focus: {focusNodeId || 'erster sichtbarer Knoten'}</span> : null}
         <span className="graph-save-state">{savingState ? 'State wird gespeichert ...' : stateLoaded ? 'State geladen' : 'State offen'}</span>
       </section>
 
@@ -246,7 +250,13 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
       ) : null}
 
       {viewMode === 'graph' ? (
-        <GraphNetworkView nodes={filtered.nodes} edges={filtered.edges} searchText={filters.searchText} onOpenNodePath={onOpenNodePath} />
+        <GraphNetworkView
+          nodes={filtered.nodes}
+          edges={filtered.edges}
+          searchText={filters.searchText}
+          onOpenNodePath={onOpenNodePath}
+          onSelectNode={setFocusNodeId}
+        />
       ) : (
         <GraphPreview nodes={previewNodes} edges={previewEdges} />
       )}
