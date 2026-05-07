@@ -29,7 +29,16 @@ def read_graph_index(path: Path) -> GraphIndex:
 
 def write_graph_index(path: Path, index: GraphIndex) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(index.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(json.dumps(index.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        temp_path.replace(path)
+    except PermissionError:
+        path.write_text(temp_path.read_text(encoding="utf-8"), encoding="utf-8")
+        try:
+            temp_path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
 
 
 def default_graph_state() -> dict[str, Any]:

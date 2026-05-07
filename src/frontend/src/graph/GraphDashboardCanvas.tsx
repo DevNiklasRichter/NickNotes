@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { GraphEdge, GraphFilters, GraphIndex, GraphMode, GraphNode, GraphState, GraphViewMode } from '../app/AppShared'
+import type { GraphEdge, GraphFilters, GraphIndex, GraphIndexStatus, GraphMode, GraphNode, GraphState, GraphViewMode } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import { GraphNetworkView } from './GraphNetworkView'
 import {
   DEFAULT_GRAPH_FILTERS,
   DEFAULT_GRAPH_STATE,
   fetchGraphIndex,
+  fetchGraphIndexStatus,
   fetchGraphState,
   filterGraph,
   rebuildGraphIndex,
@@ -34,6 +35,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
   const [rebuilding, setRebuilding] = useState(false)
   const [savingState, setSavingState] = useState(false)
   const [stateLoaded, setStateLoaded] = useState(false)
+  const [graphStatus, setGraphStatus] = useState<GraphIndexStatus | null>(null)
   const [error, setError] = useState('')
   const saveTimerRef = useRef<number | null>(null)
 
@@ -45,11 +47,16 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
     setLoading(true)
     setError('')
     try {
-      const [nextIndex, nextState] = await Promise.all([fetchGraphIndex(backendUrl), fetchGraphState(backendUrl)])
+      const [nextIndex, nextState, nextStatus] = await Promise.all([
+        fetchGraphIndex(backendUrl),
+        fetchGraphState(backendUrl),
+        fetchGraphIndexStatus(backendUrl),
+      ])
       setIndex(nextIndex)
       setMode(nextState.activeMode)
       setViewMode(nextState.viewMode ?? 'graph')
       setFilters(nextState.filters)
+      setGraphStatus(nextStatus)
       setStateLoaded(true)
     } catch (caught) {
       setError(`Graph konnte nicht geladen werden: ${String(caught)}`)
@@ -118,6 +125,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
     try {
       const rebuilt = await rebuildGraphIndex(backendUrl)
       setIndex(rebuilt)
+      setGraphStatus(await fetchGraphIndexStatus(backendUrl))
     } catch (caught) {
       setError(`Graph-Rebuild ist fehlgeschlagen: ${String(caught)}`)
     } finally {
@@ -168,6 +176,16 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, onOpenNodePath }
         <Metric label="Sichtbar" value={`${filtered.nodes.length}/${filtered.edges.length}`} />
         <Metric label="Updated" value={index?.updated_at || '-'} wide />
       </section>
+      {graphStatus ? (
+        <section className="graph-status-strip">
+          <span>{graphStatus.available ? 'Index verfuegbar' : 'Index nicht verfuegbar'}</span>
+          <span>{graphStatus.is_updating ? 'Update laeuft' : 'Update idle'}</span>
+          <span>{graphStatus.node_count} Nodes</span>
+          <span>{graphStatus.edge_count} Edges</span>
+          <span>{graphStatus.diagnostic_count} Diagnostics</span>
+          {graphStatus.last_error ? <strong>{graphStatus.last_error}</strong> : null}
+        </section>
+      ) : null}
 
       <section className="graph-toolbar">
         <label>

@@ -340,6 +340,16 @@ export type GraphState = {
   positions?: Record<string, unknown>
 }
 
+export type GraphIndexStatus = {
+  available: boolean
+  updated_at: string | null
+  node_count: number
+  edge_count: number
+  diagnostic_count: number
+  is_updating: boolean
+  last_error: string | null
+}
+
 export type BackendState = {
   vaultLoaded: boolean
   vaultPath?: string

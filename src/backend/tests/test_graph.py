@@ -5,7 +5,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from src.backend.nicknotes_backend.graph_index import build_graph_index
+from src.backend.nicknotes_backend.graph_index import build_graph_index, update_graph_index_for_file
 from src.backend.nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from src.backend.nicknotes_backend.markdown_io import dump_markdown
 from src.backend.nicknotes_backend.vault import VaultManager
@@ -153,6 +153,110 @@ class GraphIndexTests(unittest.TestCase):
         self.assertEqual(fallback["version"], 1)
         self.assertEqual(fallback["nodes"], [])
         self.assertTrue(any(item["type"] == "graphIndexReadFailed" for item in fallback["diagnostics"]))
+
+        rebuilt = build_graph_index(self.vault_path, self.vault.read_tag_groups())
+        write_graph_index(self.vault.graph_index_path, rebuilt)
+        recovered = read_graph_index(self.vault.graph_index_path).to_dict()
+        self.assertIn("notes/roundtrip.md", recovered["files"])
+        self.assertFalse(any(item["type"] == "graphIndexReadFailed" for item in recovered["diagnostics"]))
+
+    def test_incremental_update_refreshes_file_edges_and_diagnostics(self) -> None:
+        first = self.vault_path / "notes" / "first.md"
+        second = self.vault_path / "notes" / "second.md"
+        third = self.vault_path / "notes" / "third.md"
+        first.parent.mkdir(parents=True, exist_ok=True)
+
+        first.write_text(
+            dump_markdown(
+                {
+                    "id": "note_first",
+                    "node_id": "note_first",
+                    "title": "First Note",
+                    "type": "note",
+                    "tags": ["project:alpha"],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "Links to [[missing-note]] and #project/unknown.",
+            ),
+            encoding="utf-8",
+        )
+        second.write_text(
+            dump_markdown(
+                {
+                    "id": "note_second",
+                    "node_id": "note_second",
+                    "title": "Second Note",
+                    "type": "note",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "# Second Note",
+            ),
+            encoding="utf-8",
+        )
+        third.write_text(
+            dump_markdown(
+                {
+                    "id": "note_third",
+                    "node_id": "note_third",
+                    "title": "Third Note",
+                    "type": "note",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "# Third Note",
+            ),
+            encoding="utf-8",
+        )
+
+        index = build_graph_index(self.vault_path, self.vault.read_tag_groups())
+        original_second_hash = index.files["notes/second.md"].hash
+
+        first.write_text(
+            dump_markdown(
+                {
+                    "id": "note_first",
+                    "node_id": "note_first",
+                    "title": "First Note",
+                    "type": "note",
+                    "tags": [],
+                    "tags_auto": ["topic:known"],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "Links to [[notes/second]] and [[notes/third]].",
+            ),
+            encoding="utf-8",
+        )
+
+        updated = update_graph_index_for_file(
+            vault_path=self.vault_path,
+            tag_groups=self.vault.read_tag_groups(),
+            index=index,
+            file_path=first,
+        )
+        payload = updated.to_dict()
+        self.assertEqual(payload["files"]["notes/second.md"]["hash"], original_second_hash)
+
+        edges = payload["edges"]
+        self.assertFalse(
+            any(edge["type"] == "tagUsage" and edge["source"] == "file:note_first" and edge["target"] == "tag:project/alpha" for edge in edges)
+        )
+        self.assertTrue(
+            any(edge["type"] == "tagUsage" and edge["source"] == "file:note_first" and edge["target"] == "tag:topic/known" for edge in edges)
+        )
+        self.assertTrue(any(edge["type"] == "link" and edge["source"] == "file:note_first" and edge["target"] == "file:note_second" for edge in edges))
+        self.assertTrue(any(edge["type"] == "link" and edge["source"] == "file:note_first" and edge["target"] == "file:note_third" for edge in edges))
+
+        diagnostics = payload["diagnostics"]
+        self.assertFalse(any(item["type"] == "unresolvedLink" and item.get("path") == "notes/first.md" for item in diagnostics))
+        self.assertFalse(any(item["type"] == "unknownTag" and item.get("path") == "notes/first.md" for item in diagnostics))
 
     def test_graph_state_roundtrip_and_corrupt_fallback(self) -> None:
         saved = write_graph_state(

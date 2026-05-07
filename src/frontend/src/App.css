@@ -3850,6 +3850,27 @@
   font-size: 0.95rem;
 }
 
+.graph-status-strip {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.graph-status-strip strong {
+  min-width: 0;
+  color: var(--error-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graph-toolbar,
 .graph-filter-panel,
 .graph-preview-panel,

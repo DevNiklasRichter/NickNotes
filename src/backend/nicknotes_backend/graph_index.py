@@ -215,6 +215,163 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
     )
 
 
+def update_graph_index_for_file(
+    *,
+    vault_path: Path,
+    tag_groups: list[dict[str, Any]],
+    index: GraphIndex,
+    file_path: Path,
+    previous_path: Path | None = None,
+) -> GraphIndex:
+    vault_root = vault_path.resolve()
+    resolved = file_path.resolve()
+    known_tags = _known_tag_map(tag_groups)
+    previous_relative_path = _relative_markdown_path(vault_root, previous_path.resolve()) if previous_path else None
+    relative_path = _relative_markdown_path(vault_root, resolved)
+
+    old_file_entry = index.files.get(previous_relative_path or "") if previous_relative_path else None
+    current_file_entry = index.files.get(relative_path or "") if relative_path else None
+    old_file_ids = {entry.id for entry in (old_file_entry, current_file_entry) if entry and entry.id}
+
+    files = dict(index.files)
+    if previous_relative_path:
+        files.pop(previous_relative_path, None)
+    if relative_path:
+        files.pop(relative_path, None)
+
+    nodes_by_id = {
+        node.id: node
+        for node in index.nodes
+        if node.id and node.id not in old_file_ids and not (node.path and node.path in {previous_relative_path, relative_path})
+    }
+    edges_by_id = {
+        edge.id: edge
+        for edge in index.edges
+        if edge.source not in old_file_ids and (edge.target not in old_file_ids or edge.target in {current_file_entry.id if current_file_entry else ""})
+    }
+    diagnostics = [
+        item
+        for item in index.diagnostics
+        if item.path not in {previous_relative_path, relative_path}
+        and item.type not in {"graphIndexReadFailed", "graphIndexUpdateFailed"}
+    ]
+
+    file_records = [
+        {
+            "id": entry.id,
+            "relative_path": stored_relative_path,
+            "tags": list(entry.tags),
+            "links": [{"raw": link, "target": link} for link in entry.links],
+        }
+        for stored_relative_path, entry in files.items()
+        if entry.id
+    ]
+
+    if not relative_path or not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
+        return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
+    if relative_path.split("/", 1)[0] in {".system", "system", "99_system", ".media"}:
+        return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
+
+    try:
+        meta, body = parse_markdown(resolved)
+    except OSError as exc:
+        diagnostics.append(
+            GraphDiagnostic(
+                type="markdownReadFailed",
+                severity="warning",
+                message=f"Markdown file could not be read: {exc}",
+                path=relative_path,
+            )
+        )
+        return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
+
+    note_type = _note_type_for_path(vault_root, resolved, meta)
+    if note_type == "tag_index":
+        return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
+
+    title = _title_for_markdown(resolved, meta, body)
+    file_id = _file_node_id(meta, relative_path)
+    content_hash = _file_hash(resolved)
+    stat = resolved.stat()
+    tags = _extract_tags(meta, body)
+    links = _extract_wikilinks(body)
+
+    files[relative_path] = GraphFileEntry(
+        id=file_id,
+        type=note_type,
+        title=title,
+        hash=content_hash,
+        mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        tags=tags,
+        links=[link["target"] for link in links],
+    )
+    nodes_by_id[file_id] = GraphNode(id=file_id, type=note_type, label=title, path=relative_path)
+    if file_id not in old_file_ids:
+        edges_by_id = {edge_id: edge for edge_id, edge in edges_by_id.items() if edge.target not in old_file_ids}
+
+    current_record = {
+        "id": file_id,
+        "relative_path": relative_path,
+        "tags": tags,
+        "links": links,
+    }
+    link_lookup = _build_link_lookup([*file_records, current_record])
+
+    for tag_key in tags:
+        group, tag = tag_key.split(":", 1)
+        tag_node_id = f"tag:{group}/{tag}"
+        known_tag = known_tags.get(tag_key)
+        label = str((known_tag or {}).get("displayName") or tag).replace("_", " ").replace("-", " ").strip() or tag
+        nodes_by_id.setdefault(
+            tag_node_id,
+            GraphNode(id=tag_node_id, type="tag", label=label, group=group, tag=tag),
+        )
+        _add_edge(
+            edges_by_id,
+            source=file_id,
+            target=tag_node_id,
+            edge_type="tagUsage",
+            weight=2,
+            reason=f"Tag {tag_key}",
+        )
+        if tag_key not in known_tags:
+            diagnostics.append(
+                GraphDiagnostic(
+                    type="unknownTag",
+                    severity="warning",
+                    message=f"Tag is used but not defined in tag groups: {tag_key}",
+                    path=relative_path,
+                    tag=tag_key,
+                )
+            )
+
+    for link in links:
+        target = str(link["target"])
+        resolved_target = _resolve_link_target(target, link_lookup)
+        if not resolved_target:
+            diagnostics.append(
+                GraphDiagnostic(
+                    type="unresolvedLink",
+                    severity="warning",
+                    message=f"WikiLink could not be resolved: [[{target}]]",
+                    path=relative_path,
+                    target=target,
+                )
+            )
+            continue
+        _add_edge(
+            edges_by_id,
+            source=file_id,
+            target=str(resolved_target["id"]),
+            edge_type="link",
+            weight=5,
+            reason=f"WikiLink [[{link['raw']}]]",
+        )
+
+    _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
+    return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
+
+
 def graph_index_from_dict(payload: Any) -> GraphIndex:
     if not isinstance(payload, dict):
         raise ValueError("Graph index payload must be an object.")
@@ -299,6 +456,45 @@ def _iter_markdown_sources(vault_root: Path) -> list[Path]:
             continue
         sources.append(path)
     return sorted(sources, key=lambda item: item.relative_to(vault_root).as_posix().lower())
+
+
+def _relative_markdown_path(vault_root: Path, file_path: Path) -> str | None:
+    try:
+        relative = file_path.relative_to(vault_root).as_posix()
+    except ValueError:
+        return None
+    return relative if relative.lower().endswith(".md") else None
+
+
+def _finalize_incremental_index(
+    previous_index: GraphIndex,
+    tag_groups: list[dict[str, Any]],
+    files: dict[str, GraphFileEntry],
+    nodes_by_id: dict[str, GraphNode],
+    edges_by_id: dict[str, GraphEdge],
+    diagnostics: list[GraphDiagnostic],
+) -> GraphIndex:
+    _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
+    return GraphIndex(
+        version=GRAPH_INDEX_VERSION,
+        updated_at=datetime.now().isoformat(timespec="seconds"),
+        source={
+            **previous_index.source,
+            "tag_groups_hash": _stable_json_hash(tag_groups),
+            "note_base_relative": True,
+        },
+        files=files,
+        nodes=sorted(nodes_by_id.values(), key=lambda node: (node.type, node.label.lower(), node.id)),
+        edges=sorted(edges_by_id.values(), key=lambda edge: edge.id),
+        diagnostics=diagnostics,
+    )
+
+
+def _prune_orphan_tag_nodes(nodes_by_id: dict[str, GraphNode], edges_by_id: dict[str, GraphEdge]) -> None:
+    referenced = {edge.source for edge in edges_by_id.values()} | {edge.target for edge in edges_by_id.values()}
+    for node_id, node in list(nodes_by_id.items()):
+        if node.type == "tag" and node_id not in referenced:
+            nodes_by_id.pop(node_id, None)
 
 
 def _known_tag_map(tag_groups: list[dict[str, Any]]) -> dict[str, dict[str, str]]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import os
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
-from .nicknotes_backend.graph_index import build_graph_index
+from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update_graph_index_for_file
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
@@ -26,12 +27,22 @@ from .nicknotes_backend.parser import CaptureParser
 from .nicknotes_backend.vault import VaultManager
 
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GraphRuntimeStatus:
+    is_updating: bool = False
+    last_error: str | None = None
+
+
 @dataclass
 class RuntimeState:
     vault: VaultManager | None = None
     indexer: VaultIndexer | None = None
     parser: CaptureParser = field(default_factory=CaptureParser)
     openai: OpenAISuggester | None = None
+    graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
 
     def close(self) -> None:
         if self.indexer:
@@ -698,6 +709,12 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     tag_groups = vault.sync_tag_groups_with_index(indexer) if bool(result.get("tag_rebuild_required")) else None
+    graph_status = _update_graph_after_note_save(
+        vault=vault,
+        saved_path=Path(result["path"]),
+        previous_path=file_path,
+        tag_groups=tag_groups,
+    )
     return {
         "saved": True,
         "path": str(result["path"]),
@@ -705,6 +722,7 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
         "tagGroupsRebuilt": bool(tag_groups is not None),
+        "graphStatus": graph_status,
     }
 
 
@@ -811,12 +829,80 @@ def get_graph_index() -> dict[str, Any]:
     return {"index": read_graph_index(vault.graph_index_path).to_dict()}
 
 
+@app.get("/graph-index/status")
+def get_graph_index_status() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    return _graph_index_status(vault)
+
+
 @app.post("/graph-index/rebuild")
 def rebuild_graph_index() -> dict[str, Any]:
     vault, _indexer = _require_loaded()
-    index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
-    write_graph_index(vault.graph_index_path, index)
-    return {"index": index.to_dict()}
+    state.graph_status.is_updating = True
+    state.graph_status.last_error = None
+    try:
+        index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
+        write_graph_index(vault.graph_index_path, index)
+        return {"index": index.to_dict(), "status": _graph_index_status(vault, index)}
+    except Exception as exc:
+        state.graph_status.last_error = str(exc)
+        logger.exception("Graph index rebuild failed.")
+        raise
+    finally:
+        state.graph_status.is_updating = False
+
+
+def _update_graph_after_note_save(
+    *,
+    vault: VaultManager,
+    saved_path: Path,
+    previous_path: Path,
+    tag_groups: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    state.graph_status.is_updating = True
+    state.graph_status.last_error = None
+    try:
+        groups = tag_groups if tag_groups is not None else vault.read_tag_groups()
+        if not vault.graph_index_path.exists():
+            index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
+        else:
+            index = read_graph_index(vault.graph_index_path)
+            if _graph_index_needs_rebuild(index):
+                index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
+            else:
+                index = update_graph_index_for_file(
+                    vault_path=vault.vault_path,
+                    tag_groups=groups,
+                    index=index,
+                    file_path=saved_path,
+                    previous_path=previous_path if previous_path.resolve() != saved_path.resolve() else None,
+                )
+        write_graph_index(vault.graph_index_path, index)
+        return _graph_index_status(vault, index)
+    except Exception as exc:
+        state.graph_status.last_error = str(exc)
+        logger.exception("Incremental graph update failed.")
+        return _graph_index_status(vault)
+    finally:
+        state.graph_status.is_updating = False
+
+
+def _graph_index_needs_rebuild(index: GraphIndex) -> bool:
+    return any(item.type == "graphIndexReadFailed" for item in index.diagnostics)
+
+
+def _graph_index_status(vault: VaultManager, index: GraphIndex | None = None) -> dict[str, Any]:
+    loaded = index if index is not None else read_graph_index(vault.graph_index_path)
+    read_failed = _graph_index_needs_rebuild(loaded)
+    return {
+        "available": vault.graph_index_path.exists() and not read_failed,
+        "updated_at": loaded.updated_at or None,
+        "node_count": len(loaded.nodes),
+        "edge_count": len(loaded.edges),
+        "diagnostic_count": len(loaded.diagnostics),
+        "is_updating": state.graph_status.is_updating,
+        "last_error": state.graph_status.last_error,
+    }
 
 
 @app.get("/graph-state")

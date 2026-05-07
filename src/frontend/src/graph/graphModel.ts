@@ -3,6 +3,7 @@ import {
   type GraphEdge,
   type GraphFilters,
   type GraphIndex,
+  type GraphIndexStatus,
   type GraphMode,
   type GraphNode,
   type GraphState,
@@ -34,6 +35,10 @@ export type FilteredGraph = {
 export async function fetchGraphIndex(baseUrl: string): Promise<GraphIndex> {
   const response = await apiRequest<{ index: GraphIndex }>(baseUrl, '/graph-index')
   return normalizeGraphIndex(response.index)
+}
+
+export async function fetchGraphIndexStatus(baseUrl: string): Promise<GraphIndexStatus> {
+  return apiRequest<GraphIndexStatus>(baseUrl, '/graph-index/status')
 }
 
 export async function rebuildGraphIndex(baseUrl: string): Promise<GraphIndex> {
