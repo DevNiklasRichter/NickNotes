@@ -3933,6 +3933,15 @@
   padding: 0.65rem 0.75rem;
 }
 
+.graph-empty-state {
+  margin: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--muted);
+  padding: 0.85rem;
+}
+
 .graph-warning {
   margin: 0;
   border: 1px solid color-mix(in srgb, #d3a33a 55%, var(--line));

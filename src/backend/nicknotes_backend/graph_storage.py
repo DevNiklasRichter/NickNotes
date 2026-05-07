@@ -83,5 +83,14 @@ def write_graph_state(path: Path, state: dict[str, Any]) -> dict[str, Any]:
     payload["version"] = GRAPH_STATE_VERSION
     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        temp_path.replace(path)
+    except PermissionError:
+        path.write_text(temp_path.read_text(encoding="utf-8"), encoding="utf-8")
+        try:
+            temp_path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
     return payload

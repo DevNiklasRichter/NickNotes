@@ -361,6 +361,63 @@ class GraphIndexTests(unittest.TestCase):
         payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
         self.assertEqual([edge for edge in payload["edges"] if edge["type"] == "sharedTag"], [])
 
+    def test_deleted_file_is_removed_incrementally(self) -> None:
+        first = self.vault_path / "notes" / "first.md"
+        second = self.vault_path / "notes" / "second.md"
+        first.parent.mkdir(parents=True, exist_ok=True)
+        first.write_text(
+            dump_markdown(
+                {"id": "note_first", "node_id": "note_first", "title": "First", "type": "note", "tags": ["project:alpha"]},
+                "Links to [[notes/second]].",
+            ),
+            encoding="utf-8",
+        )
+        second.write_text(
+            dump_markdown(
+                {"id": "note_second", "node_id": "note_second", "title": "Second", "type": "note", "tags": ["project:alpha"]},
+                "# Second",
+            ),
+            encoding="utf-8",
+        )
+        index = build_graph_index(self.vault_path, self.vault.read_tag_groups())
+        missing_path = first.with_name("deleted.md")
+
+        updated = update_graph_index_for_file(
+            vault_path=self.vault_path,
+            tag_groups=self.vault.read_tag_groups(),
+            index=index,
+            file_path=missing_path,
+            previous_path=first,
+        )
+        payload = updated.to_dict()
+        self.assertNotIn("notes/first.md", payload["files"])
+        self.assertFalse(any(node["id"] == "file:note_first" for node in payload["nodes"]))
+        self.assertFalse(any(edge["source"] == "file:note_first" or edge["target"] == "file:note_first" for edge in payload["edges"]))
+
+    def test_large_shared_tag_bucket_does_not_crash(self) -> None:
+        notes_dir = self.vault_path / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        for index_value in range(45):
+            note = notes_dir / f"alpha-{index_value}.md"
+            note.write_text(
+                dump_markdown(
+                    {
+                        "id": f"alpha_{index_value}",
+                        "node_id": f"alpha_{index_value}",
+                        "title": f"Alpha {index_value}",
+                        "type": "note",
+                        "tags": ["project:alpha"],
+                    },
+                    f"# Alpha {index_value}",
+                ),
+                encoding="utf-8",
+            )
+
+        payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
+        shared_edges = [edge for edge in payload["edges"] if edge["type"] == "sharedTag"]
+        self.assertEqual(len(shared_edges), 990)
+        self.assertTrue(all(edge["weight"] >= 3 for edge in shared_edges))
+
     def test_graph_state_roundtrip_and_corrupt_fallback(self) -> None:
         saved = write_graph_state(
             self.vault.graph_state_path,

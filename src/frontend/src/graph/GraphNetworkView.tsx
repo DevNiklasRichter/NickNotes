@@ -163,6 +163,7 @@ export function GraphNetworkView({
   const onShowNeighborsRef = useLatest(onShowNeighbors)
   const onClearSelectionRef = useLatest(onClearSelection)
   const viewportRef = useLatest(viewport)
+  const positionsRef = useLatest(positions)
 
   useEffect(() => {
     const cy = cyRef.current
@@ -173,9 +174,9 @@ export function GraphNetworkView({
       cy.batch(() => {
         cy.elements().remove()
         cy.add(elements)
-        applyStoredPositions(cy, positions)
+        applyStoredPositions(cy, positionsRef.current)
       })
-      const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positions)
+      const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positionsRef.current)
       lastLayoutVersionRef.current = layoutVersion
       if (shouldRunLayout) {
         runLayout(cy, largeGraph, () => {
@@ -188,7 +189,7 @@ export function GraphNetworkView({
     } catch (caught) {
       setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`)
     }
-  }, [elements, largeGraph, layoutVersion, nodes, positions])
+  }, [elements, largeGraph, layoutVersion, nodes])
 
   const fitGraph = () => {
     cyRef.current?.fit(undefined, 36)

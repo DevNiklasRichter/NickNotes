@@ -163,6 +163,9 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
   const diagnostics = useMemo(() => (filters.showDiagnostics ? index?.diagnostics ?? [] : []), [filters.showDiagnostics, index])
   const fileCount = index ? Object.keys(index.files).length : 0
+  const hiddenNodeCount = index ? Math.max(0, index.nodes.length - filtered.nodes.length) : 0
+  const hiddenEdgeCount = index ? Math.max(0, index.edges.length - filtered.edges.length) : 0
+  const sharedTagEdgeCount = index?.edges.filter((edge) => edge.type === 'sharedTag').length ?? 0
   const previewNodes = filtered.nodes.slice(0, GRAPH_PREVIEW_LIMIT)
   const previewNodeIds = new Set(previewNodes.map((node) => node.id))
   const previewEdges = filtered.edges.filter((edge) => previewNodeIds.has(edge.source) && previewNodeIds.has(edge.target)).slice(0, 160)
@@ -225,10 +228,10 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
           <p>Indexdaten, Kanten und Diagnostics aus der aktuellen NoteBase.</p>
         </div>
         <div className="graph-dashboard-actions">
-          <button className="icon-button compact muted" onClick={() => void loadGraph()} disabled={loading || rebuilding} title="Graph neu laden">
+          <button className="icon-button compact muted" onClick={() => void loadGraph()} disabled={loading || rebuilding} title="Aktuellen graph-index.json neu laden, ohne den Index neu zu berechnen">
             <LucideNamedIcon name="RefreshCw" size={14} />
           </button>
-          <button className="primary graph-rebuild-button" onClick={() => void triggerRebuild()} disabled={rebuilding || loading}>
+          <button className="primary graph-rebuild-button" onClick={() => void triggerRebuild()} disabled={rebuilding || loading} title="Graph-Index vollstaendig aus Markdown-Dateien neu berechnen">
             {rebuilding ? 'Wird aufgebaut ...' : 'Graph neu aufbauen'}
           </button>
         </div>
@@ -277,7 +280,7 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
             <option value="debug">Debug</option>
             <option value="link">Link</option>
             <option value="tag">Tag</option>
-            <option value="focus">Focus</option>
+            <option value="focus" title="Zeigt die direkte Umgebung des ausgewaehlten Knotens">Focus</option>
           </select>
         </label>
         <label className="graph-search-label">
@@ -298,13 +301,13 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
             onChange={(event) => updateFilters({ minimumEdgeWeight: Math.max(0, Number.parseFloat(event.target.value) || 0) })}
           />
         </label>
-        <button className="muted graph-reset-button" onClick={resetFilters}>
+        <button className="muted graph-reset-button" onClick={resetFilters} title="Filter und Modus auf die Standardwerte zuruecksetzen">
           Filter zuruecksetzen
         </button>
-        <button className="muted graph-reset-button" onClick={resetLayoutState}>
+        <button className="muted graph-reset-button" onClick={resetLayoutState} title="Gespeicherte Knotenpositionen und Viewport loeschen">
           Layout zuruecksetzen
         </button>
-        <button className="muted graph-reset-button" onClick={rerunLayout}>
+        <button className="muted graph-reset-button" onClick={rerunLayout} title="Layout neu berechnen und die neuen Positionen speichern">
           Layout neu berechnen
         </button>
       </section>
@@ -316,7 +319,9 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
         {renderCheckbox('showLinkEdges', 'Link-Edges')}
         {renderCheckbox('showBacklinkEdges', 'Backlink-Edges')}
         {renderCheckbox('showTagUsageEdges', 'TagUsage-Edges')}
-        {renderCheckbox('showSharedTagEdges', 'SharedTag-Edges')}
+        <span title="Similarity-Kanten zwischen Dateien mit gemeinsamen Tags. Kann bei grossen NoteBases viele Kanten erzeugen.">
+          {renderCheckbox('showSharedTagEdges', 'SharedTag-Edges')}
+        </span>
         {renderCheckbox('showDiagnostics', 'Diagnostics')}
         {mode === 'focus' ? <span className="graph-save-state">Focus: {focusNodeId || 'erster sichtbarer Knoten'}</span> : null}
         <span className="graph-save-state">{savingState ? 'State wird gespeichert ...' : stateLoaded ? 'State geladen' : 'State offen'}</span>
@@ -324,6 +329,9 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
 
       {error ? <p className="graph-error">{error}</p> : null}
       {loading ? <p className="empty-copy">Graph wird geladen ...</p> : null}
+      {!loading && index && index.nodes.length === 0 ? (
+        <p className="graph-empty-state">Keine Graph-Daten vorhanden. Lege Markdown-Notizen an oder baue den Graph neu auf.</p>
+      ) : null}
       {filtered.nodes.length > 450 || filtered.edges.length > 900 ? (
         <p className="graph-warning">
           Viele sichtbare Elemente ({filtered.nodes.length} Nodes, {filtered.edges.length} Edges). Filter oder Suche halten die Ansicht reaktionsfreudiger.
@@ -331,8 +339,13 @@ export function GraphDashboardCanvas({ backendUrl, vaultLoaded, graphUpdateToken
       ) : null}
       {index && (filtered.nodes.length > 300 || filtered.edges.length > 800) ? (
         <p className="graph-warning">
-          Grosser Graph: {index.nodes.length - filtered.nodes.length} Nodes und {index.edges.length - filtered.edges.length} Edges sind aktuell ausgeblendet.
+          Grosser Graph: {hiddenNodeCount} Nodes und {hiddenEdgeCount} Edges sind aktuell ausgeblendet.
           Focus-Modus oder deaktivierte SharedTag-Edges sind fuer diese Groesse meist angenehmer.
+        </p>
+      ) : null}
+      {!filters.showSharedTagEdges && sharedTagEdgeCount > 800 ? (
+        <p className="graph-warning">
+          SharedTag ist aus. Das wuerde aktuell {sharedTagEdgeCount} Similarity-Kanten einblenden und kann die Ansicht deutlich dichter machen.
         </p>
       ) : null}
 
