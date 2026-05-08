@@ -23,6 +23,7 @@ import {
 import { GFM } from '@lezer/markdown'
 
 import {
+  buildMarkdownTable,
   filterMarkdownCommands,
   runMarkdownCommand,
   type MarkdownCommand,
@@ -84,6 +85,17 @@ type PaletteState =
         anchor: PaletteAnchor
       }
     }
+  | {
+      mode: 'table-size'
+      rows: number
+      columns: number
+      selectedIndex: number
+      context: {
+        from: number
+        to: number
+        anchor: PaletteAnchor
+      }
+    }
 
 export type MarkdownEditorApi = {
   insertText: (text: string) => void
@@ -119,6 +131,8 @@ type CodeMirrorMarkdownEditorProps = {
   onChange: (nextValue: string) => void
   onSubmitShortcut?: (markdown: string) => void
   onToggleTagSuggestion?: (tagKey: string) => void
+  onRejectTagSuggestion?: (tagKey: string) => void
+  onCreateTagFromSelection?: (selectedText: string, replaceSelection: (tagSyntax: string) => void) => void
   onInsertImageAsset?: (file: File) => Promise<string | null>
   onOpenWikiLink?: (target: string) => void
   onOpenTagReference?: (groupId: string, tagId: string) => void
@@ -141,8 +155,24 @@ type SlashMatch = {
 
 type HoveredTagSuggestion = {
   key: string
+  from: number
+  to: number
   left: number
   top: number
+}
+
+type SelectionTagContextMenu = {
+  selectedText: string
+  from: number
+  to: number
+  left: number
+  top: number
+}
+
+type ResolvedTagSuggestion = {
+  suggestion: MarkdownEditorTagSuggestion
+  from: number
+  to: number
 }
 
 const LOCAL_ECHO_TTL_MS = 2000
@@ -342,7 +372,7 @@ function findTagSuggestionAtPosition(
   view: EditorView,
   position: number,
   suggestions: readonly MarkdownEditorTagSuggestion[]
-): MarkdownEditorTagSuggestion | null {
+): ResolvedTagSuggestion | null {
   const line = view.state.doc.lineAt(position)
   const offset = position - line.from
   for (const suggestion of suggestions) {
@@ -356,7 +386,12 @@ function findTagSuggestionAtPosition(
           continue
         }
         if (offset >= match.index && offset <= match.index + match[0].length) {
-          return suggestion
+          const from = line.from + match.index
+          return {
+            suggestion,
+            from,
+            to: from + match[0].length,
+          }
         }
       }
     }
@@ -398,7 +433,7 @@ function resolveSlashAnchor(view: EditorView, position: number, host: HTMLElemen
 
   const rect = host.getBoundingClientRect()
   const panelWidth = 340
-  const panelHeight = 340
+  const panelHeight = Math.min(320, Math.max(160, rect.height - 20))
   const left = Math.max(10, Math.min(coords.left - rect.left - 16, rect.width - panelWidth - 10))
   const preferredBelow = coords.bottom - rect.top + 8
   const maxTop = Math.max(10, rect.height - panelHeight - 10)
@@ -409,11 +444,36 @@ function resolveSlashAnchor(view: EditorView, position: number, host: HTMLElemen
   return { left, top }
 }
 
+function resolveSelectionAnchor(view: EditorView, host: HTMLElement | null): PaletteAnchor {
+  const selection = view.state.selection.main
+  return resolveSlashAnchor(view, selection.head, host)
+}
+
 function clampIndex(index: number, itemCount: number): number {
   if (itemCount <= 0) {
     return 0
   }
   return Math.max(0, Math.min(index, itemCount - 1))
+}
+
+function insertSizedMarkdownTable(
+  view: EditorView,
+  context: { from: number; to: number },
+  rows: number,
+  columns: number
+): void {
+  const from = Math.max(0, Math.min(context.from, view.state.doc.length))
+  const to = Math.max(from, Math.min(context.to, view.state.doc.length))
+  const prefix = from > 0 && view.state.doc.sliceString(from - 1, from) !== '\n' ? '\n\n' : ''
+  const suffix = to < view.state.doc.length && view.state.doc.sliceString(to, to + 1) !== '\n' ? '\n\n' : '\n'
+  const insert = `${prefix}${buildMarkdownTable(rows, columns)}${suffix}`
+  const cursor = from + insert.length
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: cursor, head: cursor },
+    scrollIntoView: true,
+    userEvent: 'input.type',
+  })
 }
 
 function extractImageFiles(fileList: FileList | null | undefined): File[] {
@@ -600,6 +660,8 @@ export function CodeMirrorMarkdownEditor({
   onChange,
   onSubmitShortcut,
   onToggleTagSuggestion,
+  onRejectTagSuggestion,
+  onCreateTagFromSelection,
   onInsertImageAsset,
   onOpenWikiLink,
   onOpenTagReference,
@@ -608,10 +670,14 @@ export function CodeMirrorMarkdownEditor({
   const shellRef = useRef<HTMLDivElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const paletteInputRef = useRef<HTMLInputElement | null>(null)
+  const paletteListRef = useRef<HTMLDivElement | null>(null)
+  const activePaletteItemRef = useRef<HTMLButtonElement | null>(null)
   const editorRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSubmitShortcutRef = useRef(onSubmitShortcut)
   const onToggleTagSuggestionRef = useRef(onToggleTagSuggestion)
+  const onRejectTagSuggestionRef = useRef(onRejectTagSuggestion)
+  const onCreateTagFromSelectionRef = useRef(onCreateTagFromSelection)
   const onInsertImageAssetRef = useRef(onInsertImageAsset)
   const linkTargetsRef = useRef(linkTargets)
   const tagSuggestionsRef = useRef(tagSuggestions)
@@ -638,6 +704,7 @@ export function CodeMirrorMarkdownEditor({
   const initialSelectedTagSuggestionKeysRef = useRef(selectedTagSuggestionKeys)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
   const [hoveredTagSuggestion, setHoveredTagSuggestion] = useState<HoveredTagSuggestion | null>(null)
+  const [selectionTagContextMenu, setSelectionTagContextMenu] = useState<SelectionTagContextMenu | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
@@ -714,6 +781,10 @@ export function CodeMirrorMarkdownEditor({
       return buildLinkPaletteItems(linkTargets, paletteState.pathParts, paletteState.query)
     }
 
+    if (paletteState.mode === 'table-size') {
+      return []
+    }
+
     const query = paletteState.query.trim().toLowerCase()
     const tags = paletteState.group.tags
     if (!query) {
@@ -745,6 +816,14 @@ export function CodeMirrorMarkdownEditor({
   useEffect(() => {
     onToggleTagSuggestionRef.current = onToggleTagSuggestion
   }, [onToggleTagSuggestion])
+
+  useEffect(() => {
+    onRejectTagSuggestionRef.current = onRejectTagSuggestion
+  }, [onRejectTagSuggestion])
+
+  useEffect(() => {
+    onCreateTagFromSelectionRef.current = onCreateTagFromSelection
+  }, [onCreateTagFromSelection])
 
   useEffect(() => {
     tagSuggestionsRef.current = tagSuggestions
@@ -820,7 +899,8 @@ export function CodeMirrorMarkdownEditor({
       (paletteState.mode !== 'palette' &&
         paletteState.mode !== 'tag-group' &&
         paletteState.mode !== 'tag-item' &&
-        paletteState.mode !== 'link-browse')
+        paletteState.mode !== 'link-browse' &&
+        paletteState.mode !== 'table-size')
     ) {
       return
     }
@@ -830,8 +910,10 @@ export function CodeMirrorMarkdownEditor({
         return
       }
       input.focus()
-      const cursor = input.value.length
-      input.setSelectionRange(cursor, cursor)
+      if (input.type !== 'number') {
+        const cursor = input.value.length
+        input.setSelectionRange(cursor, cursor)
+      }
     })
   }, [paletteState?.mode])
 
@@ -855,6 +937,29 @@ export function CodeMirrorMarkdownEditor({
       document.removeEventListener('pointerdown', onPointerDown)
     }
   }, [paletteState])
+
+  useEffect(() => {
+    if (!selectionTagContextMenu) {
+      return
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const shell = shellRef.current
+      if (!shell) {
+        return
+      }
+      const target = event.target as Node
+      if (shell.contains(target) && target instanceof HTMLElement && target.closest('.editor-selection-context-menu')) {
+        return
+      }
+      setSelectionTagContextMenu(null)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [selectionTagContextMenu])
 
   useEffect(() => {
     const host = hostRef.current
@@ -931,6 +1036,29 @@ export function CodeMirrorMarkdownEditor({
       const item = available[index]
 
       if (item.kind === 'command') {
+        if (item.command.id === 'table') {
+          const selection = view.state.selection.main
+          const context =
+            current.mode === 'slash'
+              ? {
+                  from: current.from,
+                  to: current.to,
+                  anchor: current.anchor,
+                }
+              : {
+                  from: selection.from,
+                  to: selection.to,
+                  anchor: resolveSelectionAnchor(view, shellRef.current),
+                }
+          setPaletteState({
+            mode: 'table-size',
+            rows: 3,
+            columns: 3,
+            selectedIndex: 0,
+            context,
+          })
+          return true
+        }
         const context =
           current.mode === 'slash'
             ? {
@@ -1271,19 +1399,55 @@ export function CodeMirrorMarkdownEditor({
               }
               return true
             },
+            contextmenu: (event, view) => {
+              const createFromSelection = onCreateTagFromSelectionRef.current
+              if (!createFromSelection || view.state.facet(EditorState.readOnly)) {
+                return false
+              }
+              const selection = view.state.selection.main
+              if (selection.empty) {
+                setSelectionTagContextMenu(null)
+                return false
+              }
+              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+              if (typeof pos !== 'number' || pos < selection.from || pos > selection.to) {
+                setSelectionTagContextMenu(null)
+                return false
+              }
+              const selectedText = view.state.doc.sliceString(selection.from, selection.to).trim()
+              if (!selectedText) {
+                setSelectionTagContextMenu(null)
+                return false
+              }
+              event.preventDefault()
+              const shellRect = shellRef.current?.getBoundingClientRect()
+              setSelectionTagContextMenu({
+                selectedText,
+                from: selection.from,
+                to: selection.to,
+                left: shellRect ? event.clientX - shellRect.left : event.clientX,
+                top: shellRect ? event.clientY - shellRect.top : event.clientY,
+              })
+              setPaletteState(null)
+              return true
+            },
             mousemove: (event, view) => {
               const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-              const suggestion =
+              const resolved =
                 typeof pos === 'number' ? findTagSuggestionAtPosition(view, pos, tagSuggestionsRef.current) : null
-              if (!suggestion) {
-                setHoveredTagSuggestion(null)
+              if (!resolved) {
                 return false
               }
               const shellRect = shellRef.current?.getBoundingClientRect()
+              const coords = view.coordsAtPos(resolved.to)
+              const left = coords && shellRect ? coords.left - shellRect.left : event.clientX - (shellRect?.left ?? 0)
+              const top = coords && shellRect ? coords.bottom - shellRect.top + 8 : event.clientY - (shellRect?.top ?? 0) + 12
               setHoveredTagSuggestion({
-                key: suggestion.key,
-                left: shellRect ? event.clientX - shellRect.left : event.clientX,
-                top: shellRect ? event.clientY - shellRect.top + 12 : event.clientY + 12,
+                key: resolved.suggestion.key,
+                from: resolved.from,
+                to: resolved.to,
+                left,
+                top,
               })
               return false
             },
@@ -1474,8 +1638,28 @@ export function CodeMirrorMarkdownEditor({
       (paletteState.mode !== 'palette' &&
         paletteState.mode !== 'tag-group' &&
         paletteState.mode !== 'tag-item' &&
-        paletteState.mode !== 'link-browse')
+        paletteState.mode !== 'link-browse' &&
+        paletteState.mode !== 'table-size')
     ) {
+      return
+    }
+
+    if (paletteState.mode === 'table-size') {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const view = editorRef.current
+        if (view && !view.state.facet(EditorState.readOnly)) {
+          insertSizedMarkdownTable(view, paletteState.context, paletteState.rows, paletteState.columns)
+          setPaletteState(null)
+          view.focus()
+        }
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPaletteState(null)
+        editorRef.current?.focus()
+      }
       return
     }
 
@@ -1559,6 +1743,29 @@ export function CodeMirrorMarkdownEditor({
       return
     }
     if (item.kind === 'command') {
+      if (item.command.id === 'table') {
+        const selection = view.state.selection.main
+        const context =
+          current.mode === 'slash'
+            ? {
+                from: current.from,
+                to: current.to,
+                anchor: current.anchor,
+              }
+            : {
+                from: selection.from,
+                to: selection.to,
+                anchor: resolveSelectionAnchor(view, shellRef.current),
+              }
+        setPaletteState({
+          mode: 'table-size',
+          rows: 3,
+          columns: 3,
+          selectedIndex: 0,
+          context,
+        })
+        return
+      }
       const context =
         current.mode === 'slash'
           ? {
@@ -1679,7 +1886,8 @@ export function CodeMirrorMarkdownEditor({
     (paletteState.mode === 'slash' ||
       paletteState.mode === 'tag-group' ||
       paletteState.mode === 'tag-item' ||
-      paletteState.mode === 'link-browse')
+      paletteState.mode === 'link-browse' ||
+      paletteState.mode === 'table-size')
   const paletteLeft = isAnchoredPalette
     ? paletteState.mode === 'slash'
       ? paletteState.anchor.left
@@ -1695,7 +1903,18 @@ export function CodeMirrorMarkdownEditor({
   const hoveredSuggestion = hoveredTagSuggestion
     ? tagSuggestions.find((item) => item.key === hoveredTagSuggestion.key) ?? null
     : null
-  const hoveredSuggestionSelected = hoveredSuggestion ? selectedTagSuggestionKeys.includes(hoveredSuggestion.key) : false
+
+  useEffect(() => {
+    if (!paletteState || paletteState.mode === 'table-size' || paletteItems.length === 0) {
+      return
+    }
+    window.requestAnimationFrame(() => {
+      activePaletteItemRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      })
+    })
+  }, [activeCommandIndex, paletteItems.length, paletteState?.mode])
 
   return (
     <div
@@ -1707,17 +1926,45 @@ export function CodeMirrorMarkdownEditor({
     >
       <div className={`code-editor-host ${embeddedInScroll ? 'embedded-scroll' : ''}`.trim()} ref={hostRef} />
 
+      {selectionTagContextMenu ? (
+        <div
+          className="editor-selection-context-menu"
+          style={{ left: `${selectionTagContextMenu.left}px`, top: `${selectionTagContextMenu.top}px` }}
+          onMouseDown={(event) => {
+            event.preventDefault()
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const menu = selectionTagContextMenu
+              onCreateTagFromSelectionRef.current?.(menu.selectedText, (tagSyntax) => {
+                const view = editorRef.current
+                if (!view) {
+                  return
+                }
+                view.dispatch({
+                  changes: { from: menu.from, to: menu.to, insert: tagSyntax },
+                  selection: { anchor: menu.from + tagSyntax.length },
+                  scrollIntoView: true,
+                  userEvent: 'input.type',
+                })
+                view.focus()
+              })
+              setSelectionTagContextMenu(null)
+            }}
+          >
+            Neuen Tag erstellen
+          </button>
+        </div>
+      ) : null}
+
       {hoveredSuggestion ? (
         <div
           className="editor-tag-suggestion-menu"
           style={{ left: `${hoveredTagSuggestion?.left ?? 0}px`, top: `${hoveredTagSuggestion?.top ?? 0}px` }}
-          onMouseEnter={() => {
-            setHoveredTagSuggestion((current) =>
-              current && current.key === hoveredSuggestion.key ? current : hoveredTagSuggestion
-            )
-          }}
-          onMouseLeave={() => {
-            setHoveredTagSuggestion(null)
+          onMouseDown={(event) => {
+            event.preventDefault()
           }}
         >
           <span className="editor-tag-suggestion-title">
@@ -1726,11 +1973,33 @@ export function CodeMirrorMarkdownEditor({
           <button
             type="button"
             onClick={() => {
+              const view = editorRef.current
+              const hover = hoveredTagSuggestion
+              if (view && hover) {
+                const syntax = `{tag:${hoveredSuggestion.category}/${hoveredSuggestion.slug}}`
+                view.dispatch({
+                  changes: { from: hover.from, to: hover.to, insert: syntax },
+                  selection: { anchor: hover.from + syntax.length },
+                  scrollIntoView: true,
+                  userEvent: 'input.type',
+                })
+                view.focus()
+              }
               onToggleTagSuggestionRef.current?.(hoveredSuggestion.key)
               setHoveredTagSuggestion(null)
             }}
           >
-            {hoveredSuggestionSelected ? 'Verwerfen' : 'Uebernehmen'}
+            Uebernehmen
+          </button>
+          <button
+            type="button"
+            className="muted"
+            onClick={() => {
+              onRejectTagSuggestionRef.current?.(hoveredSuggestion.key)
+              setHoveredTagSuggestion(null)
+            }}
+          >
+            Verwerfen
           </button>
         </div>
       ) : null}
@@ -1740,7 +2009,82 @@ export function CodeMirrorMarkdownEditor({
           className={`editor-command-palette ${isAnchoredPalette ? 'slash' : 'global'}`}
           style={isAnchoredPalette ? { left: `${paletteLeft}px`, top: `${paletteTop}px` } : undefined}
         >
-          {showSearchInput ? (
+          {paletteState.mode === 'table-size' ? (
+            <div className="editor-table-size-panel">
+              <div className="editor-command-slash-meta">Tabelle einfuegen</div>
+              <div className="editor-table-size-fields">
+                <label>
+                  Zeilen
+                  <input
+                    ref={paletteInputRef}
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={paletteState.rows}
+                    onChange={(event) => {
+                      const rows = Number.parseInt(event.target.value, 10)
+                      setPaletteState((current) =>
+                        current && current.mode === 'table-size'
+                          ? { ...current, rows: Number.isFinite(rows) ? Math.max(1, Math.min(30, rows)) : 1 }
+                          : current
+                      )
+                    }}
+                    onKeyDown={onPaletteInputKeyDown}
+                  />
+                </label>
+                <label>
+                  Spalten
+                  <input
+                    type="number"
+                    min="1"
+                    max="12"
+                    value={paletteState.columns}
+                    onChange={(event) => {
+                      const columns = Number.parseInt(event.target.value, 10)
+                      setPaletteState((current) =>
+                        current && current.mode === 'table-size'
+                          ? { ...current, columns: Number.isFinite(columns) ? Math.max(1, Math.min(12, columns)) : 1 }
+                          : current
+                      )
+                    }}
+                    onKeyDown={onPaletteInputKeyDown}
+                  />
+                </label>
+              </div>
+              <div className="editor-table-size-actions">
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                  }}
+                  onClick={() => {
+                    const view = editorRef.current
+                    if (!view || paletteState.mode !== 'table-size') {
+                      return
+                    }
+                    insertSizedMarkdownTable(view, paletteState.context, paletteState.rows, paletteState.columns)
+                    setPaletteState(null)
+                    view.focus()
+                  }}
+                >
+                  Einfuegen
+                </button>
+                <button
+                  type="button"
+                  className="muted"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                  }}
+                  onClick={() => {
+                    setPaletteState(null)
+                    editorRef.current?.focus()
+                  }}
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          ) : showSearchInput ? (
             <div className="editor-command-search-row">
               <input
                 ref={paletteInputRef}
@@ -1782,7 +2126,8 @@ export function CodeMirrorMarkdownEditor({
             <div className="editor-command-slash-meta">{paletteState.pathParts.join(' / ')}</div>
           ) : null}
 
-          <div className="editor-command-list" role="listbox" aria-label="Markdown-Befehle">
+          {paletteState.mode !== 'table-size' ? (
+            <div ref={paletteListRef} className="editor-command-list" role="listbox" aria-label="Markdown-Befehle">
             {paletteItems.length === 0 ? <div className="editor-command-empty">Kein passender Eintrag.</div> : null}
             {paletteItems.map((item, index) => {
               const title =
@@ -1832,6 +2177,7 @@ export function CodeMirrorMarkdownEditor({
 
               return (
                 <button
+                  ref={index === activeCommandIndex ? activePaletteItemRef : null}
                   key={key}
                   type="button"
                   className={`editor-command-item ${index === activeCommandIndex ? 'active' : ''}`}
@@ -1845,9 +2191,11 @@ export function CodeMirrorMarkdownEditor({
                 </button>
               )
             })}
-          </div>
+            </div>
+          ) : null}
 
-          <div className="editor-command-footnote">
+          {paletteState.mode !== 'table-size' ? (
+            <div className="editor-command-footnote">
             {paletteState.mode === 'slash'
               ? 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'
               : paletteState.mode === 'link-browse'
@@ -1855,7 +2203,8 @@ export function CodeMirrorMarkdownEditor({
               : paletteState.mode === 'tag-item'
                 ? 'Pfeiltasten waehlen - Enter einfuegen - Esc zurueck'
                 : 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'}
-          </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

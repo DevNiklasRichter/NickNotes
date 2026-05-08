@@ -10,10 +10,8 @@ export type MarkdownCommandId =
   | 'blockquote'
   | 'bold'
   | 'italic'
-  | 'inline-code'
-  | 'code-block-ts'
-  | 'code-block-js'
   | 'code-block-text'
+  | 'table'
   | 'hyperlink'
   | 'divider'
 
@@ -87,28 +85,16 @@ export const markdownCommands: readonly MarkdownCommand[] = [
     keywords: ['italic', 'kursiv', 'emphasis'],
   },
   {
-    id: 'inline-code',
-    title: 'Inline Code',
-    description: 'Formatiert Auswahl als Inline-Code (`code`).',
-    keywords: ['code', 'inline', 'snippet'],
-  },
-  {
-    id: 'code-block-ts',
-    title: 'Code Block (TypeScript)',
-    description: 'Fuegt einen TypeScript-Codeblock (```ts) ein.',
-    keywords: ['codeblock', 'ts', 'typescript', 'fenced'],
-  },
-  {
-    id: 'code-block-js',
-    title: 'Code Block (JavaScript)',
-    description: 'Fuegt einen JavaScript-Codeblock (```js) ein.',
-    keywords: ['codeblock', 'js', 'javascript', 'fenced'],
-  },
-  {
     id: 'code-block-text',
-    title: 'Code Block (Plain Text)',
+    title: 'Code Block',
     description: 'Fuegt einen einfachen Codeblock ein.',
-    keywords: ['codeblock', 'plain', 'text', 'fenced'],
+    keywords: ['codeblock', 'plain', 'text', 'fenced', 'plaintext'],
+  },
+  {
+    id: 'table',
+    title: 'Table',
+    description: 'Fuegt eine Markdown-Tabelle ein.',
+    keywords: ['table', 'tabelle', 'grid', 'zeilen', 'spalten'],
   },
   {
     id: 'hyperlink',
@@ -186,6 +172,26 @@ function insertCodeFence(view: EditorView, language: string, context?: CommandRu
   insertText(view, range.from, range.to, insert, cursor, cursor)
 }
 
+export function buildMarkdownTable(rowCount: number, columnCount: number): string {
+  const rows = Math.max(1, Math.min(30, Math.round(rowCount)))
+  const columns = Math.max(1, Math.min(12, Math.round(columnCount)))
+  const headers = Array.from({ length: columns }, (_, index) => `Spalte ${index + 1}`)
+  const separator = Array.from({ length: columns }, () => '---')
+  const bodyRows = Array.from({ length: rows }, () => Array.from({ length: columns }, () => ''))
+  const renderRow = (cells: readonly string[]) => `| ${cells.join(' | ')} |`
+  return [renderRow(headers), renderRow(separator), ...bodyRows.map(renderRow)].join('\n')
+}
+
+function insertTable(view: EditorView, rows: number, columns: number, context?: CommandRuntimeContext): void {
+  const range = resolveRange(view, context)
+  const prefix = range.from > 0 && view.state.doc.sliceString(range.from - 1, range.from) !== '\n' ? '\n\n' : ''
+  const table = buildMarkdownTable(rows, columns)
+  const suffix = range.to < view.state.doc.length && view.state.doc.sliceString(range.to, range.to + 1) !== '\n' ? '\n\n' : '\n'
+  const insert = `${prefix}${table}${suffix}`
+  const cursor = range.from + insert.length
+  insertText(view, range.from, range.to, insert, cursor, cursor)
+}
+
 function insertLink(view: EditorView, context?: CommandRuntimeContext): void {
   const range = resolveRange(view, context)
   const selected = view.state.doc.sliceString(range.from, range.to)
@@ -225,17 +231,11 @@ export function runMarkdownCommand(view: EditorView, commandId: MarkdownCommandI
     case 'italic':
       wrapSelection(view, '*', '*', context)
       return true
-    case 'inline-code':
-      wrapSelection(view, '`', '`', context)
-      return true
-    case 'code-block-ts':
-      insertCodeFence(view, 'ts', context)
-      return true
-    case 'code-block-js':
-      insertCodeFence(view, 'js', context)
-      return true
     case 'code-block-text':
       insertCodeFence(view, '', context)
+      return true
+    case 'table':
+      insertTable(view, 3, 3, context)
       return true
     case 'hyperlink':
       insertLink(view, context)

@@ -297,6 +297,181 @@ type ParsedWikiLink = {
   to: number
 }
 
+type ParsedMarkdownTable = {
+  from: number
+  to: number
+  headers: string[]
+  rows: string[][]
+}
+
+function splitMarkdownTableRow(lineText: string): string[] {
+  let text = lineText.trim()
+  if (text.startsWith('|')) {
+    text = text.slice(1)
+  }
+  if (text.endsWith('|')) {
+    text = text.slice(0, -1)
+  }
+
+  const cells: string[] = []
+  let current = ''
+  let escaped = false
+  for (const char of text) {
+    if (escaped) {
+      current += char
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '|') {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  cells.push(current.trim())
+  return cells
+}
+
+function isMarkdownTableSeparator(lineText: string, expectedColumns: number): boolean {
+  const cells = splitMarkdownTableRow(lineText)
+  return (
+    cells.length === expectedColumns &&
+    cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')))
+  )
+}
+
+function isPotentialMarkdownTableRow(lineText: string): boolean {
+  return lineText.includes('|') && splitMarkdownTableRow(lineText).length >= 2
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim()
+}
+
+function normalizeMarkdownTableRows(headers: readonly string[], rows: readonly (readonly string[])[]): string[][] {
+  const columnCount = Math.max(1, headers.length)
+  return rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
+}
+
+function serializeMarkdownTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
+  const cleanHeaders = headers.map(escapeMarkdownTableCell)
+  const normalizedRows = normalizeMarkdownTableRows(cleanHeaders, rows)
+  const renderRow = (cells: readonly string[]) => `| ${cells.map(escapeMarkdownTableCell).join(' | ')} |`
+  return [
+    renderRow(cleanHeaders.map((header, index) => header || `Spalte ${index + 1}`)),
+    renderRow(cleanHeaders.map(() => '---')),
+    ...normalizedRows.map(renderRow),
+  ].join('\n')
+}
+
+class MarkdownTableWidget extends WidgetType {
+  readonly headers: string[]
+  readonly rows: string[][]
+  readonly from: number
+  readonly to: number
+
+  constructor(headers: string[], rows: string[][], from: number, to: number) {
+    super()
+    this.headers = headers
+    this.rows = rows
+    this.from = from
+    this.to = to
+  }
+
+  eq(other: MarkdownTableWidget): boolean {
+    return (
+      other.from === this.from &&
+      other.to === this.to &&
+      JSON.stringify(other.headers) === JSON.stringify(this.headers) &&
+      JSON.stringify(other.rows) === JSON.stringify(this.rows)
+    )
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'cm-md-table-widget'
+    wrapper.dataset.tableFrom = String(this.from)
+    wrapper.dataset.tableTo = String(this.to)
+
+    const table = document.createElement('table')
+    const thead = document.createElement('thead')
+    const headerRow = document.createElement('tr')
+    const columnCount = Math.max(1, this.headers.length)
+    const draftHeaders = Array.from({ length: columnCount }, (_, index) => this.headers[index] ?? '')
+    const draftRows = normalizeMarkdownTableRows(draftHeaders, this.rows)
+
+    const commit = () => {
+      const nextMarkdown = serializeMarkdownTable(draftHeaders, draftRows)
+      const currentMarkdown = view.state.doc.sliceString(this.from, this.to)
+      if (nextMarkdown === currentMarkdown) {
+        return
+      }
+      view.dispatch({
+        changes: { from: this.from, to: this.to, insert: nextMarkdown },
+        selection: { anchor: this.from + nextMarkdown.length },
+        scrollIntoView: false,
+        userEvent: 'input.type',
+      })
+    }
+
+    const commitOnEnter = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter') {
+        return
+      }
+      event.preventDefault()
+      const input = event.currentTarget as HTMLInputElement
+      input.blur()
+    }
+
+    draftHeaders.forEach((header, columnIndex) => {
+      const cell = document.createElement('th')
+      const input = document.createElement('input')
+      input.value = header
+      input.ariaLabel = `Tabellenkopf ${columnIndex + 1}`
+      input.addEventListener('input', () => {
+        draftHeaders[columnIndex] = input.value
+      })
+      input.addEventListener('keydown', commitOnEnter)
+      input.addEventListener('blur', commit)
+      cell.appendChild(input)
+      headerRow.appendChild(cell)
+    })
+    thead.appendChild(headerRow)
+    table.appendChild(thead)
+
+    const tbody = document.createElement('tbody')
+    draftRows.forEach((row, rowIndex) => {
+      const tr = document.createElement('tr')
+      row.forEach((value, columnIndex) => {
+        const cell = document.createElement('td')
+        const input = document.createElement('input')
+        input.value = value
+        input.ariaLabel = `Tabellenzelle ${rowIndex + 1}, ${columnIndex + 1}`
+        input.addEventListener('input', () => {
+          draftRows[rowIndex][columnIndex] = input.value
+        })
+        input.addEventListener('keydown', commitOnEnter)
+        input.addEventListener('blur', commit)
+        cell.appendChild(input)
+        tr.appendChild(cell)
+      })
+      tbody.appendChild(tr)
+    })
+    table.appendChild(tbody)
+    wrapper.appendChild(table)
+    return wrapper
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
 function parseInlineTagsInLine(lineText: string, lineFrom: number): ParsedInlineTag[] {
   const matches: ParsedInlineTag[] = []
   INLINE_TAG_PATTERN.lastIndex = 0
@@ -514,6 +689,10 @@ function intersectsSelection(from: number, to: number, selections: readonly Sele
   })
 }
 
+function isInsideRange(from: number, to: number, ranges: readonly SelectionRange[]): boolean {
+  return ranges.some((range) => from >= range.from && to <= range.to)
+}
+
 function intersectsMarkdownLink(from: number, to: number, selections: readonly SelectionRange[]): boolean {
   return selections.some((selection) => {
     if (selection.from === selection.to) {
@@ -571,7 +750,13 @@ function resolveLinkRanges(linkNode: { firstChild: SyntaxLikeNode | null }): {
   return { firstMark, secondMark, urlRange }
 }
 
-function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineClassSeen: Set<string>, selections: readonly SelectionRange[]): void {
+function decorateTaskLines(
+  entries: DecorationEntry[],
+  view: EditorView,
+  lineClassSeen: Set<string>,
+  selections: readonly SelectionRange[],
+  excludedRanges: readonly SelectionRange[]
+): void {
   const processed = new Set<number>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
@@ -580,6 +765,14 @@ function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineCla
 
     while (true) {
       if (!processed.has(line.number)) {
+        if (lineIsInsideRange(line.from, line.to, excludedRanges)) {
+          processed.add(line.number)
+          if (line.number >= endLine) {
+            break
+          }
+          line = view.state.doc.line(line.number + 1)
+          continue
+        }
         const match = line.text.match(/^(\s*[-+*]\s+)\[( |x|X)\](\s+|$)/)
         if (match) {
           const markerFrom = line.from + match[1].length
@@ -606,7 +799,13 @@ function decorateTaskLines(entries: DecorationEntry[], view: EditorView, lineCla
   }
 }
 
-function decorateInlineTags(entries: DecorationEntry[], view: EditorView, selections: readonly SelectionRange[], lookup: TagLookup): void {
+function decorateInlineTags(
+  entries: DecorationEntry[],
+  view: EditorView,
+  selections: readonly SelectionRange[],
+  lookup: TagLookup,
+  excludedRanges: readonly SelectionRange[]
+): void {
   const processedLines = new Set<number>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
@@ -615,6 +814,14 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
 
     while (true) {
       if (!processedLines.has(line.number)) {
+        if (lineIsInsideRange(line.from, line.to, excludedRanges)) {
+          processedLines.add(line.number)
+          if (line.number >= endLine) {
+            break
+          }
+          line = view.state.doc.line(line.number + 1)
+          continue
+        }
         const tags = parseInlineTagsInLine(line.text, line.from)
         for (const tag of tags) {
           const tagIsActive = intersectsSelection(Math.max(line.from, tag.from - 1), Math.min(line.to, tag.to + 1), selections)
@@ -647,11 +854,16 @@ function decorateInlineTags(entries: DecorationEntry[], view: EditorView, select
   }
 }
 
+function lineIsInsideRange(lineFrom: number, lineTo: number, ranges: readonly SelectionRange[]): boolean {
+  return ranges.some((range) => lineFrom >= range.from && lineTo <= range.to)
+}
+
 function decorateInlineImages(
   entries: DecorationEntry[],
   view: EditorView,
   selections: readonly SelectionRange[],
-  options: LivePreviewOptions
+  options: LivePreviewOptions,
+  excludedRanges: readonly SelectionRange[]
 ): void {
   const notePath = (options.notePath ?? '').trim()
   const backendUrl = (options.backendUrl ?? '').trim()
@@ -667,6 +879,14 @@ function decorateInlineImages(
 
     while (true) {
       if (!processedLines.has(line.number)) {
+        if (lineIsInsideRange(line.from, line.to, excludedRanges)) {
+          processedLines.add(line.number)
+          if (line.number >= endLine) {
+            break
+          }
+          line = view.state.doc.line(line.number + 1)
+          continue
+        }
         const images = parseInlineImagesInLine(line.text, line.from)
         for (const image of images) {
           if (/^(https?:\/\/|data:|file:\/\/|mailto:)/i.test(image.source)) {
@@ -706,7 +926,12 @@ function decorateInlineImages(
   }
 }
 
-function decorateMarkdownLinks(entries: DecorationEntry[], view: EditorView, selections: readonly SelectionRange[]): void {
+function decorateMarkdownLinks(
+  entries: DecorationEntry[],
+  view: EditorView,
+  selections: readonly SelectionRange[],
+  excludedRanges: readonly SelectionRange[]
+): void {
   const processedLines = new Set<number>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
@@ -715,6 +940,14 @@ function decorateMarkdownLinks(entries: DecorationEntry[], view: EditorView, sel
 
     while (true) {
       if (!processedLines.has(line.number)) {
+        if (lineIsInsideRange(line.from, line.to, excludedRanges)) {
+          processedLines.add(line.number)
+          if (line.number >= endLine) {
+            break
+          }
+          line = view.state.doc.line(line.number + 1)
+          continue
+        }
         const links = parseMarkdownLinksInLine(line.text, line.from)
         for (const link of links) {
           if (intersectsMarkdownLink(link.from, link.to, selections)) {
@@ -740,7 +973,7 @@ function decorateMarkdownLinks(entries: DecorationEntry[], view: EditorView, sel
   }
 }
 
-function decorateWikiLinks(entries: DecorationEntry[], view: EditorView): void {
+function decorateWikiLinks(entries: DecorationEntry[], view: EditorView, excludedRanges: readonly SelectionRange[]): void {
   const processedLines = new Set<number>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
@@ -749,6 +982,14 @@ function decorateWikiLinks(entries: DecorationEntry[], view: EditorView): void {
 
     while (true) {
       if (!processedLines.has(line.number)) {
+        if (lineIsInsideRange(line.from, line.to, excludedRanges)) {
+          processedLines.add(line.number)
+          if (line.number >= endLine) {
+            break
+          }
+          line = view.state.doc.line(line.number + 1)
+          continue
+        }
         const wikiLinks = parseWikiLinksInLine(line.text, line.from)
         for (const link of wikiLinks) {
           addRange(entries, link.from, link.to, wikiLinkDeco)
@@ -764,18 +1005,93 @@ function decorateWikiLinks(entries: DecorationEntry[], view: EditorView): void {
   }
 }
 
+function parseMarkdownTables(view: EditorView): ParsedMarkdownTable[] {
+  const tables: ParsedMarkdownTable[] = []
+  const processedLines = new Set<number>()
+
+  for (const range of view.visibleRanges) {
+    const end = Math.max(range.from, range.to - 1)
+    let line = view.state.doc.lineAt(range.from)
+    const endLine = view.state.doc.lineAt(end).number
+
+    while (true) {
+      if (!processedLines.has(line.number)) {
+        processedLines.add(line.number)
+        const nextLine = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null
+        if (nextLine && isPotentialMarkdownTableRow(line.text)) {
+          const headers = splitMarkdownTableRow(line.text)
+          if (headers.length >= 2 && isMarkdownTableSeparator(nextLine.text, headers.length)) {
+            const rows: string[][] = []
+            let lastLine = nextLine
+            let cursorLineNumber = nextLine.number + 1
+            while (cursorLineNumber <= view.state.doc.lines) {
+              const cursorLine = view.state.doc.line(cursorLineNumber)
+              if (!isPotentialMarkdownTableRow(cursorLine.text)) {
+                break
+              }
+              const row = splitMarkdownTableRow(cursorLine.text)
+              if (row.length !== headers.length) {
+                break
+              }
+              rows.push(row)
+              processedLines.add(cursorLine.number)
+              lastLine = cursorLine
+              cursorLineNumber += 1
+            }
+            tables.push({
+              from: line.from,
+              to: lastLine.to,
+              headers,
+              rows,
+            })
+          }
+        }
+      }
+
+      if (line.number >= endLine) {
+        break
+      }
+      line = view.state.doc.line(line.number + 1)
+    }
+  }
+
+  return tables
+}
+
+function decorateMarkdownTables(entries: DecorationEntry[], view: EditorView): ParsedMarkdownTable[] {
+  const tables = parseMarkdownTables(view)
+  for (const table of tables) {
+    addRange(
+      entries,
+      table.from,
+      table.to,
+      Decoration.replace({
+        widget: new MarkdownTableWidget(table.headers, table.rows, table.from, table.to),
+        block: true,
+      })
+    )
+  }
+  return tables
+}
+
 function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
   const entries: DecorationEntry[] = []
   const doc = view.state.doc
   const selections = view.state.selection.ranges.map((range) => ({ from: range.from, to: range.to }))
   const lineClassSeen = new Set<string>()
   const tagLookup = view.state.facet(markdownTagLookupFacet)
+  const tables = decorateMarkdownTables(entries, view)
+  const tableRanges = tables.map((table) => ({ from: table.from, to: table.to }))
 
   for (const range of view.visibleRanges) {
     syntaxTree(view.state).iterate({
       from: range.from,
       to: range.to,
       enter: (node) => {
+        if (isInsideRange(node.from, node.to, tableRanges)) {
+          return false
+        }
+
         if (/^ATXHeading[1-6]$/.test(node.name)) {
           const level = Number(node.name.slice(-1))
           const lineFrom = doc.lineAt(node.from).from
@@ -877,11 +1193,11 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
     })
   }
 
-  decorateTaskLines(entries, view, lineClassSeen, selections)
-  decorateInlineTags(entries, view, selections, tagLookup)
-  decorateInlineImages(entries, view, selections, options)
-  decorateMarkdownLinks(entries, view, selections)
-  decorateWikiLinks(entries, view)
+  decorateTaskLines(entries, view, lineClassSeen, selections, tableRanges)
+  decorateInlineTags(entries, view, selections, tagLookup, tableRanges)
+  decorateInlineImages(entries, view, selections, options, tableRanges)
+  decorateMarkdownLinks(entries, view, selections, tableRanges)
+  decorateWikiLinks(entries, view, tableRanges)
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
   return Decoration.set(ranges, true)

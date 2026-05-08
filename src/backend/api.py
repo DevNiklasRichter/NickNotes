@@ -27,6 +27,7 @@ from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
+from .nicknotes_backend.onenote_importer import OneNoteLocalImporter
 from .nicknotes_backend.parser import CaptureParser
 from .nicknotes_backend.vault import VaultManager
 
@@ -315,6 +316,15 @@ class UiSettingsUpdateRequest(BaseModel):
     explorer: dict[str, Any] | None = None
 
 
+class OneNoteImportPreviewRequest(BaseModel):
+    source_paths: list[str] = Field(default_factory=list, alias="sourcePaths")
+
+
+class OneNoteImportRequest(BaseModel):
+    source_paths: list[str] = Field(default_factory=list, alias="sourcePaths")
+    target_folder: str = Field(default="", alias="targetFolder")
+
+
 class TodoToggleRequest(BaseModel):
     checked: bool | None = None
 
@@ -495,6 +505,38 @@ def create_notebase(req: VaultCreateRequest) -> dict[str, Any]:
 @app.post("/notebase/reindex")
 def reindex_notebase() -> dict[str, Any]:
     return reindex_vault()
+
+
+@app.post("/imports/onenote/preview")
+def preview_onenote_import(req: OneNoteImportPreviewRequest) -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    try:
+        preview = OneNoteLocalImporter(vault).preview(req.source_paths)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return preview
+
+
+@app.post("/imports/onenote/start")
+def start_onenote_import(req: OneNoteImportRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    try:
+        result = OneNoteLocalImporter(vault).import_sources(req.source_paths, req.target_folder)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    indexed = indexer.reindex_vault(vault.vault_path)
+    try:
+        vault.rebuild_task_status_links(indexer)
+    except OSError:
+        pass
+    tag_groups = vault.sync_tag_groups_with_index(indexer)
+    return {
+        "import": result,
+        "indexed": indexed,
+        "counts": _counts(indexer),
+        "tagGroups": tag_groups,
+        "groups": vault.list_note_groups(),
+    }
 
 
 @app.post("/notebase/rename")

@@ -186,6 +186,7 @@ function App() {
   const [captureText, setCaptureText] = useState('')
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [selectedTagKeys, setSelectedTagKeys] = useState<string[]>([])
+  const [ignoredCaptureTagKeys, setIgnoredCaptureTagKeys] = useState<string[]>([])
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [todos, setTodos] = useState<TodoRow[]>([])
@@ -987,6 +988,7 @@ function App() {
     if (!normalizedCapture) {
       setSuggestions([])
       setSelectedTagKeys([])
+      setIgnoredCaptureTagKeys([])
       capturePreviewLastTextRef.current = ''
       capturePreviewRequestSeqRef.current += 1
       return
@@ -1932,18 +1934,10 @@ function App() {
       }
 
       capturePreviewLastTextRef.current = normalizedText
-      setSuggestions(response.suggestions)
-
-      setSelectedTagKeys((prev) => {
-        const previous = new Set(prev)
-        const next: string[] = []
-        for (const item of response.suggestions) {
-          if (previous.has(item.key) || item.autoApply || item.source === 'explicit') {
-            next.push(item.key)
-          }
-        }
-        return next
-      })
+      const ignoredKeys = new Set(ignoredCaptureTagKeys)
+      const visibleSuggestions = response.suggestions.filter((item) => !ignoredKeys.has(item.key))
+      setSuggestions(visibleSuggestions)
+      setSelectedTagKeys((prev) => prev.filter((key) => visibleSuggestions.some((item) => item.key === key)))
     } catch {
       if (requestSeq !== capturePreviewRequestSeqRef.current) {
         return
@@ -1952,7 +1946,14 @@ function App() {
   }
 
   const toggleCaptureTag = (tagKey: string) => {
-    setSelectedTagKeys((prev) => (prev.includes(tagKey) ? prev.filter((item) => item !== tagKey) : [...prev, tagKey]))
+    setSuggestions((prev) => prev.filter((item) => item.key !== tagKey))
+    setSelectedTagKeys((prev) => prev.filter((item) => item !== tagKey))
+  }
+
+  const rejectCaptureTag = (tagKey: string) => {
+    setIgnoredCaptureTagKeys((prev) => (prev.includes(tagKey) ? prev : [...prev, tagKey]))
+    setSuggestions((prev) => prev.filter((item) => item.key !== tagKey))
+    setSelectedTagKeys((prev) => prev.filter((item) => item !== tagKey))
   }
 
   const saveCapture = async (rawText?: string) => {
@@ -1978,6 +1979,7 @@ function App() {
       setCaptureText('')
       setSuggestions([])
       setSelectedTagKeys([])
+      setIgnoredCaptureTagKeys([])
       setMessage(`Quick Capture in Daily ${response.date} gespeichert.`)
       await Promise.all([refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups(), refreshExplorerSidebarData()])
     } catch (caught) {
@@ -3347,6 +3349,7 @@ function App() {
     initialValue?: string
     initialGroupValues?: TagGroupFormValues
     initialTagValues?: TagFormValues
+    tagGroupOptions?: Array<{ id: string; displayName: string }>
     actions: TagActionDialogAction[]
   }): Promise<TagActionDialogResult> =>
     new Promise((resolve) => {
@@ -3358,6 +3361,7 @@ function App() {
         value: config.initialValue ?? '',
         groupValues: config.initialGroupValues,
         tagValues: config.initialTagValues,
+        tagGroupOptions: config.tagGroupOptions,
         actions: config.actions,
         resolve,
       })
@@ -3473,12 +3477,14 @@ function App() {
     message?: string
     confirmLabel: string
     initialValues: TagFormValues
+    tagGroupOptions?: Array<{ id: string; displayName: string }>
   }): Promise<TagFormValues | null> => {
     const result = await openTagActionDialog({
       kind: 'tag-form',
       title: config.title,
       message: config.message,
       initialTagValues: config.initialValues,
+      tagGroupOptions: config.tagGroupOptions,
       actions: [
         { id: 'confirm', label: config.confirmLabel, tone: 'primary' },
         { id: 'cancel', label: 'Abbrechen' },
@@ -3488,6 +3494,9 @@ function App() {
       return null
     }
     return {
+      groupId: result.tagValues.groupId ? normalizeTagId(result.tagValues.groupId) : undefined,
+      newGroupId: result.tagValues.newGroupId ? normalizeTagId(result.tagValues.newGroupId) : undefined,
+      newGroupDisplayName: normalizeLabel(result.tagValues.newGroupDisplayName ?? ''),
       id: normalizeTagId(result.tagValues.id),
       displayName: normalizeLabel(result.tagValues.displayName),
     }
@@ -3594,6 +3603,106 @@ function App() {
       setCustomTagGroups(toStorageTagGroups(response.groups))
       setFolderOpen(`tag-group-${group.id}`)
       setMessage(`Tag hinzugefuegt: ${group.displayName} / ${form.displayName || tagId}`)
+    } catch (caught) {
+      setError(String(caught))
+    }
+  }
+
+  const createTagFromEditorSelection = async (
+    selectedText: string,
+    replaceSelection: (tagSyntax: string) => void
+  ): Promise<void> => {
+    const displayName = normalizeLabel(selectedText)
+    if (!displayName) {
+      return
+    }
+    if (mergedTagGroups.length === 0) {
+      setMessage('Lege zuerst eine Tag-Gruppe an.')
+      return
+    }
+
+    const firstGroup = mergedTagGroups[0]
+    const form = await openTagFormDialog({
+      title: 'Neuen Tag aus Auswahl erstellen',
+      message: 'Waehle die Tag-Gruppe und pruefe ID sowie Anzeigename.',
+      confirmLabel: 'Anlegen und einfuegen',
+      initialValues: {
+        groupId: firstGroup.id,
+        id: normalizeTagId(displayName),
+        displayName,
+      },
+      tagGroupOptions: mergedTagGroups.map((group) => ({ id: group.id, displayName: group.displayName })),
+    })
+    if (!form) {
+      return
+    }
+
+    const creatingNewGroup = form.groupId === 'create-new-tag-group'
+    const groupId = creatingNewGroup ? normalizeTagId(form.newGroupId || '') : normalizeTagId(form.groupId || firstGroup.id)
+
+    const tagId = normalizeTagId(form.id)
+    if (!tagId) {
+      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      return
+    }
+
+    const tagDisplayName = normalizeLabel(form.displayName) || displayName
+    if (!groupId) {
+      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      return
+    }
+
+    const existingGroup = resolveTagGroupById(groupId)
+    if (!creatingNewGroup && !existingGroup) {
+      setMessage(`Tag-Gruppe nicht gefunden: ${groupId}`)
+      return
+    }
+
+    if (creatingNewGroup && existingGroup) {
+      setMessage(`Die Tag-Gruppe "${existingGroup.displayName}" (${existingGroup.id}) existiert bereits.`)
+      return
+    }
+
+    const tagSyntax = `{tag:${groupId}/${tagId}}`
+    const duplicateTag = existingGroup?.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
+    if (duplicateTag && existingGroup) {
+      replaceSelection(tagSyntax)
+      setMessage(`Bestehenden Tag eingefuegt: ${existingGroup.displayName} / ${duplicateTag.displayName}`)
+      return
+    }
+
+    try {
+      setError('')
+      let latestGroups: unknown = null
+      let groupDisplayName = existingGroup?.displayName || normalizeLabel(form.newGroupDisplayName || '') || groupId
+      if (creatingNewGroup) {
+        const groupResponse = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-group', {
+          method: 'POST',
+          body: JSON.stringify({
+            groupId,
+            displayName: groupDisplayName,
+            color: TAG_COLOR_PRESETS[0],
+          }),
+        })
+        latestGroups = groupResponse.groups
+      }
+
+      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-tag', {
+        method: 'POST',
+        body: JSON.stringify({
+          groupId,
+          tagId,
+          displayName: tagDisplayName,
+        }),
+      })
+      latestGroups = response.groups ?? latestGroups
+      const normalizedGroups = toStorageTagGroups(latestGroups)
+      const createdGroup = normalizedGroups.find((group) => group.id.toLowerCase() === groupId.toLowerCase())
+      groupDisplayName = createdGroup?.displayName || groupDisplayName
+      setCustomTagGroups(normalizedGroups)
+      setFolderOpen(`tag-group-${groupId}`)
+      replaceSelection(tagSyntax)
+      setMessage(`Tag angelegt und eingefuegt: ${groupDisplayName} / ${tagDisplayName}`)
     } catch (caught) {
       setError(String(caught))
     }
@@ -4195,6 +4304,9 @@ function App() {
             onOpenTagReference={(groupId, tagId) => {
               void openTagOverviewByReference(`${groupId}:${tagId}`, { targetPane: paneId })
             }}
+            onCreateTagFromSelection={(selectedText, replaceSelection) => {
+              void createTagFromEditorSelection(selectedText, replaceSelection)
+            }}
             editorApiRef={paneId === 'left' ? leftEditorRef : rightEditorRef}
           />
         </div>
@@ -4608,6 +4720,7 @@ function App() {
                     selectedTagSuggestionKeys={selectedTagKeys}
                     onChange={setCaptureText}
                     onToggleTagSuggestion={toggleCaptureTag}
+                    onRejectTagSuggestion={rejectCaptureTag}
                     onSubmitShortcut={(markdown) => {
                       void saveCapture(markdown)
                     }}

@@ -16,6 +16,9 @@ export type TagGroupFormValues = {
 }
 
 export type TagFormValues = {
+  groupId?: string
+  newGroupId?: string
+  newGroupDisplayName?: string
   id: string
   displayName: string
 }
@@ -35,9 +38,12 @@ export type TagActionDialogState = {
   value: string
   groupValues?: TagGroupFormValues
   tagValues?: TagFormValues
+  tagGroupOptions?: Array<{ id: string; displayName: string }>
   actions: TagActionDialogAction[]
   resolve: (result: TagActionDialogResult) => void
 }
+
+const CREATE_NEW_TAG_GROUP_VALUE = '__create-new-tag-group__'
 
 type TagActionDialogModalProps = {
   dialog: TagActionDialogState | null
@@ -239,12 +245,106 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
 
         {dialog.kind === 'tag-form' ? (
           <div className="tag-form-grid">
+            {dialog.tagValues?.groupId !== undefined ? (
+              <>
+                <label className="tag-form-label" htmlFor="tag-group-select">
+                  Tag-Gruppe
+                </label>
+                <select
+                  id="tag-group-select"
+                  autoFocus
+                  value={dialog.tagValues.groupId}
+                  onChange={(event) => {
+                    const nextGroupId = event.target.value
+                    setDialog((current) =>
+                      current && current.kind === 'tag-form'
+                        ? {
+                            ...current,
+                            tagValues: {
+                              groupId: nextGroupId,
+                              newGroupId: current.tagValues?.newGroupId ?? '',
+                              newGroupDisplayName: current.tagValues?.newGroupDisplayName ?? '',
+                              id: current.tagValues?.id ?? '',
+                              displayName: current.tagValues?.displayName ?? '',
+                            },
+                          }
+                        : current
+                    )
+                  }}
+                >
+                  {(dialog.tagGroupOptions ?? []).map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.displayName} ({group.id})
+                    </option>
+                  ))}
+                  <option value={CREATE_NEW_TAG_GROUP_VALUE}>Neue Tag-Gruppe erstellen ...</option>
+                </select>
+                {dialog.tagValues.groupId === CREATE_NEW_TAG_GROUP_VALUE ? (
+                  <>
+                    <label className="tag-form-label" htmlFor="new-tag-group-id">
+                      Neue Gruppen-ID
+                    </label>
+                    <input
+                      id="new-tag-group-id"
+                      value={dialog.tagValues.newGroupId ?? ''}
+                      placeholder="z. B. person"
+                      onChange={(event) => {
+                        const { cleanValue, rejectedInvalidChar } = sanitizeTagIdInput(event.target.value)
+                        setGroupIdHintVisible(rejectedInvalidChar)
+                        setDialog((current) =>
+                          current && current.kind === 'tag-form'
+                            ? {
+                                ...current,
+                                tagValues: {
+                                  groupId: current.tagValues?.groupId,
+                                  newGroupId: cleanValue,
+                                  newGroupDisplayName: current.tagValues?.newGroupDisplayName ?? '',
+                                  id: current.tagValues?.id ?? '',
+                                  displayName: current.tagValues?.displayName ?? '',
+                                },
+                              }
+                            : current
+                        )
+                      }}
+                    />
+                    {groupIdHintVisible ? <p className="tag-form-hint">{TAG_ID_INPUT_HINT}</p> : null}
+
+                    <label className="tag-form-label" htmlFor="new-tag-group-display-name">
+                      Gruppen-Anzeigename
+                    </label>
+                    <input
+                      id="new-tag-group-display-name"
+                      value={dialog.tagValues.newGroupDisplayName ?? ''}
+                      placeholder="z. B. Personen"
+                      onChange={(event) => {
+                        const nextValue = event.target.value
+                        setDialog((current) =>
+                          current && current.kind === 'tag-form'
+                            ? {
+                                ...current,
+                                tagValues: {
+                                  groupId: current.tagValues?.groupId,
+                                  newGroupId: current.tagValues?.newGroupId ?? '',
+                                  newGroupDisplayName: nextValue,
+                                  id: current.tagValues?.id ?? '',
+                                  displayName: current.tagValues?.displayName ?? '',
+                                },
+                              }
+                            : current
+                        )
+                      }}
+                    />
+                  </>
+                ) : null}
+              </>
+            ) : null}
+
             <label className="tag-form-label" htmlFor="tag-id">
               Tag-ID
             </label>
             <input
               id="tag-id"
-              autoFocus
+              autoFocus={dialog.tagValues?.groupId === undefined}
               value={dialog.tagValues?.id ?? ''}
               placeholder="z. B. projekt-a"
               onChange={(event) => {
@@ -255,6 +355,9 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
                     ? {
                         ...current,
                         tagValues: {
+                          groupId: current.tagValues?.groupId,
+                          newGroupId: current.tagValues?.newGroupId,
+                          newGroupDisplayName: current.tagValues?.newGroupDisplayName,
                           id: cleanValue,
                           displayName: current.tagValues?.displayName ?? '',
                         },
@@ -279,6 +382,9 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
                     ? {
                         ...current,
                         tagValues: {
+                          groupId: current.tagValues?.groupId,
+                          newGroupId: current.tagValues?.newGroupId,
+                          newGroupDisplayName: current.tagValues?.newGroupDisplayName,
                           id: current.tagValues?.id ?? '',
                           displayName: nextValue,
                         },

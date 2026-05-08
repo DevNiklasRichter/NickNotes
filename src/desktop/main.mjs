@@ -195,6 +195,25 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
+  ipcMain.handle('dialog:selectImportSources', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      filters: [
+        {
+          name: 'OneNote- und Exportdateien',
+          extensions: ['one', 'onepkg', 'onetoc2', 'html', 'htm', 'mht', 'mhtml', 'md', 'markdown', 'txt'],
+        },
+        { name: 'Alle Dateien', extensions: ['*'] },
+      ],
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return []
+    }
+
+    return result.filePaths
+  })
+
   ipcMain.handle('backend:url', async () => {
     return `http://127.0.0.1:${BACKEND_PORT}`
   })

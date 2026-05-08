@@ -3002,6 +3002,50 @@
   padding: 0.05rem 0.7rem;
 }
 
+.code-editor-host .cm-md-table-widget {
+  max-width: min(1030px, calc(100% - 1.2rem));
+  margin: 0.58rem auto;
+  overflow-x: auto;
+}
+
+.code-editor-host .cm-md-table-widget table {
+  width: 100%;
+  min-width: 360px;
+  border-collapse: collapse;
+  background: color-mix(in srgb, var(--surface-contrast) 94%, transparent);
+}
+
+.code-editor-host .cm-md-table-widget th,
+.code-editor-host .cm-md-table-widget td {
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  padding: 0;
+  min-width: 96px;
+}
+
+.code-editor-host .cm-md-table-widget th {
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+}
+
+.code-editor-host .cm-md-table-widget input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0.42rem 0.5rem;
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.code-editor-host .cm-md-table-widget th input {
+  font-weight: 680;
+}
+
+.code-editor-host .cm-md-table-widget input:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 52%, transparent);
+}
+
 .code-editor-host .cm-line.cm-md-quote-line {
   border-left: 3px solid color-mix(in srgb, var(--accent) 58%, transparent);
   border-radius: 8px;
@@ -3260,11 +3304,49 @@
 }
 
 .editor-command-list {
-  max-height: min(320px, 44vh);
+  max-height: min(260px, 38vh);
   overflow: auto;
   padding: 0.28rem;
   display: grid;
   gap: 0.2rem;
+}
+
+.editor-table-size-panel {
+  display: grid;
+}
+
+.editor-table-size-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
+  padding: 0.56rem;
+}
+
+.editor-table-size-fields label {
+  display: grid;
+  gap: 0.22rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.editor-table-size-fields input {
+  width: 100%;
+  border-radius: 8px;
+  padding: 0.36rem 0.46rem;
+}
+
+.editor-table-size-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.38rem;
+  padding: 0.48rem 0.56rem;
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+
+.editor-table-size-actions button {
+  border-radius: 7px;
+  padding: 0.32rem 0.54rem;
+  font-size: 0.76rem;
 }
 
 .editor-command-item {
@@ -3560,10 +3642,12 @@
 
 .capture-markdown-editor .cm-content {
   min-height: 100%;
-  padding: 0.3rem 0.04rem;
+  padding: 0.3rem min(10%, 8rem) 0.3rem min(5%, 4rem);
 }
 
 .capture-markdown-editor .cm-line {
+  max-width: 100%;
+  margin: 0;
   padding: 0 0.06rem;
 }
 
@@ -3609,6 +3693,26 @@
   padding: 0.16rem 0.44rem;
   border-radius: 6px;
   font-size: 0.72rem;
+}
+
+.editor-selection-context-menu {
+  position: absolute;
+  z-index: 26;
+  min-width: 172px;
+  padding: 0.24rem;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-contrast) 97%, transparent);
+  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
+}
+
+.editor-selection-context-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  border-radius: 6px;
+  padding: 0.34rem 0.46rem;
+  font-size: 0.76rem;
+  text-align: left;
 }
 
 .capture-input-wrap button {
