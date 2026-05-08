@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent } from 'react'
+import type { CSSProperties } from 'react'
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor'
 import type { MarkdownEditorApi, MarkdownLinkTarget } from './editor/CodeMirrorMarkdownEditor'
 import { NotePropertiesPanel } from './editor/NotePropertiesPanel'
@@ -186,8 +186,6 @@ function App() {
   const [captureText, setCaptureText] = useState('')
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [selectedTagKeys, setSelectedTagKeys] = useState<string[]>([])
-  const [todoCandidates, setTodoCandidates] = useState<string[]>([])
-  const [selectedTodoTexts, setSelectedTodoTexts] = useState<string[]>([])
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [todos, setTodos] = useState<TodoRow[]>([])
@@ -260,6 +258,7 @@ function App() {
   >({})
   const leftEditorRef = useRef<MarkdownEditorApi | null>(null)
   const rightEditorRef = useRef<MarkdownEditorApi | null>(null)
+  const captureEditorRef = useRef<MarkdownEditorApi | null>(null)
 
   const [message, setMessage] = useState('Backend wird vorbereitet ...')
   const [error, setError] = useState('')
@@ -988,8 +987,6 @@ function App() {
     if (!normalizedCapture) {
       setSuggestions([])
       setSelectedTagKeys([])
-      setTodoCandidates([])
-      setSelectedTodoTexts([])
       capturePreviewLastTextRef.current = ''
       capturePreviewRequestSeqRef.current += 1
       return
@@ -998,8 +995,6 @@ function App() {
     if (normalizedCapture.length < CAPTURE_PREVIEW_MIN_CHARS) {
       setSuggestions([])
       setSelectedTagKeys([])
-      setTodoCandidates([])
-      setSelectedTodoTexts([])
       capturePreviewLastTextRef.current = ''
       capturePreviewRequestSeqRef.current += 1
       return
@@ -1025,9 +1020,6 @@ function App() {
       })
     )
   }, [settingsDirty])
-
-  const chosenTags = useMemo(() => new Set(selectedTagKeys), [selectedTagKeys])
-  const chosenTodos = useMemo(() => new Set(selectedTodoTexts), [selectedTodoTexts])
 
   const sortedNotes = useMemo(() => {
     return [...searchResults].sort((left, right) => {
@@ -1897,8 +1889,6 @@ function App() {
       setSearchResults([])
       setSuggestions([])
       setSelectedTagKeys([])
-      setTodoCandidates([])
-      setSelectedTodoTexts([])
       setOpenTabs([])
       dispatchWorkspace({ type: 'RESET' })
       setCustomTagGroups([])
@@ -1932,7 +1922,6 @@ function App() {
     try {
       const response = await apiRequest<{
         suggestions: Suggestion[]
-        todos: string[]
       }>(backendUrl, '/capture/preview', {
         method: 'POST',
         body: JSON.stringify({ text: normalizedText }),
@@ -1944,7 +1933,6 @@ function App() {
 
       capturePreviewLastTextRef.current = normalizedText
       setSuggestions(response.suggestions)
-      setTodoCandidates(response.todos)
 
       setSelectedTagKeys((prev) => {
         const previous = new Set(prev)
@@ -1955,17 +1943,6 @@ function App() {
           }
         }
         return next
-      })
-      setSelectedTodoTexts((prev) => {
-        if (response.todos.length === 0) {
-          return []
-        }
-        if (prev.length === 0) {
-          return [...response.todos]
-        }
-        const previous = new Set(prev)
-        const next = response.todos.filter((item) => previous.has(item))
-        return next.length > 0 ? next : [...response.todos]
       })
     } catch {
       if (requestSeq !== capturePreviewRequestSeqRef.current) {
@@ -1978,18 +1955,14 @@ function App() {
     setSelectedTagKeys((prev) => (prev.includes(tagKey) ? prev.filter((item) => item !== tagKey) : [...prev, tagKey]))
   }
 
-  const toggleCaptureTodo = (todoText: string) => {
-    setSelectedTodoTexts((prev) => (prev.includes(todoText) ? prev.filter((item) => item !== todoText) : [...prev, todoText]))
-  }
-
-  const saveCapture = async () => {
+  const saveCapture = async (rawText?: string) => {
     try {
-      const text = captureText.trim()
+      const text = (rawText ?? captureEditorRef.current?.getMarkdown() ?? captureText).trim()
       if (!text) {
         return
       }
 
-      const response = await apiRequest<{ counts: VaultCounts; date: string; notePath: string; todoCount: number }>(
+      const response = await apiRequest<{ counts: VaultCounts; date: string; notePath: string }>(
         backendUrl,
         '/capture/save',
         {
@@ -1997,7 +1970,6 @@ function App() {
           body: JSON.stringify({
             text,
             selectedTagKeys,
-            selectedTodoTexts,
           }),
         }
       )
@@ -2006,9 +1978,7 @@ function App() {
       setCaptureText('')
       setSuggestions([])
       setSelectedTagKeys([])
-      setTodoCandidates([])
-      setSelectedTodoTexts([])
-      setMessage(`Quick Capture in Daily ${response.date} gespeichert (${response.todoCount} To-dos).`)
+      setMessage(`Quick Capture in Daily ${response.date} gespeichert.`)
       await Promise.all([refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups(), refreshExplorerSidebarData()])
     } catch (caught) {
       setError(String(caught))
@@ -4019,13 +3989,6 @@ function App() {
     setSidebarOpen(true)
   }
 
-  const onQuickCaptureKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      void saveCapture()
-    }
-  }
-
   useEffect(() => {
     const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
@@ -4630,63 +4593,31 @@ function App() {
                 </div>
               </div>
               <div className="capture-panel-body">
-                <p className="capture-meta">Vorschlaege {suggestions.length} | Tags {chosenTags.size} | To-dos erkannt {todoCandidates.length}</p>
-                {suggestions.length > 0 ? (
-                  <div className="capture-suggestion-section">
-                    <span className="capture-suggestion-label">Tag-Vorschlaege</span>
-                    <div className="capture-chip-list">
-                      {suggestions.map((item) => {
-                        const selected = chosenTags.has(item.key)
-                        return (
-                          <button
-                            key={item.key}
-                            type="button"
-                            className={`capture-chip ${selected ? 'selected' : ''}`}
-                            onClick={() => {
-                              toggleCaptureTag(item.key)
-                            }}
-                            title={`${item.category}:${item.slug}`}
-                          >
-                            {selected ? '[x] ' : '[ ] '}
-                            {item.displayName} ({item.category})
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-                {todoCandidates.length > 0 ? (
-                  <div className="capture-suggestion-section">
-                    <span className="capture-suggestion-label">To-do-Vorschlaege</span>
-                    <div className="capture-chip-list">
-                      {todoCandidates.map((todoText) => {
-                        const selected = chosenTodos.has(todoText)
-                        return (
-                          <button
-                            key={todoText}
-                            type="button"
-                            className={`capture-chip todo ${selected ? 'selected' : ''}`}
-                            onClick={() => {
-                              toggleCaptureTodo(todoText)
-                            }}
-                            title={todoText}
-                          >
-                            {selected ? '[x] ' : '[ ] '}
-                            {todoText}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <textarea
+                  <CodeMirrorMarkdownEditor
+                    className="capture-markdown-editor"
                     value={captureText}
-                    onChange={(event) => setCaptureText(event.target.value)}
-                    onKeyDown={onQuickCaptureKeyDown}
-                    placeholder="Notiz erfassen und optional To-do nennen (Enter speichert, Shift+Enter fuer Zeilenumbruch)"
-                    rows={4}
+                    theme={theme}
+                    notePath=""
+                    backendUrl={backendUrl}
+                    tagGroups={mergedTagGroups}
+                    linkTargets={markdownLinkTargets}
+                    placeholderText="Notiz erfassen und optional To-do nennen"
+                    tagSuggestions={suggestions}
+                    selectedTagSuggestionKeys={selectedTagKeys}
+                    onChange={setCaptureText}
+                    onToggleTagSuggestion={toggleCaptureTag}
+                    onSubmitShortcut={(markdown) => {
+                      void saveCapture(markdown)
+                    }}
+                    onOpenWikiLink={(target) => {
+                      openWikiLinkInEditor(target, activePaneId)
+                    }}
+                    onOpenTagReference={(groupId, tagId) => {
+                      void openTagOverviewByReference(`${groupId}:${tagId}`, { targetPane: activePaneId })
+                    }}
+                    editorApiRef={captureEditorRef}
                   />
                   <button onClick={() => void saveCapture()} disabled={!captureText.trim()}>
                     Senden

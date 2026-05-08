@@ -9,7 +9,6 @@ from pathlib import Path
 from src.backend.nicknotes_backend.indexer import VaultIndexer
 from src.backend.nicknotes_backend.markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
-from src.backend.nicknotes_backend.parser import CaptureParser
 from src.backend.nicknotes_backend.vault import VaultManager
 
 try:
@@ -111,13 +110,6 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIsNone(unchecked_todo.get("completed_at"))
         self.assertEqual(str(unchecked_todo.get("created_at", "")).strip(), created_at)
 
-    def test_capture_parser_extracts_todos_from_checkbox_and_inline_text(self) -> None:
-        parser = CaptureParser()
-        text = "Bananen sind ungesund. Als To-do dann keine Bananen mehr kaufen.\n- [ ] Milch kaufen"
-        todos = parser.parse_todos(text)
-        self.assertIn("keine Bananen mehr kaufen", todos)
-        self.assertIn("Milch kaufen", todos)
-
     def test_save_capture_appends_quick_capture_block_to_daily(self) -> None:
         selected_tags = [
             TagSuggestion(
@@ -132,24 +124,21 @@ class PhaseEBackendTests(unittest.TestCase):
         result = self.vault.save_capture(
             text="Max sagt: Bananen sind ungesund und als To-do keine Bananen mehr kaufen.",
             selected_tags=selected_tags,
-            todos=["keine Bananen mehr kaufen"],
             indexer=self.indexer,
         )
 
         note_path = Path(result["note_path"])
         self.assertTrue(note_path.exists())
-        self.assertEqual(note_path.parent, self.vault.daily_root_path)
-        self.assertEqual(result["todo_texts"], ["keine Bananen mehr kaufen"])
+        self.assertEqual(note_path.parent.name, datetime.now().strftime("%Y.%m"))
+        self.assertEqual(note_path.parent.parent, self.vault.daily_root_path)
 
         _meta, body = parse_markdown(note_path)
         self.assertIn("**Quick Capture** ", body)
         self.assertIn("Bananen sind ungesund", body)
-        self.assertIn("- [ ] keine Bananen mehr kaufen", body)
         self.assertIn("{tag:person/max-muster}", body)
 
         self.assertEqual(len(self.indexer.list_tasks()), 0)
-        todos = self.indexer.list_todos()
-        self.assertTrue(any(str(item.get("raw_text", "")).strip() == "keine Bananen mehr kaufen" for item in todos))
+        self.assertEqual(len(self.indexer.list_todos()), 0)
 
     @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
     def test_compute_done_today_counts_uses_completed_at_and_fallback(self) -> None:
@@ -290,7 +279,7 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(str(first_payload.get("date", "")), "2026-04-20")
         self.assertEqual(str(first_payload.get("title", "")), "2026-04-20")
         first_path = str(first_payload.get("notePath", "")).strip()
-        self.assertTrue(first_path.endswith("2026-04-20.md"))
+        self.assertTrue(first_path.endswith("2026.04\\2026-04-20.md") or first_path.endswith("2026.04/2026-04-20.md"))
         meta, body = parse_markdown(Path(first_path))
         self.assertEqual(str(meta.get("title", "")), "2026-04-20")
         self.assertTrue(body.startswith("# 2026-04-20"))
@@ -346,12 +335,6 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIn(str(risk.get("level", "")), {"low", "medium", "high"})
 
     def test_daily_note_creation_and_legacy_notes_folder_migration(self) -> None:
-        created = self.vault.create_note_in_group(group_key=self.vault.daily_root_name, title="New Note", indexer=self.indexer)
-        created_path = Path(created["note_path"])
-        created_relative = created_path.relative_to(self.vault.vault_path)
-        self.assertEqual(created_relative.parts[0], self.vault.daily_root_name)
-        self.assertEqual(len(created_relative.parts), 2)
-
         legacy_notes_dir = self.vault.daily_root_path / "notes"
         legacy_notes_dir.mkdir(parents=True, exist_ok=True)
         legacy_note_path = legacy_notes_dir / "2026-04-21.md"
@@ -382,7 +365,39 @@ class PhaseEBackendTests(unittest.TestCase):
         self.indexer = VaultIndexer(self.vault.db_path)
         self.indexer.reindex_vault(self.vault.vault_path)
 
-        self.assertTrue((self.vault.daily_root_path / "2026-04-21.md").exists())
+        self.assertTrue((self.vault.daily_root_path / "2026.04" / "2026-04-21.md").exists())
+
+    def test_daily_note_helpers_use_month_folders(self) -> None:
+        result = self.vault.add_quick_todo_to_daily(text="Monatsordner Todo", indexer=self.indexer, day_iso="2026-12-05")
+        note_path = Path(result["note_path"])
+        self.assertEqual(note_path, self.vault.daily_root_path / "2026.12" / "2026-12-05.md")
+        self.assertTrue(note_path.exists())
+
+        mit_state = self.vault.set_daily_mit(day_iso="2027-01-02", mit_ids=["tk_a"], indexer=self.indexer)
+        mit_path = Path(mit_state["note_path"])
+        self.assertEqual(mit_path, self.vault.daily_root_path / "2027.01" / "2027-01-02.md")
+        self.assertEqual(self.vault.get_daily_mit("2027-01-02")["mit_ids"], ["tk_a"])
+
+    def test_flat_daily_notes_are_migrated_to_month_folders(self) -> None:
+        flat_path = self.vault.daily_root_path / "2026-11-03.md"
+        flat_path.write_text(
+            dump_markdown(
+                {
+                    "id": "daily_2026-11-03",
+                    "title": "2026-11-03",
+                    "type": "daily",
+                    "created_at": "2026-11-03T00:00:00",
+                    "updated_at": "2026-11-03T00:00:00",
+                    "tags": [],
+                },
+                "# 2026-11-03",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.ensure_structure()
+
+        self.assertTrue((self.vault.daily_root_path / "2026.11" / "2026-11-03.md").exists())
 
 
 if __name__ == "__main__":

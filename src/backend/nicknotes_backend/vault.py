@@ -394,6 +394,10 @@ def _normalize_daily_day(raw_day: str | None) -> str:
     return datetime.now().date().isoformat()
 
 
+def _daily_month_folder(day_iso: str) -> str:
+    return day_iso[:7].replace("-", ".")
+
+
 def _normalize_mit_ids(raw_value: Any, limit: int = MAX_DAILY_MIT_ITEMS) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -466,6 +470,7 @@ class VaultManager:
             )
 
         self._migrate_legacy_daily_notes_folder()
+        self._migrate_flat_daily_notes_to_months()
         self._migrate_legacy_inbox()
 
     def _configure_root_paths(self) -> None:
@@ -2111,13 +2116,11 @@ class VaultManager:
         self,
         text: str,
         selected_tags: list[TagSuggestion],
-        todos: list[str],
         indexer: VaultIndexer,
     ) -> dict[str, Any]:
         now = datetime.now()
         created_at = now.isoformat(timespec="seconds")
         day = f"{now:%Y-%m-%d}"
-        todo_lines = [value for value in (" ".join(raw.strip().split()) for raw in todos) if value]
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("Capture text is empty")
@@ -2135,9 +2138,6 @@ class VaultManager:
         meta["updated_at"] = created_at
 
         block_lines = [f"**Quick Capture** {now:%H:%M}", "", capture_text]
-        if todo_lines:
-            block_lines.append("")
-            block_lines.extend(f"- [ ] {todo}" for todo in todo_lines)
         block = "\n".join(block_lines).strip()
 
         next_body = body.rstrip()
@@ -2155,12 +2155,11 @@ class VaultManager:
             "note_id": str(meta.get("id", f"daily_{day}")),
             "date": day,
             "note_path": note_path,
-            "todo_texts": todo_lines,
         }
 
     def get_daily_mit(self, day_iso: str | None = None) -> dict[str, Any]:
         day = _normalize_daily_day(day_iso)
-        daily_path = self.daily_root_path / f"{day}.md"
+        daily_path = self._daily_note_path(day)
         if not daily_path.exists():
             return {
                 "date": day,
@@ -2178,7 +2177,7 @@ class VaultManager:
     def ensure_daily_note(self, day_iso: str | None, indexer: VaultIndexer) -> dict[str, Any]:
         day = _normalize_daily_day(day_iso)
         now_iso = datetime.now().isoformat(timespec="seconds")
-        daily_path = self.daily_root_path / f"{day}.md"
+        daily_path = self._daily_note_path(day)
         existed = daily_path.exists()
         daily_path = self._ensure_daily_note(day, now_iso)
         if not existed:
@@ -2377,10 +2376,11 @@ class VaultManager:
             daily_path.write_text(updated, encoding="utf-8")
 
     def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
-        daily_path = self.daily_root_path / f"{day_iso}.md"
+        daily_path = self._daily_note_path(day_iso)
         if daily_path.exists():
             return daily_path
 
+        daily_path.parent.mkdir(parents=True, exist_ok=True)
         fm = {
             "id": f"daily_{day_iso}",
             "type": "daily",
@@ -2392,6 +2392,9 @@ class VaultManager:
         body = f"# {day_iso}\n"
         daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
         return daily_path
+
+    def _daily_note_path(self, day_iso: str) -> Path:
+        return self.daily_root_path / _daily_month_folder(day_iso) / f"{day_iso}.md"
 
     def rebuild_all_tag_pages(self, groups: list[dict[str, Any]], indexer: VaultIndexer) -> None:
         self.tag_root_path.mkdir(parents=True, exist_ok=True)
@@ -2648,7 +2651,7 @@ class VaultManager:
 
         daily_root = self.daily_root_path
         if moved_paths and daily_root.exists():
-            for daily_file in daily_root.glob("*.md"):
+            for daily_file in daily_root.rglob("*.md"):
                 content = daily_file.read_text(encoding="utf-8")
                 updated = content
                 for old_path, new_path in moved_paths:
@@ -2671,11 +2674,12 @@ class VaultManager:
             if not source_path.is_file():
                 continue
 
-            target_path = self.daily_root_path / source_path.name
+            target_path = self._legacy_daily_target_path(source_path)
             suffix = 2
             while target_path.exists():
-                target_path = self.daily_root_path / f"{source_path.stem}_{suffix}{source_path.suffix}"
+                target_path = target_path.parent / f"{source_path.stem}_{suffix}{source_path.suffix}"
                 suffix += 1
+            target_path.parent.mkdir(parents=True, exist_ok=True)
 
             moved = False
             try:
@@ -2736,6 +2740,57 @@ class VaultManager:
                 legacy_notes_path.rmdir()
         except OSError:
             pass
+
+    def _migrate_flat_daily_notes_to_months(self) -> None:
+        if not self.daily_root_path.exists() or not self.daily_root_path.is_dir():
+            return
+
+        for source_path in sorted(self.daily_root_path.glob("*.md")):
+            if not source_path.is_file() or not ISO_DAY_PATTERN.fullmatch(source_path.stem):
+                continue
+
+            target_path = self._daily_note_path(source_path.stem)
+            if source_path.resolve() == target_path.resolve():
+                continue
+
+            suffix = 2
+            while target_path.exists():
+                target_path = target_path.parent / f"{source_path.stem}_{suffix}{source_path.suffix}"
+                suffix += 1
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                source_path.rename(target_path)
+            except OSError:
+                try:
+                    shutil.move(str(source_path), str(target_path))
+                except OSError:
+                    continue
+            if target_path.exists() and source_path.exists():
+                try:
+                    source_path.chmod(0o666)
+                except OSError:
+                    pass
+                try:
+                    source_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _legacy_daily_target_path(self, source_path: Path) -> Path:
+        if ISO_DAY_PATTERN.fullmatch(source_path.stem):
+            return self._daily_note_path(source_path.stem)
+
+        try:
+            meta, _body = parse_markdown(source_path)
+        except OSError:
+            meta = {}
+
+        for raw_value in (meta.get("title"), meta.get("created_at"), meta.get("id")):
+            value = str(raw_value or "").strip()
+            if len(value) >= 10 and ISO_DAY_PATTERN.fullmatch(value[:10]):
+                return self._daily_note_path(value[:10])
+
+        return self.daily_root_path / source_path.name
 
     def _collect_custom_group_payloads(
         self, root: Path, favorites: set[str], seen: set[Path] | None = None

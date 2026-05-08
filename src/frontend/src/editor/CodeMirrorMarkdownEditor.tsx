@@ -113,17 +113,36 @@ type CodeMirrorMarkdownEditorProps = {
   searchHighlightQuery?: string
   className?: string
   embeddedInScroll?: boolean
+  placeholderText?: string
+  tagSuggestions?: MarkdownEditorTagSuggestion[]
+  selectedTagSuggestionKeys?: string[]
   onChange: (nextValue: string) => void
+  onSubmitShortcut?: (markdown: string) => void
+  onToggleTagSuggestion?: (tagKey: string) => void
   onInsertImageAsset?: (file: File) => Promise<string | null>
   onOpenWikiLink?: (target: string) => void
   onOpenTagReference?: (groupId: string, tagId: string) => void
   editorApiRef: MutableRefObject<MarkdownEditorApi | null>
 }
 
+export type MarkdownEditorTagSuggestion = {
+  key: string
+  category: string
+  slug: string
+  displayName: string
+  source: string
+}
+
 type SlashMatch = {
   from: number
   to: number
   query: string
+}
+
+type HoveredTagSuggestion = {
+  key: string
+  left: number
+  top: number
 }
 
 const LOCAL_ECHO_TTL_MS = 2000
@@ -157,6 +176,10 @@ const explorerSearchHitDeco = Decoration.mark({ class: 'cm-explorer-search-hit' 
 
 function normalizeSearchTerm(value: string): string {
   return value.trim().toLowerCase()
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function buildSearchTermDecorations(view: EditorView, query: string): DecorationSet {
@@ -221,6 +244,124 @@ function buildExplorerSearchHighlightExtension(query: string): Extension {
       decorations: (instance) => instance.decorations,
     }
   )
+}
+
+const captureTagSuggestionDeco = Decoration.mark({
+  class: 'cm-capture-tag-suggestion',
+})
+
+const captureTagSuggestionSelectedDeco = Decoration.mark({
+  class: 'cm-capture-tag-suggestion selected',
+})
+
+function buildTagSuggestionTerms(suggestion: MarkdownEditorTagSuggestion): string[] {
+  const terms = new Set<string>()
+  const addTerm = (value: string) => {
+    const clean = value.trim()
+    if (clean.length >= 3) {
+      terms.add(clean)
+    }
+  }
+  addTerm(suggestion.slug.replace(/[_-]+/g, ' '))
+  addTerm(suggestion.slug)
+  addTerm(suggestion.displayName)
+  if (suggestion.source === 'explicit') {
+    addTerm(`${suggestion.category}:${suggestion.slug}`)
+  }
+  return Array.from(terms).sort((left, right) => right.length - left.length)
+}
+
+function buildTagSuggestionHighlightExtension(
+  suggestions: readonly MarkdownEditorTagSuggestion[],
+  selectedKeys: readonly string[]
+): Extension {
+  const usableSuggestions = suggestions.filter((item) => item.source !== 'explicit')
+  if (usableSuggestions.length === 0) {
+    return []
+  }
+
+  const selected = new Set(selectedKeys)
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(view: EditorView) {
+        this.decorations = this.build(view)
+      }
+
+      update(update: ViewUpdate): void {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = this.build(update.view)
+        }
+      }
+
+      build(view: EditorView): DecorationSet {
+        const ranges: ReturnType<typeof captureTagSuggestionDeco.range>[] = []
+        const occupied = new Set<string>()
+        for (const visibleRange of view.visibleRanges) {
+          const end = Math.max(visibleRange.from, visibleRange.to - 1)
+          let line = view.state.doc.lineAt(visibleRange.from)
+          const endLine = view.state.doc.lineAt(end).number
+          while (true) {
+            for (const suggestion of usableSuggestions) {
+              const decoration = selected.has(suggestion.key) ? captureTagSuggestionSelectedDeco : captureTagSuggestionDeco
+              for (const term of buildTagSuggestionTerms(suggestion)) {
+                const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, 'gi')
+                for (const match of line.text.matchAll(pattern)) {
+                  if (typeof match.index !== 'number') {
+                    continue
+                  }
+                  const from = line.from + match.index
+                  const to = from + match[0].length
+                  const key = `${from}:${to}`
+                  if (occupied.has(key)) {
+                    continue
+                  }
+                  occupied.add(key)
+                  ranges.push(decoration.range(from, to))
+                }
+              }
+            }
+            if (line.number >= endLine) {
+              break
+            }
+            line = view.state.doc.line(line.number + 1)
+          }
+        }
+        ranges.sort((left, right) => left.from - right.from || left.to - right.to)
+        return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none
+      }
+    },
+    {
+      decorations: (instance) => instance.decorations,
+    }
+  )
+}
+
+function findTagSuggestionAtPosition(
+  view: EditorView,
+  position: number,
+  suggestions: readonly MarkdownEditorTagSuggestion[]
+): MarkdownEditorTagSuggestion | null {
+  const line = view.state.doc.lineAt(position)
+  const offset = position - line.from
+  for (const suggestion of suggestions) {
+    if (suggestion.source === 'explicit') {
+      continue
+    }
+    for (const term of buildTagSuggestionTerms(suggestion)) {
+      const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, 'gi')
+      for (const match of line.text.matchAll(pattern)) {
+        if (typeof match.index !== 'number') {
+          continue
+        }
+        if (offset >= match.index && offset <= match.index + match[0].length) {
+          return suggestion
+        }
+      }
+    }
+  }
+  return null
 }
 
 function detectSlashMatch(view: EditorView): SlashMatch | null {
@@ -453,7 +594,12 @@ export function CodeMirrorMarkdownEditor({
   searchHighlightQuery = '',
   className = '',
   embeddedInScroll = false,
+  placeholderText = 'Starte mit einer Notiz ...',
+  tagSuggestions = [],
+  selectedTagSuggestionKeys = [],
   onChange,
+  onSubmitShortcut,
+  onToggleTagSuggestion,
   onInsertImageAsset,
   onOpenWikiLink,
   onOpenTagReference,
@@ -464,8 +610,12 @@ export function CodeMirrorMarkdownEditor({
   const paletteInputRef = useRef<HTMLInputElement | null>(null)
   const editorRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
+  const onSubmitShortcutRef = useRef(onSubmitShortcut)
+  const onToggleTagSuggestionRef = useRef(onToggleTagSuggestion)
   const onInsertImageAssetRef = useRef(onInsertImageAsset)
   const linkTargetsRef = useRef(linkTargets)
+  const tagSuggestionsRef = useRef(tagSuggestions)
+  const selectedTagSuggestionKeysRef = useRef(selectedTagSuggestionKeys)
   const syncingRef = useRef(false)
   const pendingDocRef = useRef<string | null>(null)
   const onChangeFrameRef = useRef<number | null>(null)
@@ -474,6 +624,7 @@ export function CodeMirrorMarkdownEditor({
   const readOnlyCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
   const searchHighlightCompartmentRef = useRef(new Compartment())
+  const tagSuggestionHighlightCompartmentRef = useRef(new Compartment())
   const previewCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialThemeRef = useRef(theme)
@@ -482,7 +633,11 @@ export function CodeMirrorMarkdownEditor({
   const initialBackendUrlRef = useRef(backendUrl)
   const initialTagGroupsRef = useRef(tagGroups)
   const initialSearchHighlightQueryRef = useRef(searchHighlightQuery)
+  const initialPlaceholderTextRef = useRef(placeholderText)
+  const initialTagSuggestionsRef = useRef(tagSuggestions)
+  const initialSelectedTagSuggestionKeysRef = useRef(selectedTagSuggestionKeys)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
+  const [hoveredTagSuggestion, setHoveredTagSuggestion] = useState<HoveredTagSuggestion | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
@@ -582,6 +737,22 @@ export function CodeMirrorMarkdownEditor({
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  useEffect(() => {
+    onSubmitShortcutRef.current = onSubmitShortcut
+  }, [onSubmitShortcut])
+
+  useEffect(() => {
+    onToggleTagSuggestionRef.current = onToggleTagSuggestion
+  }, [onToggleTagSuggestion])
+
+  useEffect(() => {
+    tagSuggestionsRef.current = tagSuggestions
+  }, [tagSuggestions])
+
+  useEffect(() => {
+    selectedTagSuggestionKeysRef.current = selectedTagSuggestionKeys
+  }, [selectedTagSuggestionKeys])
 
   const pruneLocalEchoValues = (now: number) => {
     localEchoValuesRef.current = localEchoValuesRef.current.filter((entry) => now - entry.at <= LOCAL_ECHO_TTL_MS)
@@ -1026,8 +1197,14 @@ export function CodeMirrorMarkdownEditor({
           searchHighlightCompartmentRef.current.of(
             buildExplorerSearchHighlightExtension(initialSearchHighlightQueryRef.current)
           ),
+          tagSuggestionHighlightCompartmentRef.current.of(
+            buildTagSuggestionHighlightExtension(
+              initialTagSuggestionsRef.current,
+              initialSelectedTagSuggestionKeysRef.current
+            )
+          ),
           highlightSelectionMatches(),
-          placeholder('Starte mit einer Notiz ...'),
+          placeholder(initialPlaceholderTextRef.current),
           previewCompartmentRef.current.of(
             liveMarkdownPreview({
               notePath: initialNotePathRef.current,
@@ -1062,6 +1239,18 @@ export function CodeMirrorMarkdownEditor({
               run: () => applyPaletteCommand(),
             },
             {
+              key: 'Enter',
+              run: (view) => {
+                const submitShortcut = onSubmitShortcutRef.current
+                if (!submitShortcut || paletteStateRef.current || view.state.facet(EditorState.readOnly)) {
+                  return false
+                }
+                flushQueuedOnChange()
+                submitShortcut(view.state.doc.toString())
+                return true
+              },
+            },
+            {
               key: 'Escape',
               run: () => closePalette(),
             },
@@ -1081,6 +1270,22 @@ export function CodeMirrorMarkdownEditor({
                 event.dataTransfer.dropEffect = 'copy'
               }
               return true
+            },
+            mousemove: (event, view) => {
+              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+              const suggestion =
+                typeof pos === 'number' ? findTagSuggestionAtPosition(view, pos, tagSuggestionsRef.current) : null
+              if (!suggestion) {
+                setHoveredTagSuggestion(null)
+                return false
+              }
+              const shellRect = shellRef.current?.getBoundingClientRect()
+              setHoveredTagSuggestion({
+                key: suggestion.key,
+                left: shellRect ? event.clientX - shellRect.left : event.clientX,
+                top: shellRect ? event.clientY - shellRect.top + 12 : event.clientY + 12,
+              })
+              return false
             },
             paste: (event, view) => {
               if (view.state.facet(EditorState.readOnly)) {
@@ -1193,6 +1398,19 @@ export function CodeMirrorMarkdownEditor({
       effects: searchHighlightCompartmentRef.current.reconfigure(buildExplorerSearchHighlightExtension(searchHighlightQuery)),
     })
   }, [searchHighlightQuery])
+
+  useEffect(() => {
+    const instance = editorRef.current
+    if (!instance) {
+      return
+    }
+
+    instance.dispatch({
+      effects: tagSuggestionHighlightCompartmentRef.current.reconfigure(
+        buildTagSuggestionHighlightExtension(tagSuggestions, selectedTagSuggestionKeys)
+      ),
+    })
+  }, [tagSuggestions, selectedTagSuggestionKeys])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -1474,10 +1692,48 @@ export function CodeMirrorMarkdownEditor({
     : undefined
   const activeCommandIndex = clampIndex(paletteState ? paletteState.selectedIndex : 0, paletteItems.length)
   const showSearchInput = paletteState ? paletteState.mode !== 'slash' : false
+  const hoveredSuggestion = hoveredTagSuggestion
+    ? tagSuggestions.find((item) => item.key === hoveredTagSuggestion.key) ?? null
+    : null
+  const hoveredSuggestionSelected = hoveredSuggestion ? selectedTagSuggestionKeys.includes(hoveredSuggestion.key) : false
 
   return (
-    <div className={`code-editor-shell ${embeddedInScroll ? 'embedded-scroll' : ''} ${className}`.trim()} ref={shellRef}>
+    <div
+      className={`code-editor-shell ${embeddedInScroll ? 'embedded-scroll' : ''} ${className}`.trim()}
+      ref={shellRef}
+      onMouseLeave={() => {
+        setHoveredTagSuggestion(null)
+      }}
+    >
       <div className={`code-editor-host ${embeddedInScroll ? 'embedded-scroll' : ''}`.trim()} ref={hostRef} />
+
+      {hoveredSuggestion ? (
+        <div
+          className="editor-tag-suggestion-menu"
+          style={{ left: `${hoveredTagSuggestion?.left ?? 0}px`, top: `${hoveredTagSuggestion?.top ?? 0}px` }}
+          onMouseEnter={() => {
+            setHoveredTagSuggestion((current) =>
+              current && current.key === hoveredSuggestion.key ? current : hoveredTagSuggestion
+            )
+          }}
+          onMouseLeave={() => {
+            setHoveredTagSuggestion(null)
+          }}
+        >
+          <span className="editor-tag-suggestion-title">
+            {hoveredSuggestion.displayName} ({hoveredSuggestion.category})
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              onToggleTagSuggestionRef.current?.(hoveredSuggestion.key)
+              setHoveredTagSuggestion(null)
+            }}
+          >
+            {hoveredSuggestionSelected ? 'Verwerfen' : 'Uebernehmen'}
+          </button>
+        </div>
+      ) : null}
 
       {paletteState ? (
         <div

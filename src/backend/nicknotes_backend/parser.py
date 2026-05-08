@@ -14,11 +14,6 @@ TAG_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 TODO_PATTERN = re.compile(r"^\s*todo:\s*(.+)$", flags=re.IGNORECASE)
-TODO_CHECKBOX_PATTERN = re.compile(r"^\s*[-*+]\s+\[(?: |x|X)\]\s+(.+)$")
-TODO_PREFIX_PATTERN = re.compile(r"^\s*(?:todo|to-do)\s*[:\-]\s*(.+)$", flags=re.IGNORECASE)
-TODO_BULLET_PATTERN = re.compile(r"^\s*[-*+]\s*(?:todo|to-do)\s*[:\-]?\s*(.+)$", flags=re.IGNORECASE)
-TODO_INLINE_PATTERN = re.compile(r"\bto-?do\b\s*(?::|-)?\s*([^\n.!?;]+)", flags=re.IGNORECASE)
-TODO_FILLER_PREFIX_PATTERN = re.compile(r"^(?:(?:als|dann|noch|bitte|irgendwie|mal|quasi)\s+)+", flags=re.IGNORECASE)
 WORD_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_\-]{2,}")
 
 
@@ -163,56 +158,6 @@ class CaptureParser:
 
             tasks.append(task)
         return tasks
-
-    def parse_todos(self, text: str) -> list[str]:
-        todos: list[str] = []
-        seen: set[str] = set()
-
-        def add_candidate(raw_value: str) -> None:
-            value = _normalize_todo_candidate(raw_value)
-            if not value:
-                return
-            key = value.casefold()
-            if key in seen:
-                return
-            seen.add(key)
-            todos.append(value)
-
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-
-            checkbox = TODO_CHECKBOX_PATTERN.match(line)
-            if checkbox:
-                add_candidate(checkbox.group(1))
-                continue
-
-            prefixed = TODO_PATTERN.match(line) or TODO_PREFIX_PATTERN.match(line)
-            if prefixed:
-                add_candidate(prefixed.group(1))
-                continue
-
-            bullet = TODO_BULLET_PATTERN.match(line)
-            if bullet:
-                add_candidate(bullet.group(1))
-
-        for inline_match in TODO_INLINE_PATTERN.finditer(text):
-            add_candidate(inline_match.group(1))
-
-        return todos
-
-
-def _normalize_todo_candidate(raw_value: str) -> str:
-    clean = " ".join(raw_value.strip().split())
-    if not clean:
-        return ""
-    clean = TODO_FILLER_PREFIX_PATTERN.sub("", clean)
-    clean = clean.strip(" \t-:;,.!?")
-    if len(clean) < 3:
-        return ""
-    return clean
-
 
 def make_note_id(now: datetime | None = None) -> str:
     now = now or datetime.now()
