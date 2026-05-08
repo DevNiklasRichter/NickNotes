@@ -8,6 +8,7 @@ from pathlib import Path
 from src.backend.nicknotes_backend.graph_index import build_graph_index, update_graph_index_for_file
 from src.backend.nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from src.backend.nicknotes_backend.graph_watcher import graph_watcher_snapshot
+from src.backend.nicknotes_backend.indexer import VaultIndexer
 from src.backend.nicknotes_backend.markdown_io import dump_markdown
 from src.backend.nicknotes_backend.vault import VaultManager
 
@@ -63,10 +64,10 @@ class GraphIndexTests(unittest.TestCase):
                     "type": "note",
                     "tags": ["project:alpha"],
                     "tags_auto": [],
-                    "related": [],
+                    "related": ["notes/second"],
                     "related_auto": [],
                 },
-                "Links to [[notes/second]] and [[missing-note]]. Also {tag:topic/known} and #project/unknown.",
+                "Links to [[missing-note]]. Also {tag:topic/known} and #project/unknown.",
             ),
             encoding="utf-8",
         )
@@ -167,6 +168,101 @@ class GraphIndexTests(unittest.TestCase):
         self.assertIn("notes/roundtrip.md", recovered["files"])
         self.assertFalse(any(item["type"] == "graphIndexReadFailed" for item in recovered["diagnostics"]))
 
+    def test_legacy_backlink_edges_are_ignored_when_loading_index(self) -> None:
+        payload = {
+            "version": 1,
+            "updated_at": "2026-01-01T00:00:00",
+            "source": {},
+            "files": {},
+            "nodes": [],
+            "edges": [
+                {"id": "link:a->b", "source": "a", "target": "b", "type": "link", "weight": 5, "reasons": []},
+                {"id": "backlink:b->a", "source": "b", "target": "a", "type": "backlink", "weight": 4, "reasons": []},
+            ],
+            "diagnostics": [],
+        }
+        self.vault.graph_index_path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        loaded = read_graph_index(self.vault.graph_index_path).to_dict()
+        self.assertEqual([edge["type"] for edge in loaded["edges"]], ["link"])
+
+    def test_related_links_resolve_slug_variants(self) -> None:
+        note = self.vault_path / "notes" / "source.md"
+        target = self.vault_path / "company" / "reviews" / "Review_Board_2026_W16.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(
+            dump_markdown(
+                {
+                    "id": "source",
+                    "node_id": "source",
+                    "title": "Source",
+                    "type": "note",
+                    "related": ["company/reviews/review-board-2026-W16"],
+                },
+                "# Source",
+            ),
+            encoding="utf-8",
+        )
+        target.write_text(
+            dump_markdown(
+                {"id": "review", "node_id": "review", "title": "Review", "type": "note"},
+                "# Review",
+            ),
+            encoding="utf-8",
+        )
+
+        payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
+        self.assertTrue(
+            any(edge["type"] == "link" and edge["source"] == "file:source" and edge["target"] == "file:review" for edge in payload["edges"])
+        )
+
+    def test_save_note_document_recovers_renamed_path_by_id(self) -> None:
+        old_path = self.vault_path / "notes" / "old-name.md"
+        renamed_path = self.vault_path / "notes" / "Renamed_Note.md"
+        renamed_path.parent.mkdir(parents=True, exist_ok=True)
+        renamed_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_stable_id",
+                    "node_id": "note_stable_id",
+                    "title": "Renamed Note",
+                    "type": "note",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "Original body.",
+            ),
+            encoding="utf-8",
+        )
+
+        indexer = VaultIndexer(self.vault.db_path)
+        try:
+            result = self.vault.save_note_document(
+                str(old_path),
+                dump_markdown(
+                    {
+                        "id": "note_stable_id",
+                        "node_id": "note_stable_id",
+                        "title": "Renamed Note",
+                        "type": "note",
+                        "tags": [],
+                        "tags_auto": [],
+                        "related": [],
+                        "related_auto": [],
+                    },
+                    "Updated body.",
+                ),
+                indexer,
+            )
+        finally:
+            indexer.close()
+
+        saved_path = Path(result["path"])
+        self.assertEqual(saved_path, renamed_path)
+        self.assertIn("Updated body.", renamed_path.read_text(encoding="utf-8"))
+
     def test_incremental_update_refreshes_file_edges_and_diagnostics(self) -> None:
         first = self.vault_path / "notes" / "first.md"
         second = self.vault_path / "notes" / "second.md"
@@ -265,7 +361,7 @@ class GraphIndexTests(unittest.TestCase):
         self.assertFalse(any(item["type"] == "unresolvedLink" and item.get("path") == "notes/first.md" for item in diagnostics))
         self.assertFalse(any(item["type"] == "unknownTag" and item.get("path") == "notes/first.md" for item in diagnostics))
 
-    def test_backlinks_and_shared_tag_edges_are_derived(self) -> None:
+    def test_shared_tag_edges_are_derived_without_backlinks(self) -> None:
         first = self.vault_path / "notes" / "first.md"
         second = self.vault_path / "notes" / "second.md"
         third = self.vault_path / "notes" / "third.md"
@@ -322,8 +418,7 @@ class GraphIndexTests(unittest.TestCase):
 
         payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
         edges = payload["edges"]
-        backlink_edges = [edge for edge in edges if edge["type"] == "backlink"]
-        self.assertTrue(any(edge["source"] == "file:note_second" and edge["target"] == "file:note_first" and edge["weight"] == 4 for edge in backlink_edges))
+        self.assertFalse(any(edge["type"] == "backlink" for edge in edges))
 
         shared_edges = [edge for edge in edges if edge["type"] == "sharedTag"]
         self.assertEqual(len(shared_edges), 1)

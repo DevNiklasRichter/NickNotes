@@ -35,7 +35,6 @@ const HEADING_OWNER_NAMES = new Set(['ATXHeading1', 'ATXHeading2', 'ATXHeading3'
 const EMPHASIS_OWNER_NAMES = new Set(['StrongEmphasis', 'Emphasis'])
 const CODE_OWNER_NAMES = new Set(['InlineCode', 'FencedCode'])
 const BLOCKQUOTE_OWNER_NAMES = new Set(['Blockquote'])
-const LIST_ITEM_OWNER_NAMES = new Set(['ListItem'])
 const LINK_OWNER_NAMES = new Set(['Link'])
 
 const strongDeco = Decoration.mark({ class: 'cm-md-strong' })
@@ -865,9 +864,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
         }
 
         if (node.name === 'ListMark') {
-          const owner = ancestorRange(node.node, LIST_ITEM_OWNER_NAMES)
-          const isActive = owner ? intersectsSelection(owner.from, owner.to, selections) : intersectsSelection(node.from, node.to, selections)
-          addSyntaxVisibilityRange(entries, node.from, node.to, isActive, listMarkVisibleDeco, listMarkMutedDeco)
+          addSyntaxVisibilityRange(entries, node.from, node.to, true, listMarkVisibleDeco, listMarkMutedDeco)
           return
         }
 

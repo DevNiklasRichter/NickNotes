@@ -12,17 +12,26 @@ type GraphNetworkViewProps = {
   viewport: GraphViewport
   layoutVersion: number
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
+  onRevealNodePath?: (path: string) => void
   onSelectNode?: (nodeId: string) => void
   onPositionsChange?: (positions: Record<string, GraphNodePosition>) => void
   onViewportChange?: (viewport: GraphViewport) => void
   onShowNeighbors?: (nodeId: string) => void
   onClearSelection?: () => void
+  showDetails?: boolean
+  compactChrome?: boolean
 }
 
 type SelectedGraphItem =
   | { kind: 'node'; node: GraphNode; connectedEdges: GraphEdge[]; neighbors: GraphNode[] }
   | { kind: 'edge'; edge: GraphEdge; source?: GraphNode; target?: GraphNode }
   | null
+
+type GraphNodeContextMenu = {
+  x: number
+  y: number
+  node: GraphNode
+} | null
 
 const LARGE_GRAPH_NODE_WARNING = 450
 const LARGE_GRAPH_EDGE_WARNING = 900
@@ -35,18 +44,24 @@ export function GraphNetworkView({
   viewport,
   layoutVersion,
   onOpenNodePath,
+  onRevealNodePath,
   onSelectNode,
   onPositionsChange,
   onViewportChange,
   onShowNeighbors,
   onClearSelection,
+  showDetails = true,
+  compactChrome = false,
 }: GraphNetworkViewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cyRef = useRef<Core | null>(null)
   const [selected, setSelected] = useState<SelectedGraphItem>(null)
   const [hoverText, setHoverText] = useState('')
   const [initError, setInitError] = useState('')
+  const [nodeContextMenu, setNodeContextMenu] = useState<GraphNodeContextMenu>(null)
   const applyingViewportRef = useRef(false)
+  const viewportTimerRef = useRef<number | null>(null)
+  const zoomStyleTimerRef = useRef<number | null>(null)
   const lastLayoutVersionRef = useRef(layoutVersion)
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
   const connectedEdgesByNode = useMemo(() => {
@@ -77,9 +92,10 @@ export function GraphNetworkView({
         style: cytoscapeStyles,
         minZoom: 0.08,
         maxZoom: 3,
-        wheelSensitivity: 0.18,
+        autounselectify: true,
       })
       cyRef.current = cy
+      applyZoomDensity(cy, false)
 
       cy.on('tap', 'node', (event) => {
         const nodeId = event.target.id()
@@ -92,6 +108,8 @@ export function GraphNetworkView({
         const neighbors = connectedEdges
           .map((edge) => nodeByIdRef.current.get(edge.source === nodeId ? edge.target : edge.source))
           .filter((item): item is GraphNode => Boolean(item))
+        applySelectionFocus(cy, nodeId, largeGraphRef.current)
+        setNodeContextMenu(null)
         setSelected({ kind: 'node', node, connectedEdges, neighbors })
         onSelectNodeRef.current?.(nodeId)
       })
@@ -99,14 +117,37 @@ export function GraphNetworkView({
       cy.on('tap', 'edge', (event) => {
         const edgeId = event.target.id()
         const edge = edgeByIdRef.current.get(edgeId)
+        applyEdgeFocus(cy, edgeId, largeGraphRef.current)
+        setNodeContextMenu(null)
         setSelected(edge ? { kind: 'edge', edge, source: nodeByIdRef.current.get(edge.source), target: nodeByIdRef.current.get(edge.target) } : null)
       })
 
       cy.on('tap', (event) => {
         if (event.target === cy) {
+          clearSelectionFocus(cy, largeGraphRef.current)
+          setNodeContextMenu(null)
           setSelected(null)
           onSelectNodeRef.current?.('')
           onClearSelectionRef.current?.()
+        }
+      })
+
+      cy.on('cxttap', 'node', (event) => {
+        const node = nodeByIdRef.current.get(event.target.id())
+        if (!node) {
+          return
+        }
+        const originalEvent = event.originalEvent as MouseEvent | undefined
+        setNodeContextMenu({
+          x: originalEvent?.offsetX ?? event.renderedPosition.x,
+          y: originalEvent?.offsetY ?? event.renderedPosition.y,
+          node,
+        })
+      })
+
+      cy.on('cxttap', (event) => {
+        if (event.target === cy) {
+          setNodeContextMenu(null)
         }
       })
 
@@ -141,13 +182,33 @@ export function GraphNetworkView({
         if (applyingViewportRef.current) {
           return
         }
-        const pan = cy.pan()
-        onViewportChangeRef.current?.({ zoom: cy.zoom(), pan: { x: pan.x, y: pan.y } })
+        if (zoomStyleTimerRef.current === null) {
+          zoomStyleTimerRef.current = window.setTimeout(() => {
+            zoomStyleTimerRef.current = null
+            applyZoomDensity(cy, largeGraphRef.current)
+          }, 80)
+        }
+        if (viewportTimerRef.current !== null) {
+          return
+        }
+        viewportTimerRef.current = window.setTimeout(() => {
+          viewportTimerRef.current = null
+          const pan = cy.pan()
+          onViewportChangeRef.current?.({ zoom: cy.zoom(), pan: { x: pan.x, y: pan.y } })
+        }, 160)
       })
     } catch (caught) {
       setInitError(`Cytoscape konnte nicht initialisiert werden: ${String(caught)}`)
     }
     return () => {
+      if (viewportTimerRef.current !== null) {
+        window.clearTimeout(viewportTimerRef.current)
+        viewportTimerRef.current = null
+      }
+      if (zoomStyleTimerRef.current !== null) {
+        window.clearTimeout(zoomStyleTimerRef.current)
+        zoomStyleTimerRef.current = null
+      }
       cyRef.current?.destroy()
       cyRef.current = null
     }
@@ -157,6 +218,7 @@ export function GraphNetworkView({
   const edgeByIdRef = useLatest(useMemo(() => new Map(edges.map((edge) => [edge.id, edge])), [edges]))
   const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
   const onOpenNodePathRef = useLatest(onOpenNodePath)
+  const onRevealNodePathRef = useLatest(onRevealNodePath)
   const onSelectNodeRef = useLatest(onSelectNode)
   const onPositionsChangeRef = useLatest(onPositionsChange)
   const onViewportChangeRef = useLatest(onViewportChange)
@@ -164,6 +226,7 @@ export function GraphNetworkView({
   const onClearSelectionRef = useLatest(onClearSelection)
   const viewportRef = useLatest(viewport)
   const positionsRef = useLatest(positions)
+  const largeGraphRef = useLatest(largeGraph)
 
   useEffect(() => {
     const cy = cyRef.current
@@ -174,6 +237,7 @@ export function GraphNetworkView({
       cy.batch(() => {
         cy.elements().remove()
         cy.add(elements)
+        clearSelectionFocus(cy, largeGraph)
         applyStoredPositions(cy, positionsRef.current)
       })
       const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positionsRef.current)
@@ -182,9 +246,11 @@ export function GraphNetworkView({
         runLayout(cy, largeGraph, () => {
           onPositionsChangeRef.current?.(collectPositions(cy))
           applyViewport(cy, viewportRef.current, applyingViewportRef)
+          window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
         })
       } else {
         applyViewport(cy, viewportRef.current, applyingViewportRef)
+        window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
       }
     } catch (caught) {
       setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`)
@@ -215,7 +281,7 @@ export function GraphNetworkView({
   }
 
   return (
-    <section className="graph-network-shell">
+    <section className={`graph-network-shell ${compactChrome ? 'compact-chrome' : ''}`}>
       <header className="graph-network-toolbar">
         <div>
           <h3>Interaktiver Graph</h3>
@@ -233,41 +299,66 @@ export function GraphNetworkView({
           </button>
         </div>
       </header>
-      {largeGraph ? (
+      {!compactChrome && largeGraph ? (
         <p className="graph-warning">
           Groesserer Graph sichtbar. Layout laeuft ohne Animation; Filter koennen die Ansicht fluessiger machen.
         </p>
       ) : null}
       {initError ? <p className="graph-error">{initError}</p> : null}
-      <div className="graph-network-grid">
+      <div className={`graph-network-grid ${showDetails ? '' : 'graph-network-grid-full'}`}>
         <div className="graph-network-canvas-wrap">
           <div ref={hostRef} className="graph-network-canvas" />
           {hoverText ? <div className="graph-network-hover">{hoverText}</div> : null}
+          {nodeContextMenu ? (
+            <GraphNodeContextMenu
+              menu={nodeContextMenu}
+              onClose={() => setNodeContextMenu(null)}
+              onFocus={(nodeId) => {
+                const cy = cyRef.current
+                if (cy) {
+                  applySelectionFocus(cy, nodeId, largeGraphRef.current)
+                }
+                onSelectNodeRef.current?.(nodeId)
+                setNodeContextMenu(null)
+              }}
+              onReveal={(path) => {
+                onRevealNodePathRef.current?.(path)
+                setNodeContextMenu(null)
+              }}
+              onOpen={(node) => {
+                if (node.path && (node.type === 'note' || node.type === 'task')) {
+                  onOpenNodePathRef.current?.(node.path, node.label, node.type)
+                }
+                setNodeContextMenu(null)
+              }}
+            />
+          ) : null}
           {nodes.length === 0 ? <p className="graph-network-empty">Keine Knoten im aktuellen Filter.</p> : null}
         </div>
-        <GraphSelectionPanel
-          selected={selected}
-          onOpenNodePath={onOpenNodePath}
-          onShowNeighbors={(nodeId) => onShowNeighborsRef.current?.(nodeId)}
-          onFocusNode={(nodeId) => {
-            onSelectNodeRef.current?.(nodeId)
-            onShowNeighborsRef.current?.(nodeId)
-          }}
-          onClearSelection={() => {
-            setSelected(null)
-            onSelectNodeRef.current?.('')
-            onClearSelectionRef.current?.()
-          }}
-        />
+        {showDetails ? (
+          <GraphSelectionPanel
+            selected={selected}
+            onOpenNodePath={onOpenNodePath}
+            onShowNeighbors={(nodeId) => onShowNeighborsRef.current?.(nodeId)}
+            onFocusNode={(nodeId) => {
+              onSelectNodeRef.current?.(nodeId)
+              onShowNeighborsRef.current?.(nodeId)
+            }}
+            onClearSelection={() => {
+              setSelected(null)
+              onSelectNodeRef.current?.('')
+              onClearSelectionRef.current?.()
+            }}
+          />
+        ) : null}
       </div>
-      <div className="graph-legend" aria-label="Graph Legende">
+      {showDetails ? <div className="graph-legend" aria-label="Graph Legende">
         <span><i className="legend-node note" /> Note</span>
         <span><i className="legend-node task" /> Task</span>
         <span><i className="legend-node tag" /> Tag</span>
         <span><i className="legend-edge link" /> Link</span>
-        <span><i className="legend-edge backlink" /> Backlink</span>
         <span><i className="legend-edge sharedTag" /> SharedTag</span>
-      </div>
+      </div> : null}
     </section>
   )
 }
@@ -327,8 +418,8 @@ function GraphSelectionPanel({
       <Detail label="Typ" value={selected.node.type} />
       <Detail label="Pfad" value={selected.node.path || '-'} />
       <Detail label="ID" value={selected.node.id} />
-      <Detail label="Links" value={String(selected.connectedEdges.filter((edge) => edge.type === 'link' && edge.source === selected.node.id).length)} />
-      <Detail label="Backlinks" value={String(selected.connectedEdges.filter((edge) => edge.type === 'backlink' && edge.source === selected.node.id).length)} />
+      <Detail label="Ausgehende Links" value={String(selected.connectedEdges.filter((edge) => edge.type === 'link' && edge.source === selected.node.id).length)} />
+      <Detail label="Eingehende Links" value={String(selected.connectedEdges.filter((edge) => edge.type === 'link' && edge.target === selected.node.id).length)} />
       <Detail label="Shared Tags" value={String(selected.connectedEdges.filter((edge) => edge.type === 'sharedTag').length)} />
       <div className="graph-selection-actions">
         {selected.node.path && (selected.node.type === 'note' || selected.node.type === 'task') ? (
@@ -386,6 +477,42 @@ function GraphSelectionPanel({
         </ul>
       </div>
     </aside>
+  )
+}
+
+function GraphNodeContextMenu({
+  menu,
+  onClose,
+  onFocus,
+  onReveal,
+  onOpen,
+}: {
+  menu: NonNullable<GraphNodeContextMenu>
+  onClose: () => void
+  onFocus: (nodeId: string) => void
+  onReveal: (path: string) => void
+  onOpen: (node: GraphNode) => void
+}) {
+  const canOpen = Boolean(menu.node.path && (menu.node.type === 'note' || menu.node.type === 'task'))
+  return (
+    <div
+      className="graph-node-context-menu"
+      style={{ left: `${menu.x}px`, top: `${menu.y}px` }}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <strong>{menu.node.label || menu.node.id}</strong>
+      <button onClick={() => onFocus(menu.node.id)}>Knoten hervorheben</button>
+      <button onClick={() => menu.node.path && onReveal(menu.node.path)} disabled={!canOpen}>
+        Im Node Explorer anzeigen
+      </button>
+      <button onClick={() => onOpen(menu.node)} disabled={!canOpen}>
+        Im Editor oeffnen
+      </button>
+      <button className="muted" onClick={onClose}>
+        Schliessen
+      </button>
+    </div>
   )
 }
 
@@ -472,6 +599,86 @@ function applyViewport(cy: Core, viewport: GraphViewport, applyingViewportRef: {
   }
 }
 
+function applySelectionFocus(cy: Core, nodeId: string, largeGraph: boolean) {
+  clearSelectionFocus(cy, largeGraph)
+  const node = cy.getElementById(nodeId)
+  if (!node.length) {
+    return
+  }
+  const visibleEdges = node.connectedEdges(':visible')
+  const visibleNeighbors = visibleEdges.connectedNodes(':visible')
+  const activeElements = node.union(visibleEdges).union(visibleNeighbors)
+  node.addClass('graph-focus-primary')
+  visibleNeighbors.addClass('graph-focus-neighbor')
+  visibleEdges.addClass('graph-focus-edge')
+  const muted = cy.elements().difference(activeElements)
+  muted.addClass('graph-muted')
+  muted.nodes().style({ opacity: 0.16, 'text-opacity': 0.04 })
+  muted.edges().style({ opacity: 0.07, 'target-arrow-shape': 'none' })
+}
+
+function applyEdgeFocus(cy: Core, edgeId: string, largeGraph: boolean) {
+  clearSelectionFocus(cy, largeGraph)
+  const edge = cy.getElementById(edgeId)
+  if (!edge.length) {
+    return
+  }
+  const activeElements = edge.union(edge.connectedNodes(':visible'))
+  const muted = cy.elements().difference(activeElements)
+  muted.addClass('graph-muted')
+  muted.nodes().style({ opacity: 0.16, 'text-opacity': 0.04 })
+  muted.edges().style({ opacity: 0.07, 'target-arrow-shape': 'none' })
+}
+
+function clearSelectionFocus(cy: Core, largeGraph: boolean) {
+  cy.elements().removeClass('graph-muted graph-focus-primary graph-focus-neighbor graph-focus-edge')
+  cy.nodes().removeStyle('opacity')
+  cy.edges().removeStyle('opacity target-arrow-shape')
+  applyZoomDensity(cy, largeGraph)
+}
+
+function applyZoomDensity(cy: Core, largeGraph: boolean) {
+  const zoom = cy.zoom()
+  const exponent = largeGraph ? 1.15 : 0.75
+  const minFactor = largeGraph ? 0.28 : 0.42
+  const factor = zoom > 1 ? Math.max(minFactor, Math.pow(zoom, -exponent)) : 1
+  const labelOpacity = largeGraph ? (zoom < 0.65 ? 0.08 : zoom < 1.2 ? 0.28 : 0.64) : 0.92
+  const edgeFactor = zoom > 1 ? Math.max(0.34, Math.pow(zoom, -0.85)) : 1
+
+  cy.batch(() => {
+    cy.nodes().forEach((node) => {
+      const nodeType = String(node.data('type') ?? '')
+      const baseWidth = nodeType === 'task' ? 40 : nodeType === 'tag' ? 24 : 34
+      const baseHeight = nodeType === 'task' ? 28 : nodeType === 'tag' ? 24 : 34
+      const baseFontSize = nodeType === 'tag' ? 9 : 10
+      node.style({
+        width: Math.max(7, Math.round(baseWidth * factor)),
+        height: Math.max(7, Math.round(baseHeight * factor)),
+        'font-size': Math.max(3, Math.round(baseFontSize * factor)),
+        'border-width': Math.max(0.5, 1.2 * factor),
+        'text-opacity': labelOpacity,
+        'text-outline-width': largeGraph ? Math.max(0.5, 1.6 * factor) : Math.max(1, 2 * factor),
+      })
+    })
+
+    cy.edges().forEach((edge) => {
+      const edgeType = String(edge.data('type') ?? '')
+      const weight = Number(edge.data('weight') ?? 1)
+      const baseWidth =
+        edgeType === 'tagUsage'
+          ? Math.max(0.8, Math.min(3, weight / 2.8))
+          : edgeType === 'sharedTag'
+              ? Math.max(1, Math.min(5, weight / 2.4))
+              : Math.max(1, Math.min(5, weight / 1.8))
+      edge.style({
+        width: Math.max(0.35, baseWidth * edgeFactor),
+        'arrow-scale': edgeType === 'tagUsage' || edgeType === 'sharedTag' ? 0.45 : Math.max(0.22, 0.62 * edgeFactor),
+        opacity: edgeType === 'sharedTag' ? 0.38 : largeGraph ? 0.56 : 0.72,
+      })
+    })
+  })
+}
+
 function runLayout(cy: Core, largeGraph: boolean, onDone?: () => void) {
   const layout = cy.layout({
     name: 'cose',
@@ -548,12 +755,36 @@ const cytoscapeStyles: StylesheetStyle[] = [
     },
   },
   {
-    selector: 'node:selected',
+    selector: 'node.graph-focus-primary',
     style: {
-      'border-width': 5,
       'border-color': '#ffffff',
+      'border-width': 3,
       'overlay-color': '#ffffff',
-      'overlay-opacity': 0.12,
+      'overlay-opacity': 0.1,
+      'z-compound-depth': 'top',
+      'z-index': 20,
+    },
+  },
+  {
+    selector: 'node.graph-focus-neighbor',
+    style: {
+      'border-color': '#dce3ee',
+      'border-width': 2,
+      'z-index': 14,
+    },
+  },
+  {
+    selector: 'edge.graph-focus-edge',
+    style: {
+      opacity: 0.92,
+      'z-index': 12,
+    },
+  },
+  {
+    selector: 'node.graph-muted',
+    style: {
+      opacity: 0.16,
+      'text-opacity': 0.04,
     },
   },
   {
@@ -563,6 +794,7 @@ const cytoscapeStyles: StylesheetStyle[] = [
       'line-color': '#728096',
       'target-arrow-color': '#728096',
       'target-arrow-shape': 'triangle',
+      'arrow-scale': 0.62,
       'curve-style': 'bezier',
       opacity: 0.72,
     },
@@ -585,16 +817,6 @@ const cytoscapeStyles: StylesheetStyle[] = [
     },
   },
   {
-    selector: 'edge.backlink',
-    style: {
-      'line-color': '#9eb3d1',
-      'target-arrow-color': '#9eb3d1',
-      'line-style': 'dashed',
-      width: 'mapData(weight, 1, 8, 1, 4)',
-      opacity: 0.58,
-    },
-  },
-  {
     selector: 'edge.sharedTag',
     style: {
       'line-color': '#32b67a',
@@ -612,6 +834,13 @@ const cytoscapeStyles: StylesheetStyle[] = [
       'target-arrow-color': '#ffffff',
       width: 6,
       opacity: 1,
+    },
+  },
+  {
+    selector: 'edge.graph-muted',
+    style: {
+      opacity: 0.07,
+      'target-arrow-shape': 'none',
     },
   },
 ]

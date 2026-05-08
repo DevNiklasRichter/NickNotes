@@ -123,7 +123,7 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
         content_hash = _file_hash(md_path)
         stat = md_path.stat()
         tags = _extract_tags(meta, body)
-        links = _extract_wikilinks(body)
+        links = _extract_links(meta, body)
 
         files[relative_path] = GraphFileEntry(
             id=file_id,
@@ -198,7 +198,7 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
                 target=str(resolved["id"]),
                 edge_type="link",
                 weight=5,
-                reason=f"WikiLink [[{link['raw']}]]",
+                reason=_link_reason(link),
             )
 
     _add_derived_file_edges(edges_by_id, files)
@@ -249,7 +249,7 @@ def update_graph_index_for_file(
     edges_by_id = {
         edge.id: edge
         for edge in index.edges
-        if edge.type not in {"backlink", "sharedTag"} and edge.source not in old_file_ids
+        if edge.type != "sharedTag" and edge.source not in old_file_ids
     }
     diagnostics = [
         item
@@ -296,7 +296,7 @@ def update_graph_index_for_file(
     content_hash = _file_hash(resolved)
     stat = resolved.stat()
     tags = _extract_tags(meta, body)
-    links = _extract_wikilinks(body)
+    links = _extract_links(meta, body)
 
     files[relative_path] = GraphFileEntry(
         id=file_id,
@@ -367,7 +367,7 @@ def update_graph_index_for_file(
             target=str(resolved_target["id"]),
             edge_type="link",
             weight=5,
-            reason=f"WikiLink [[{link['raw']}]]",
+            reason=_link_reason(link),
         )
 
     _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
@@ -426,7 +426,7 @@ def graph_index_from_dict(payload: Any) -> GraphIndex:
                 reasons=_string_list(item.get("reasons")),
             )
             for item in payload.get("edges", [])
-            if isinstance(item, dict)
+            if isinstance(item, dict) and str(item.get("type", "")) != "backlink"
         ],
         diagnostics=[
             GraphDiagnostic(
@@ -476,7 +476,7 @@ def _finalize_incremental_index(
     edges_by_id: dict[str, GraphEdge],
     diagnostics: list[GraphDiagnostic],
 ) -> GraphIndex:
-    edges_by_id = {edge_id: edge for edge_id, edge in edges_by_id.items() if edge.type not in {"backlink", "sharedTag"}}
+    edges_by_id = {edge_id: edge for edge_id, edge in edges_by_id.items() if edge.type != "sharedTag"}
     _add_derived_file_edges(edges_by_id, files)
     _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
     return GraphIndex(
@@ -502,20 +502,6 @@ def _prune_orphan_tag_nodes(nodes_by_id: dict[str, GraphNode], edges_by_id: dict
 
 
 def _add_derived_file_edges(edges_by_id: dict[str, GraphEdge], files: dict[str, GraphFileEntry]) -> None:
-    file_ids = {entry.id for entry in files.values() if entry.id and entry.type in {"note", "task"}}
-    for edge in list(edges_by_id.values()):
-        if edge.type != "link" or edge.source not in file_ids or edge.target not in file_ids:
-            continue
-        reason = edge.reasons[0] if edge.reasons else f"Link from {edge.source}"
-        _add_edge(
-            edges_by_id,
-            source=edge.target,
-            target=edge.source,
-            edge_type="backlink",
-            weight=4,
-            reason=f"Backlink from {reason}",
-        )
-
     shared_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
     tag_to_files: dict[str, list[str]] = {}
     for entry in files.values():
@@ -656,6 +642,36 @@ def _extract_tags(meta: dict[str, Any], body: str) -> list[str]:
     return sorted(found, key=lambda item: item.lower())
 
 
+def _extract_links(meta: dict[str, Any], body: str) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(raw: str, target: str, source: str) -> None:
+        clean_target = _normalize_link_target(target)
+        if not clean_target:
+            return
+        key = clean_target.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        links.append({"raw": raw, "target": clean_target, "source": source})
+
+    for key in ("related", "related_auto"):
+        for item in _string_list(meta.get(key)):
+            add(item, item, key)
+
+    for link in _extract_wikilinks(body):
+        add(link["raw"], link["target"], "wikilink")
+
+    return links
+
+
+def _link_reason(link: dict[str, str]) -> str:
+    if link.get("source") in {"related", "related_auto"}:
+        return f"Frontmatter {link['source']} {link['target']}"
+    return f"WikiLink [[{link['raw']}]]"
+
+
 def _extract_wikilinks(body: str) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -663,9 +679,7 @@ def _extract_wikilinks(body: str) -> list[dict[str, str]]:
         raw = match.group(1).strip()
         if not raw:
             continue
-        target = raw.split("|", 1)[0].strip()
-        target = target.split("#", 1)[0].strip().replace("\\", "/")
-        target = target[:-3] if target.lower().endswith(".md") else target
+        target = _normalize_link_target(raw)
         if not target:
             continue
         key = target.lower()
@@ -676,20 +690,27 @@ def _extract_wikilinks(body: str) -> list[dict[str, str]]:
     return links
 
 
+def _normalize_link_target(raw: str) -> str:
+    target = str(raw or "").split("|", 1)[0].strip()
+    target = target.split("#", 1)[0].strip().replace("\\", "/")
+    target = target[:-3] if target.lower().endswith(".md") else target
+    return target.strip().strip("/")
+
+
 def _build_link_lookup(records: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
     lookup: dict[str, dict[str, Any] | None] = {}
 
     def add(key: str, record: dict[str, Any]) -> None:
-        clean = _normalize_link_lookup_key(key)
-        if not clean:
-            return
-        if clean not in lookup:
-            lookup[clean] = record
-            return
-        current = lookup.get(clean)
-        if current and current.get("id") == record.get("id"):
-            return
-        lookup[clean] = None
+        for clean in {_normalize_link_lookup_key(key), _slugified_link_lookup_key(key), _loose_link_lookup_key(key)}:
+            if not clean:
+                continue
+            if clean not in lookup:
+                lookup[clean] = record
+                continue
+            current = lookup.get(clean)
+            if current and current.get("id") == record.get("id"):
+                continue
+            lookup[clean] = None
 
     for record in records:
         relative_path = str(record["relative_path"])
@@ -704,7 +725,7 @@ def _resolve_link_target(target: str, lookup: dict[str, dict[str, Any] | None]) 
     clean = _normalize_link_lookup_key(target)
     if not clean:
         return None
-    return lookup.get(clean)
+    return lookup.get(clean) or lookup.get(_slugified_link_lookup_key(target)) or lookup.get(_loose_link_lookup_key(target))
 
 
 def _add_edge(
@@ -752,6 +773,16 @@ def _normalize_link_lookup_key(raw: str) -> str:
     clean = str(raw or "").strip().replace("\\", "/").strip("/")
     clean = clean[:-3] if clean.lower().endswith(".md") else clean
     return clean.lower()
+
+
+def _slugified_link_lookup_key(raw: str) -> str:
+    clean = _normalize_link_lookup_key(raw)
+    return "/".join(slugify(part) for part in clean.split("/") if part)
+
+
+def _loose_link_lookup_key(raw: str) -> str:
+    clean = _normalize_link_lookup_key(raw)
+    return "/".join(re.sub(r"[^a-z0-9]+", "", part) for part in clean.split("/") if part)
 
 
 def _normalize_label(value: str) -> str:

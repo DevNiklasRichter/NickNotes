@@ -22,6 +22,7 @@ import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas'
 import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas'
 import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas'
 import { GraphDashboardCanvas } from './graph/GraphDashboardCanvas'
+import { GraphWorkspaceProvider } from './graph/GraphWorkspaceContext'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -134,6 +135,23 @@ import type {
 
 const CAPTURE_PREVIEW_IDLE_MS = 1200
 const CAPTURE_PREVIEW_MIN_CHARS = 3
+const NOTEBASE_OPEN_POLL_MS = 160
+
+type NoteBaseOpenStatus = {
+  active: boolean
+  done: boolean
+  error: string | null
+  phase: string
+  processed: number
+  total: number
+  currentPath?: string | null
+  result?: {
+    counts: VaultCounts
+    noteBasePath?: string
+    vaultPath?: string
+    tagGroups?: unknown
+  } | null
+}
 
 function resolveGraphNodePath(path: string, vaultPath: string): string {
   const cleanPath = normalizeLabel(path)
@@ -162,6 +180,7 @@ function App() {
 
   const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath)
   const [vaultLoaded, setVaultLoaded] = useState(false)
+  const [noteBaseOpenStatus, setNoteBaseOpenStatus] = useState<NoteBaseOpenStatus | null>(null)
   const [counts, setCounts] = useState<VaultCounts>({ notes: 0, openTasks: 0, doneTasks: 0 })
 
   const [captureText, setCaptureText] = useState('')
@@ -805,21 +824,46 @@ function App() {
     }
   }
 
+  const waitForNoteBaseOpen = async (): Promise<NonNullable<NoteBaseOpenStatus['result']>> => {
+    while (true) {
+      const status = await apiRequest<NoteBaseOpenStatus>(backendUrl, '/notebase/open/status')
+      setNoteBaseOpenStatus(status)
+      if (status.done) {
+        if (status.error) {
+          throw new Error(status.error)
+        }
+        if (!status.result) {
+          throw new Error('NoteBase wurde geladen, aber das Ergebnis fehlt.')
+        }
+        return status.result
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, NOTEBASE_OPEN_POLL_MS))
+    }
+  }
+
   const openVaultAtPath = async (rawPath: string, successMessage: string): Promise<boolean> => {
     const path = normalizeLabel(rawPath)
     if (!path) {
       throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
     }
 
-    const response = await apiRequest<{
-      counts: VaultCounts
-      noteBasePath?: string
-      tagGroups?: unknown
-    }>(backendUrl, '/notebase/open', {
+    setVaultLoaded(false)
+    setNoteBaseOpenStatus({
+      active: true,
+      done: false,
+      error: null,
+      phase: 'NoteBase wird vorbereitet ...',
+      processed: 0,
+      total: 0,
+      result: null,
+    })
+    setMessage('NoteBase wird geladen ...')
+    await apiRequest<{ started: boolean; path: string }>(backendUrl, '/notebase/open/start', {
       method: 'POST',
       body: JSON.stringify({ path }),
     })
-    const loadedPath = response.noteBasePath ?? path
+    const response = await waitForNoteBaseOpen()
+    const loadedPath = response.noteBasePath ?? response.vaultPath ?? path
     uiSettingsReadyRef.current = false
     setVaultPath(loadedPath)
     setVaultLoaded(true)
@@ -830,6 +874,7 @@ function App() {
     storeLastNoteBasePath(loadedPath)
     setMessage(successMessage)
     setError('')
+    setNoteBaseOpenStatus(null)
 
     await loadUiSettings()
     await refreshWorkspaceData(true)
@@ -847,6 +892,9 @@ function App() {
       if (!state.vaultLoaded) {
         uiSettingsReadyRef.current = false
         setVaultLoaded(false)
+        if (!noteBaseOpenStatus?.active) {
+          setNoteBaseOpenStatus(null)
+        }
         setFocusMitIds([])
         setOpenTabs([])
         dispatchWorkspace({ type: 'RESET' })
@@ -880,6 +928,7 @@ function App() {
       }
 
       setVaultLoaded(true)
+      setNoteBaseOpenStatus(null)
       const loadedPath = state.noteBasePath ?? state.vaultPath ?? ''
       setVaultPath(loadedPath)
       storeLastNoteBasePath(loadedPath)
@@ -1630,6 +1679,26 @@ function App() {
       tabId: nextTabId,
       activate: true,
     })
+  }
+
+  const openGraphNodePath = (path: string, title: string, noteType: 'note' | 'task') => {
+    const cleanPath = normalizeLabel(path)
+    if (!cleanPath) {
+      return
+    }
+    const resolvedPath = resolveGraphNodePath(cleanPath, vaultPath)
+    void openNoteInTab(resolvedPath, title, { initialNoteType: noteType })
+  }
+
+  const revealGraphNodePath = (path: string) => {
+    const cleanPath = normalizeLabel(path)
+    if (!cleanPath) {
+      return
+    }
+    setSidebarView('notes')
+    setSidebarOpen(true)
+    setExplorerRevealPath(resolveGraphNodePath(cleanPath, vaultPath))
+    setExplorerRevealRequestId((prev) => prev + 1)
   }
 
   const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
@@ -4111,22 +4180,7 @@ function App() {
     }
 
     if (paneTab.kind === 'graph_dashboard') {
-      return (
-        <GraphDashboardCanvas
-          backendUrl={backendUrl}
-          vaultLoaded={vaultLoaded}
-          graphUpdateToken={graphUpdateToken}
-          latestGraphStatus={latestGraphStatus}
-          onOpenNodePath={(path, title, noteType) => {
-            const cleanPath = normalizeLabel(path)
-            if (!cleanPath) {
-              return
-            }
-            const resolvedPath = resolveGraphNodePath(cleanPath, vaultPath)
-            void openNoteInTab(resolvedPath, title, { initialNoteType: noteType })
-          }}
-        />
-      )
+      return <GraphDashboardCanvas />
     }
 
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
@@ -4285,6 +4339,18 @@ function App() {
     </div>
   ) : null
 
+  const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0
+  const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0
+  const noteBaseProgressPercent =
+    noteBaseProgressTotal > 0 ? Math.min(100, Math.round((noteBaseProgressProcessed / noteBaseProgressTotal) * 100)) : 0
+  const noteBaseProgressLabel =
+    noteBaseOpenStatus && noteBaseProgressTotal > 0
+      ? `${noteBaseProgressProcessed} von ${noteBaseProgressTotal} Dateien`
+      : 'Fortschritt wird ermittelt ...'
+  const noteBaseProgressPath = noteBaseOpenStatus?.currentPath
+    ? getRelativeVaultPath(noteBaseOpenStatus.currentPath, vaultPath)
+    : ''
+
   if (!vaultLoaded) {
     return (
       <div className="window-frame">
@@ -4306,12 +4372,37 @@ function App() {
               />
 
               <div className="launch-actions">
-                <button onClick={() => void pickAndOpenVault()}>NoteBase laden</button>
-                <button onClick={() => void createVault()}>NoteBase anlegen</button>
+                <button onClick={() => void pickAndOpenVault()} disabled={noteBaseOpenStatus?.active}>
+                  NoteBase laden
+                </button>
+                <button onClick={() => void createVault()} disabled={noteBaseOpenStatus?.active}>
+                  NoteBase anlegen
+                </button>
                 <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
                   {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
                 </button>
               </div>
+
+              {noteBaseOpenStatus?.active || noteBaseOpenStatus?.done ? (
+                <div className="launch-progress" role="status" aria-live="polite">
+                  <div className="launch-progress-header">
+                    <span>{noteBaseOpenStatus.phase || 'NoteBase wird geladen ...'}</span>
+                    <strong>{noteBaseProgressTotal > 0 ? `${noteBaseProgressPercent}%` : ''}</strong>
+                  </div>
+                  <div
+                    className={`launch-progress-track ${noteBaseProgressTotal > 0 ? '' : 'indeterminate'}`}
+                    aria-label="NoteBase-Ladefortschritt"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={noteBaseProgressTotal > 0 ? noteBaseProgressPercent : undefined}
+                    role="progressbar"
+                  >
+                    <span style={{ width: noteBaseProgressTotal > 0 ? `${noteBaseProgressPercent}%` : '42%' }} />
+                  </div>
+                  <p className="launch-progress-meta">{noteBaseProgressLabel}</p>
+                  {noteBaseProgressPath ? <p className="launch-progress-path">{noteBaseProgressPath}</p> : null}
+                </div>
+              ) : null}
 
               {message ? <p className="launch-message">{message}</p> : null}
               {error ? <p className="launch-error">{error}</p> : null}
@@ -4327,6 +4418,14 @@ function App() {
     <div className="window-frame">
       {windowTitlebar}
       <div className="window-content">
+        <GraphWorkspaceProvider
+          backendUrl={backendUrl}
+          vaultLoaded={vaultLoaded}
+          graphUpdateToken={graphUpdateToken}
+          latestGraphStatus={latestGraphStatus}
+          onOpenNodePath={openGraphNodePath}
+          onRevealNodePath={revealGraphNodePath}
+        >
         <div className="workbench-shell">
       <ActivityRail
         sidebarView={sidebarView}
@@ -4668,6 +4767,7 @@ function App() {
       {createNoteBaseDialog}
 
         </div>
+        </GraphWorkspaceProvider>
       </div>
     </div>
   )

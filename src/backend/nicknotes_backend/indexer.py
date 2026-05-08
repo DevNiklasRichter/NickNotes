@@ -7,7 +7,7 @@ import sqlite3
 import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .markdown_io import parse_markdown
 from .models import ParsedTask, TagRef
@@ -1265,10 +1265,15 @@ class VaultIndexer:
             "completed_items": completed_items,
         }
 
-    def reindex_vault(self, vault_path: Path) -> dict[str, int]:
+    def reindex_vault(
+        self,
+        vault_path: Path,
+        progress_callback: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> dict[str, int]:
         self.clear_all()
         notes_indexed = 0
         tasks_indexed = 0
+        processed = 0
 
         excluded_note_roots = {"00_inbox", "tasks", "03_tasks", ".system", "system", "99_system", "02_entities"}
         if (vault_path / "daily").is_dir():
@@ -1279,18 +1284,37 @@ class VaultIndexer:
             excluded_note_roots.add("03_tasks")
         if (vault_path / "system").is_dir():
             excluded_note_roots.add("99_system")
+        if progress_callback:
+            progress_callback("Dateien werden gesucht ...", 0, 0, None)
+        note_files: list[Path] = []
         for child in vault_path.iterdir():
             if not child.is_dir() or child.name in excluded_note_roots:
                 continue
-            for md in child.rglob("*.md"):
-                notes_indexed += self._index_note_markdown(md)
+            note_files.extend(child.rglob("*.md"))
 
         task_root = vault_path / "tasks"
         if not task_root.is_dir():
             task_root = vault_path / "03_tasks"
+        task_files: list[Path] = []
         if task_root.is_dir():
-            for md in task_root.rglob("*.md"):
-                tasks_indexed += self._index_task_markdown(md)
+            task_files.extend(task_root.rglob("*.md"))
+
+        total = len(note_files) + len(task_files)
+        if progress_callback:
+            progress_callback("Notizen werden indexiert ...", processed, total, None)
+        for md in note_files:
+            notes_indexed += self._index_note_markdown(md)
+            processed += 1
+            if progress_callback:
+                progress_callback("Notizen werden indexiert ...", processed, total, str(md))
+
+        if progress_callback:
+            progress_callback("Tasks werden indexiert ...", processed, total, None)
+        for md in task_files:
+            tasks_indexed += self._index_task_markdown(md)
+            processed += 1
+            if progress_callback:
+                progress_callback("Tasks werden indexiert ...", processed, total, str(md))
 
         return {"notes": notes_indexed, "tasks": tasks_indexed}
 

@@ -1279,7 +1279,7 @@ class VaultManager:
         return destination, meta, changed
 
     def save_note_document(self, note_path: str, content: str, indexer: VaultIndexer) -> dict[str, Any]:
-        file_path = self._resolve_note_file(note_path)
+        file_path = self._resolve_note_file_for_save(note_path, content)
         raw_meta, _raw_body = parse_markdown(file_path)
         raw_type = str(raw_meta.get("type", "")).strip().lower()
         is_tag_overview_file = file_path.name.lower() == "overview.md" and self._is_tag_path(file_path.parent)
@@ -3001,6 +3001,109 @@ class VaultManager:
         if self._is_system_path(path.parent):
             raise ValueError("System files cannot be modified")
         return path
+
+    def _resolve_note_file_for_save(self, note_path: str, content: str) -> Path:
+        try:
+            return self._resolve_note_file(note_path)
+        except ValueError as original_exc:
+            resolved = self._resolve_existing_note_after_rename(note_path, content)
+            if resolved is not None:
+                return resolved
+            raise original_exc
+
+    def _resolve_existing_note_after_rename(self, note_path: str, content: str) -> Path | None:
+        meta, body = parse_markdown_text(content)
+        note_ids = [
+            str(meta.get("id", "")).strip(),
+            str(meta.get("node_id", "")).strip(),
+        ]
+        for note_id in note_ids:
+            if not note_id:
+                continue
+            by_id = self._find_markdown_file_by_note_id(note_id)
+            if by_id is not None:
+                return by_id
+
+        target_parent = self._requested_note_parent(note_path)
+        if target_parent is None or not target_parent.exists():
+            return None
+
+        title = str(meta.get("title", "")).strip()
+        if not title and body.strip():
+            heading = TITLE_HEADING_PATTERN.search(body)
+            title = heading.group(1).strip() if heading else ""
+        safe_stem = self._safe_entry_name(title) if title else ""
+        if safe_stem:
+            for candidate in (
+                target_parent / f"{safe_stem}.md",
+                target_parent / f"{safe_stem.lower()}.md",
+            ):
+                resolved = self._validated_existing_note_file(candidate)
+                if resolved is not None:
+                    return resolved
+
+        requested_stem = Path(note_path).stem
+        requested_key = self._loose_filename_key(requested_stem)
+        if requested_key:
+            for sibling in target_parent.glob("*.md"):
+                if self._loose_filename_key(sibling.stem) == requested_key:
+                    resolved = self._validated_existing_note_file(sibling)
+                    if resolved is not None:
+                        return resolved
+
+        return None
+
+    def _requested_note_parent(self, note_path: str) -> Path | None:
+        candidate = Path(note_path).expanduser()
+        if candidate.is_absolute():
+            parent = candidate.parent.resolve()
+        else:
+            clean_path = note_path.replace("\\", "/").strip().strip("/")
+            parent = (self.vault_path / clean_path).resolve().parent
+        vault_root = self.vault_path.resolve()
+        try:
+            parent.relative_to(vault_root)
+        except ValueError:
+            return None
+        if self._is_system_path(parent):
+            return None
+        return parent
+
+    def _find_markdown_file_by_note_id(self, note_id: str) -> Path | None:
+        matches: list[Path] = []
+        for candidate in self.vault_path.rglob("*.md"):
+            if self._is_system_path(candidate.parent):
+                continue
+            if candidate.parts and any(part == self.media_root_name for part in candidate.parts):
+                continue
+            try:
+                meta, _body = parse_markdown(candidate)
+            except OSError:
+                continue
+            ids = {
+                str(meta.get("id", "")).strip(),
+                str(meta.get("node_id", "")).strip(),
+            }
+            if note_id in ids:
+                matches.append(candidate.resolve())
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def _validated_existing_note_file(self, candidate: Path) -> Path | None:
+        try:
+            path = candidate.resolve()
+            path.relative_to(self.vault_path.resolve())
+        except (OSError, ValueError):
+            return None
+        if not path.exists() or not path.is_file() or path.suffix.lower() != ".md":
+            return None
+        if self._is_system_path(path.parent):
+            return None
+        return path
+
+    def _loose_filename_key(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
 
     def _read_favorite_folders(self) -> list[str]:
         if not self.favorite_folders_path.exists():

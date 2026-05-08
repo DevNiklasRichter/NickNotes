@@ -5,6 +5,7 @@ import binascii
 import logging
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -42,6 +43,20 @@ class GraphRuntimeStatus:
 
 
 @dataclass
+class NoteBaseLoadStatus:
+    active: bool = False
+    done: bool = False
+    error: str | None = None
+    phase: str = ""
+    processed: int = 0
+    total: int = 0
+    current_path: str | None = None
+    result: dict[str, Any] | None = None
+    started_at: float = 0.0
+    finished_at: float | None = None
+
+
+@dataclass
 class RuntimeState:
     vault: VaultManager | None = None
     indexer: VaultIndexer | None = None
@@ -50,6 +65,8 @@ class RuntimeState:
     graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
     watcher_stop: threading.Event | None = None
     watcher_thread: threading.Thread | None = None
+    load_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
+    load_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def close(self) -> None:
         self.stop_graph_watcher()
@@ -82,6 +99,57 @@ class RuntimeState:
         self.watcher_stop = None
         self.watcher_thread = None
         self.graph_status.watcher_enabled = False
+
+    def reset_load_status(self, phase: str) -> None:
+        with self.load_lock:
+            self.load_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
+
+    def update_load_status(
+        self,
+        *,
+        phase: str | None = None,
+        processed: int | None = None,
+        total: int | None = None,
+        current_path: str | None = None,
+        done: bool | None = None,
+        error: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        with self.load_lock:
+            status = self.load_status
+            if phase is not None:
+                status.phase = phase
+            if processed is not None:
+                status.processed = processed
+            if total is not None:
+                status.total = total
+            if current_path is not None:
+                status.current_path = current_path
+            if error is not None:
+                status.error = error
+            if result is not None:
+                status.result = result
+            if done is not None:
+                status.done = done
+                status.active = not done
+                if done:
+                    status.finished_at = time.time()
+
+    def get_load_status(self) -> dict[str, Any]:
+        with self.load_lock:
+            status = self.load_status
+            return {
+                "active": status.active,
+                "done": status.done,
+                "error": status.error,
+                "phase": status.phase,
+                "processed": status.processed,
+                "total": status.total,
+                "currentPath": status.current_path,
+                "result": status.result,
+                "startedAt": status.started_at,
+                "finishedAt": status.finished_at,
+            }
 
 
 state = RuntimeState()
@@ -271,37 +339,67 @@ def get_state() -> dict[str, Any]:
 
 @app.post("/vault/open")
 def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
+    return _open_vault_impl(req)
+
+
+def _open_vault_impl(req: VaultOpenRequest, progress_callback: Any | None = None) -> dict[str, Any]:
     vault_path = Path(req.path).expanduser().resolve()
     if not vault_path.exists():
         raise HTTPException(status_code=400, detail=f"NoteBase path not found: {vault_path}")
 
     state.close()
-    vault = VaultManager(vault_path)
-    vault.ensure_structure()
-    indexer = VaultIndexer(vault.db_path)
-
-    cfg = vault.read_config()
-    openai_cfg = cfg.get("openai", {})
-    smart_enabled = cfg.get("mode", "core") == "smart" and bool(openai_cfg.get("enabled"))
-    openai = OpenAISuggester(
-        OpenAIConfig(
-            enabled=smart_enabled,
-            model=str(openai_cfg.get("model", "gpt-4.1-mini")),
-            api_key_env=str(openai_cfg.get("api_key_env", "OPENAI_API_KEY")),
-        )
-    )
-
-    indexed = indexer.reindex_vault(vault_path)
+    indexer: VaultIndexer | None = None
     try:
-        vault.bootstrap_task_status_links(indexer)
-    except OSError:
-        # Task-Link bootstrap is best-effort and should not block opening the NoteBase.
-        pass
-    tag_groups = vault.sync_tag_groups_with_index(indexer)
-    state.vault = vault
-    state.indexer = indexer
-    state.openai = openai
-    state.start_graph_watcher()
+        vault = VaultManager(vault_path)
+        vault.ensure_structure()
+        indexer = VaultIndexer(vault.db_path)
+
+        cfg = vault.read_config()
+        openai_cfg = cfg.get("openai", {})
+        smart_enabled = cfg.get("mode", "core") == "smart" and bool(openai_cfg.get("enabled"))
+        openai = OpenAISuggester(
+            OpenAIConfig(
+                enabled=smart_enabled,
+                model=str(openai_cfg.get("model", "gpt-4.1-mini")),
+                api_key_env=str(openai_cfg.get("api_key_env", "OPENAI_API_KEY")),
+            )
+        )
+
+        if progress_callback:
+            progress_callback("Index wird vorbereitet ...", 0, 0, None)
+        indexed = indexer.reindex_vault(vault_path, progress_callback=progress_callback)
+        if progress_callback:
+            progress_callback("Aufgabenstatus wird aktualisiert ...", indexed.get("notes", 0) + indexed.get("tasks", 0), indexed.get("notes", 0) + indexed.get("tasks", 0), None)
+        try:
+            vault.bootstrap_task_status_links(indexer)
+        except OSError:
+            # Task-Link bootstrap is best-effort and should not block opening the NoteBase.
+            pass
+        if progress_callback:
+            progress_callback("Tags werden synchronisiert ...", indexed.get("notes", 0) + indexed.get("tasks", 0), indexed.get("notes", 0) + indexed.get("tasks", 0), None)
+        tag_groups = vault.sync_tag_groups_with_index(indexer)
+        state.vault = vault
+        state.indexer = indexer
+        state.openai = openai
+        try:
+            state.start_graph_watcher()
+        except Exception as exc:
+            state.graph_status.last_error = f"Graph watcher could not be started: {exc}"
+            logger.exception("Graph watcher could not be started.")
+    except sqlite3.OperationalError as exc:
+        if indexer:
+            indexer.close()
+        state.close()
+        detail = f"Could not open NoteBase index database: {exc}"
+        if "locked" in str(exc).lower():
+            detail = f"Could not open NoteBase because its index database is locked: {vault_path}"
+        raise HTTPException(status_code=409, detail=detail) from exc
+    except Exception as exc:
+        if indexer:
+            indexer.close()
+        state.close()
+        logger.exception("Could not open NoteBase.")
+        raise HTTPException(status_code=500, detail=f"Could not open NoteBase: {exc}") from exc
 
     return {
         "vaultPath": str(vault_path),
@@ -311,6 +409,54 @@ def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
         "tagGroups": tag_groups,
         "counts": _counts(indexer),
     }
+
+
+def _open_notebase_background(req: VaultOpenRequest) -> None:
+    def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
+        state.update_load_status(
+            phase=phase,
+            processed=processed,
+            total=total,
+            current_path=current_path,
+        )
+
+    try:
+        result = _open_vault_impl(req, progress_callback=update_progress)
+        state.update_load_status(
+            phase="NoteBase ist bereit.",
+            done=True,
+            error=None,
+            result=result,
+        )
+    except HTTPException as exc:
+        state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.detail), result=None)
+    except Exception as exc:
+        logger.exception("Could not open NoteBase in background.")
+        state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
+
+
+@app.post("/notebase/open/start")
+def start_notebase_open(req: VaultOpenRequest) -> dict[str, Any]:
+    vault_path = Path(req.path).expanduser().resolve()
+    if not vault_path.exists():
+        raise HTTPException(status_code=400, detail=f"NoteBase path not found: {vault_path}")
+    with state.load_lock:
+        if state.load_status.active:
+            raise HTTPException(status_code=409, detail="A NoteBase is already being loaded.")
+    state.reset_load_status("NoteBase wird vorbereitet ...")
+    thread = threading.Thread(
+        target=_open_notebase_background,
+        args=(VaultOpenRequest(path=str(vault_path)),),
+        name="nicknotes-notebase-open",
+        daemon=True,
+    )
+    thread.start()
+    return {"started": True, "path": str(vault_path)}
+
+
+@app.get("/notebase/open/status")
+def get_notebase_open_status() -> dict[str, Any]:
+    return state.get_load_status()
 
 
 @app.post("/vault/create")
@@ -724,17 +870,20 @@ def read_note_content(path: str) -> dict[str, Any]:
 @app.post("/notes/save")
 def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
-    file_path = Path(req.path).expanduser().resolve()
     vault_root = vault.vault_path.resolve()
+    candidate = Path(req.path).expanduser()
+    if candidate.is_absolute():
+        file_path = candidate.resolve()
+    else:
+        clean_path = req.path.replace("\\", "/").strip().strip("/")
+        file_path = (vault_root / clean_path).resolve()
 
     try:
         file_path.relative_to(vault_root)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Can only save files inside the loaded NoteBase") from exc
 
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-    if not file_path.is_file():
+    if file_path.exists() and not file_path.is_file():
         raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
 
     try:

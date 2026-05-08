@@ -17,10 +17,8 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
   showTasks: true,
   showTags: true,
   showLinkEdges: true,
-  showBacklinkEdges: true,
   showTagUsageEdges: true,
   showSharedTagEdges: false,
-  showDiagnostics: true,
   minimumEdgeWeight: 0,
   searchText: '',
 }
@@ -89,16 +87,13 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
   }
   const normalizedSearch = filters.searchText.trim().toLowerCase()
   const edgeTypes = new Set<string>()
-  if ((mode === 'debug' || mode === 'link') && filters.showLinkEdges) {
+  if (filters.showLinkEdges) {
     edgeTypes.add('link')
   }
-  if ((mode === 'debug' || mode === 'link' || mode === 'focus') && filters.showBacklinkEdges) {
-    edgeTypes.add('backlink')
-  }
-  if ((mode === 'debug' || mode === 'tag') && filters.showTagUsageEdges) {
+  if (filters.showTagUsageEdges) {
     edgeTypes.add('tagUsage')
   }
-  if ((mode === 'debug' || mode === 'focus') && filters.showSharedTagEdges) {
+  if (filters.showSharedTagEdges) {
     edgeTypes.add('sharedTag')
   }
 
@@ -170,10 +165,8 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
     showTasks: source.showTasks ?? DEFAULT_GRAPH_FILTERS.showTasks,
     showTags: source.showTags ?? DEFAULT_GRAPH_FILTERS.showTags,
     showLinkEdges: source.showLinkEdges ?? DEFAULT_GRAPH_FILTERS.showLinkEdges,
-    showBacklinkEdges: source.showBacklinkEdges ?? DEFAULT_GRAPH_FILTERS.showBacklinkEdges,
     showTagUsageEdges: source.showTagUsageEdges ?? DEFAULT_GRAPH_FILTERS.showTagUsageEdges,
     showSharedTagEdges: source.showSharedTagEdges ?? DEFAULT_GRAPH_FILTERS.showSharedTagEdges,
-    showDiagnostics: source.showDiagnostics ?? DEFAULT_GRAPH_FILTERS.showDiagnostics,
     minimumEdgeWeight:
       typeof source.minimumEdgeWeight === 'number' && Number.isFinite(source.minimumEdgeWeight)
         ? Math.max(0, Math.min(20, source.minimumEdgeWeight))

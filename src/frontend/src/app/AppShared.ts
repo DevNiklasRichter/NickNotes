@@ -263,7 +263,7 @@ export type ReviewDashboardResponse = {
 }
 
 export type GraphNodeType = 'note' | 'task' | 'tag' | 'tagGroup'
-export type GraphEdgeType = 'link' | 'tagUsage' | 'backlink' | 'sharedTag'
+export type GraphEdgeType = 'link' | 'tagUsage' | 'sharedTag'
 export type GraphMode = 'link' | 'tag' | 'focus' | 'debug'
 export type GraphViewMode = 'graph' | 'debug'
 
@@ -323,10 +323,8 @@ export type GraphFilters = {
   showTasks: boolean
   showTags: boolean
   showLinkEdges: boolean
-  showBacklinkEdges: boolean
   showTagUsageEdges: boolean
   showSharedTagEdges: boolean
-  showDiagnostics: boolean
   minimumEdgeWeight: number
   searchText: string
 }

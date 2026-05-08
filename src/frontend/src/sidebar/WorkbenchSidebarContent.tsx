@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ExplorerSidebar } from '../explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from '../explorer/TagSidebarV2'
 import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, ExplorerViewState } from '../explorer/types'
+import { GraphSidebarPanel } from '../graph/GraphSidebarPanel'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 import {
@@ -1617,29 +1618,7 @@ export function WorkbenchSidebarContent({
   }
 
   if (sidebarView === 'graph') {
-    return (
-      <div className="explorer-shell todo-explorer-shell">
-        <header className="explorer-toolbar todo-sidebar-toolbar">
-          <div className="explorer-toolbar-top">
-            <h3>Graph</h3>
-            <div className="explorer-toolbar-right">
-              <button className="icon-button compact" onClick={onOpenGraphDashboard} disabled={!vaultLoaded} title="Graph-Ansicht oeffnen">
-                <LucideNamedIcon name="Network" size={14} />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <button className="todo-open-dashboard-button" onClick={onOpenGraphDashboard} disabled={!vaultLoaded}>
-          Graph oeffnen
-        </button>
-
-        <section className="todo-sidebar-section">
-          <h4>Phase 2</h4>
-          <p className="muted-copy">Preview fuer Graph-Index, Filter, Diagnostics und manuellen Rebuild.</p>
-        </section>
-      </div>
-    )
+    return <GraphSidebarPanel vaultLoaded={vaultLoaded} onOpenGraphDashboard={onOpenGraphDashboard} />
   }
 
   if (sidebarView === 'tags') {
