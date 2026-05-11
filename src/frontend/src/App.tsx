@@ -153,6 +153,35 @@ type NoteBaseOpenStatus = {
   } | null
 }
 
+type TagMatchCandidate = {
+  id: string
+  path: string
+  relativePath: string
+  start: number
+  end: number
+  line: number
+  lineOffset: number
+  matchedText: string
+  alias: string
+  replacement: string
+  groupId: string
+  groupDisplayName: string
+  groupColor: string
+  tagId: string
+  tagDisplayName: string
+  before: string
+  after: string
+}
+
+type TagMatchAssistantState = {
+  open: boolean
+  loading: boolean
+  applying: boolean
+  cursor: number
+  items: TagMatchCandidate[]
+  skippedIds: string[]
+}
+
 function resolveGraphNodePath(path: string, vaultPath: string): string {
   const cleanPath = normalizeLabel(path)
   if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
@@ -250,6 +279,14 @@ function App() {
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null)
   const tagActionDialogRef = useRef<TagActionDialogState | null>(null)
+  const [tagMatchAssistant, setTagMatchAssistant] = useState<TagMatchAssistantState>({
+    open: false,
+    loading: false,
+    applying: false,
+    cursor: 0,
+    items: [],
+    skippedIds: [],
+  })
   const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({})
   const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
   const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
@@ -1116,15 +1153,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendUrl, vaultLoaded, noteGroups.length, explorerRows.length])
 
-  const wikiTitleCounts = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const row of explorerRows) {
-      const key = normalizeWikiLookup(toNoteDisplayName(row.path))
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return counts
-  }, [explorerRows])
-
   const noteGroupsByKey = useMemo(() => {
     const byKey = new Map<string, NoteGroup>()
     for (const group of noteGroups) {
@@ -1261,12 +1289,7 @@ function App() {
   }, [tasks])
 
   const toWikiTargetForRow = (row: SearchRow): string => {
-    const noteName = toNoteDisplayName(row.path)
-    const duplicateCount = wikiTitleCounts.get(normalizeWikiLookup(noteName)) ?? 0
-    if (duplicateCount <= 1) {
-      return noteName
-    }
-    return getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '')
+    return getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '') || toNoteDisplayName(row.path)
   }
   const propertyRelatedOptions = useMemo(() => {
     const values = new Set<string>()
@@ -4015,6 +4038,191 @@ function App() {
     }
   }
 
+  const openTagMatchAssistant = async () => {
+    if (!vaultLoaded) {
+      return
+    }
+    setTagMatchAssistant({
+      open: true,
+      loading: true,
+      applying: false,
+      cursor: 0,
+      items: [],
+      skippedIds: [],
+    })
+    try {
+      setError('')
+      const response = await apiRequest<{ items: TagMatchCandidate[]; total: number }>(
+        backendUrl,
+        '/tag-groups/match-candidates'
+      )
+      setTagMatchAssistant((current) => ({
+        ...current,
+        loading: false,
+        cursor: 0,
+        items: response.items,
+        skippedIds: [],
+      }))
+      setMessage(response.total > 0 ? `${response.total} moegliche Tag-Fundstellen gefunden.` : 'Keine offenen Tag-Fundstellen gefunden.')
+    } catch (caught) {
+      setTagMatchAssistant((current) => ({ ...current, loading: false }))
+      setError(String(caught))
+    }
+  }
+
+  const closeTagMatchAssistant = () => {
+    if (tagMatchAssistant.applying) {
+      return
+    }
+    setTagMatchAssistant((current) => ({ ...current, open: false }))
+  }
+
+  const visibleTagMatchItems = tagMatchAssistant.items.filter((item) => !tagMatchAssistant.skippedIds.includes(item.id))
+  const activeTagMatch =
+    visibleTagMatchItems.length > 0
+      ? visibleTagMatchItems[Math.min(tagMatchAssistant.cursor, visibleTagMatchItems.length - 1)]
+      : null
+
+  const moveTagMatchCursor = (direction: 1 | -1) => {
+    setTagMatchAssistant((current) => {
+      const visibleCount = current.items.filter((item) => !current.skippedIds.includes(item.id)).length
+      if (visibleCount <= 0) {
+        return current
+      }
+      return {
+        ...current,
+        cursor: (current.cursor + direction + visibleCount) % visibleCount,
+      }
+    })
+  }
+
+  const skipActiveTagMatch = () => {
+    if (!activeTagMatch) {
+      return
+    }
+    setTagMatchAssistant((current) => {
+      const skippedIds = current.skippedIds.includes(activeTagMatch.id)
+        ? current.skippedIds
+        : [...current.skippedIds, activeTagMatch.id]
+      const visibleCount = current.items.filter((item) => !skippedIds.includes(item.id)).length
+      return {
+        ...current,
+        skippedIds,
+        cursor: Math.max(0, Math.min(current.cursor, visibleCount - 1)),
+      }
+    })
+  }
+
+  const applyTagMatches = async (matches: TagMatchCandidate[]) => {
+    const uniqueMatches = Array.from(new Map(matches.map((item) => [item.id, item])).values())
+    if (uniqueMatches.length === 0) {
+      return
+    }
+    const targetPathKeys = new Set(uniqueMatches.map((item) => normalizeFilePathKey(item.path)))
+    const dirtyTargets = openTabsRef.current.filter(
+      (tab) => tab.kind === 'note' && tab.dirty && targetPathKeys.has(normalizeFilePathKey(tab.path))
+    )
+    if (dirtyTargets.length > 0) {
+      setError('Bitte speichere offene geaenderte Notizen, bevor Tag-Fundstellen darin uebernommen werden.')
+      return
+    }
+    setTagMatchAssistant((current) => ({ ...current, applying: true }))
+    try {
+      setError('')
+      const response = await apiRequest<{
+        applied: number
+        notesUpdated: number
+        paths: string[]
+        counts: VaultCounts
+        tagGroups?: unknown
+      }>(backendUrl, '/tag-groups/apply-matches', {
+        method: 'POST',
+        body: JSON.stringify({ matches: uniqueMatches }),
+      })
+      setCounts(response.counts)
+      if (response.tagGroups) {
+        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+      }
+      setOpenTabs((tabs) =>
+        tabs.map((tab) => {
+          if (tab.kind !== 'note' || !response.paths.some((path) => normalizeFilePathKey(path) === normalizeFilePathKey(tab.path))) {
+            return tab
+          }
+          return { ...tab, dirty: false, loading: true }
+        })
+      )
+      await Promise.all([refreshWorkspaceData(true), refreshOpenTabsFromDisk(response.paths)])
+      setTagMatchAssistant((current) => {
+        const appliedIds = new Set(uniqueMatches.map((item) => item.id))
+        const items = current.items.filter((item) => !appliedIds.has(item.id))
+        return {
+          ...current,
+          applying: false,
+          items,
+          cursor: Math.max(0, Math.min(current.cursor, items.length - 1)),
+        }
+      })
+      setMessage(`${response.applied} Fundstellen in ${response.notesUpdated} Notizen uebernommen.`)
+    } catch (caught) {
+      setTagMatchAssistant((current) => ({ ...current, applying: false }))
+      setError(String(caught))
+    }
+  }
+
+  const applyActiveTagMatch = () => {
+    if (activeTagMatch) {
+      void applyTagMatches([activeTagMatch])
+    }
+  }
+
+  const applyActiveTagEverywhere = () => {
+    if (!activeTagMatch) {
+      return
+    }
+    const matches = visibleTagMatchItems.filter(
+      (item) =>
+        item.groupId.toLowerCase() === activeTagMatch.groupId.toLowerCase() &&
+        item.tagId.toLowerCase() === activeTagMatch.tagId.toLowerCase()
+    )
+    void applyTagMatches(matches)
+  }
+
+  const applyAllTagMatches = () => {
+    void applyTagMatches(visibleTagMatchItems)
+  }
+
+  const refreshOpenTabsFromDisk = async (paths: string[]) => {
+    if (paths.length === 0) {
+      return
+    }
+    const pathKeys = new Set(paths.map(normalizeFilePathKey))
+    const noteTabs = openTabsRef.current.filter((tab) => tab.kind === 'note' && pathKeys.has(normalizeFilePathKey(tab.path)))
+    await Promise.allSettled(
+      noteTabs.map(async (tab) => {
+        const response = await apiRequest<{ path: string; content: string }>(
+          backendUrl,
+          `/notes/content?path=${encodeURIComponent(tab.path)}`
+        )
+        const parsed = parseNoteDocument(response.content, tab.title || toNoteDisplayName(response.path))
+        setOpenTabs((tabs) =>
+          tabs.map((entry) =>
+            entry.id === tab.id
+              ? {
+                  ...entry,
+                  path: response.path,
+                  title: normalizeLabel(String(parsed.frontmatter.title ?? '')) || toNoteDisplayName(response.path),
+                  content: response.content,
+                  parsedDocument: parsed,
+                  dirty: false,
+                  loading: false,
+                }
+              : entry
+          )
+        )
+      })
+    )
+  }
+
   const handleWorkspaceExternalDrop = (paneId: PaneId, payload: ExternalNoteDropPayload) => {
     void openNoteInTab(payload.path, payload.title, {
       targetPane: paneId,
@@ -4088,6 +4296,27 @@ function App() {
     setTheme(nextMode)
   }
 
+  const handleOneNoteImportComplete = (response: {
+    counts?: VaultCounts
+    tagGroups?: unknown
+    groups?: NoteGroup[]
+    import?: { importedPages?: number; reportPath?: string }
+  }) => {
+    if (response.counts) {
+      setCounts(response.counts)
+    }
+    if (response.tagGroups) {
+      setCustomTagGroups(toStorageTagGroups(response.tagGroups))
+    }
+    if (response.groups) {
+      setNoteGroups(response.groups)
+    }
+    const importedPages = response.import?.importedPages ?? 0
+    setMessage(`OneNote-Import abgeschlossen: ${importedPages} Seiten importiert.`)
+    setError('')
+    void Promise.allSettled([refreshExplorerSidebarData(true), runSearch(searchQuery, true), refreshReview()])
+  }
+
   const openSidebarView = (view: SidebarView) => {
     if (sidebarView === view) {
       setSidebarOpen((prev) => !prev)
@@ -4129,6 +4358,8 @@ function App() {
         <SettingsEditorPanel
           displayName={displayName}
           theme={theme}
+          backendUrl={backendUrl}
+          vaultLoaded={vaultLoaded}
           sidebarOpen={sidebarOpen}
           explorerOptions={explorerOptions}
           statusBarPrefs={statusBarPrefs}
@@ -4144,6 +4375,7 @@ function App() {
             void saveSettings()
           }}
           onDiscard={discardSettings}
+          onOneNoteImportComplete={handleOneNoteImportComplete}
         />
       )
     }
@@ -4414,6 +4646,130 @@ function App() {
     </div>
   ) : null
 
+  const renderTagMatchPreview = (match: TagMatchCandidate, mode: 'before' | 'after') => (
+    <div className="tag-match-editor-preview">
+      <span className="tag-match-context">{match.before}</span>
+      {mode === 'before' ? (
+        <mark className="tag-match-highlight">{match.matchedText}</mark>
+      ) : (
+        <span
+          className="cm-md-inline-tag-chip tag-match-chip"
+          style={{ '--cm-md-tag-color': match.groupColor } as CSSProperties}
+          title={`${match.groupDisplayName} / ${match.tagDisplayName}`}
+        >
+          {match.tagDisplayName}
+        </span>
+      )}
+      <span className="tag-match-context">{match.after}</span>
+    </div>
+  )
+
+  const tagMatchAssistantModal = tagMatchAssistant.open ? (
+    <div
+      className="modal-overlay tag-match-overlay"
+      onClick={() => {
+        closeTagMatchAssistant()
+      }}
+    >
+      <aside
+        className="tag-match-modal"
+        onClick={(event) => {
+          event.stopPropagation()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            closeTagMatchAssistant()
+          }
+          if (event.key === 'ArrowRight') {
+            event.preventDefault()
+            moveTagMatchCursor(1)
+          }
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault()
+            moveTagMatchCursor(-1)
+          }
+        }}
+      >
+        <header className="tag-match-header">
+          <div>
+            <h3>Tag-Fundstellen pruefen</h3>
+            <p>
+              {tagMatchAssistant.loading
+                ? 'NoteBase wird durchsucht ...'
+                : activeTagMatch
+                  ? `${activeTagMatch.relativePath} - Zeile ${activeTagMatch.line}`
+                  : 'Keine offenen Fundstellen.'}
+            </p>
+          </div>
+          <button className="icon-button compact muted" onClick={closeTagMatchAssistant} title="Schliessen">
+            <LucideNamedIcon name="X" size={14} />
+          </button>
+        </header>
+
+        {tagMatchAssistant.loading ? <div className="tag-match-empty">Suche laeuft ...</div> : null}
+
+        {!tagMatchAssistant.loading && activeTagMatch ? (
+          <>
+            <div className="tag-match-summary-row">
+              <span>
+                Treffer {Math.min(tagMatchAssistant.cursor + 1, visibleTagMatchItems.length)} von {visibleTagMatchItems.length}
+              </span>
+              <span>
+                {activeTagMatch.groupDisplayName} / {activeTagMatch.tagDisplayName}
+              </span>
+            </div>
+
+            <div className="tag-match-compare-grid">
+              <section>
+                <h4>Vorher</h4>
+                {renderTagMatchPreview(activeTagMatch, 'before')}
+              </section>
+              <section>
+                <h4>Nachher</h4>
+                {renderTagMatchPreview(activeTagMatch, 'after')}
+              </section>
+            </div>
+
+            <footer className="tag-match-actions">
+              <div className="tag-match-nav-actions">
+                <button type="button" onClick={() => moveTagMatchCursor(-1)} disabled={visibleTagMatchItems.length <= 1}>
+                  <LucideNamedIcon name="ChevronLeft" size={14} />
+                </button>
+                <button type="button" onClick={() => moveTagMatchCursor(1)} disabled={visibleTagMatchItems.length <= 1}>
+                  <LucideNamedIcon name="ChevronRight" size={14} />
+                </button>
+              </div>
+              <div className="tag-match-apply-actions">
+                <button type="button" onClick={skipActiveTagMatch} disabled={tagMatchAssistant.applying}>
+                  Ueberspringen
+                </button>
+                <button type="button" onClick={applyActiveTagEverywhere} disabled={tagMatchAssistant.applying}>
+                  Diesen Tag ueberall
+                </button>
+                <button type="button" onClick={applyAllTagMatches} disabled={tagMatchAssistant.applying}>
+                  Alle uebernehmen
+                </button>
+                <button type="button" className="primary" onClick={applyActiveTagMatch} disabled={tagMatchAssistant.applying}>
+                  Uebernehmen
+                </button>
+              </div>
+            </footer>
+          </>
+        ) : null}
+
+        {!tagMatchAssistant.loading && !activeTagMatch ? (
+          <div className="tag-match-empty">
+            <p>Keine Fundstellen mehr offen.</p>
+            <button type="button" onClick={closeTagMatchAssistant}>
+              Fertig
+            </button>
+          </div>
+        ) : null}
+      </aside>
+    </div>
+  ) : null
+
   const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0
   const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0
   const noteBaseProgressPercent =
@@ -4593,6 +4949,9 @@ function App() {
             }}
             onOpenTagOverview={(groupName, tagName) => {
               void openTagOverviewByReference(`${groupName}:${tagName}`)
+            }}
+            onOpenTagMatchAssistant={() => {
+              void openTagMatchAssistant()
             }}
             noteGroups={noteGroups}
             explorerRows={explorerRows}
@@ -4808,6 +5167,7 @@ function App() {
         setDialog={setTagActionDialog}
         onClose={closeTagActionDialog}
       />
+      {tagMatchAssistantModal}
       {createNoteBaseDialog}
 
         </div>

@@ -68,6 +68,7 @@ type WorkbenchSidebarContentProps = {
   onRenameTag: (groupName: string, tagName: string) => void
   onDeleteTag: (groupName: string, tagName: string) => void
   onOpenTagOverview?: (groupName: string, tagName: string) => void
+  onOpenTagMatchAssistant: () => void
   noteGroups: ExplorerSourceGroup[]
   explorerRows: ExplorerSourceFile[]
   activeNotePath: string
@@ -173,6 +174,7 @@ export function WorkbenchSidebarContent({
   onRenameTag,
   onDeleteTag,
   onOpenTagOverview,
+  onOpenTagMatchAssistant,
   noteGroups,
   explorerRows,
   activeNotePath,
@@ -1638,6 +1640,7 @@ export function WorkbenchSidebarContent({
         onRenameTag={onRenameTag}
         onDeleteTag={onDeleteTag}
         onOpenTagOverview={onOpenTagOverview}
+        onOpenTagMatchAssistant={onOpenTagMatchAssistant}
       />
     )
   }

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -11,6 +11,7 @@ const BACKEND_PORT = 8765
 
 let backendProcess = null
 let mainWindow = null
+let backendStopping = false
 const unsavedByWebContentsId = new Map()
 const pendingSaveBeforeCloseByWebContentsId = new Set()
 const allowCloseByWebContentsId = new Set()
@@ -50,6 +51,7 @@ function startBackend() {
     return
   }
 
+  backendStopping = false
   const python = resolvePythonBinary()
   backendProcess = spawn(python, ['-m', 'src.backend.server'], {
     cwd: process.cwd(),
@@ -62,21 +64,33 @@ function startBackend() {
 
   backendProcess.on('exit', () => {
     backendProcess = null
+    backendStopping = false
   })
 }
 
 function stopBackend() {
-  if (!backendProcess) {
+  if (!backendProcess || backendStopping) {
     return
   }
 
+  backendStopping = true
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(backendProcess.pid), '/T', '/F'])
+    spawnSync('taskkill', ['/PID', String(backendProcess.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
   } else {
     backendProcess.kill('SIGTERM')
   }
-
   backendProcess = null
+  backendStopping = false
+}
+
+function stopBackendAndQuit(signal = '') {
+  stopBackend()
+  if (signal) {
+    process.exit(0)
+  }
 }
 
 function createWindow() {
@@ -197,13 +211,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle('dialog:selectImportSources', async () => {
     const result = await dialog.showOpenDialog({
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      properties: ['openFile', 'multiSelections'],
       filters: [
         {
-          name: 'OneNote- und Exportdateien',
-          extensions: ['one', 'onepkg', 'onetoc2', 'html', 'htm', 'mht', 'mhtml', 'md', 'markdown', 'txt'],
+          name: 'OneNote-Paketdateien',
+          extensions: ['onepkg'],
         },
-        { name: 'Alle Dateien', extensions: ['*'] },
       ],
     })
 
@@ -252,6 +265,18 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopBackend()
+})
+
+process.once('SIGINT', () => {
+  stopBackendAndQuit('SIGINT')
+})
+
+process.once('SIGTERM', () => {
+  stopBackendAndQuit('SIGTERM')
+})
+
+process.once('exit', () => {
   stopBackend()
 })
 

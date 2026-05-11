@@ -1,5 +1,5 @@
 ﻿import { syntaxTree } from '@codemirror/language'
-import { Facet, type EditorState, type Extension } from '@codemirror/state'
+import { Facet, type EditorState, type Extension, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
 import { buildTagLookup, findTagDefinition, type TagGroupDefinition, type TagLookup } from '../tags/tagTypes'
 
@@ -27,8 +27,15 @@ type DecorationEntry = {
 type LivePreviewOptions = {
   notePath?: string
   backendUrl?: string
+  linkTargets?: readonly MarkdownPreviewLinkTarget[]
   onOpenWikiLink?: (target: string) => void
   onOpenTagReference?: (groupId: string, tagId: string) => void
+}
+
+type MarkdownPreviewLinkTarget = {
+  title: string
+  target: string
+  relativePath: string
 }
 
 const HEADING_OWNER_NAMES = new Set(['ATXHeading1', 'ATXHeading2', 'ATXHeading3', 'ATXHeading4', 'ATXHeading5', 'ATXHeading6'])
@@ -268,6 +275,37 @@ class MarkdownLinkWidget extends WidgetType {
   }
 }
 
+class WikiLinkWidget extends WidgetType {
+  readonly text: string
+  readonly target: string
+  readonly tooltip: string
+
+  constructor(text: string, target: string, tooltip: string) {
+    super()
+    this.text = text
+    this.target = target
+    this.tooltip = tooltip
+  }
+
+  eq(other: WikiLinkWidget): boolean {
+    return other.text === this.text && other.target === this.target && other.tooltip === this.tooltip
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-md-wikilink cm-md-wikilink-widget'
+    element.dataset.wikiTarget = this.target
+    element.textContent = this.text
+    element.title = this.tooltip
+    element.setAttribute('role', 'link')
+    return element
+  }
+
+  ignoreEvent(): boolean {
+    return false
+  }
+}
+
 type ParsedInlineTag = {
   from: number
   to: number
@@ -295,6 +333,8 @@ type ParsedMarkdownLink = {
 type ParsedWikiLink = {
   from: number
   to: number
+  target: string
+  displayText: string
 }
 
 type ParsedMarkdownTable = {
@@ -349,17 +389,25 @@ function isPotentialMarkdownTableRow(lineText: string): boolean {
   return lineText.includes('|') && splitMarkdownTableRow(lineText).length >= 2
 }
 
+function decodeMarkdownTableCell(value: string): string {
+  return value.replace(/<br\s*\/?>/gi, '\n').trim()
+}
+
 function escapeMarkdownTableCell(value: string): string {
-  return value.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim()
+  return value
+    .replace(/\r?\n/g, '<br>')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .trim()
 }
 
 function normalizeMarkdownTableRows(headers: readonly string[], rows: readonly (readonly string[])[]): string[][] {
   const columnCount = Math.max(1, headers.length)
-  return rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
+  return rows.map((row) => Array.from({ length: columnCount }, (_, index) => decodeMarkdownTableCell(row[index] ?? '')))
 }
 
 function serializeMarkdownTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
-  const cleanHeaders = headers.map(escapeMarkdownTableCell)
+  const cleanHeaders = headers.map(decodeMarkdownTableCell)
   const normalizedRows = normalizeMarkdownTableRows(cleanHeaders, rows)
   const renderRow = (cells: readonly string[]) => `| ${cells.map(escapeMarkdownTableCell).join(' | ')} |`
   return [
@@ -393,7 +441,7 @@ class MarkdownTableWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const wrapper = document.createElement('div')
+    const wrapper = document.createElement('span')
     wrapper.className = 'cm-md-table-widget'
     wrapper.dataset.tableFrom = String(this.from)
     wrapper.dataset.tableTo = String(this.to)
@@ -401,43 +449,238 @@ class MarkdownTableWidget extends WidgetType {
     const table = document.createElement('table')
     const thead = document.createElement('thead')
     const headerRow = document.createElement('tr')
+    let activeContextMenu: HTMLElement | null = null
     const columnCount = Math.max(1, this.headers.length)
-    const draftHeaders = Array.from({ length: columnCount }, (_, index) => this.headers[index] ?? '')
+    const draftHeaders = Array.from({ length: columnCount }, (_, index) => decodeMarkdownTableCell(this.headers[index] ?? ''))
     const draftRows = normalizeMarkdownTableRows(draftHeaders, this.rows)
+    let suppressBlurCommit = false
 
-    const commit = () => {
+    const commit = (selectionAnchor?: number) => {
       const nextMarkdown = serializeMarkdownTable(draftHeaders, draftRows)
       const currentMarkdown = view.state.doc.sliceString(this.from, this.to)
+      const requestedAnchor = typeof selectionAnchor === 'number' ? Math.max(0, Math.min(selectionAnchor, view.state.doc.length)) : null
       if (nextMarkdown === currentMarkdown) {
+        if (requestedAnchor !== null) {
+          view.dispatch({
+            selection: { anchor: requestedAnchor, head: requestedAnchor },
+            scrollIntoView: true,
+          })
+          view.focus()
+        }
         return
       }
+      const nextDocLength = view.state.doc.length - (this.to - this.from) + nextMarkdown.length
+      const mappedAnchor =
+        requestedAnchor === null
+          ? null
+          : requestedAnchor <= this.from
+            ? requestedAnchor
+            : requestedAnchor >= this.to
+              ? this.from + nextMarkdown.length + (requestedAnchor - this.to)
+              : this.from + nextMarkdown.length
+      const safeAnchor = mappedAnchor === null ? null : Math.max(0, Math.min(mappedAnchor, nextDocLength))
+      suppressBlurCommit = true
       view.dispatch({
         changes: { from: this.from, to: this.to, insert: nextMarkdown },
-        selection: { anchor: this.from + nextMarkdown.length },
-        scrollIntoView: false,
+        selection: safeAnchor !== null ? { anchor: safeAnchor, head: safeAnchor } : { anchor: this.from + nextMarkdown.length },
+        scrollIntoView: safeAnchor !== null,
         userEvent: 'input.type',
       })
+      if (safeAnchor !== null) {
+        view.focus()
+      }
     }
 
-    const commitOnEnter = (event: KeyboardEvent) => {
-      if (event.key !== 'Enter') {
+    let contextMenuPointerCleanup = () => {}
+
+    const closeContextMenu = () => {
+      activeContextMenu?.remove()
+      activeContextMenu = null
+      contextMenuPointerCleanup()
+      contextMenuPointerCleanup = () => {}
+    }
+
+    const commitStructureChange = () => {
+      closeContextMenu()
+      commit()
+    }
+
+    const createMenuButton = (label: string, action: () => void, disabled = false): HTMLButtonElement => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = label
+      button.disabled = disabled
+      button.addEventListener('mousedown', (event) => {
+        event.preventDefault()
+      })
+      button.addEventListener('click', () => {
+        if (!disabled) {
+          action()
+        }
+      })
+      return button
+    }
+
+    const insertRowAt = (index: number) => {
+      const targetIndex = Math.max(0, Math.min(index, draftRows.length))
+      draftRows.splice(targetIndex, 0, Array.from({ length: draftHeaders.length }, () => ''))
+      commitStructureChange()
+    }
+
+    const deleteRowAt = (index: number) => {
+      if (index < 0 || draftRows.length <= 1) {
         return
       }
+      draftRows.splice(index, 1)
+      commitStructureChange()
+    }
+
+    const insertColumnAt = (index: number) => {
+      const targetIndex = Math.max(0, Math.min(index, draftHeaders.length))
+      draftHeaders.splice(targetIndex, 0, `Spalte ${targetIndex + 1}`)
+      for (const row of draftRows) {
+        row.splice(targetIndex, 0, '')
+      }
+      commitStructureChange()
+    }
+
+    const deleteColumnAt = (index: number) => {
+      if (index < 0 || draftHeaders.length <= 1) {
+        return
+      }
+      draftHeaders.splice(index, 1)
+      for (const row of draftRows) {
+        row.splice(index, 1)
+      }
+      commitStructureChange()
+    }
+
+    const showCellContextMenu = (event: MouseEvent, rowIndex: number | null, columnIndex: number) => {
       event.preventDefault()
-      const input = event.currentTarget as HTMLInputElement
-      input.blur()
+      closeContextMenu()
+      const menu = document.createElement('div')
+      menu.className = 'cm-md-table-context-menu'
+      const rowTarget = rowIndex ?? 0
+      menu.appendChild(createMenuButton('Zeile darueber einfuegen', () => insertRowAt(rowTarget)))
+      menu.appendChild(createMenuButton('Zeile darunter einfuegen', () => insertRowAt(rowTarget + 1)))
+      menu.appendChild(createMenuButton('Spalte links einfuegen', () => insertColumnAt(columnIndex)))
+      menu.appendChild(createMenuButton('Spalte rechts einfuegen', () => insertColumnAt(columnIndex + 1)))
+      menu.appendChild(createMenuButton('Zeile loeschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1))
+      menu.appendChild(createMenuButton('Spalte loeschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1))
+      menu.style.left = '0px'
+      menu.style.top = '0px'
+      menu.addEventListener('mousedown', (menuEvent) => {
+        menuEvent.preventDefault()
+      })
+      document.body.appendChild(menu)
+      document.addEventListener('pointerdown', closeContextMenuFromPointer)
+      contextMenuPointerCleanup = () => {
+        document.removeEventListener('pointerdown', closeContextMenuFromPointer)
+      }
+      const menuRect = menu.getBoundingClientRect()
+      const viewportPadding = 8
+      const left = Math.min(
+        Math.max(viewportPadding, event.clientX),
+        Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding)
+      )
+      const top = Math.min(
+        Math.max(viewportPadding, event.clientY),
+        Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding)
+      )
+      menu.style.left = `${left}px`
+      menu.style.top = `${top}px`
+      activeContextMenu = menu
+    }
+
+    const closeContextMenuFromPointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.closest('.cm-md-table-context-menu')) {
+        return
+      }
+      closeContextMenu()
+    }
+
+    const tableControls: HTMLTextAreaElement[] = []
+    let navigatingInsideTable = false
+
+    const focusTableControl = (index: number) => {
+      const target = tableControls[index]
+      if (!target) {
+        return
+      }
+      navigatingInsideTable = true
+      target.focus()
+      target.select()
+      window.setTimeout(() => {
+        navigatingInsideTable = false
+      }, 0)
+    }
+
+    const resolvePositionAfterTable = (): number => {
+      const nextChar = view.state.doc.sliceString(this.to, this.to + 1)
+      return nextChar === '\n' ? this.to + 1 : this.to
+    }
+
+    const handleCellKeyDown = (event: KeyboardEvent) => {
+      const input = event.currentTarget as HTMLTextAreaElement
+      const controlIndex = tableControls.indexOf(input)
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          if (controlIndex > 0) {
+            focusTableControl(controlIndex - 1)
+            return
+          }
+          commit(this.from)
+          return
+        }
+        if (controlIndex >= 0 && controlIndex < tableControls.length - 1) {
+          focusTableControl(controlIndex + 1)
+          return
+        }
+        commit(resolvePositionAfterTable())
+        return
+      }
+
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        commit()
+        input.blur()
+        return
+      }
+
+      if (event.key === 'Enter' && event.shiftKey) {
+        event.preventDefault()
+        const start = input.selectionStart
+        const end = input.selectionEnd
+        input.value = `${input.value.slice(0, start)}\n${input.value.slice(end)}`
+        input.selectionStart = start + 1
+        input.selectionEnd = start + 1
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    }
+
+    const commitOnBlur = () => {
+      if (navigatingInsideTable || suppressBlurCommit) {
+        return
+      }
+      commit()
     }
 
     draftHeaders.forEach((header, columnIndex) => {
       const cell = document.createElement('th')
-      const input = document.createElement('input')
+      const input = document.createElement('textarea')
+      input.rows = Math.max(1, header.split('\n').length)
       input.value = header
       input.ariaLabel = `Tabellenkopf ${columnIndex + 1}`
       input.addEventListener('input', () => {
         draftHeaders[columnIndex] = input.value
+        input.rows = Math.max(1, input.value.split('\n').length)
       })
-      input.addEventListener('keydown', commitOnEnter)
-      input.addEventListener('blur', commit)
+      input.addEventListener('keydown', handleCellKeyDown)
+      input.addEventListener('contextmenu', (event) => showCellContextMenu(event, null, columnIndex))
+      input.addEventListener('blur', commitOnBlur)
+      tableControls.push(input)
       cell.appendChild(input)
       headerRow.appendChild(cell)
     })
@@ -449,14 +692,18 @@ class MarkdownTableWidget extends WidgetType {
       const tr = document.createElement('tr')
       row.forEach((value, columnIndex) => {
         const cell = document.createElement('td')
-        const input = document.createElement('input')
+        const input = document.createElement('textarea')
+        input.rows = Math.max(1, value.split('\n').length)
         input.value = value
         input.ariaLabel = `Tabellenzelle ${rowIndex + 1}, ${columnIndex + 1}`
         input.addEventListener('input', () => {
           draftRows[rowIndex][columnIndex] = input.value
+          input.rows = Math.max(1, input.value.split('\n').length)
         })
-        input.addEventListener('keydown', commitOnEnter)
-        input.addEventListener('blur', commit)
+        input.addEventListener('keydown', handleCellKeyDown)
+        input.addEventListener('contextmenu', (event) => showCellContextMenu(event, rowIndex, columnIndex))
+        input.addEventListener('blur', commitOnBlur)
+        tableControls.push(input)
         cell.appendChild(input)
         tr.appendChild(cell)
       })
@@ -465,6 +712,12 @@ class MarkdownTableWidget extends WidgetType {
     table.appendChild(tbody)
     wrapper.appendChild(table)
     return wrapper
+  }
+
+  destroy(): void {
+    document.querySelectorAll('.cm-md-table-context-menu').forEach((menu) => {
+      menu.remove()
+    })
   }
 
   ignoreEvent(): boolean {
@@ -608,16 +861,33 @@ function parseWikiLinksInLine(lineText: string, lineFrom: number): ParsedWikiLin
 
   while (result) {
     const full = result[0] ?? ''
-    if (full) {
+    const innerTarget = result[1] ?? ''
+    const target = normalizeWikiLinkTarget(innerTarget)
+    if (full && target) {
       matches.push({
         from: lineFrom + result.index,
         to: lineFrom + result.index + full.length,
+        target,
+        displayText: getWikiLinkDisplayText(innerTarget, target),
       })
     }
     result = WIKILINK_PATTERN.exec(lineText)
   }
 
   return matches
+}
+
+function getWikiLinkDisplayText(raw: string, target: string): string {
+  const pipeIndex = raw.indexOf('|')
+  if (pipeIndex >= 0) {
+    const alias = raw.slice(pipeIndex + 1).trim()
+    if (alias) {
+      return alias
+    }
+  }
+  const cleanTarget = target.replace(/\\/g, '/').replace(/\.md$/i, '').trim()
+  const parts = cleanTarget.split('/').filter(Boolean)
+  return parts.at(-1) ?? cleanTarget
 }
 
 function addRange(entries: DecorationEntry[], from: number, to: number, decoration: Decoration): void {
@@ -973,7 +1243,13 @@ function decorateMarkdownLinks(
   }
 }
 
-function decorateWikiLinks(entries: DecorationEntry[], view: EditorView, excludedRanges: readonly SelectionRange[]): void {
+function decorateWikiLinks(
+  entries: DecorationEntry[],
+  view: EditorView,
+  selections: readonly SelectionRange[],
+  excludedRanges: readonly SelectionRange[],
+  linkTargets: readonly MarkdownPreviewLinkTarget[]
+): void {
   const processedLines = new Set<number>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
@@ -992,7 +1268,18 @@ function decorateWikiLinks(entries: DecorationEntry[], view: EditorView, exclude
         }
         const wikiLinks = parseWikiLinksInLine(line.text, line.from)
         for (const link of wikiLinks) {
-          addRange(entries, link.from, link.to, wikiLinkDeco)
+          if (intersectsSelection(link.from, link.to, selections)) {
+            addRange(entries, link.from, link.to, wikiLinkDeco)
+            continue
+          }
+          addRange(
+            entries,
+            link.from,
+            link.to,
+            Decoration.replace({
+              widget: new WikiLinkWidget(link.displayText, link.target, resolveWikiLinkTooltip(link.target, linkTargets)),
+            })
+          )
         }
         processedLines.add(line.number)
       }
@@ -1003,76 +1290,130 @@ function decorateWikiLinks(entries: DecorationEntry[], view: EditorView, exclude
       line = view.state.doc.line(line.number + 1)
     }
   }
+}
+
+function resolveWikiLinkTooltip(target: string, linkTargets: readonly MarkdownPreviewLinkTarget[]): string {
+  const resolved = resolveWikiLinkRelativePath(target, linkTargets)
+  return resolved || target
+}
+
+function resolveWikiLinkRelativePath(target: string, linkTargets: readonly MarkdownPreviewLinkTarget[]): string {
+  const lookup = normalizeWikiLookup(target)
+  if (!lookup) {
+    return ''
+  }
+
+  const byRelativePath = linkTargets.filter((candidate) => normalizeWikiLookup(candidate.relativePath) === lookup)
+  if (byRelativePath.length === 1) {
+    return byRelativePath[0]?.relativePath ?? ''
+  }
+
+  const byTarget = linkTargets.filter((candidate) => normalizeWikiLookup(candidate.target) === lookup)
+  if (byTarget.length === 1) {
+    return byTarget[0]?.relativePath ?? ''
+  }
+
+  const byTitle = linkTargets.filter((candidate) => normalizeWikiLookup(candidate.title) === lookup)
+  if (byTitle.length === 1) {
+    return byTitle[0]?.relativePath ?? ''
+  }
+
+  return ''
+}
+
+function normalizeWikiLookup(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\.md$/i, '').trim().toLowerCase()
+}
+
+function parseMarkdownTablesInState(state: EditorState, fromLine = 1, toLine = state.doc.lines): ParsedMarkdownTable[] {
+  const tables: ParsedMarkdownTable[] = []
+  const processedLines = new Set<number>()
+  let line = state.doc.line(fromLine)
+  const endLine = Math.max(fromLine, Math.min(toLine, state.doc.lines))
+
+  while (true) {
+    if (!processedLines.has(line.number)) {
+      processedLines.add(line.number)
+      const nextLine = line.number < state.doc.lines ? state.doc.line(line.number + 1) : null
+      if (nextLine && isPotentialMarkdownTableRow(line.text)) {
+        const headers = splitMarkdownTableRow(line.text)
+        if (headers.length >= 2 && isMarkdownTableSeparator(nextLine.text, headers.length)) {
+          const rows: string[][] = []
+          let lastLine = nextLine
+          let cursorLineNumber = nextLine.number + 1
+          while (cursorLineNumber <= state.doc.lines) {
+            const cursorLine = state.doc.line(cursorLineNumber)
+            if (!isPotentialMarkdownTableRow(cursorLine.text)) {
+              break
+            }
+            const row = splitMarkdownTableRow(cursorLine.text)
+            if (row.length !== headers.length) {
+              break
+            }
+            rows.push(row)
+            processedLines.add(cursorLine.number)
+            lastLine = cursorLine
+            cursorLineNumber += 1
+          }
+          tables.push({
+            from: line.from,
+            to: lastLine.to,
+            headers,
+            rows,
+          })
+        }
+      }
+    }
+
+    if (line.number >= endLine) {
+      break
+    }
+    line = state.doc.line(line.number + 1)
+  }
+
+  return tables
 }
 
 function parseMarkdownTables(view: EditorView): ParsedMarkdownTable[] {
   const tables: ParsedMarkdownTable[] = []
-  const processedLines = new Set<number>()
-
+  const seen = new Set<string>()
   for (const range of view.visibleRanges) {
     const end = Math.max(range.from, range.to - 1)
-    let line = view.state.doc.lineAt(range.from)
-    const endLine = view.state.doc.lineAt(end).number
-
-    while (true) {
-      if (!processedLines.has(line.number)) {
-        processedLines.add(line.number)
-        const nextLine = line.number < view.state.doc.lines ? view.state.doc.line(line.number + 1) : null
-        if (nextLine && isPotentialMarkdownTableRow(line.text)) {
-          const headers = splitMarkdownTableRow(line.text)
-          if (headers.length >= 2 && isMarkdownTableSeparator(nextLine.text, headers.length)) {
-            const rows: string[][] = []
-            let lastLine = nextLine
-            let cursorLineNumber = nextLine.number + 1
-            while (cursorLineNumber <= view.state.doc.lines) {
-              const cursorLine = view.state.doc.line(cursorLineNumber)
-              if (!isPotentialMarkdownTableRow(cursorLine.text)) {
-                break
-              }
-              const row = splitMarkdownTableRow(cursorLine.text)
-              if (row.length !== headers.length) {
-                break
-              }
-              rows.push(row)
-              processedLines.add(cursorLine.number)
-              lastLine = cursorLine
-              cursorLineNumber += 1
-            }
-            tables.push({
-              from: line.from,
-              to: lastLine.to,
-              headers,
-              rows,
-            })
-          }
-        }
+    const fromLine = view.state.doc.lineAt(range.from).number
+    const toLine = view.state.doc.lineAt(end).number
+    for (const table of parseMarkdownTablesInState(view.state, fromLine, toLine)) {
+      const key = `${table.from}:${table.to}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        tables.push(table)
       }
-
-      if (line.number >= endLine) {
-        break
-      }
-      line = view.state.doc.line(line.number + 1)
     }
   }
-
   return tables
 }
 
-function decorateMarkdownTables(entries: DecorationEntry[], view: EditorView): ParsedMarkdownTable[] {
-  const tables = parseMarkdownTables(view)
+function buildMarkdownTableDecorations(state: EditorState): DecorationSet {
+  const ranges: ReturnType<Decoration['range']>[] = []
+  const tables = parseMarkdownTablesInState(state)
   for (const table of tables) {
-    addRange(
-      entries,
-      table.from,
-      table.to,
+    ranges.push(
       Decoration.replace({
         widget: new MarkdownTableWidget(table.headers, table.rows, table.from, table.to),
-        block: true,
-      })
+      }).range(table.from, table.to)
     )
   }
-  return tables
+  return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none
 }
+
+const markdownTableDecorationsField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildMarkdownTableDecorations(state)
+  },
+  update(value, transaction) {
+    return transaction.docChanged ? buildMarkdownTableDecorations(transaction.state) : value.map(transaction.changes)
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
 
 function buildDecorations(view: EditorView, options: LivePreviewOptions): DecorationSet {
   const entries: DecorationEntry[] = []
@@ -1080,7 +1421,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
   const selections = view.state.selection.ranges.map((range) => ({ from: range.from, to: range.to }))
   const lineClassSeen = new Set<string>()
   const tagLookup = view.state.facet(markdownTagLookupFacet)
-  const tables = decorateMarkdownTables(entries, view)
+  const tables = parseMarkdownTables(view)
   const tableRanges = tables.map((table) => ({ from: table.from, to: table.to }))
 
   for (const range of view.visibleRanges) {
@@ -1197,7 +1538,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
   decorateInlineTags(entries, view, selections, tagLookup, tableRanges)
   decorateInlineImages(entries, view, selections, options, tableRanges)
   decorateMarkdownLinks(entries, view, selections, tableRanges)
-  decorateWikiLinks(entries, view, tableRanges)
+  decorateWikiLinks(entries, view, selections, tableRanges, options.linkTargets ?? [])
 
   const ranges = entries.map((entry) => (entry.line ? entry.decoration.range(entry.from) : entry.decoration.range(entry.from, entry.to)))
   return Decoration.set(ranges, true)
@@ -1300,6 +1641,16 @@ function openWikiLinkFromPointerEvent(
 ): boolean {
   if (event.button !== 0 || !onOpenWikiLink) {
     return false
+  }
+
+  const eventTarget = event.target
+  const widget = eventTarget instanceof HTMLElement ? eventTarget.closest<HTMLElement>('.cm-md-wikilink-widget') : null
+  const widgetTarget = widget?.dataset.wikiTarget?.trim()
+  if (widgetTarget) {
+    event.preventDefault()
+    event.stopPropagation()
+    onOpenWikiLink(widgetTarget)
+    return true
   }
 
   const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
@@ -1538,6 +1889,7 @@ export function markdownTagLookupExtension(tagGroups: TagGroupDefinition[]): Ext
 
 export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension {
   return [
+    markdownTableDecorationsField,
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
       pointerdown: (event, view) => {

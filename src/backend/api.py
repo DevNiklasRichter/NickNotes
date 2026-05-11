@@ -4,6 +4,7 @@ import base64
 import binascii
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -68,6 +69,8 @@ class RuntimeState:
     watcher_thread: threading.Thread | None = None
     load_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
     load_lock: threading.Lock = field(default_factory=threading.Lock)
+    import_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
+    import_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def close(self) -> None:
         self.stop_graph_watcher()
@@ -139,6 +142,57 @@ class RuntimeState:
     def get_load_status(self) -> dict[str, Any]:
         with self.load_lock:
             status = self.load_status
+            return {
+                "active": status.active,
+                "done": status.done,
+                "error": status.error,
+                "phase": status.phase,
+                "processed": status.processed,
+                "total": status.total,
+                "currentPath": status.current_path,
+                "result": status.result,
+                "startedAt": status.started_at,
+                "finishedAt": status.finished_at,
+            }
+
+    def reset_import_status(self, phase: str) -> None:
+        with self.import_lock:
+            self.import_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
+
+    def update_import_status(
+        self,
+        *,
+        phase: str | None = None,
+        processed: int | None = None,
+        total: int | None = None,
+        current_path: str | None = None,
+        done: bool | None = None,
+        error: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        with self.import_lock:
+            status = self.import_status
+            if phase is not None:
+                status.phase = phase
+            if processed is not None:
+                status.processed = processed
+            if total is not None:
+                status.total = total
+            if current_path is not None:
+                status.current_path = current_path
+            if error is not None:
+                status.error = error
+            if result is not None:
+                status.result = result
+            if done is not None:
+                status.done = done
+                status.active = not done
+                if done:
+                    status.finished_at = time.time()
+
+    def get_import_status(self) -> dict[str, Any]:
+        with self.import_lock:
+            status = self.import_status
             return {
                 "active": status.active,
                 "done": status.done,
@@ -260,6 +314,10 @@ class TagDeleteRequest(BaseModel):
     group_id: str = Field(alias="groupId")
     tag_id: str = Field(alias="tagId")
     remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
+
+
+class TagMatchApplyRequest(BaseModel):
+    matches: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class NoteGroupCreateRequest(BaseModel):
@@ -520,23 +578,48 @@ def preview_onenote_import(req: OneNoteImportPreviewRequest) -> dict[str, Any]:
 @app.post("/imports/onenote/start")
 def start_onenote_import(req: OneNoteImportRequest) -> dict[str, Any]:
     vault, indexer = _require_loaded()
+    state.reset_import_status("Import wird vorbereitet ...")
+
+    def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
+        state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
+
     try:
-        result = OneNoteLocalImporter(vault).import_sources(req.source_paths, req.target_folder)
-    except ValueError as exc:
+        result = OneNoteLocalImporter(vault, progress_callback=update_progress).import_sources(req.source_paths, req.target_folder)
+    except (RuntimeError, ValueError) as exc:
+        state.update_import_status(phase="Import fehlgeschlagen.", done=True, error=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    state.update_import_status(
+        phase="NoteBase wird aktualisiert ...",
+        processed=result.get("importedPages", 0),
+        total=max(result.get("importedPages", 0), 1),
+        current_path="",
+    )
     indexed = indexer.reindex_vault(vault.vault_path)
     try:
         vault.rebuild_task_status_links(indexer)
     except OSError:
         pass
     tag_groups = vault.sync_tag_groups_with_index(indexer)
-    return {
+    response = {
         "import": result,
         "indexed": indexed,
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
         "groups": vault.list_note_groups(),
     }
+    state.update_import_status(
+        phase="Import abgeschlossen.",
+        processed=result.get("importedPages", 0),
+        total=max(result.get("importedPages", 0), 1),
+        done=True,
+        result=response,
+    )
+    return response
+
+
+@app.get("/imports/onenote/status")
+def get_onenote_import_status() -> dict[str, Any]:
+    return state.get_import_status()
 
 
 @app.post("/notebase/rename")
@@ -1274,6 +1357,35 @@ def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
     return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
 
 
+@app.get("/tag-groups/match-candidates")
+def scan_tag_match_candidates() -> dict[str, Any]:
+    vault, _indexer = _require_loaded()
+    matches = _scan_tag_match_candidates(vault)
+    return {
+        "items": matches,
+        "total": len(matches),
+    }
+
+
+@app.post("/tag-groups/apply-matches")
+def apply_tag_match_candidates(req: TagMatchApplyRequest) -> dict[str, Any]:
+    vault, indexer = _require_loaded()
+    applied, touched_paths = _apply_tag_match_candidates(vault, req.matches)
+    if touched_paths:
+        for path in touched_paths:
+            indexer.reindex_markdown_file(vault.vault_path, path)
+        tag_groups = vault.sync_tag_groups_with_index(indexer)
+    else:
+        tag_groups = vault.read_tag_groups()
+    return {
+        "applied": applied,
+        "notesUpdated": len(touched_paths),
+        "paths": [str(path) for path in touched_paths],
+        "counts": _counts(indexer),
+        "tagGroups": tag_groups,
+    }
+
+
 @app.get("/note-groups")
 def get_note_groups() -> dict[str, Any]:
     vault, _indexer = _require_loaded()
@@ -1434,6 +1546,172 @@ def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
     if not state.vault or not state.indexer:
         raise HTTPException(status_code=400, detail="No NoteBase loaded")
     return state.vault, state.indexer
+
+
+def _tag_match_aliases(group: dict[str, Any], tag: dict[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    for value in (
+        str(tag.get("displayName", "")).strip(),
+        str(tag.get("id", "")).strip().replace("-", " "),
+        str(tag.get("id", "")).strip(),
+    ):
+        clean = " ".join(value.split())
+        if len(clean) < 2:
+            continue
+        if clean.lower() in {alias.lower() for alias in aliases}:
+            continue
+        aliases.append(clean)
+    return aliases
+
+
+def _tag_match_excluded_ranges(markdown: str) -> list[tuple[int, int]]:
+    ranges = [(match.start(), match.end()) for match in re.finditer(r"\{tag:[^}\n]+\}", markdown)]
+    if markdown.startswith("---"):
+        end = markdown.find("\n---", 3)
+        if end >= 0:
+            ranges.append((0, min(len(markdown), end + 4)))
+    for match in re.finditer(r"(^|\n)```.*?(?:\n```|$)", markdown, flags=re.DOTALL):
+        ranges.append((match.start(), match.end()))
+    return sorted(ranges)
+
+
+def _tag_match_intersects(ranges: list[tuple[int, int]], start: int, end: int) -> bool:
+    return any(start < range_end and end > range_start for range_start, range_end in ranges)
+
+
+def _tag_match_context(markdown: str, start: int, end: int, radius: int = 170) -> dict[str, Any]:
+    before_start = max(0, start - radius)
+    after_end = min(len(markdown), end + radius)
+    line_start = markdown.rfind("\n", 0, start) + 1
+    line_no = markdown.count("\n", 0, start) + 1
+    return {
+        "before": markdown[before_start:start],
+        "match": markdown[start:end],
+        "after": markdown[end:after_end],
+        "line": line_no,
+        "lineOffset": start - line_start,
+    }
+
+
+def _scan_tag_match_candidates(vault: VaultManager) -> list[dict[str, Any]]:
+    tag_rows: list[dict[str, Any]] = []
+    for group in vault.read_tag_groups():
+        group_id = str(group.get("id", "")).strip()
+        if not group_id:
+            continue
+        for tag in group.get("tags", []):
+            if not isinstance(tag, dict):
+                continue
+            tag_id = str(tag.get("id", "")).strip()
+            if not tag_id:
+                continue
+            for alias in _tag_match_aliases(group, tag):
+                tag_rows.append(
+                    {
+                        "groupId": group_id,
+                        "groupDisplayName": str(group.get("displayName", "")).strip() or group_id,
+                        "groupColor": str(group.get("color", "")).strip() or "#4f8cff",
+                        "tagId": tag_id,
+                        "tagDisplayName": str(tag.get("displayName", "")).strip() or tag_id,
+                        "alias": alias,
+                        "pattern": re.compile(rf"(?<![\w/:-]){re.escape(alias)}(?![\w/:-])", re.IGNORECASE),
+                    }
+                )
+
+    matches: list[dict[str, Any]] = []
+    for note_file in sorted(vault._iter_markdown_files_for_tag_updates(), key=lambda item: item.as_posix()):  # noqa: SLF001
+        try:
+            markdown = note_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        excluded_ranges = _tag_match_excluded_ranges(markdown)
+        relative_path = note_file.resolve().relative_to(vault.vault_path.resolve()).as_posix()
+        for row in tag_rows:
+            inline_ref = f"{{tag:{row['groupId']}/{row['tagId']}}}"
+            for match in row["pattern"].finditer(markdown):
+                start, end = match.span()
+                if _tag_match_intersects(excluded_ranges, start, end):
+                    continue
+                context = _tag_match_context(markdown, start, end)
+                match_id = f"{relative_path}:{start}:{end}:{row['groupId']}:{row['tagId']}"
+                matches.append(
+                    {
+                        "id": match_id,
+                        "path": str(note_file),
+                        "relativePath": relative_path,
+                        "start": start,
+                        "end": end,
+                        "line": context["line"],
+                        "lineOffset": context["lineOffset"],
+                        "matchedText": context["match"],
+                        "alias": row["alias"],
+                        "replacement": inline_ref,
+                        "groupId": row["groupId"],
+                        "groupDisplayName": row["groupDisplayName"],
+                        "groupColor": row["groupColor"],
+                        "tagId": row["tagId"],
+                        "tagDisplayName": row["tagDisplayName"],
+                        "before": context["before"],
+                        "after": context["after"],
+                    }
+                )
+
+    return matches
+
+
+def _apply_tag_match_candidates(vault: VaultManager, raw_matches: list[dict[str, Any]]) -> tuple[int, list[Path]]:
+    by_path: dict[Path, list[dict[str, Any]]] = {}
+    for item in raw_matches:
+        path = str(item.get("path", "")).strip()
+        replacement = str(item.get("replacement", "")).strip()
+        matched_text = str(item.get("matchedText", ""))
+        try:
+            start = int(item.get("start"))
+            end = int(item.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not path or not replacement or end <= start:
+            continue
+        try:
+            note_file = vault._resolve_note_file(path)  # noqa: SLF001
+        except ValueError:
+            continue
+        by_path.setdefault(note_file, []).append(
+            {
+                "start": start,
+                "end": end,
+                "matchedText": matched_text,
+                "replacement": replacement,
+            }
+        )
+
+    applied = 0
+    touched: list[Path] = []
+    for note_file, items in by_path.items():
+        try:
+            markdown = note_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        next_markdown = markdown
+        changed = False
+        occupied: list[tuple[int, int]] = []
+        for item in sorted(items, key=lambda entry: int(entry["start"]), reverse=True):
+            start = int(item["start"])
+            end = int(item["end"])
+            replacement = str(item["replacement"])
+            matched_text = str(item["matchedText"])
+            if start < 0 or end > len(next_markdown) or _tag_match_intersects(occupied, start, end):
+                continue
+            if next_markdown[start:end] != matched_text:
+                continue
+            next_markdown = f"{next_markdown[:start]}{replacement}{next_markdown[end:]}"
+            occupied.append((start, start + len(replacement)))
+            applied += 1
+            changed = True
+        if changed:
+            note_file.write_text(next_markdown, encoding="utf-8")
+            touched.append(note_file)
+    return applied, touched
 
 
 def _compute_capture(text: str, vault: VaultManager, indexer: VaultIndexer) -> list[TagSuggestion]:

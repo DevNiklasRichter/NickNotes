@@ -42,6 +42,7 @@ type TagSidebarProps = {
   onRenameTag: (groupId: string, tagId: string) => void
   onDeleteTag: (groupId: string, tagId: string) => void
   onOpenTagOverview?: (groupId: string, tagId: string) => void
+  onOpenTagMatchAssistant: () => void
 }
 
 type VisibleTagGroup = {
@@ -120,6 +121,7 @@ export function TagSidebar({
   onRenameTag,
   onDeleteTag,
   onOpenTagOverview,
+  onOpenTagMatchAssistant,
 }: TagSidebarProps) {
   const [filterQuery, setFilterQuery] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState<string>('')
@@ -377,6 +379,17 @@ export function TagSidebar({
           <h3>Tags</h3>
 
           <div className="explorer-toolbar-right">
+            <button
+              className="icon-button compact"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenTagMatchAssistant()
+              }}
+              disabled={!vaultLoaded || groups.length === 0}
+              title="NoteBase nach Tag-Fundstellen durchsuchen"
+            >
+              <LucideNamedIcon name="ScanSearch" className="row-action-icon" size={14} />
+            </button>
             <button
               className="icon-button compact"
               onClick={(event) => {

@@ -1,44 +1,211 @@
 from __future__ import annotations
 
 import json
-import mimetypes
-import os
+import base64
+import binascii
 import re
-import shutil
-import zipfile
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
-from email import policy
-from email.parser import BytesParser
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+from xml.etree import ElementTree as ET
 
 from .markdown_io import dump_markdown
 from .parser import make_note_id, slugify
 from .vault import VaultManager
 
 
-SUPPORTED_PAGE_EXTENSIONS = {".html", ".htm", ".mht", ".mhtml", ".md", ".markdown", ".txt"}
-UNSUPPORTED_ONENOTE_EXTENSIONS = {".one", ".onepkg", ".onetoc2"}
-MEDIA_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".bmp",
-    ".svg",
-    ".avif",
-    ".pdf",
-    ".doc",
-    ".docx",
-    ".xls",
-    ".xlsx",
-    ".ppt",
-    ".pptx",
+ONEPKG_EXTENSIONS = {".onepkg"}
+
+_ONEPKG_EXPORT_POWERSHELL = r"""
+param(
+  [Parameter(Mandatory=$true)][string]$PackagePath,
+  [Parameter(Mandatory=$true)][string]$OutDir
+)
+
+$ErrorActionPreference = 'Stop'
+
+function ConvertTo-SafeFileName([string]$Value) {
+  $name = if ([string]::IsNullOrWhiteSpace($Value)) { 'Page' } else { $Value.Trim() }
+  foreach ($char in [System.IO.Path]::GetInvalidFileNameChars()) {
+    $name = $name.Replace($char, '_')
+  }
+  $name = ($name -replace '\s+', '_').Trim('_')
+  if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Page' }
+  if ($name.Length -gt 90) { $name = $name.Substring(0, 90) }
+  return $name
 }
+
+if (-not (Test-Path -LiteralPath $PackagePath)) {
+  throw "Paketdatei nicht gefunden: $PackagePath"
+}
+
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$extractDir = Join-Path $OutDir 'extracted'
+New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+
+$expandOutput = & expand.exe -F:* $PackagePath $extractDir 2>&1
+if ($LASTEXITCODE -ne 0) {
+  throw "OneNote-Paket konnte nicht entpackt werden: $expandOutput"
+}
+
+$sectionFiles = @(Get-ChildItem -LiteralPath $extractDir -Recurse -File | Where-Object { $_.Extension -ieq '.one' } | Sort-Object FullName)
+if ($sectionFiles.Count -eq 0) {
+  throw "Im OneNote-Paket wurden keine .one-Abschnittsdateien gefunden."
+}
+
+$oneNote = $null
+try {
+  $oneNote = New-Object -ComObject OneNote.Application
+} catch {
+  throw "OneNote Desktop ist nicht als COM-Anwendung verfuegbar. Bitte OneNote Desktop installieren und einmal starten."
+}
+
+$resultPages = @()
+$warnings = @()
+$index = 0
+$notebookName = [System.IO.Path]::GetFileNameWithoutExtension($PackagePath)
+
+$notebookId = ''
+try {
+  $oneNote.OpenHierarchy($extractDir, '', [ref]$notebookId, 0)
+  Start-Sleep -Seconds 8
+} catch {
+  $warnings += "Der entpackte Notebook-Ordner konnte nicht vorinitialisiert werden: $($_.Exception.Message)"
+}
+
+foreach ($sectionFile in $sectionFiles) {
+  $sectionId = ''
+  try {
+    $oneNote.OpenHierarchy($sectionFile.FullName, '', [ref]$sectionId, 0)
+  } catch {
+    $warnings += "Abschnitt '$($sectionFile.Name)' konnte nicht geoeffnet werden: $($_.Exception.Message)"
+    continue
+  }
+
+  if ([string]::IsNullOrWhiteSpace($sectionId)) {
+    $warnings += "Abschnitt '$($sectionFile.Name)' lieferte keine OneNote-ID."
+    continue
+  }
+
+  $hierarchyXml = ''
+  $doc = $null
+  $ns = $null
+  $pages = $null
+  for ($attempt = 1; $attempt -le 30; $attempt++) {
+    try {
+      $hierarchyXml = ''
+      $oneNote.GetHierarchy($sectionId, 4, [ref]$hierarchyXml)
+      [xml]$doc = $hierarchyXml
+      $namespaceUri = $doc.DocumentElement.NamespaceURI
+      $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+      $ns.AddNamespace('one', $namespaceUri)
+      $pages = $doc.SelectNodes('//one:Page', $ns)
+      $allPagesAvailable = $doc.DocumentElement.areAllPagesAvailable
+      if ($pages -and $pages.Count -gt 0) {
+        break
+      }
+      if ($allPagesAvailable -and [string]$allPagesAvailable -ne 'false') {
+        break
+      }
+    } catch {
+      if ($attempt -ge 30) {
+        $warnings += "Abschnitt '$($sectionFile.Name)' konnte nicht gelesen werden: $($_.Exception.Message)"
+      }
+    }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $pages -or $pages.Count -eq 0) {
+    $warnings += "Abschnitt '$($sectionFile.Name)' enthaelt keine exportierbaren Seiten oder OneNote hat sie nicht geladen."
+    continue
+  }
+
+  foreach ($page in $pages) {
+    $index += 1
+    $title = if ($page.name) { [string]$page.name } else { "Page_$index" }
+    $safeTitle = ConvertTo-SafeFileName $title
+    $target = Join-Path $OutDir ("{0:D4}_{1}.xml" -f $index, $safeTitle)
+    while (Test-Path -LiteralPath $target) {
+      $target = Join-Path $OutDir ("{0:D4}_{1}_{2}.xml" -f $index, $safeTitle, [System.Guid]::NewGuid().ToString('N').Substring(0, 6))
+    }
+
+    try {
+      $pageContent = ''
+      $oneNote.GetPageContent($page.ID, [ref]$pageContent, 0)
+      $pageContent | Set-Content -LiteralPath $target -Encoding UTF8
+    } catch {
+      $warnings += "Seite '$title' konnte nicht gelesen werden: $($_.Exception.Message)"
+      continue
+    }
+
+    $binaryObjects = @()
+    try {
+      [xml]$pageDoc = $pageContent
+      $pageNamespaceUri = $pageDoc.DocumentElement.NamespaceURI
+      $pageNs = New-Object System.Xml.XmlNamespaceManager($pageDoc.NameTable)
+      $pageNs.AddNamespace('one', $pageNamespaceUri)
+      $callbacks = @($pageDoc.SelectNodes('//one:Image/one:CallbackID', $pageNs))
+      $binaryDir = Join-Path $OutDir ("{0:D4}_{1}_media" -f $index, $safeTitle)
+      $binaryIndex = 0
+      foreach ($callback in $callbacks) {
+        $callbackId = [string]$callback.callbackID
+        if ([string]::IsNullOrWhiteSpace($callbackId)) {
+          continue
+        }
+        $binaryIndex += 1
+        try {
+          $binaryB64 = ''
+          $oneNote.GetBinaryPageContent($page.ID, $callbackId, [ref]$binaryB64)
+          if ([string]::IsNullOrWhiteSpace($binaryB64)) {
+            continue
+          }
+          New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
+          $binaryTarget = Join-Path $binaryDir ("image_{0:D3}.b64" -f $binaryIndex)
+          $binaryB64 | Set-Content -LiteralPath $binaryTarget -Encoding ASCII
+          $binaryObjects += [pscustomobject]@{
+            callbackId = $callbackId
+            path = $binaryTarget
+          }
+        } catch {
+          $warnings += "Bild $binaryIndex auf Seite '$title' konnte nicht gelesen werden: $($_.Exception.Message)"
+        }
+      }
+    } catch {
+      $warnings += "Bildinformationen auf Seite '$title' konnten nicht gelesen werden: $($_.Exception.Message)"
+    }
+
+    $sectionParts = @()
+    $parent = $page.ParentNode
+    while ($parent -and $parent.LocalName -ne 'Notebook' -and $parent.NodeType -ne [System.Xml.XmlNodeType]::Document) {
+      if (($parent.LocalName -eq 'Section' -or $parent.LocalName -eq 'SectionGroup') -and $parent.name) {
+        $sectionParts = @([string]$parent.name) + $sectionParts
+      }
+      $parent = $parent.ParentNode
+    }
+    if ($sectionParts.Count -eq 0) {
+      $sectionName = if ($doc.DocumentElement.name) { [string]$doc.DocumentElement.name } else { [System.IO.Path]::GetFileNameWithoutExtension($sectionFile.Name) }
+      $sectionParts = @($sectionName)
+    }
+
+    $resultPages += [pscustomobject]@{
+      path = $target
+      title = $title
+      notebook = $notebookName
+      sections = $sectionParts
+      binaryObjects = $binaryObjects
+    }
+  }
+}
+
+[pscustomobject]@{
+  pages = $resultPages
+  warnings = $warnings
+} | ConvertTo-Json -Depth 8 -Compress
+"""
 
 
 @dataclass
@@ -48,6 +215,7 @@ class ImportPage:
     section_parts: list[str]
     title: str
     extension: str
+    binary_objects: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,44 +263,62 @@ class ImportResult:
 
 
 class OneNoteLocalImporter:
-    def __init__(self, vault: VaultManager):
+    def __init__(self, vault: VaultManager, progress_callback: Any | None = None):
         self.vault = vault
+        self.progress_callback = progress_callback
 
     def preview(self, source_paths: list[str]) -> dict[str, Any]:
         clean_sources = self._resolve_source_paths(source_paths)
-        pages, warnings, unsupported_count = self._discover_pages(clean_sources)
-        notebooks = {page.notebook for page in pages}
-        sections = {"/".join([page.notebook, *page.section_parts]) for page in pages}
-        media_candidates = self._count_media_candidates(clean_sources)
         preview = ImportPreview(
             sources=[str(path) for path in clean_sources],
-            notebooks=len(notebooks),
-            sections=len(sections),
-            pages=len(pages),
-            media_candidates=media_candidates,
-            unsupported_files=unsupported_count,
-            warnings=warnings,
-            pages_preview=[self._page_preview_payload(page) for page in pages[:30]],
+            notebooks=len(clean_sources),
+            sections=0,
+            pages=0,
+            media_candidates=0,
+            unsupported_files=0,
+            warnings=[
+                "Die Seitenzahl von .onepkg-Dateien wird erst beim Import ermittelt. Beim Import muss OneNote Desktop installiert sein und darf kurz gestartet werden."
+            ],
+            pages_preview=[],
         )
         return preview.as_dict()
 
     def import_sources(self, source_paths: list[str], target_folder: str = "") -> dict[str, Any]:
         clean_sources = self._resolve_source_paths(source_paths)
-        pages, warnings, _unsupported_count = self._discover_pages(clean_sources)
+        self._progress("Quellen werden gelesen ...", 0, 0, None)
+        pages: list[ImportPage] = []
         target_base = self._resolve_target_base(target_folder)
-        result = ImportResult(warnings=list(warnings))
+        result = ImportResult()
 
-        for page in pages:
-            try:
-                note_path, media_count = self._import_page(page, target_base)
-            except OSError as exc:
-                result.skipped_pages += 1
-                result.warnings.append(f"{page.source_path}: konnte nicht importiert werden ({exc}).")
-                continue
-            result.imported_pages += 1
-            result.media_files += media_count
-            result.created_notes.append(note_path.relative_to(self.vault.vault_path).as_posix())
+        with tempfile.TemporaryDirectory(prefix="nicknotes_onepkg_") as temp_dir:
+            for package_source in clean_sources:
+                try:
+                    self._progress(f"{package_source.name} wird ueber OneNote Desktop vorbereitet ...", 0, 0, str(package_source))
+                    exported_pages, export_warnings = self._export_onepkg_with_onenote(package_source, Path(temp_dir))
+                except RuntimeError as exc:
+                    result.skipped_pages += 1
+                    result.warnings.append(str(exc))
+                    continue
+                pages.extend(exported_pages)
+                result.warnings.extend(export_warnings)
 
+            planned_note_paths = self._planned_note_paths(pages, target_base)
+            wiki_target_map = self._build_import_wiki_target_map(pages, planned_note_paths)
+            total_pages = len(pages)
+            for page in pages:
+                try:
+                    self._progress("OneNote-Seiten werden importiert ...", result.imported_pages, total_pages, page.title)
+                    note_path, media_count = self._import_page(page, planned_note_paths[page.source_path], wiki_target_map)
+                except OSError as exc:
+                    result.skipped_pages += 1
+                    result.warnings.append(f"{page.source_path}: konnte nicht importiert werden ({exc}).")
+                    continue
+                result.imported_pages += 1
+                result.media_files += media_count
+                result.created_notes.append(note_path.relative_to(self.vault.vault_path).as_posix())
+                self._progress("OneNote-Seiten werden importiert ...", result.imported_pages, total_pages, page.title)
+
+        self._progress("Importbericht wird geschrieben ...", result.imported_pages, max(result.imported_pages, len(pages)), None)
         result.report_path = self._write_report(clean_sources, target_folder, result)
         return result.as_dict()
 
@@ -150,98 +336,105 @@ class OneNoteLocalImporter:
             seen.add(key)
             if not path.exists():
                 raise ValueError(f"Quelle nicht gefunden: {path}")
+            if path.is_dir():
+                raise ValueError(f"Bitte einzelne .onepkg-Dateien auswaehlen, keine ganzen Ordner: {path}.")
+            if path.suffix.lower() not in ONEPKG_EXTENSIONS:
+                raise ValueError(f"Bitte nur OneNote-Paketdateien (.onepkg) auswaehlen: {path}")
             paths.append(path)
         if not paths:
-            raise ValueError("Bitte mindestens eine OneNote-Quelle auswaehlen.")
+            raise ValueError("Bitte mindestens eine .onepkg-Datei auswaehlen.")
         return paths
 
-    def _discover_pages(self, source_paths: list[Path]) -> tuple[list[ImportPage], list[str], int]:
-        pages: list[ImportPage] = []
-        warnings: list[str] = []
-        unsupported_count = 0
+    def _export_onepkg_with_onenote(self, package_path: Path, temp_root: Path) -> tuple[list[ImportPage], list[str]]:
+        package_output_dir = temp_root / self._safe_path_token(package_path.stem)
+        package_output_dir.mkdir(parents=True, exist_ok=True)
+        script_path = package_output_dir / "export_onepkg.ps1"
+        script_path.write_text(_ONEPKG_EXPORT_POWERSHELL, encoding="utf-8")
 
-        for source in source_paths:
-            notebook_name = self._safe_display_name(source.stem if source.is_file() else source.name)
-            candidates = [source] if source.is_file() else sorted(source.rglob("*"), key=lambda item: str(item).lower())
-            for candidate in candidates:
-                if candidate.is_dir():
-                    continue
-                suffix = candidate.suffix.lower()
-                if suffix in UNSUPPORTED_ONENOTE_EXTENSIONS:
-                    unsupported_count += 1
-                    warnings.append(self._unsupported_message(candidate))
-                    continue
-                if suffix not in SUPPORTED_PAGE_EXTENSIONS:
-                    continue
-                section_parts = self._section_parts_for(source, candidate)
-                title = self._page_title(candidate)
-                pages.append(
-                    ImportPage(
-                        source_path=candidate,
-                        notebook=notebook_name,
-                        section_parts=section_parts,
-                        title=title,
-                        extension=suffix,
-                    )
-                )
-
-        if not pages and unsupported_count:
-            warnings.append(
-                "Es wurden nur native OneNote-Dateien gefunden. Diese lokalen .one/.onepkg-Dateien koennen ohne OneNote-Export oder Microsoft Graph nicht zuverlaessig gelesen werden."
+        powershell = "powershell.exe"
+        completed = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-PackagePath",
+                str(package_path),
+                "-OutDir",
+                str(package_output_dir),
+            ],
+            cwd=str(self.vault.vault_path),
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            if not detail:
+                detail = "OneNote Desktop konnte die Paketdatei nicht exportieren."
+            raise RuntimeError(
+                f"{package_path.name}: Import fehlgeschlagen. OneNote Desktop muss installiert sein und das Paket oeffnen koennen. Details: {detail}"
             )
-        elif not pages:
-            warnings.append("Keine importierbaren HTML-, MHTML-, Markdown- oder Textdateien gefunden.")
-        return pages, self._dedupe(warnings), unsupported_count
 
-    def _unsupported_message(self, path: Path) -> str:
-        suffix = path.suffix.lower()
-        if suffix == ".onepkg":
-            try:
-                with zipfile.ZipFile(path) as archive:
-                    one_files = [name for name in archive.namelist() if name.lower().endswith(".one")]
-            except zipfile.BadZipFile:
-                one_files = []
-            if one_files:
-                return f"{path.name}: .onepkg enthaelt native .one-Dateien und braucht einen OneNote-Export nach HTML/PDF oder Graph-Zugriff."
-        return f"{path.name}: natives OneNote-Format ({suffix}) wird lokal noch nicht direkt gelesen."
-
-    def _section_parts_for(self, source_root: Path, page_path: Path) -> list[str]:
-        if source_root.is_file():
-            return []
+        raw_output = completed.stdout.strip()
         try:
-            relative_parent = page_path.parent.relative_to(source_root)
-        except ValueError:
-            return []
-        return [self._safe_display_name(part) for part in relative_parent.parts if part not in {"", "."}]
+            payload = json.loads(raw_output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{package_path.name}: OneNote-Export lieferte keine lesbare Antwort.") from exc
 
-    def _page_title(self, path: Path) -> str:
-        try:
-            if path.suffix.lower() in {".html", ".htm"}:
-                text = path.read_text(encoding="utf-8", errors="replace")
-                title = _extract_html_title(text)
-                if title:
-                    return title
-            if path.suffix.lower() in {".mht", ".mhtml"}:
-                html, _resources = _read_mhtml(path)
-                title = _extract_html_title(html)
-                if title:
-                    return title
-            if path.suffix.lower() in {".md", ".markdown", ".txt"}:
-                first_title = _extract_text_title(path.read_text(encoding="utf-8", errors="replace"))
-                if first_title:
-                    return first_title
-        except OSError:
-            pass
-        return self._safe_display_name(path.stem)
+        raw_pages = payload.get("pages", []) if isinstance(payload, dict) else []
+        raw_warnings = payload.get("warnings", []) if isinstance(payload, dict) else []
+        warning_detail = ""
+        if isinstance(raw_warnings, list) and raw_warnings:
+            warning_detail = " Details: " + " | ".join(str(warning) for warning in raw_warnings if str(warning).strip())
+        if not isinstance(raw_pages, list) or not raw_pages:
+            raise RuntimeError(f"{package_path.name}: OneNote Desktop hat keine Seiten aus dem Paket exportiert.{warning_detail}")
 
-    def _count_media_candidates(self, source_paths: list[Path]) -> int:
-        count = 0
-        for source in source_paths:
-            candidates = [source] if source.is_file() else source.rglob("*")
-            for candidate in candidates:
-                if candidate.is_file() and candidate.suffix.lower() in MEDIA_EXTENSIONS:
-                    count += 1
-        return count
+        pages: list[ImportPage] = []
+        package_notebook = self._safe_display_name(package_path.stem)
+        for raw_page in raw_pages:
+            if not isinstance(raw_page, dict):
+                continue
+            exported_path = Path(str(raw_page.get("path", ""))).resolve()
+            if not exported_path.exists() or exported_path.suffix.lower() != ".xml":
+                continue
+            notebook = self._safe_display_name(str(raw_page.get("notebook", "")) or package_notebook)
+            title = self._safe_display_name(str(raw_page.get("title", "")) or exported_path.stem)
+            raw_sections = raw_page.get("sections", [])
+            sections = [self._safe_display_name(str(section)) for section in raw_sections if str(section).strip()] if isinstance(raw_sections, list) else []
+            binary_objects: dict[str, Path] = {}
+            raw_binary_objects = raw_page.get("binaryObjects", [])
+            if isinstance(raw_binary_objects, list):
+                for raw_binary in raw_binary_objects:
+                    if not isinstance(raw_binary, dict):
+                        continue
+                    callback_id = str(raw_binary.get("callbackId", "")).strip()
+                    binary_path = Path(str(raw_binary.get("path", ""))).resolve()
+                    if callback_id and binary_path.exists():
+                        binary_objects[callback_id] = binary_path
+            pages.append(
+                ImportPage(
+                    source_path=exported_path,
+                    notebook=notebook,
+                    section_parts=sections,
+                    title=title,
+                    extension=exported_path.suffix.lower(),
+                    binary_objects=binary_objects,
+                )
+            )
+
+        if not pages:
+            raise RuntimeError(f"{package_path.name}: OneNote Desktop hat keine importierbaren Seiten erzeugt.")
+
+        warnings = [
+            f"{package_path.name}: {len(pages)} Seiten ueber OneNote Desktop exportiert. OneNote kann waehrenddessen sichtbar geoeffnet werden."
+        ]
+        if isinstance(raw_warnings, list):
+            warnings.extend(str(warning) for warning in raw_warnings if str(warning).strip())
+        return pages, warnings
 
     def _resolve_target_base(self, target_folder: str) -> Path:
         clean = target_folder.replace("\\", "/").strip().strip("/")
@@ -259,31 +452,56 @@ class OneNoteLocalImporter:
         target.mkdir(parents=True, exist_ok=True)
         return target
 
-    def _import_page(self, page: ImportPage, target_base: Path) -> tuple[Path, int]:
-        note_dir = target_base / self._safe_path_token(page.notebook)
-        for section in page.section_parts:
-            note_dir = note_dir / self._safe_path_token(section)
-        note_dir.mkdir(parents=True, exist_ok=True)
+    def _planned_note_paths(self, pages: list[ImportPage], target_base: Path) -> dict[Path, Path]:
+        planned: dict[Path, Path] = {}
+        reserved: set[str] = set()
+        for page in pages:
+            note_dir = target_base / self._safe_path_token(page.notebook)
+            for section in page.section_parts:
+                note_dir = note_dir / self._safe_path_token(section)
+            note_stem = self._safe_path_token(page.title) or "OneNote_Seite"
+            note_path = self._next_available_path(note_dir, note_stem, ".md", reserved)
+            planned[page.source_path] = note_path
+            reserved.add(str(note_path.resolve()).lower())
+        return planned
 
-        note_stem = self._safe_path_token(page.title) or "OneNote_Seite"
-        note_path = self._next_available_path(note_dir, note_stem, ".md")
+    def _build_import_wiki_target_map(self, pages: list[ImportPage], planned_note_paths: dict[Path, Path]) -> dict[str, str]:
+        target_map: dict[str, str] = {}
+        ambiguous: set[str] = set()
+
+        def add(key: str, relative_target: str) -> None:
+            clean = _normalize_wiki_compare(key)
+            if not clean or clean in ambiguous:
+                return
+            existing = target_map.get(clean)
+            if existing and existing != relative_target:
+                target_map.pop(clean, None)
+                ambiguous.add(clean)
+                return
+            target_map[clean] = relative_target
+
+        for page in pages:
+            note_path = planned_note_paths.get(page.source_path)
+            if not note_path:
+                continue
+            relative_target = note_path.relative_to(self.vault.vault_path).as_posix()
+            relative_target = relative_target[:-3] if relative_target.lower().endswith(".md") else relative_target
+            add(page.title, relative_target)
+            add(self._safe_path_token(page.title), relative_target)
+        return target_map
+
+    def _import_page(self, page: ImportPage, note_path: Path, wiki_target_map: dict[str, str]) -> tuple[Path, int]:
         media_dir = self.vault.media_root_path / self._safe_path_token(page.notebook)
         for section in page.section_parts:
             media_dir = media_dir / self._safe_path_token(section)
         media_dir = media_dir / note_path.stem
         media_dir.mkdir(parents=True, exist_ok=True)
 
-        if page.extension in {".html", ".htm"}:
-            html = page.source_path.read_text(encoding="utf-8", errors="replace")
-            body, media_count = self._html_to_markdown(html, page.source_path.parent, media_dir, note_path)
-        elif page.extension in {".mht", ".mhtml"}:
-            html, resources = _read_mhtml(page.source_path)
-            body, media_count = self._html_to_markdown(html, page.source_path.parent, media_dir, note_path, resources)
-        elif page.extension in {".md", ".markdown"}:
-            body, media_count = self._import_markdown_body(page.source_path, media_dir, note_path)
-        else:
-            body = page.source_path.read_text(encoding="utf-8", errors="replace").strip()
-            media_count = 0
+        note_dir = note_path.parent
+        note_dir.mkdir(parents=True, exist_ok=True)
+
+        media_refs, media_count = self._import_page_images(page, media_dir)
+        body = _rewrite_wikilinks_to_relative_paths(_onenote_xml_to_markdown(page.source_path, media_refs), wiki_target_map)
 
         now = datetime.now()
         try:
@@ -311,99 +529,32 @@ class OneNoteLocalImporter:
         note_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
         return note_path, media_count
 
-    def _html_to_markdown(
-        self,
-        html: str,
-        base_dir: Path,
-        media_dir: Path,
-        note_path: Path,
-        resources: dict[str, tuple[bytes, str, str]] | None = None,
-    ) -> tuple[str, int]:
-        converter = _HtmlToMarkdown(
-            copy_asset=lambda src, alt: self._copy_html_asset(src, alt, base_dir, media_dir, note_path, resources or {})
-        )
-        converter.feed(html)
-        converter.close()
-        return converter.markdown(), converter.media_count
-
-    def _copy_html_asset(
-        self,
-        src: str,
-        alt: str,
-        base_dir: Path,
-        media_dir: Path,
-        note_path: Path,
-        resources: dict[str, tuple[bytes, str, str]],
-    ) -> str:
-        clean_src = unquote((src or "").strip())
-        if not clean_src:
-            return ""
-        if clean_src in resources:
-            data, filename, content_type = resources[clean_src]
-            target = self._write_media_bytes(media_dir, filename, data, content_type)
-            return _markdown_relative_path(note_path, target)
-        parsed = urlparse(clean_src)
-        if parsed.scheme in {"http", "https"}:
-            return clean_src
-        if parsed.scheme == "file":
-            source_path = Path(unquote(parsed.path)).resolve()
-        else:
-            source_path = (base_dir / clean_src.replace("/", "\\")).resolve()
-        try:
-            source_path.relative_to(base_dir.resolve())
-        except ValueError:
-            return clean_src
-        if not source_path.exists() or not source_path.is_file():
-            return clean_src
-        target = self._copy_media_file(source_path, media_dir)
-        return _markdown_relative_path(note_path, target)
-
-    def _import_markdown_body(self, source_path: Path, media_dir: Path, note_path: Path) -> tuple[str, int]:
-        body = source_path.read_text(encoding="utf-8", errors="replace")
-        media_count = 0
-
-        def replace_image(match: re.Match[str]) -> str:
-            nonlocal media_count
-            alt = match.group(1)
-            target = match.group(2).strip()
-            if re.match(r"^(https?:)?//", target, flags=re.IGNORECASE):
-                return match.group(0)
-            source = (source_path.parent / target).resolve()
+    def _import_page_images(self, page: ImportPage, media_dir: Path) -> tuple[dict[str, str], int]:
+        media_refs: dict[str, str] = {}
+        imported = 0
+        for index, (callback_id, b64_path) in enumerate(page.binary_objects.items(), start=1):
             try:
-                source.relative_to(source_path.parent.resolve())
-            except ValueError:
-                return match.group(0)
-            if not source.exists() or not source.is_file():
-                return match.group(0)
-            copied = self._copy_media_file(source, media_dir)
-            media_count += 1
-            return f"![{alt}]({_markdown_relative_path(note_path, copied)})"
+                payload = _read_base64_file(b64_path)
+            except (OSError, ValueError):
+                continue
+            suffix = _image_suffix_from_bytes(payload)
+            target_path = media_dir / f"image_{index:03d}{suffix}"
+            counter = 2
+            while target_path.exists():
+                target_path = media_dir / f"image_{index:03d}_{counter}{suffix}"
+                counter += 1
+            target_path.write_bytes(payload)
+            media_refs[callback_id] = f"/{target_path.relative_to(self.vault.vault_path).as_posix()}"
+            imported += 1
+        return media_refs, imported
 
-        body = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_image, body)
-        return body, media_count
-
-    def _copy_media_file(self, source_path: Path, media_dir: Path) -> Path:
-        media_dir.mkdir(parents=True, exist_ok=True)
-        target = self._next_available_path(media_dir, self._safe_path_token(source_path.stem), source_path.suffix.lower())
-        shutil.copy2(source_path, target)
-        return target
-
-    def _write_media_bytes(self, media_dir: Path, filename: str, data: bytes, content_type: str) -> Path:
-        media_dir.mkdir(parents=True, exist_ok=True)
-        raw_name = filename.strip() or "asset"
-        suffix = Path(raw_name).suffix.lower()
-        if not suffix:
-            suffix = mimetypes.guess_extension(content_type or "") or ".bin"
-        target = self._next_available_path(media_dir, self._safe_path_token(Path(raw_name).stem), suffix)
-        target.write_bytes(data)
-        return target
-
-    def _next_available_path(self, directory: Path, stem: str, suffix: str) -> Path:
+    def _next_available_path(self, directory: Path, stem: str, suffix: str, reserved: set[str] | None = None) -> Path:
         clean_stem = stem or "item"
         clean_suffix = suffix if suffix.startswith(".") else f".{suffix}"
         candidate = directory / f"{clean_stem}{clean_suffix}"
         counter = 2
-        while candidate.exists():
+        reserved = reserved or set()
+        while candidate.exists() or str(candidate.resolve()).lower() in reserved:
             candidate = directory / f"{clean_stem}_{counter}{clean_suffix}"
             counter += 1
         return candidate
@@ -452,172 +603,438 @@ class OneNoteLocalImporter:
             result.append(value)
         return result
 
+    def _progress(self, phase: str, processed: int, total: int, current_path: str | None) -> None:
+        if self.progress_callback:
+            self.progress_callback(phase, processed, total, current_path)
 
-class _HtmlToMarkdown(HTMLParser):
-    def __init__(self, copy_asset: Any):
+
+def _local_name(element: ET.Element) -> str:
+    return element.tag.rsplit("}", 1)[-1] if "}" in element.tag else element.tag
+
+
+def _element_text(element: ET.Element) -> str:
+    parts: list[str] = []
+    for text_node in element.iter():
+        if _local_name(text_node) != "T":
+            continue
+        text = "".join(text_node.itertext())
+        text = re.sub(r"<[^>]+>", "", text)
+        clean = " ".join(text.split())
+        if clean:
+            parts.append(clean)
+    return " ".join(parts).strip()
+
+
+def _element_markdown_text(element: ET.Element) -> str:
+    parts: list[str] = []
+    for text_node in element.iter():
+        if _local_name(text_node) != "T":
+            continue
+        clean = " ".join(_format_onenote_text(text_node).split())
+        if clean:
+            parts.append(clean)
+    return " ".join(parts).strip()
+
+
+def _table_to_markdown(table: ET.Element) -> str:
+    rows: list[list[str]] = []
+    for row in table:
+        if _local_name(row) != "Row":
+            continue
+        cells: list[str] = []
+        for cell in row:
+            if _local_name(cell) != "Cell":
+                continue
+            cells.append(_element_markdown_text(cell).replace("|", "\\|"))
+        if cells:
+            rows.append(cells)
+    if not rows:
+        return ""
+
+    width = max(len(row) for row in rows)
+    normalized = [row + [""] * (width - len(row)) for row in rows]
+    header = normalized[0]
+    separator = ["---"] * width
+    body_rows = normalized[1:]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(separator) + " |",
+    ]
+    for row in body_rows:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _onenote_xml_to_markdown(path: Path, media_refs: dict[str, str] | None = None) -> str:
+    root = ET.fromstring(path.read_text(encoding="utf-8-sig"))
+    media_refs = media_refs or {}
+    title_text = ""
+    blocks: list[str] = []
+
+    for child in root:
+        name = _local_name(child)
+        if name == "Title":
+            title_text = _element_text(child)
+            continue
+        if name == "Image":
+            image_markdown = _image_to_markdown(child, media_refs)
+            if image_markdown:
+                blocks.append(image_markdown)
+            continue
+        if name != "Outline":
+            continue
+        blocks.extend(_outline_to_markdown_blocks(child, media_refs))
+
+    body = _join_onenote_markdown_blocks(blocks)
+    if not body:
+        body = _element_text(root)
+        if title_text and body.startswith(title_text):
+            body = body[len(title_text) :].strip()
+    return _linkify_plain_urls(body.strip())
+
+
+def _join_onenote_markdown_blocks(blocks: list[str]) -> str:
+    clean_blocks = [block.rstrip() for block in blocks if block.strip()]
+    if not clean_blocks:
+        return ""
+
+    lines: list[str] = []
+    previous_was_list = False
+    for block in clean_blocks:
+        current_is_list = _is_markdown_list_line(block)
+        current_is_table = block.startswith("|")
+        previous_is_table = bool(lines and lines[-1].startswith("|"))
+        if lines and not (previous_was_list and current_is_list) and not previous_is_table and not current_is_table:
+            lines.append("")
+        elif lines and (previous_is_table or current_is_table):
+            lines.append("")
+        lines.extend(block.splitlines())
+        previous_was_list = current_is_list
+    return "\n".join(lines).strip()
+
+
+def _is_markdown_list_line(text: str) -> bool:
+    return bool(re.match(r"^\s*[-*+]\s+\S", text))
+
+
+def _linkify_plain_urls(markdown: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in ".,;:!?)]}":
+            trailing = url[-1] + trailing
+            url = url[:-1]
+        return f"[{url}]({url}){trailing}"
+
+    return re.sub(r"(?<!\[)(?<!\]\()(?<!\()https?://[^\s<>\]]+", replace, markdown)
+
+
+def _outline_to_markdown_blocks(outline: ET.Element, media_refs: dict[str, str]) -> list[str]:
+    blocks: list[str] = []
+    for child in outline:
+        if _local_name(child) == "OEChildren":
+            blocks.extend(_oe_container_to_markdown_blocks(child, media_refs))
+    return blocks
+
+
+def _oe_container_to_markdown_blocks(container: ET.Element, media_refs: dict[str, str]) -> list[str]:
+    blocks: list[str] = []
+    for child in container:
+        name = _local_name(child)
+        if name == "Table":
+            markdown_table = _table_to_markdown(child)
+            if markdown_table:
+                blocks.append(markdown_table)
+            continue
+        if name != "OE":
+            if name == "OEChildren":
+                blocks.extend(_oe_container_to_markdown_blocks(child, media_refs))
+            elif name == "Image":
+                image_markdown = _image_to_markdown(child, media_refs)
+                if image_markdown:
+                    blocks.append(image_markdown)
+            continue
+        blocks.extend(_oe_to_markdown_blocks(child, 0, media_refs))
+    return blocks
+
+
+def _oe_to_markdown_blocks(oe: ET.Element, list_depth: int, media_refs: dict[str, str]) -> list[str]:
+    blocks: list[str] = []
+    direct_texts: list[str] = []
+    child_containers: list[ET.Element] = []
+    direct_tables: list[ET.Element] = []
+    direct_images: list[ET.Element] = []
+    is_list_item = False
+
+    for child in oe:
+        name = _local_name(child)
+        if name == "List":
+            is_list_item = True
+        elif name == "T":
+            text = _format_onenote_text(child, oe.attrib.get("style", ""))
+            clean = " ".join(text.split())
+            if clean:
+                direct_texts.append(clean)
+        elif name == "Table":
+            direct_tables.append(child)
+        elif name == "Image":
+            direct_images.append(child)
+        elif name == "OEChildren":
+            child_containers.append(child)
+
+    text = " ".join(direct_texts).strip()
+    if text:
+        if is_list_item:
+            blocks.append(f"{'  ' * list_depth}- {text}")
+        else:
+            blocks.append(text)
+
+    for table in direct_tables:
+        markdown_table = _table_to_markdown(table)
+        if markdown_table:
+            blocks.append(markdown_table)
+
+    for image in direct_images:
+        image_markdown = _image_to_markdown(image, media_refs)
+        if image_markdown:
+            blocks.append(image_markdown)
+
+    child_depth = list_depth + 1 if is_list_item else list_depth
+    for container in child_containers:
+        for child in container:
+            name = _local_name(child)
+            if name == "Table":
+                markdown_table = _table_to_markdown(child)
+                if markdown_table:
+                    blocks.append(markdown_table)
+            elif name == "OEChildren":
+                blocks.extend(_oe_container_to_markdown_blocks(child, media_refs))
+            elif name == "Image":
+                image_markdown = _image_to_markdown(child, media_refs)
+                if image_markdown:
+                    blocks.append(image_markdown)
+            elif name == "OE":
+                blocks.extend(_oe_to_markdown_blocks(child, child_depth, media_refs))
+    return blocks
+
+
+def _image_to_markdown(image: ET.Element, media_refs: dict[str, str]) -> str:
+    callback_id = ""
+    for child in image:
+        if _local_name(child) == "CallbackID":
+            callback_id = child.attrib.get("callbackID", "").strip()
+            break
+    source = media_refs.get(callback_id)
+    if not source:
+        return ""
+    return f"![OneNote Bild]({source})"
+
+
+def _format_onenote_text(text_element: ET.Element, inherited_style: str = "") -> str:
+    raw_text = "".join(text_element.itertext())
+    if not raw_text:
+        return ""
+    formatted = _OneNoteInlineMarkdown().convert(raw_text)
+    style = ";".join(part for part in [inherited_style, text_element.attrib.get("style", "")] if part)
+    return _apply_onenote_text_style(formatted, style)
+
+
+def _apply_onenote_text_style(text: str, style: str) -> str:
+    clean = text.strip()
+    if not clean:
+        return ""
+    traits = _parse_onenote_style(style)
+    if traits.get("bold"):
+        clean = f"**{clean}**"
+    if traits.get("italic"):
+        clean = f"*{clean}*"
+    if traits.get("underline"):
+        clean = f"<u>{clean}</u>"
+    return clean
+
+
+def _parse_onenote_style(style: str) -> dict[str, str | bool]:
+    traits: dict[str, str | bool] = {}
+    for declaration in style.split(";"):
+        if ":" not in declaration:
+            continue
+        key, value = declaration.split(":", 1)
+        key = key.strip().lower()
+        value = " ".join(value.strip().split())
+        lower_value = value.lower()
+        if key == "font-weight" and (lower_value == "bold" or lower_value.isdigit() and int(lower_value) >= 600):
+            traits["bold"] = True
+        elif key == "font-style" and "italic" in lower_value:
+            traits["italic"] = True
+        elif key == "text-decoration" and "underline" in lower_value:
+            traits["underline"] = True
+    return traits
+
+
+class _OneNoteInlineMarkdown(HTMLParser):
+    def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.copy_asset = copy_asset
         self.parts: list[str] = []
-        self.href_stack: list[str] = []
-        self.list_stack: list[str] = []
-        self.in_title = False
-        self.table_depth = 0
-        self.media_count = 0
+        self.style_stack: list[dict[str, str | bool]] = []
+        self.link_stack: list[dict[str, Any]] = []
+
+    def convert(self, fragment: str) -> str:
+        self.parts = []
+        self.style_stack = []
+        self.link_stack = []
+        try:
+            self.feed(fragment)
+            self.close()
+        except Exception:
+            return re.sub(r"<[^>]+>", "", fragment)
+        return "".join(self.parts).strip()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr = {key.lower(): value or "" for key, value in attrs}
-        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-            self._block()
-            self.parts.append(f"{'#' * int(tag[1])} ")
-        elif tag in {"p", "div", "section", "article"}:
-            self._block()
-        elif tag == "br":
-            self.parts.append("\n")
-        elif tag in {"strong", "b"}:
-            self.parts.append("**")
+        traits = _parse_onenote_style(attr.get("style", ""))
+        if tag == "a":
+            href = attr.get("href", "").strip()
+            wiki_target = _onenote_wiki_target_from_href(href)
+            self.link_stack.append({"href": href, "wiki_target": wiki_target, "start": len(self.parts)})
+            if not wiki_target:
+                self.parts.append("[")
+        if tag in {"strong", "b"}:
+            traits["bold"] = True
         elif tag in {"em", "i"}:
-            self.parts.append("*")
-        elif tag == "code":
-            self.parts.append("`")
-        elif tag == "pre":
-            self._block()
-            self.parts.append("```\n")
-        elif tag in {"ul", "ol"}:
-            self._block()
-            self.list_stack.append(tag)
-        elif tag == "li":
-            self._block()
-            marker = "1. " if self.list_stack and self.list_stack[-1] == "ol" else "- "
-            self.parts.append(marker)
-        elif tag == "a":
-            self.href_stack.append(attr.get("href", ""))
-            self.parts.append("[")
-        elif tag == "img":
-            source = attr.get("data-fullres-src") or attr.get("src") or ""
-            alt = attr.get("alt") or "Bild"
-            target = self.copy_asset(source, alt)
-            if target:
-                if not re.match(r"^https?://", target, flags=re.IGNORECASE):
-                    self.media_count += 1
-                self.parts.append(f"![{alt}]({target})")
-        elif tag == "object":
-            source = attr.get("data") or ""
-            label = attr.get("data-attachment") or "Anhang"
-            target = self.copy_asset(source, label)
-            if target:
-                if not re.match(r"^https?://", target, flags=re.IGNORECASE):
-                    self.media_count += 1
-                self.parts.append(f"[{label}]({target})")
-        elif tag == "table":
-            self._block()
-            self.table_depth += 1
-            self.parts.append("<table>\n")
-        elif tag in {"tr", "td", "th"} and self.table_depth:
-            self.parts.append(f"<{tag}>")
+            traits["italic"] = True
+        elif tag == "u":
+            traits["underline"] = True
+        self.style_stack.append(traits)
+        self.parts.append(self._open_markup(traits))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "article", "li"}:
-            self._block()
-        elif tag in {"strong", "b"}:
-            self.parts.append("**")
-        elif tag in {"em", "i"}:
-            self.parts.append("*")
-        elif tag == "code":
-            self.parts.append("`")
-        elif tag == "pre":
-            self.parts.append("\n```")
-            self._block()
-        elif tag in {"ul", "ol"}:
-            if self.list_stack:
-                self.list_stack.pop()
-            self._block()
-        elif tag == "a":
-            href = self.href_stack.pop() if self.href_stack else ""
-            self.parts.append(f"]({href})" if href else "]")
-        elif tag == "table":
-            self.parts.append("</table>")
-            self.table_depth = max(0, self.table_depth - 1)
-            self._block()
-        elif tag in {"tr", "td", "th"} and self.table_depth:
-            self.parts.append(f"</{tag}>")
-            if tag == "tr":
-                self.parts.append("\n")
+        traits = self.style_stack.pop() if self.style_stack else {}
+        self.parts.append(self._close_markup(traits))
+        if tag == "a":
+            link = self.link_stack.pop() if self.link_stack else {"href": "", "wiki_target": "", "start": len(self.parts)}
+            self._close_link(link)
 
     def handle_data(self, data: str) -> None:
-        if not data:
-            return
         self.parts.append(data)
 
-    def markdown(self) -> str:
-        text = "".join(self.parts)
-        text = re.sub(r"[ \t]+\n", "\n", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
+    def _open_markup(self, traits: dict[str, str | bool]) -> str:
+        markers: list[str] = []
+        if traits.get("underline"):
+            markers.append("<u>")
+        if traits.get("italic"):
+            markers.append("*")
+        if traits.get("bold"):
+            markers.append("**")
+        return "".join(markers)
 
-    def _block(self) -> None:
-        current = "".join(self.parts)
-        if not current:
-            return
-        if not current.endswith("\n\n"):
-            if current.endswith("\n"):
-                self.parts.append("\n")
+    def _close_markup(self, traits: dict[str, str | bool]) -> str:
+        markers: list[str] = []
+        if traits.get("bold"):
+            markers.append("**")
+        if traits.get("italic"):
+            markers.append("*")
+        if traits.get("underline"):
+            markers.append("</u>")
+        return "".join(markers)
+
+    def _close_link(self, link: dict[str, Any]) -> None:
+        href = str(link.get("href", ""))
+        wiki_target = str(link.get("wiki_target", ""))
+        if wiki_target:
+            start = int(link.get("start", len(self.parts)))
+            label = "".join(self.parts[start:]).strip()
+            del self.parts[start:]
+            if label and _normalize_wiki_compare(label) != _normalize_wiki_compare(wiki_target):
+                self.parts.append(f"[[{wiki_target}|{label}]]")
             else:
-                self.parts.append("\n\n")
+                self.parts.append(f"[[{wiki_target}]]")
+            return
+        if not href:
+            self.parts.append("]")
+            return
+        self.parts.append(f"]({_escape_markdown_link_target(href)})")
 
 
-class _TitleParser(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.in_title = False
-        self.parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() == "title":
-            self.in_title = True
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() == "title":
-            self.in_title = False
-
-    def handle_data(self, data: str) -> None:
-        if self.in_title:
-            self.parts.append(data)
+def _escape_markdown_link_target(target: str) -> str:
+    return target.replace(" ", "%20").replace(")", "%29")
 
 
-def _extract_html_title(html: str) -> str:
-    parser = _TitleParser()
-    parser.feed(html)
-    title = " ".join("".join(parser.parts).split())
+def _onenote_wiki_target_from_href(href: str) -> str:
+    clean = href.strip()
+    if not clean.lower().startswith("onenote:"):
+        return ""
+    parsed = urlparse(clean)
+    fragment = unquote(parsed.fragment or "")
+    if not fragment and "#" in clean:
+        fragment = unquote(clean.split("#", 1)[1])
+    title = fragment.split("&", 1)[0].strip()
+    title = title.replace("+", " ")
+    title = re.sub(r"\.(one|onepkg)$", "", title, flags=re.IGNORECASE).strip()
+    if not title or title.lower() in {"section-id", "page-id"}:
+        return ""
     return title[:160]
 
 
-def _extract_text_title(text: str) -> str:
-    for line in text.splitlines():
-        clean = line.strip().lstrip("#").strip()
-        if clean:
-            return clean[:160]
-    return ""
+def _normalize_wiki_compare(value: str) -> str:
+    clean = value.strip().replace("\\", "/")
+    clean = clean[:-3] if clean.lower().endswith(".md") else clean
+    return clean.lower()
 
 
-def _read_mhtml(path: Path) -> tuple[str, dict[str, tuple[bytes, str, str]]]:
-    message = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
-    html = ""
-    resources: dict[str, tuple[bytes, str, str]] = {}
-    for part in message.walk():
-        content_type = part.get_content_type()
-        payload = part.get_payload(decode=True)
-        if payload is None:
-            continue
-        location = str(part.get("Content-Location") or part.get("Content-ID") or "").strip("<>")
-        filename = part.get_filename() or Path(urlparse(location).path).name or "asset"
-        if content_type in {"text/html", "application/xhtml+xml"} and not html:
-            charset = part.get_content_charset() or "utf-8"
-            html = payload.decode(charset, errors="replace")
-            continue
-        if location:
-            resources[unquote(location)] = (payload, filename, content_type)
-    return html, resources
+def _rewrite_wikilinks_to_relative_paths(markdown: str, target_map: dict[str, str]) -> str:
+    if not markdown:
+        return markdown
+
+    def replace(match: re.Match[str]) -> str:
+        raw = match.group(1).strip()
+        if not raw:
+            return match.group(0)
+        target, separator, alias = raw.partition("|")
+        clean_target = _normalize_wiki_compare(target)
+        relative_target = target_map.get(clean_target)
+        clean_alias = alias.strip()
+        if not relative_target:
+            if separator and clean_alias and _normalize_wiki_compare(clean_alias) == clean_target:
+                return f"[[{target.strip()}]]"
+            return match.group(0)
+        relative_name = relative_target.rsplit("/", 1)[-1]
+        if (
+            separator
+            and clean_alias
+            and _normalize_wiki_compare(clean_alias) != _normalize_wiki_compare(relative_target)
+            and _normalize_wiki_compare(clean_alias) != _normalize_wiki_compare(relative_name)
+        ):
+            return f"[[{relative_target}|{clean_alias}]]"
+        return f"[[{relative_target}]]"
+
+    return re.sub(r"\[\[([^\[\]\n]+)\]\]", replace, markdown)
 
 
-def _markdown_relative_path(note_path: Path, asset_path: Path) -> str:
-    return os.path.relpath(asset_path, start=note_path.parent).replace("\\", "/")
+def _read_base64_file(path: Path) -> bytes:
+    raw = "".join(path.read_text(encoding="ascii", errors="ignore").split())
+    if not raw:
+        raise ValueError("Leere Bilddaten.")
+    try:
+        payload = base64.b64decode(raw, validate=True)
+    except binascii.Error as exc:
+        raise ValueError("Ungueltige Base64-Bilddaten.") from exc
+    if not payload:
+        raise ValueError("Leere Bilddaten.")
+    return payload
+
+
+def _image_suffix_from_bytes(payload: bytes) -> str:
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if payload.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if payload.startswith(b"GIF87a") or payload.startswith(b"GIF89a"):
+        return ".gif"
+    if payload.startswith(b"BM"):
+        return ".bmp"
+    if payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+        return ".webp"
+    stripped = payload.lstrip()
+    if stripped.startswith(b"<svg") or stripped.startswith(b"<?xml"):
+        return ".svg"
+    return ".png"

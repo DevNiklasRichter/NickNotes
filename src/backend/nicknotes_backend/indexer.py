@@ -19,6 +19,16 @@ INLINE_TITLE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za
 BODY_HASHTAG_PATTERN = re.compile(r"(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})")
 
 
+def _count_from_cursor(cur: sqlite3.Cursor) -> int:
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row["cnt"] or 0)
+    except (KeyError, TypeError, ValueError):
+        return 0
+
+
 class VaultIndexer:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -672,7 +682,7 @@ class VaultIndexer:
                 "SELECT COUNT(*) AS cnt FROM notes WHERE substr(created_at, 1, 10) = ?;",
                 (day_str,),
             )
-            notes_count = int(cur.fetchone()["cnt"])
+            notes_count = _count_from_cursor(cur)
             cur.execute(
                 """
                 SELECT COUNT(*) AS cnt
@@ -681,7 +691,7 @@ class VaultIndexer:
                 """,
                 (day_str,),
             )
-            open_count = int(cur.fetchone()["cnt"])
+            open_count = _count_from_cursor(cur)
             cur.execute(
                 """
                 SELECT COUNT(*) AS cnt
@@ -690,7 +700,7 @@ class VaultIndexer:
                 """,
                 (day_str,),
             )
-            done_count = int(cur.fetchone()["cnt"])
+            done_count = _count_from_cursor(cur)
         return {
             "date": day_str,
             "new_notes": notes_count,
@@ -710,7 +720,7 @@ class VaultIndexer:
                 """,
                 (start.isoformat(), end_day.isoformat()),
             )
-            notes_count = int(cur.fetchone()["cnt"])
+            notes_count = _count_from_cursor(cur)
             cur.execute(
                 """
                 SELECT COUNT(*) AS cnt
@@ -718,7 +728,7 @@ class VaultIndexer:
                 WHERE status <> 'done';
                 """
             )
-            open_tasks = int(cur.fetchone()["cnt"])
+            open_tasks = _count_from_cursor(cur)
             cur.execute(
                 """
                 SELECT COUNT(*) AS cnt
@@ -728,7 +738,7 @@ class VaultIndexer:
                 """,
                 (start.isoformat(), end_day.isoformat()),
             )
-            done_week = int(cur.fetchone()["cnt"])
+            done_week = _count_from_cursor(cur)
         return {
             "from": start.isoformat(),
             "to": end_day.isoformat(),
@@ -758,10 +768,10 @@ class VaultIndexer:
             cur = self.conn.cursor()
 
             cur.execute("SELECT COUNT(*) AS cnt FROM tasks WHERE status <> 'done';")
-            open_tasks_now = int(cur.fetchone()["cnt"])
+            open_tasks_now = _count_from_cursor(cur)
 
             cur.execute("SELECT COUNT(*) AS cnt FROM todos WHERE checked = 0;")
-            open_todos_now = int(cur.fetchone()["cnt"])
+            open_todos_now = _count_from_cursor(cur)
 
             cur.execute(
                 """
@@ -774,7 +784,7 @@ class VaultIndexer:
                 """,
                 (end_iso,),
             )
-            overdue_open_tasks = int(cur.fetchone()["cnt"])
+            overdue_open_tasks = _count_from_cursor(cur)
 
             notes_by_day = _to_daily_count_map(
                 cur,
@@ -837,7 +847,7 @@ class VaultIndexer:
                 """,
                 (start_iso, end_iso),
             )
-            notes_updated_period = int(cur.fetchone()["cnt"])
+            notes_updated_period = _count_from_cursor(cur)
 
             cur.execute(
                 """

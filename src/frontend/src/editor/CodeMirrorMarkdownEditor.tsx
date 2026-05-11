@@ -697,6 +697,7 @@ export function CodeMirrorMarkdownEditor({
   const initialReadOnlyRef = useRef(readOnly)
   const initialNotePathRef = useRef(notePath)
   const initialBackendUrlRef = useRef(backendUrl)
+  const initialLinkTargetsRef = useRef(linkTargets)
   const initialTagGroupsRef = useRef(tagGroups)
   const initialSearchHighlightQueryRef = useRef(searchHighlightQuery)
   const initialPlaceholderTextRef = useRef(placeholderText)
@@ -1337,6 +1338,7 @@ export function CodeMirrorMarkdownEditor({
             liveMarkdownPreview({
               notePath: initialNotePathRef.current,
               backendUrl: initialBackendUrlRef.current,
+              linkTargets: initialLinkTargetsRef.current,
               onOpenWikiLink,
               onOpenTagReference,
             })
@@ -1439,7 +1441,12 @@ export function CodeMirrorMarkdownEditor({
                 return false
               }
               const shellRect = shellRef.current?.getBoundingClientRect()
-              const coords = view.coordsAtPos(resolved.to)
+              let coords: { left: number; right: number; top: number; bottom: number } | null = null
+              try {
+                coords = view.coordsAtPos(resolved.to)
+              } catch {
+                coords = null
+              }
               const left = coords && shellRect ? coords.left - shellRect.left : event.clientX - (shellRect?.left ?? 0)
               const top = coords && shellRect ? coords.bottom - shellRect.top + 8 : event.clientY - (shellRect?.top ?? 0) + 12
               setHoveredTagSuggestion({
@@ -1587,12 +1594,13 @@ export function CodeMirrorMarkdownEditor({
         liveMarkdownPreview({
           notePath,
           backendUrl,
+          linkTargets,
           onOpenWikiLink,
           onOpenTagReference,
         })
       ),
     })
-  }, [notePath, backendUrl, onOpenWikiLink, onOpenTagReference])
+  }, [notePath, backendUrl, linkTargets, onOpenWikiLink, onOpenTagReference])
 
   useEffect(() => {
     const instance = editorRef.current
