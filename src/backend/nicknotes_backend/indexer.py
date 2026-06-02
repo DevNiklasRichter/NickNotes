@@ -1422,6 +1422,8 @@ class VaultIndexer:
 
     def _index_task_markdown(self, file_path: Path) -> int:
         meta, body = parse_markdown(file_path)
+        if str(meta.get("type", "")).strip().lower().replace("-", "_") == "task_link":
+            return 0
         task_id = str(meta.get("id", "")).strip()
         if not task_id:
             digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]

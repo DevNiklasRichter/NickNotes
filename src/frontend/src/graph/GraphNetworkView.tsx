@@ -1,6 +1,6 @@
 import cytoscape from 'cytoscape'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Core, ElementDefinition, EventObject, StylesheetStyle } from 'cytoscape'
+import type { Core, ElementDefinition, EventObject, NodeSingular, StylesheetStyle } from 'cytoscape'
 import type { GraphEdge, GraphNode, GraphNodePosition, GraphViewport } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 
@@ -36,6 +36,13 @@ type GraphNodeContextMenu = {
 const LARGE_GRAPH_NODE_WARNING = 450
 const LARGE_GRAPH_EDGE_WARNING = 900
 
+type GraphPhysicsSimulation = {
+  kick: (heat?: number, fitWhenSettled?: boolean) => void
+  reset: (randomize: boolean, fitWhenSettled?: boolean) => void
+  setDraggedNode: (nodeId: string | null) => void
+  stop: () => void
+}
+
 export function GraphNetworkView({
   nodes,
   edges,
@@ -62,13 +69,13 @@ export function GraphNetworkView({
   const applyingViewportRef = useRef(false)
   const viewportTimerRef = useRef<number | null>(null)
   const zoomStyleTimerRef = useRef<number | null>(null)
-  const activeLayoutRef = useRef<ReturnType<Core['layout']> | null>(null)
-  const relaxingNodeRef = useRef<string>('')
+  const physicsSimulationRef = useRef<GraphPhysicsSimulation | null>(null)
   const lastLayoutVersionRef = useRef(layoutVersion)
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+  const displayEdges = useMemo(() => aggregateDisplayEdges(edges, nodes), [edges, nodes])
   const connectedEdgesByNode = useMemo(() => {
     const map = new Map<string, GraphEdge[]>()
-    for (const edge of edges) {
+    for (const edge of displayEdges) {
       if (!map.has(edge.source)) {
         map.set(edge.source, [])
       }
@@ -79,11 +86,11 @@ export function GraphNetworkView({
       map.get(edge.target)?.push(edge)
     }
     return map
-  }, [edges])
-  const elements = useMemo<ElementDefinition[]>(() => buildElements(nodes, edges, searchText), [edges, nodes, searchText])
-  const largeGraph = nodes.length > LARGE_GRAPH_NODE_WARNING || edges.length > LARGE_GRAPH_EDGE_WARNING
+  }, [displayEdges])
+  const elements = useMemo<ElementDefinition[]>(() => buildElements(nodes, displayEdges, searchText), [displayEdges, nodes, searchText])
+  const largeGraph = nodes.length > LARGE_GRAPH_NODE_WARNING || displayEdges.length > LARGE_GRAPH_EDGE_WARNING
   const nodeByIdRef = useLatest(nodeById)
-  const edgeByIdRef = useLatest(useMemo(() => new Map(edges.map((edge) => [edge.id, edge])), [edges]))
+  const edgeByIdRef = useLatest(useMemo(() => new Map(displayEdges.map((edge) => [edge.id, edge])), [displayEdges]))
   const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
   const onOpenNodePathRef = useLatest(onOpenNodePath)
   const onRevealNodePathRef = useLatest(onRevealNodePath)
@@ -110,6 +117,11 @@ export function GraphNetworkView({
         autounselectify: true,
       })
       cyRef.current = cy
+      physicsSimulationRef.current = createGraphPhysicsSimulation(cy, largeGraphRef, () => {
+        onPositionsChangeRef.current?.(collectPositions(cy))
+      }, () => {
+        fitGraphToViewport(cy)
+      })
       applyZoomDensity(cy, false)
 
       cy.on('tap', 'node', (event) => {
@@ -189,31 +201,18 @@ export function GraphNetworkView({
         setHoverText('')
       })
 
-      cy.on('grab', 'node', () => {
-        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+      cy.on('grab', 'node', (event) => {
+        physicsSimulationRef.current?.setDraggedNode(event.target.id())
+        physicsSimulationRef.current?.kick(0.72)
       })
 
-      cy.on('dragfree', 'node', (event) => {
-        const nodeId = event.target.id()
-        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
-        event.target.lock()
-        relaxingNodeRef.current = nodeId
-        activeLayoutRef.current = runLayout(cy, largeGraphRef.current, () => {
-          const relaxingNode = cy.getElementById(nodeId)
-          if (relaxingNode.length) {
-            relaxingNode.unlock()
-          }
-          if (relaxingNodeRef.current === nodeId) {
-            relaxingNodeRef.current = ''
-          }
-          activeLayoutRef.current = null
-          onPositionsChangeRef.current?.(collectPositions(cy))
-        }, {
-          animate: true,
-          fit: false,
-          randomize: false,
-          relaxation: true,
-        })
+      cy.on('drag', 'node', () => {
+        physicsSimulationRef.current?.kick(0.46)
+      })
+
+      cy.on('free', 'node', () => {
+        physicsSimulationRef.current?.setDraggedNode(null)
+        physicsSimulationRef.current?.kick(0.82)
       })
 
       cy.on('zoom pan', () => {
@@ -249,7 +248,8 @@ export function GraphNetworkView({
       }
       const cy = cyRef.current
       if (cy) {
-        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+        physicsSimulationRef.current?.stop()
+        physicsSimulationRef.current = null
         cy.destroy()
       }
       cyRef.current = null
@@ -268,20 +268,16 @@ export function GraphNetworkView({
         clearSelectionFocus(cy, largeGraph)
         applyStoredPositions(cy, positionsRef.current)
       })
-      const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positionsRef.current)
+      const layoutRequested = layoutVersion !== lastLayoutVersionRef.current
+      const shouldRunLayout = layoutRequested || !hasEnoughStoredPositions(nodes, positionsRef.current)
       lastLayoutVersionRef.current = layoutVersion
       if (shouldRunLayout) {
-        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
-        activeLayoutRef.current = runLayout(cy, largeGraph, () => {
-          activeLayoutRef.current = null
-          onPositionsChangeRef.current?.(collectPositions(cy))
-          applyViewport(cy, viewportRef.current, applyingViewportRef)
-          window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
-        })
+        physicsSimulationRef.current?.reset(layoutRequested, true)
       } else {
-        applyViewport(cy, viewportRef.current, applyingViewportRef)
-        window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
+        physicsSimulationRef.current?.kick(0.58, true)
       }
+      window.setTimeout(() => fitGraphToViewport(cy), 0)
+      window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
     } catch (caught) {
       window.setTimeout(() => setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`), 0)
     }
@@ -305,11 +301,7 @@ export function GraphNetworkView({
     if (!cy) {
       return
     }
-    stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
-    activeLayoutRef.current = runLayout(cy, largeGraph, () => {
-      activeLayoutRef.current = null
-      onPositionsChangeRef.current?.(collectPositions(cy))
-    })
+    physicsSimulationRef.current?.reset(true, true)
   }
 
   return (
@@ -317,7 +309,7 @@ export function GraphNetworkView({
       <header className="graph-network-toolbar">
         <div>
           <h3>Interaktiver Graph</h3>
-          <p>{nodes.length} Nodes | {edges.length} Edges</p>
+          <p>{nodes.length} Nodes | {displayEdges.length} Edges</p>
         </div>
         <div className="graph-network-actions">
           <button className="icon-button compact muted" onClick={fitGraph} title="Fit">
@@ -340,6 +332,7 @@ export function GraphNetworkView({
       <div className={`graph-network-grid ${showDetails ? '' : 'graph-network-grid-full'}`}>
         <div className="graph-network-canvas-wrap">
           <div ref={hostRef} className="graph-network-canvas" />
+          <GraphLegend />
           {hoverText ? <div className="graph-network-hover">{hoverText}</div> : null}
           {nodeContextMenu ? (
             <GraphNodeContextMenu
@@ -384,14 +377,18 @@ export function GraphNetworkView({
           />
         ) : null}
       </div>
-      {showDetails ? <div className="graph-legend" aria-label="Graph Legende">
-        <span><i className="legend-node note" /> Note</span>
-        <span><i className="legend-node task" /> Task</span>
-        <span><i className="legend-node tag" /> Tag</span>
-        <span><i className="legend-edge link" /> Link</span>
-        <span><i className="legend-edge sharedTag" /> SharedTag</span>
-      </div> : null}
     </section>
+  )
+}
+
+function GraphLegend() {
+  return (
+    <div className="graph-legend" aria-label="Graph Legende">
+      <span><i className="legend-node note" /> Note</span>
+      <span><i className="legend-node task" /> Task</span>
+      <span><i className="legend-node tag" /> Tag</span>
+      <span><i className="legend-edge" /> Beziehung</span>
+    </div>
   )
 }
 
@@ -586,6 +583,36 @@ function buildElements(nodes: GraphNode[], edges: GraphEdge[], searchText: strin
   return [...nodeElements, ...edgeElements]
 }
 
+function aggregateDisplayEdges(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[] {
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const merged = new Map<string, GraphEdge>()
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target) || edge.source === edge.target) {
+      continue
+    }
+    const [source, target] = edge.source < edge.target ? [edge.source, edge.target] : [edge.target, edge.source]
+    const id = `relationship:${source}<->${target}`
+    const current = merged.get(id)
+    if (!current) {
+      merged.set(id, { ...edge, id, source, target, reasons: [...edge.reasons] })
+      continue
+    }
+    current.weight += edge.weight
+    current.type = preferredRelationshipType(current.type, edge.type)
+    for (const reason of edge.reasons) {
+      if (!current.reasons.includes(reason)) {
+        current.reasons.push(reason)
+      }
+    }
+  }
+  return Array.from(merged.values())
+}
+
+function preferredRelationshipType(left: GraphEdge['type'], right: GraphEdge['type']): GraphEdge['type'] {
+  const priority = { link: 3, tagUsage: 2, sharedTag: 1 }
+  return (priority[right] ?? 0) > (priority[left] ?? 0) ? right : left
+}
+
 function matchesNode(node: GraphNode, query: string): boolean {
   return [node.id, node.label, node.path, node.group, node.tag].some((value) => String(value ?? '').toLowerCase().includes(query))
 }
@@ -619,15 +646,9 @@ function collectPositions(cy: Core): Record<string, GraphNodePosition> {
   return next
 }
 
-function applyViewport(cy: Core, viewport: GraphViewport, applyingViewportRef: { current: boolean }) {
-  applyingViewportRef.current = true
-  try {
-    cy.zoom(viewport.zoom)
-    cy.pan(viewport.pan)
-  } finally {
-    window.setTimeout(() => {
-      applyingViewportRef.current = false
-    }, 0)
+function fitGraphToViewport(cy: Core) {
+  if (!cy.destroyed() && cy.nodes().length > 0) {
+    cy.fit(cy.nodes(), 54)
   }
 }
 
@@ -683,9 +704,9 @@ function applyZoomDensity(cy: Core, largeGraph: boolean) {
   cy.batch(() => {
     cy.nodes().forEach((node) => {
       const nodeType = String(node.data('type') ?? '')
-      const baseWidth = nodeType === 'task' ? 40 : nodeType === 'tag' ? 24 : 34
-      const baseHeight = nodeType === 'task' ? 28 : nodeType === 'tag' ? 24 : 34
-      const baseFontSize = nodeType === 'tag' ? 9 : 10
+      const baseWidth = nodeType === 'task' ? 18 : nodeType === 'tag' ? 14 : 16
+      const baseHeight = baseWidth
+      const baseFontSize = nodeType === 'tag' ? 8 : 9
       node.style({
         width: Math.max(7, Math.round(baseWidth * factor)),
         height: Math.max(7, Math.round(baseHeight * factor)),
@@ -707,60 +728,214 @@ function applyZoomDensity(cy: Core, largeGraph: boolean) {
               : Math.max(1, Math.min(5, weight / 1.8))
       edge.style({
         width: Math.max(0.35, baseWidth * edgeFactor),
-        'arrow-scale': edgeType === 'tagUsage' || edgeType === 'sharedTag' ? 0.45 : Math.max(0.22, 0.62 * edgeFactor),
-        opacity: edgeType === 'sharedTag' ? 0.38 : largeGraph ? 0.56 : 0.72,
+        opacity: edgeType === 'sharedTag' ? 0.26 : largeGraph ? 0.38 : 0.48,
       })
     })
   })
 }
 
-function stopActiveLayout(
+function createGraphPhysicsSimulation(
   cy: Core,
-  activeLayoutRef: { current: ReturnType<Core['layout']> | null },
-  relaxingNodeRef: { current: string },
-) {
-  activeLayoutRef.current?.stop()
-  activeLayoutRef.current = null
-  if (relaxingNodeRef.current) {
-    const relaxingNode = cy.getElementById(relaxingNodeRef.current)
-    if (relaxingNode.length) {
-      relaxingNode.unlock()
+  largeGraphRef: { current: boolean },
+  onSettled: () => void,
+  onFitRequested: () => void,
+): GraphPhysicsSimulation {
+  const velocities = new Map<string, GraphNodePosition>()
+  let animationFrame: number | null = null
+  let draggedNodeId: string | null = null
+  let heat = 0
+  let lastFrameTime = 0
+  let lastInteractionTime = 0
+  let quietFrames = 0
+  let fitWhenSettled = false
+  let center = { x: 0, y: 0 }
+
+  const captureCenter = () => {
+    const graphNodes = collectGraphNodes(cy)
+    if (graphNodes.length === 0) {
+      center = { x: 0, y: 0 }
+      return
     }
-    relaxingNodeRef.current = ''
+    const sum = graphNodes.reduce(
+      (current, node) => {
+        const position = node.position()
+        return { x: current.x + position.x, y: current.y + position.y }
+      },
+      { x: 0, y: 0 },
+    )
+    center = { x: sum.x / graphNodes.length, y: sum.y / graphNodes.length }
+  }
+
+  const stop = () => {
+    if (animationFrame !== null) {
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = null
+    }
+    lastFrameTime = 0
+    quietFrames = 0
+  }
+
+  const tick = (frameTime: number) => {
+    animationFrame = null
+    if (cy.destroyed()) {
+      return
+    }
+    const graphNodes = collectGraphNodes(cy)
+    if (graphNodes.length === 0) {
+      onSettled()
+      return
+    }
+    const timeStep = lastFrameTime ? Math.min(1.8, Math.max(0.45, (frameTime - lastFrameTime) / 16.67)) : 1
+    lastFrameTime = frameTime
+    const forces = new Map(graphNodes.map((node) => [node.id(), { x: 0, y: 0 }]))
+    const repulsion = largeGraphRef.current ? 1180 : 1650
+
+    for (let leftIndex = 0; leftIndex < graphNodes.length - 1; leftIndex += 1) {
+      const left = graphNodes[leftIndex]
+      const leftPosition = left.position()
+      for (let rightIndex = leftIndex + 1; rightIndex < graphNodes.length; rightIndex += 1) {
+        const right = graphNodes[rightIndex]
+        const rightPosition = right.position()
+        let deltaX = rightPosition.x - leftPosition.x
+        let deltaY = rightPosition.y - leftPosition.y
+        let distanceSquared = deltaX * deltaX + deltaY * deltaY
+        if (distanceSquared < 1) {
+          deltaX = (rightIndex - leftIndex) % 2 === 0 ? 1 : -1
+          deltaY = 1
+          distanceSquared = 2
+        }
+        const distance = Math.sqrt(distanceSquared)
+        const force = repulsion / Math.max(140, distanceSquared)
+        const forceX = (deltaX / distance) * force
+        const forceY = (deltaY / distance) * force
+        addForce(forces, left.id(), -forceX, -forceY)
+        addForce(forces, right.id(), forceX, forceY)
+      }
+    }
+
+    cy.edges().forEach((edge) => {
+      const source = edge.source()
+      const target = edge.target()
+      const sourcePosition = source.position()
+      const targetPosition = target.position()
+      const deltaX = targetPosition.x - sourcePosition.x
+      const deltaY = targetPosition.y - sourcePosition.y
+      const distance = Math.max(0.01, Math.sqrt(deltaX * deltaX + deltaY * deltaY))
+      const edgeType = String(edge.data('type') ?? '')
+      const weight = Math.max(1, Number(edge.data('weight') ?? 1))
+      const restLength = edgeType === 'tagUsage' ? 78 : edgeType === 'sharedTag' ? 118 : 104
+      const stiffness = (edgeType === 'tagUsage' ? 0.014 : edgeType === 'sharedTag' ? 0.007 : 0.012) * (1 + Math.min(8, weight) * 0.08)
+      const force = (distance - restLength) * stiffness
+      const forceX = (deltaX / distance) * force
+      const forceY = (deltaY / distance) * force
+      addForce(forces, source.id(), forceX, forceY)
+      addForce(forces, target.id(), -forceX, -forceY)
+    })
+
+    let maximumSpeed = 0
+    const damping = draggedNodeId ? 0.9 : 0.86
+    const effectiveHeat = Math.max(0.08, heat)
+    cy.batch(() => {
+      graphNodes.forEach((node) => {
+        const nodeId = node.id()
+        if (nodeId === draggedNodeId || node.grabbed()) {
+          velocities.set(nodeId, { x: 0, y: 0 })
+          return
+        }
+        const position = node.position()
+        const force = forces.get(nodeId) ?? { x: 0, y: 0 }
+        force.x += (center.x - position.x) * 0.0017
+        force.y += (center.y - position.y) * 0.0017
+        const currentVelocity = velocities.get(nodeId) ?? { x: 0, y: 0 }
+        const nextVelocity = {
+          x: clamp((currentVelocity.x + force.x * effectiveHeat * timeStep) * damping, -22, 22),
+          y: clamp((currentVelocity.y + force.y * effectiveHeat * timeStep) * damping, -22, 22),
+        }
+        velocities.set(nodeId, nextVelocity)
+        maximumSpeed = Math.max(maximumSpeed, Math.abs(nextVelocity.x) + Math.abs(nextVelocity.y))
+        node.position({
+          x: position.x + nextVelocity.x * timeStep,
+          y: position.y + nextVelocity.y * timeStep,
+        })
+      })
+    })
+
+    heat = draggedNodeId ? Math.max(0.42, heat * 0.985) : heat * 0.968
+    quietFrames = !draggedNodeId && heat < 0.045 && maximumSpeed < 0.12 ? quietFrames + 1 : 0
+    if (quietFrames >= 12 || (!draggedNodeId && frameTime - lastInteractionTime > 5200)) {
+      stop()
+      onSettled()
+      if (fitWhenSettled) {
+        fitWhenSettled = false
+        onFitRequested()
+      }
+      return
+    }
+    animationFrame = window.requestAnimationFrame(tick)
+  }
+
+  const kick = (nextHeat = 0.7, nextFitWhenSettled = false) => {
+    if (cy.destroyed()) {
+      return
+    }
+    if (animationFrame === null) {
+      captureCenter()
+      lastFrameTime = 0
+      quietFrames = 0
+      animationFrame = window.requestAnimationFrame(tick)
+    }
+    lastInteractionTime = performance.now()
+    fitWhenSettled ||= nextFitWhenSettled
+    heat = Math.max(heat, nextHeat)
+  }
+
+  const reset = (randomize: boolean, nextFitWhenSettled = false) => {
+    stop()
+    velocities.clear()
+    if (randomize) {
+      randomizePhysicsPositions(cy)
+    }
+    kick(1.18, nextFitWhenSettled)
+  }
+
+  return {
+    kick,
+    reset,
+    setDraggedNode: (nodeId) => {
+      draggedNodeId = nodeId
+      if (nodeId) {
+        velocities.set(nodeId, { x: 0, y: 0 })
+      }
+    },
+    stop,
   }
 }
 
-function runLayout(
-  cy: Core,
-  largeGraph: boolean,
-  onDone?: () => void,
-  options: {
-    animate?: boolean
-    fit?: boolean
-    randomize?: boolean
-    relaxation?: boolean
-  } = {},
-) {
-  const relaxation = options.relaxation ?? false
-  const layout = cy.layout({
-    name: 'cose',
-    animate: options.animate ?? !largeGraph,
-    animationDuration: relaxation ? 620 : 280,
-    randomize: options.randomize ?? true,
-    fit: options.fit ?? true,
-    padding: 42,
-    nodeRepulsion: largeGraph ? 8500 : 11000,
-    idealEdgeLength: largeGraph ? 90 : 115,
-    edgeElasticity: 120,
-    nestingFactor: 1.1,
-    gravity: 1,
-    numIter: relaxation ? (largeGraph ? 420 : 900) : largeGraph ? 900 : 1600,
-  })
-  if (onDone) {
-    layout.one('layoutstop', onDone)
+function collectGraphNodes(cy: Core): NodeSingular[] {
+  return cy.nodes().toArray().filter((node): node is NodeSingular => node.isNode())
+}
+
+function addForce(forces: Map<string, GraphNodePosition>, nodeId: string, x: number, y: number) {
+  const force = forces.get(nodeId)
+  if (!force) {
+    return
   }
-  layout.run()
-  return layout
+  force.x += x
+  force.y += y
+}
+
+function randomizePhysicsPositions(cy: Core) {
+  const graphNodes = collectGraphNodes(cy)
+  const radius = Math.max(180, Math.sqrt(graphNodes.length) * 44)
+  graphNodes.forEach((node, index) => {
+    const angle = index * 2.399963229728653
+    const distance = radius * Math.sqrt((index + 1) / Math.max(1, graphNodes.length))
+    node.position({ x: Math.cos(angle) * distance, y: Math.sin(angle) * distance })
+  })
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value))
 }
 
 function useLatest<T>(value: T) {
@@ -782,32 +957,32 @@ const cytoscapeStyles: StylesheetStyle[] = [
       'text-outline-width': 2,
       'text-valign': 'bottom',
       'text-halign': 'center',
-      'background-color': '#4f8cff',
-      'border-color': '#a7c3ff',
+      'background-color': '#91aeca',
+      'border-color': '#d2e0ed',
       'border-width': 1,
-      width: 34,
-      height: 34,
+      width: 16,
+      height: 16,
     },
   },
   {
     selector: 'node.task',
     style: {
-      shape: 'round-rectangle',
-      'background-color': '#d3a33a',
-      'border-color': '#f4d27c',
-      width: 40,
-      height: 28,
+      shape: 'ellipse',
+      'background-color': '#d4ae61',
+      'border-color': '#f0d99e',
+      width: 18,
+      height: 18,
     },
   },
   {
     selector: 'node.tag',
     style: {
-      shape: 'diamond',
-      'background-color': '#2fba7a',
-      'border-color': '#9de4bf',
-      width: 24,
-      height: 24,
-      'font-size': 9,
+      shape: 'ellipse',
+      'background-color': '#c98989',
+      'border-color': '#edc2c2',
+      width: 14,
+      height: 14,
+      'font-size': 8,
     },
   },
   {
@@ -854,47 +1029,42 @@ const cytoscapeStyles: StylesheetStyle[] = [
     selector: 'edge',
     style: {
       width: 'mapData(weight, 1, 8, 1, 5)',
-      'line-color': '#728096',
-      'target-arrow-color': '#728096',
-      'target-arrow-shape': 'triangle',
-      'arrow-scale': 0.62,
+      'line-color': '#99a3ad',
+      'target-arrow-shape': 'none',
       'curve-style': 'bezier',
-      opacity: 0.72,
+      opacity: 0.48,
     },
   },
   {
     selector: 'edge.link',
     style: {
-      'line-color': '#7aa2ff',
-      'target-arrow-color': '#7aa2ff',
-      opacity: 0.9,
+      'line-color': '#9caaba',
+      opacity: 0.54,
     },
   },
   {
     selector: 'edge.tagUsage',
     style: {
-      'line-color': '#45c58a',
-      'target-arrow-color': '#45c58a',
+      'line-color': '#9caf9f',
       width: 'mapData(weight, 1, 8, 0.8, 3)',
-      opacity: 0.62,
+      opacity: 0.46,
     },
   },
   {
     selector: 'edge.sharedTag',
     style: {
-      'line-color': '#32b67a',
+      'line-color': '#aebbb3',
       'target-arrow-shape': 'none',
       'curve-style': 'unbundled-bezier',
       'control-point-distance': 18,
       width: 'mapData(weight, 2, 10, 1, 5)',
-      opacity: 0.46,
+      opacity: 0.34,
     },
   },
   {
     selector: 'edge:selected',
     style: {
       'line-color': '#ffffff',
-      'target-arrow-color': '#ffffff',
       width: 6,
       opacity: 1,
     },

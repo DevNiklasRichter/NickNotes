@@ -4432,11 +4432,7 @@
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background:
-    linear-gradient(color-mix(in srgb, var(--line) 26%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--line) 26%, transparent) 1px, transparent 1px),
-    color-mix(in srgb, var(--bg-layer-1) 88%, var(--surface));
-  background-size: 26px 26px;
+  background: color-mix(in srgb, var(--bg-layer-1) 88%, var(--surface));
 }
 
 .graph-network-canvas {
@@ -4563,11 +4559,23 @@
 }
 
 .graph-legend {
+  position: absolute;
+  z-index: 3;
+  top: 0.7rem;
+  right: 0.7rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.52rem;
+  max-width: min(320px, calc(100% - 1.4rem));
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  box-shadow: var(--shadow-sm);
+  padding: 0.38rem 0.48rem;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
+  pointer-events: none;
 }
 
 .graph-legend span {
@@ -4577,32 +4585,28 @@
 }
 
 .legend-node {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--accent);
+  width: 9px;
+  height: 9px;
+  border: 1px solid #d2e0ed;
   border-radius: 50%;
+  background: #91aeca;
   display: inline-block;
 }
 
 .legend-node.task {
-  border-color: #d3a33a;
-  border-radius: 3px;
+  border-color: #f0d99e;
+  background: #d4ae61;
 }
 
 .legend-node.tag {
-  border-color: #2fba7a;
-  transform: rotate(45deg);
+  border-color: #edc2c2;
+  background: #c98989;
 }
 
 .legend-edge {
   width: 22px;
-  border-top: 2px solid #7aa2ff;
+  border-top: 1px solid #9caaba;
   display: inline-block;
-}
-
-.legend-edge.sharedTag {
-  border-color: #32b67a;
-  opacity: 0.6;
 }
 
 .graph-preview-panel {
@@ -4627,15 +4631,15 @@
 }
 
 .graph-preview-edge.edge-link {
-  stroke: color-mix(in srgb, var(--accent) 70%, var(--muted));
+  stroke: color-mix(in srgb, #9caaba 72%, var(--muted));
 }
 
 .graph-preview-edge.edge-tagUsage {
-  stroke: color-mix(in srgb, #2fba7a 70%, var(--muted));
+  stroke: color-mix(in srgb, #9caf9f 72%, var(--muted));
 }
 
 .graph-preview-edge.edge-sharedTag {
-  stroke: color-mix(in srgb, #32b67a 72%, var(--muted));
+  stroke: color-mix(in srgb, #aebbb3 72%, var(--muted));
   opacity: 0.58;
 }
 
@@ -4646,15 +4650,18 @@
 }
 
 .graph-preview-node.note circle {
-  stroke: var(--accent);
+  fill: #91aeca;
+  stroke: #d2e0ed;
 }
 
 .graph-preview-node.task circle {
-  stroke: #d3a33a;
+  fill: #d4ae61;
+  stroke: #f0d99e;
 }
 
 .graph-preview-node.tag circle {
-  stroke: #2fba7a;
+  fill: #c98989;
+  stroke: #edc2c2;
 }
 
 .graph-preview-node text {
@@ -4945,15 +4952,18 @@
 }
 
 .graph-sidebar-preview-node.note {
-  stroke: var(--accent);
+  fill: #91aeca;
+  stroke: #d2e0ed;
 }
 
 .graph-sidebar-preview-node.task {
-  stroke: #d3a33a;
+  fill: #d4ae61;
+  stroke: #f0d99e;
 }
 
 .graph-sidebar-preview-node.tag {
-  stroke: #2fba7a;
+  fill: #c98989;
+  stroke: #edc2c2;
 }
 
 .graph-update-banner.compact {

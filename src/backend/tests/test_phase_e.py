@@ -378,6 +378,37 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(mit_path, self.vault.daily_root_path / "2027.01" / "2027-01-02.md")
         self.assertEqual(self.vault.get_daily_mit("2027-01-02")["mit_ids"], ["tk_a"])
 
+    def test_reindex_skips_generated_task_status_links(self) -> None:
+        task_id = "tk_external_group"
+        task_path = self.vault.vault_path / "Projects" / "Tasks" / "External task.md"
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        task_path.write_text(
+            dump_markdown(
+                {
+                    "id": task_id,
+                    "node_id": task_id,
+                    "title": "External task",
+                    "type": "task",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-04-19T08:00:00",
+                    "updated_at": "2026-04-19T08:00:00",
+                    "tags": [],
+                },
+                "External task body",
+            ),
+            encoding="utf-8",
+        )
+
+        self.indexer.reindex_vault(self.vault.vault_path)
+        self.vault.rebuild_task_status_links(self.indexer)
+        self.indexer.reindex_vault(self.vault.vault_path)
+
+        tasks = self.indexer.list_tasks(include_done=True)
+        self.assertEqual([item["id"] for item in tasks], [task_id])
+        self.assertTrue((self.vault.tasks_root_path / "open" / f"{task_id}.md").exists())
+
     def test_flat_daily_notes_are_migrated_to_month_folders(self) -> None:
         flat_path = self.vault.daily_root_path / "2026-11-03.md"
         flat_path.write_text(
