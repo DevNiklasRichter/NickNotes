@@ -399,6 +399,350 @@ class PhaseEBackendTests(unittest.TestCase):
 
         self.assertTrue((self.vault.daily_root_path / "2026.11" / "2026-11-03.md").exists())
 
+    def test_note_media_assets_are_created_below_note_path(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        created = self.vault.create_note_in_group("Projects", "Image Note", self.indexer)
+        note_path = Path(created["note_path"])
+
+        result = self.vault.add_note_media_asset(
+            note_path=str(note_path),
+            filename="diagram.png",
+            content_type="image/png",
+            data=b"fake-png",
+        )
+
+        media_path = result["media_path"].replace("\\", "/")
+        self.assertTrue(media_path.startswith(".media/Projects/Image_Note/"))
+        self.assertTrue((self.vault.vault_path / media_path).exists())
+        self.assertEqual(result["markdown_path"], f"/{media_path}")
+
+    def test_note_move_relocates_referenced_media_in_background_queue(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        self.vault.create_note_group("Archive", "")
+        created = self.vault.create_note_in_group("Projects", "Move Media", self.indexer)
+        note_path = Path(created["note_path"])
+        media_result = self.vault.add_note_media_asset(
+            note_path=str(note_path),
+            filename="screenshot.png",
+            content_type="image/png",
+            data=b"fake-png",
+        )
+        old_media_path = self.vault.vault_path / media_result["media_path"]
+        note_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_move_media",
+                    "node_id": "note_move_media",
+                    "title": "Move Media",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                f"![Screenshot]({media_result['markdown_path']})",
+            ),
+            encoding="utf-8",
+        )
+
+        moved_path = self.vault.move_note_file(str(note_path), "Archive", self.indexer)
+        self.vault._media_queue.join()
+
+        updated = moved_path.read_text(encoding="utf-8")
+        self.assertIn("](/.media/Archive/Move_Media/", updated)
+        self.assertFalse(old_media_path.exists())
+        self.assertTrue((self.vault.media_root_path / "Archive" / "Move_Media").is_dir())
+        self.assertEqual(len(list((self.vault.media_root_path / "Archive" / "Move_Media").iterdir())), 1)
+
+    def test_folder_rename_removes_old_empty_media_directories(self) -> None:
+        self.vault.create_note_group("Old Folder", "")
+        created = self.vault.create_note_in_group("Old_Folder", "Media Note", self.indexer)
+        note_path = Path(created["note_path"])
+        media_result = self.vault.add_note_media_asset(
+            note_path=str(note_path),
+            filename="screenshot.png",
+            content_type="image/png",
+            data=b"fake-png",
+        )
+        note_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_folder_rename_media",
+                    "node_id": "note_folder_rename_media",
+                    "title": "Media Note",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                f"![Screenshot]({media_result['markdown_path']})",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.rename_note_group("Old_Folder", "New Folder", self.indexer)
+        self.vault._media_queue.join()
+
+        new_note_path = self.vault.vault_path / "New_Folder" / "Media_Note.md"
+        _meta, body = parse_markdown(new_note_path)
+        self.assertIn("](/.media/New_Folder/Media_Note/", body)
+        self.assertFalse((self.vault.media_root_path / "Old_Folder").exists())
+        self.assertTrue((self.vault.media_root_path / "New_Folder" / "Media_Note").is_dir())
+
+    def test_note_move_rewrites_wikilinks_and_related_frontmatter(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        self.vault.create_note_group("Archive", "")
+        target = self.vault.create_note_in_group("Projects", "Linked Note", self.indexer)
+        source = self.vault.create_note_in_group("Projects", "Source Note", self.indexer)
+        task = self.vault.create_note_in_group("Projects", "Task Source", self.indexer, note_type="task")
+
+        source_path = Path(source["note_path"])
+        source_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_source_links",
+                    "node_id": "note_source_links",
+                    "title": "Source Note",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Projects/Linked_Note"],
+                    "related_auto": ["Projects/Linked_Note"],
+                },
+                "See [[Projects/Linked_Note#Details|Linked]] and [[Projects/Linked_Note.md]].",
+            ),
+            encoding="utf-8",
+        )
+        task_path = Path(task["note_path"])
+        task_path.write_text(
+            dump_markdown(
+                {
+                    "id": "task_source_links",
+                    "node_id": "task_source_links",
+                    "title": "Task Source",
+                    "type": "task",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Projects/Linked_Note"],
+                    "related_auto": [],
+                },
+                "Task link [[Projects/Linked_Note]].",
+            ),
+            encoding="utf-8",
+        )
+
+        moved_path = self.vault.move_note_file(str(target["note_path"]), "Archive", self.indexer)
+        self.vault._link_queue.join()
+
+        source_meta, source_body = parse_markdown(source_path)
+        task_meta, task_body = parse_markdown(task_path)
+        self.assertEqual(moved_path, self.vault.vault_path / "Archive" / "Linked_Note.md")
+        self.assertIn("[[Archive/Linked_Note#Details|Linked]]", source_body)
+        self.assertIn("[[Archive/Linked_Note.md]]", source_body)
+        self.assertEqual(source_meta.get("related"), ["Archive/Linked_Note"])
+        self.assertEqual(source_meta.get("related_auto"), ["Archive/Linked_Note"])
+        self.assertIn("[[Archive/Linked_Note]]", task_body)
+        self.assertEqual(task_meta.get("related"), ["Archive/Linked_Note"])
+
+    def test_folder_move_rewrites_links_for_all_moved_notes(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        self.vault.create_note_group("References", "Projects")
+        self.vault.create_note_group("Archive", "")
+        first = self.vault.create_note_in_group("Projects/References", "First", self.indexer)
+        second = self.vault.create_note_in_group("Projects/References", "Second", self.indexer)
+        source = self.vault.create_note_in_group("Projects", "Folder Source", self.indexer)
+        source_path = Path(source["note_path"])
+        source_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_folder_source",
+                    "node_id": "note_folder_source",
+                    "title": "Folder Source",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Projects/References/First", "Projects/References/Second"],
+                    "related_auto": [],
+                },
+                "[[Projects/References/First]]\n[[Projects/References/Second]]",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.move_note_group("Projects/References", "Archive", self.indexer)
+        self.vault._link_queue.join()
+
+        meta, body = parse_markdown(source_path)
+        self.assertTrue((self.vault.vault_path / "Archive" / "References" / "First.md").exists())
+        self.assertTrue((self.vault.vault_path / "Archive" / "References" / "Second.md").exists())
+        self.assertFalse(Path(first["note_path"]).exists())
+        self.assertFalse(Path(second["note_path"]).exists())
+        self.assertIn("[[Archive/References/First]]", body)
+        self.assertIn("[[Archive/References/Second]]", body)
+        self.assertEqual(meta.get("related"), ["Archive/References/First", "Archive/References/Second"])
+
+    def test_move_note_to_vault_root_rewrites_nested_references_before_returning(self) -> None:
+        self.vault.create_note_group("Wirtschaft", "")
+        self.vault.create_note_group("Reisen", "")
+        target = self.vault.create_note_in_group("Wirtschaft", "Anlage Servicefall", self.indexer)
+        source = self.vault.create_note_in_group("Reisen", "Reise Herbst 24", self.indexer)
+        source_path = Path(source["note_path"])
+        source_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_reise_herbst",
+                    "node_id": "note_reise_herbst",
+                    "title": "Reise Herbst 24",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": ["Wirtschaft/Anlage_Servicefall"],
+                },
+                "[[Wirtschaft/Anlage_Servicefall]]",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.move_note_file(str(target["note_path"]), "", self.indexer)
+
+        meta, body = parse_markdown(source_path)
+        self.assertIn("[[Anlage_Servicefall]]", body)
+        self.assertNotIn("Wirtschaft/Anlage_Servicefall", body)
+        self.assertEqual(meta.get("related_auto"), ["Anlage_Servicefall"])
+
+    def test_delete_note_marks_wikilinks_and_related_as_deleted(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        target = self.vault.create_note_in_group("Projects", "Deleted Target", self.indexer)
+        source = self.vault.create_note_in_group("Projects", "Source", self.indexer)
+        task = self.vault.create_note_in_group("Projects", "Task Source", self.indexer, note_type="task")
+
+        source_path = Path(source["note_path"])
+        source_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_delete_source",
+                    "node_id": "note_delete_source",
+                    "title": "Source",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Projects/Deleted_Target"],
+                    "related_auto": ["Projects/Deleted_Target"],
+                },
+                "[[Projects/Deleted_Target|Target alias]]",
+            ),
+            encoding="utf-8",
+        )
+        task_path = Path(task["note_path"])
+        task_path.write_text(
+            dump_markdown(
+                {
+                    "id": "task_delete_source",
+                    "node_id": "task_delete_source",
+                    "title": "Task Source",
+                    "type": "task",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Projects/Deleted_Target"],
+                    "related_auto": [],
+                },
+                "[[Projects/Deleted_Target]]",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.delete_note_file(str(target["note_path"]), self.indexer)
+
+        source_meta, source_body = parse_markdown(source_path)
+        task_meta, task_body = parse_markdown(task_path)
+        self.assertIn("~~Target alias~~ *(deleted note: Projects/Deleted_Target)*", source_body)
+        self.assertNotIn("[[Projects/Deleted_Target", source_body)
+        self.assertEqual(source_meta.get("related"), [])
+        self.assertEqual(source_meta.get("related_auto"), [])
+        self.assertIn("~~Projects/Deleted_Target~~ *(deleted note: Projects/Deleted_Target)*", task_body)
+        self.assertEqual(task_meta.get("related"), [])
+
+    def test_delete_folder_marks_links_to_all_deleted_notes(self) -> None:
+        self.vault.create_note_group("Projects", "")
+        self.vault.create_note_group("Archive", "")
+        self.vault.create_note_group("References", "Archive")
+        first = self.vault.create_note_in_group("Archive/References", "First", self.indexer)
+        second = self.vault.create_note_in_group("Archive/References", "Second", self.indexer)
+        source = self.vault.create_note_in_group("Projects", "Source", self.indexer)
+        source_path = Path(source["note_path"])
+        source_path.write_text(
+            dump_markdown(
+                {
+                    "id": "note_delete_folder_source",
+                    "node_id": "note_delete_folder_source",
+                    "title": "Source",
+                    "type": "note",
+                    "status": "open",
+                    "priority": "medium",
+                    "due_date": "",
+                    "created_at": "2026-05-11T10:00:00",
+                    "updated_at": "2026-05-11T10:00:00",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": ["Archive/References/First", "Archive/References/Second"],
+                    "related_auto": [],
+                },
+                "[[Archive/References/First]]\n[[Archive/References/Second|Second alias]]",
+            ),
+            encoding="utf-8",
+        )
+
+        self.vault.delete_note_group("Archive/References", self.indexer)
+
+        meta, body = parse_markdown(source_path)
+        self.assertFalse(Path(first["note_path"]).exists())
+        self.assertFalse(Path(second["note_path"]).exists())
+        self.assertIn("~~Archive/References/First~~ *(deleted note: Archive/References/First)*", body)
+        self.assertIn("~~Second alias~~ *(deleted note: Archive/References/Second)*", body)
+        self.assertEqual(meta.get("related"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

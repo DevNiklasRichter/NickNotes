@@ -67,7 +67,7 @@ class GraphIndexTests(unittest.TestCase):
                     "related": ["notes/second"],
                     "related_auto": [],
                 },
-                "Links to [[missing-note]]. Also {tag:topic/known} and #project/unknown.",
+                "Links to [[missing-note]]. Also {tag:topic/known} and {tag:project/unknown}.",
             ),
             encoding="utf-8",
         )
@@ -281,7 +281,7 @@ class GraphIndexTests(unittest.TestCase):
                     "related": [],
                     "related_auto": [],
                 },
-                "Links to [[missing-note]] and #project/unknown.",
+                "Links to [[missing-note]] and {tag:project/unknown}.",
             ),
             encoding="utf-8",
         )
@@ -360,6 +360,32 @@ class GraphIndexTests(unittest.TestCase):
         diagnostics = payload["diagnostics"]
         self.assertFalse(any(item["type"] == "unresolvedLink" and item.get("path") == "notes/first.md" for item in diagnostics))
         self.assertFalse(any(item["type"] == "unknownTag" and item.get("path") == "notes/first.md" for item in diagnostics))
+
+    def test_body_hashtags_and_mentions_are_not_tags(self) -> None:
+        note = self.vault_path / "notes" / "hashtags.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(
+            dump_markdown(
+                {
+                    "id": "note_hashtags",
+                    "node_id": "note_hashtags",
+                    "title": "Hashtags",
+                    "type": "note",
+                    "tags": [],
+                    "tags_auto": [],
+                    "related": [],
+                    "related_auto": [],
+                },
+                "Plain text #known #project/alpha @max project:alpha but explicit {tag:topic/known}.",
+            ),
+            encoding="utf-8",
+        )
+
+        payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
+        tags = payload["files"]["notes/hashtags.md"]["tags"]
+
+        self.assertEqual(tags, ["topic:known"])
+        self.assertFalse(any(node["id"] == "tag:project/alpha" for node in payload["nodes"]))
 
     def test_shared_tag_edges_are_derived_without_backlinks(self) -> None:
         first = self.vault_path / "notes" / "first.md"

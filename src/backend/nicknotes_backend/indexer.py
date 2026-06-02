@@ -16,7 +16,6 @@ from .todos import ExtractedTodo, extract_todos_from_body
 
 
 INLINE_TITLE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}", re.IGNORECASE)
-BODY_HASHTAG_PATTERN = re.compile(r"(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})")
 
 
 def _count_from_cursor(cur: sqlite3.Cursor) -> int:
@@ -1611,11 +1610,6 @@ def _extract_body_auto_tags(body: str) -> list[str]:
 
     for match in INLINE_TITLE_TAG_PATTERN.finditer(text):
         found.add(f"{match.group(1)}:{match.group(2)}")
-
-    for match in BODY_HASHTAG_PATTERN.finditer(text):
-        hashtag = str(match.group(2) or "").strip()
-        if hashtag:
-            found.add(hashtag)
 
     return sorted(found, key=lambda item: item.lower())
 

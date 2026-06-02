@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import queue
 import re
 import shutil
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -31,7 +33,6 @@ TASK_PRIORITIES = ("low", "medium", "high")
 TASK_LINK_NOTE_TYPE = "task_link"
 TASK_LINK_INDEX_VERSION = 1
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
-HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
 MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]\n]*\]\(([^)\n]+)\)")
@@ -331,20 +332,6 @@ def _extract_auto_tags(body: str) -> list[str]:
         if key:
             found.add(key)
 
-    for match in HASHTAG_PATTERN.finditer(body):
-        raw = match.group(1).strip().strip("/")
-        if not raw:
-            continue
-        if "/" in raw:
-            left, right = raw.split("/", 1)
-            key = _normalize_tag_key(f"{left}:{right}")
-            if key:
-                found.add(key)
-            continue
-        slug = slugify(raw)
-        if slug:
-            found.add(f"topic:{slug}")
-
     return sorted(found, key=lambda item: item.lower())
 
 
@@ -418,6 +405,13 @@ def _normalize_mit_ids(raw_value: Any, limit: int = MAX_DAILY_MIT_ITEMS) -> list
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
+        self._media_queue: queue.Queue[Path] = queue.Queue()
+        self._media_worker_started = False
+        self._media_worker_lock = threading.Lock()
+        self._link_queue: queue.Queue[tuple[list[tuple[str, str]], VaultIndexer | None]] = queue.Queue()
+        self._link_worker_started = False
+        self._link_worker_lock = threading.Lock()
+        self._last_link_rewrite_result: dict[str, Any] = {"updated": 0, "paths": []}
         self._configure_root_paths()
 
     def ensure_structure(self) -> None:
@@ -697,6 +691,7 @@ class VaultManager:
         return self.create_note_in_group(group_key=group_key, title=title, indexer=indexer, note_type="task", status=status)
 
     def rename_note_group(self, group_key: str, new_name: str, indexer: VaultIndexer) -> dict[str, Any]:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         target = self._resolve_group_path(group_key)
         relative = self._to_group_key(target)
         if self._is_protected_root(relative):
@@ -718,12 +713,16 @@ class VaultManager:
         if destination == target:
             return self._group_payload(target, set(self._read_favorite_folders()))
 
+        link_mappings = self._collect_note_path_mappings_for_tree_move(target, destination)
         target.rename(destination)
         self._remap_favorites(relative, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
+        self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
+        self._enqueue_media_relocation_for_tree(destination)
         return self._group_payload(destination, set(self._read_favorite_folders()))
 
     def move_note_group(self, group_key: str, target_parent_key: str, indexer: VaultIndexer) -> dict[str, Any]:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         source = self._resolve_group_path(group_key)
         source_key = self._to_group_key(source)
         if self._is_protected_root(source_key):
@@ -748,13 +747,17 @@ class VaultManager:
             destination = target_parent / f"{source.name}_{suffix}"
             suffix += 1
 
+        link_mappings = self._collect_note_path_mappings_for_tree_move(source, destination)
         source.rename(destination)
         self._remap_favorites(source_key, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
         self.rebuild_task_status_links(indexer)
+        self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
+        self._enqueue_media_relocation_for_tree(destination)
         return self._group_payload(destination, set(self._read_favorite_folders()))
 
     def delete_note_group(self, group_key: str, indexer: VaultIndexer) -> None:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         target = self._resolve_group_path(group_key)
         relative = self._to_group_key(target)
         if self._is_protected_root(relative):
@@ -762,12 +765,15 @@ class VaultManager:
         if self._is_system_path(target):
             raise ValueError("Systemordner kann nicht geloescht werden.")
 
+        deleted_targets = self._collect_note_link_keys_for_tree(target)
         shutil.rmtree(target)
         self._remove_favorite_path(relative)
         indexer.reindex_vault(self.vault_path)
         self.rebuild_task_status_links(indexer)
+        self._record_link_rewrite_result(self.rewrite_note_links_for_deleted_paths(deleted_targets, indexer))
 
     def rename_note_file(self, note_path: str, new_name: str, indexer: VaultIndexer) -> Path:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         file_path = self._resolve_note_file(note_path)
         previous_task_payload = self._task_link_payload_from_file(file_path)
         clean_name = _normalize_label(new_name)
@@ -822,9 +828,15 @@ class VaultManager:
                 task_path=str(destination),
                 indexer=indexer,
             )
+        if destination != file_path:
+            self._record_link_rewrite_result(
+                self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, destination)]), indexer)
+            )
+            self.enqueue_media_relocation(destination)
         return destination
 
     def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         file_path = self._resolve_note_file(note_path)
         task_payload = self._task_link_payload_from_file(file_path)
         target_group = self._resolve_group_path(target_group_key)
@@ -856,9 +868,14 @@ class VaultManager:
                 task_path=str(destination),
                 indexer=indexer,
             )
+        self._record_link_rewrite_result(
+            self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, destination)]), indexer)
+        )
+        self.enqueue_media_relocation(destination)
         return destination
 
     def move_note_files(self, note_paths: list[str], target_group_key: str, indexer: VaultIndexer) -> list[dict[str, str]]:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         if not note_paths:
             return []
 
@@ -905,6 +922,13 @@ class VaultManager:
             )
 
         if changed:
+            link_mappings = self._note_path_mappings(
+                [
+                    (Path(entry.get("fromPath", "")), Path(entry.get("movedPath", "")))
+                    for entry in moved_entries
+                    if entry.get("fromPath") and entry.get("movedPath") and entry.get("fromPath") != entry.get("movedPath")
+                ]
+            )
             for entry in moved_entries:
                 from_path = entry.get("fromPath", "")
                 moved_path = entry.get("movedPath", "")
@@ -922,11 +946,18 @@ class VaultManager:
                             task_path=str(moved_file),
                             indexer=indexer,
                         )
+                    if from_path and from_path != moved_path:
+                        self.enqueue_media_relocation(moved_file)
+            self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
+        else:
+            self._record_link_rewrite_result({"updated": 0, "paths": []})
         return moved_entries
 
     def delete_note_file(self, note_path: str, indexer: VaultIndexer) -> None:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         file_path = self._resolve_note_file(note_path)
         task_payload = self._task_link_payload_from_file(file_path)
+        deleted_targets = [self._note_link_key(file_path)]
         file_path.unlink(missing_ok=False)
         self._cleanup_orphan_media_assets()
         indexer.remove_projection_for_path(str(file_path))
@@ -938,6 +969,7 @@ class VaultManager:
                 task_path="",
                 indexer=indexer,
             )
+        self._record_link_rewrite_result(self.rewrite_note_links_for_deleted_paths(deleted_targets, indexer))
 
     def add_note_media_asset(
         self,
@@ -970,10 +1002,11 @@ class VaultManager:
                 suffix = guessed if guessed in MEDIA_IMAGE_EXTENSIONS else ".png"
 
         safe_note_token = self._safe_entry_name(note_file.stem) or "note"
-        self.media_root_path.mkdir(parents=True, exist_ok=True)
-        target_path = self.media_root_path / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+        target_dir = self.note_media_directory(note_file)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
         while target_path.exists():
-            target_path = self.media_root_path / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+            target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
 
         target_path.write_bytes(payload)
         vault_relative = target_path.relative_to(self.vault_path).as_posix()
@@ -983,6 +1016,480 @@ class VaultManager:
             "markdown_path": markdown_path,
             "file_name": target_path.name,
         }
+
+    def note_media_directory(self, note_file: Path) -> Path:
+        try:
+            relative_note = note_file.resolve().relative_to(self.vault_path.resolve())
+        except ValueError:
+            relative_note = Path(note_file.name)
+        return self.media_root_path / relative_note.with_suffix("")
+
+    def enqueue_media_relocation(self, note_file: Path) -> None:
+        try:
+            resolved = note_file.resolve()
+            resolved.relative_to(self.vault_path.resolve())
+        except (OSError, ValueError):
+            return
+        if resolved.suffix.lower() != ".md" or self._is_system_path(resolved.parent):
+            return
+        self._media_queue.put(resolved)
+        self._ensure_media_worker()
+
+    def _ensure_media_worker(self) -> None:
+        with self._media_worker_lock:
+            if self._media_worker_started:
+                return
+            worker = threading.Thread(
+                target=self._media_relocation_worker,
+                name="nicknotes-media-relocator",
+                daemon=True,
+            )
+            self._media_worker_started = True
+            worker.start()
+
+    def _media_relocation_worker(self) -> None:
+        while True:
+            try:
+                note_file = self._media_queue.get(timeout=15)
+            except queue.Empty:
+                with self._media_worker_lock:
+                    if self._media_queue.empty():
+                        self._media_worker_started = False
+                        return
+                continue
+            try:
+                self.relocate_note_media_assets(note_file)
+            except Exception:
+                pass
+            finally:
+                self._media_queue.task_done()
+            time.sleep(0.03)
+
+    def _enqueue_media_relocation_for_tree(self, root: Path) -> None:
+        if not root.exists():
+            return
+        if root.is_file():
+            self.enqueue_media_relocation(root)
+            return
+        for note_file in sorted(root.rglob("*.md"), key=lambda item: item.as_posix().lower()):
+            if self._is_system_path(note_file.parent):
+                continue
+            self.enqueue_media_relocation(note_file)
+
+    def relocate_note_media_assets(self, note_file: Path) -> dict[str, Any]:
+        try:
+            note_file = note_file.resolve()
+            note_file.relative_to(self.vault_path.resolve())
+        except (OSError, ValueError):
+            return {"moved": 0, "updated": False}
+        if not note_file.exists() or not note_file.is_file() or note_file.suffix.lower() != ".md":
+            return {"moved": 0, "updated": False}
+
+        try:
+            markdown = note_file.read_text(encoding="utf-8")
+        except OSError:
+            return {"moved": 0, "updated": False}
+
+        sources = self._parse_markdown_image_sources(markdown)
+        if not sources:
+            return {"moved": 0, "updated": False}
+
+        target_dir = self.note_media_directory(note_file)
+        replacements: dict[str, str] = {}
+        moved_by_source_path: dict[Path, Path] = {}
+        moved_count = 0
+
+        for source in sources:
+            if source in replacements:
+                continue
+            try:
+                current_path = self._resolve_media_source_path(note_file, source, allow_missing=False).resolve()
+            except ValueError:
+                continue
+
+            destination = moved_by_source_path.get(current_path)
+            if destination is None:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                destination = target_dir / current_path.name
+                if destination.resolve() != current_path:
+                    destination = self._next_available_media_path(destination, current_path)
+                    try:
+                        current_path.rename(destination)
+                    except OSError:
+                        shutil.move(str(current_path), str(destination))
+                    moved_count += 1
+                moved_by_source_path[current_path] = destination
+
+            replacements[source] = f"/{destination.relative_to(self.vault_path).as_posix()}"
+
+        if not replacements:
+            return {"moved": moved_count, "updated": False}
+
+        updated = self._rewrite_markdown_image_sources(markdown, replacements)
+        did_update = updated != markdown
+        if did_update:
+            try:
+                note_file.write_text(updated, encoding="utf-8")
+            except OSError:
+                return {"moved": moved_count, "updated": False}
+
+        self._cleanup_empty_media_directories()
+        return {"moved": moved_count, "updated": did_update}
+
+    def _next_available_media_path(self, preferred: Path, source: Path) -> Path:
+        if not preferred.exists() or preferred.resolve() == source.resolve():
+            return preferred
+        suffix = preferred.suffix
+        stem = preferred.stem
+        counter = 2
+        candidate = preferred.with_name(f"{stem}_{counter}{suffix}")
+        while candidate.exists():
+            counter += 1
+            candidate = preferred.with_name(f"{stem}_{counter}{suffix}")
+        return candidate
+
+    def _rewrite_markdown_image_sources(self, markdown: str, replacements: dict[str, str]) -> str:
+        updated = markdown
+        for match in reversed(list(MARKDOWN_IMAGE_PATTERN.finditer(markdown))):
+            raw_target = match.group(1)
+            source = _extract_markdown_link_target(raw_target)
+            replacement = replacements.get(source)
+            if not replacement:
+                continue
+            next_target = self._replace_markdown_link_target(raw_target, source, replacement)
+            updated = f"{updated[: match.start(1)]}{next_target}{updated[match.end(1) :]}"
+        return updated
+
+    def _replace_markdown_link_target(self, raw_target: str, source: str, replacement: str) -> str:
+        stripped = raw_target.strip()
+        if stripped.startswith("<") and ">" in stripped:
+            start = raw_target.find("<")
+            end = raw_target.find(">", start + 1)
+            if raw_target[start + 1 : end].strip() == source:
+                return f"{raw_target[:start]}<{replacement}>{raw_target[end + 1:]}"
+        index = raw_target.find(source)
+        if index >= 0:
+            return f"{raw_target[:index]}{replacement}{raw_target[index + len(source):]}"
+        return replacement
+
+    def _collect_note_path_mappings_for_tree_move(self, source: Path, destination: Path) -> list[tuple[str, str]]:
+        pairs: list[tuple[Path, Path]] = []
+        if source.is_file() and source.suffix.lower() == ".md":
+            pairs.append((source, destination))
+        elif source.is_dir():
+            for note_file in sorted(source.rglob("*.md"), key=lambda item: item.as_posix().lower()):
+                if self._is_system_path(note_file.parent):
+                    continue
+                try:
+                    relative = note_file.relative_to(source)
+                except ValueError:
+                    continue
+                pairs.append((note_file, destination / relative))
+        return self._note_path_mappings(pairs)
+
+    def _collect_note_link_keys_for_tree(self, source: Path) -> list[str]:
+        note_paths: list[Path] = []
+        if source.is_file() and source.suffix.lower() == ".md":
+            note_paths.append(source)
+        elif source.is_dir():
+            for note_file in sorted(source.rglob("*.md"), key=lambda item: item.as_posix().lower()):
+                if self._is_system_path(note_file.parent):
+                    continue
+                note_paths.append(note_file)
+
+        keys: list[str] = []
+        seen: set[str] = set()
+        for note_path in note_paths:
+            try:
+                key = self._note_link_key(note_path)
+            except ValueError:
+                continue
+            lower = key.lower()
+            if not key or lower in seen:
+                continue
+            seen.add(lower)
+            keys.append(key)
+        return keys
+
+    def _note_path_mappings(self, pairs: list[tuple[Path, Path]]) -> list[tuple[str, str]]:
+        mappings: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for old_path, new_path in pairs:
+            try:
+                old_key = self._note_link_key(old_path)
+                new_key = self._note_link_key(new_path)
+            except ValueError:
+                continue
+            if not old_key or not new_key or old_key.lower() == new_key.lower():
+                continue
+            dedupe_key = old_key.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            mappings.append((old_key, new_key))
+        return mappings
+
+    def _note_link_key(self, note_path: Path) -> str:
+        relative = note_path.resolve().relative_to(self.vault_path.resolve()).as_posix()
+        if relative.lower().endswith(".md"):
+            relative = relative[:-3]
+        return relative.strip().strip("/")
+
+    def enqueue_link_rewrite(self, mappings: list[tuple[str, str]], indexer: VaultIndexer | None = None) -> None:
+        clean_mappings = self._normalize_link_mappings(mappings)
+        if not clean_mappings:
+            return
+        self._link_queue.put((clean_mappings, indexer))
+        self._ensure_link_worker()
+
+    def consume_last_link_rewrite_result(self) -> dict[str, Any]:
+        result = self._last_link_rewrite_result
+        self._last_link_rewrite_result = {"updated": 0, "paths": []}
+        return {
+            "updated": int(result.get("updated", 0) or 0),
+            "paths": [str(path) for path in result.get("paths", []) if str(path).strip()],
+        }
+
+    def _record_link_rewrite_result(self, result: dict[str, Any]) -> None:
+        self._last_link_rewrite_result = {
+            "updated": int(result.get("updated", 0) or 0),
+            "paths": [str(path) for path in result.get("paths", []) if str(path).strip()],
+        }
+
+    def _normalize_link_mappings(self, mappings: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        normalized: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for old_target, new_target in mappings:
+            old_clean = self._normalize_wiki_target(old_target)
+            new_clean = self._normalize_wiki_target(new_target)
+            if not old_clean or not new_clean or old_clean.lower() == new_clean.lower():
+                continue
+            key = old_clean.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append((old_clean, new_clean))
+        return normalized
+
+    def _ensure_link_worker(self) -> None:
+        with self._link_worker_lock:
+            if self._link_worker_started:
+                return
+            worker = threading.Thread(
+                target=self._link_rewrite_worker,
+                name="nicknotes-link-rewriter",
+                daemon=True,
+            )
+            self._link_worker_started = True
+            worker.start()
+
+    def _link_rewrite_worker(self) -> None:
+        while True:
+            try:
+                mappings, indexer = self._link_queue.get(timeout=15)
+            except queue.Empty:
+                with self._link_worker_lock:
+                    if self._link_queue.empty():
+                        self._link_worker_started = False
+                        return
+                continue
+            try:
+                self.rewrite_note_links_for_moved_paths(mappings, indexer)
+            except Exception:
+                pass
+            finally:
+                self._link_queue.task_done()
+            time.sleep(0.03)
+
+    def rewrite_note_links_for_moved_paths(
+        self,
+        mappings: list[tuple[str, str]],
+        indexer: VaultIndexer | None = None,
+    ) -> dict[str, Any]:
+        clean_mappings = self._normalize_link_mappings(mappings)
+        if not clean_mappings:
+            return {"updated": 0, "paths": []}
+
+        mapping_by_key = {old_target.lower(): new_target for old_target, new_target in clean_mappings}
+        touched: list[Path] = []
+        for markdown_path in self._iter_markdown_files_for_tag_updates():
+            try:
+                original = markdown_path.read_text(encoding="utf-8")
+                meta, body = parse_markdown_text(original)
+            except OSError:
+                continue
+
+            updated_body = self._rewrite_wikilink_targets(body, mapping_by_key)
+            updated_meta, meta_changed = self._rewrite_related_frontmatter(meta, mapping_by_key)
+            if updated_body == body and not meta_changed:
+                continue
+
+            updated = dump_markdown(updated_meta, updated_body)
+            try:
+                markdown_path.write_text(updated, encoding="utf-8")
+            except OSError:
+                continue
+            touched.append(markdown_path)
+            if indexer is not None:
+                indexer.reindex_markdown_file(self.vault_path, markdown_path)
+
+        return {"updated": len(touched), "paths": [str(path) for path in touched]}
+
+    def rewrite_note_links_for_deleted_paths(
+        self,
+        deleted_targets: list[str],
+        indexer: VaultIndexer | None = None,
+    ) -> dict[str, Any]:
+        clean_targets = self._normalize_deleted_link_targets(deleted_targets)
+        if not clean_targets:
+            return {"updated": 0, "paths": []}
+
+        deleted_by_key = {target.lower(): target for target in clean_targets}
+        touched: list[Path] = []
+        for markdown_path in self._iter_markdown_files_for_tag_updates():
+            try:
+                original = markdown_path.read_text(encoding="utf-8")
+                meta, body = parse_markdown_text(original)
+            except OSError:
+                continue
+
+            updated_body = self._rewrite_deleted_wikilinks(body, deleted_by_key)
+            updated_meta, meta_changed = self._rewrite_deleted_related_frontmatter(meta, deleted_by_key)
+            if updated_body == body and not meta_changed:
+                continue
+
+            updated = dump_markdown(updated_meta, updated_body)
+            try:
+                markdown_path.write_text(updated, encoding="utf-8")
+            except OSError:
+                continue
+            touched.append(markdown_path)
+            if indexer is not None:
+                indexer.reindex_markdown_file(self.vault_path, markdown_path)
+
+        return {"updated": len(touched), "paths": [str(path) for path in touched]}
+
+    def _normalize_deleted_link_targets(self, deleted_targets: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for target in deleted_targets:
+            clean = self._normalize_wiki_target(target)
+            if not clean:
+                continue
+            key = clean.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(clean)
+        return normalized
+
+    def _rewrite_deleted_related_frontmatter(
+        self,
+        meta: dict[str, Any],
+        deleted_by_key: dict[str, str],
+    ) -> tuple[dict[str, Any], bool]:
+        updated = dict(meta)
+        changed = False
+        for key in ("related", "related_auto"):
+            values = _ensure_string_list(updated.get(key, []))
+            next_values: list[str] = []
+            key_changed = False
+            for value in values:
+                clean = self._normalize_wiki_target(value)
+                deleted_target = deleted_by_key.get(clean.lower())
+                if deleted_target:
+                    key_changed = True
+                else:
+                    next_values.append(value)
+            if key_changed or key in updated:
+                updated[key] = _dedupe_sorted(next_values)
+            changed = changed or key_changed
+        return updated, changed
+
+    def _rewrite_deleted_wikilinks(self, body: str, deleted_by_key: dict[str, str]) -> str:
+        updated = body
+        for match in reversed(list(WIKILINK_PATTERN.finditer(body))):
+            raw = match.group(1)
+            replacement = self._deleted_wikilink_replacement(raw, deleted_by_key)
+            if replacement is None:
+                continue
+            updated = f"{updated[: match.start()]}{replacement}{updated[match.end() :]}"
+        return updated
+
+    def _deleted_wikilink_replacement(self, raw: str, deleted_by_key: dict[str, str]) -> str | None:
+        target_part, separator, alias = raw.partition("|")
+        target_without_anchor = target_part.split("#", 1)[0]
+        clean = self._normalize_wiki_target(target_without_anchor)
+        deleted_target = deleted_by_key.get(clean.lower())
+        if not deleted_target:
+            return None
+        label = alias.strip() if separator and alias.strip() else target_part.strip()
+        if not label:
+            label = deleted_target
+        return f"~~{label}~~ *(deleted note: {deleted_target})*"
+
+    def _rewrite_related_frontmatter(
+        self,
+        meta: dict[str, Any],
+        mapping_by_key: dict[str, str],
+    ) -> tuple[dict[str, Any], bool]:
+        updated = dict(meta)
+        changed = False
+        for key in ("related", "related_auto"):
+            values = _ensure_string_list(updated.get(key, []))
+            next_values: list[str] = []
+            key_changed = False
+            for value in values:
+                replacement = self._mapped_related_value(value, mapping_by_key)
+                next_values.append(replacement)
+                key_changed = key_changed or replacement != value
+            if key_changed or key in updated:
+                updated[key] = _dedupe_sorted(next_values)
+            changed = changed or key_changed
+        return updated, changed
+
+    def _mapped_related_value(self, value: str, mapping_by_key: dict[str, str]) -> str:
+        clean = self._normalize_wiki_target(value)
+        replacement = mapping_by_key.get(clean.lower())
+        if not replacement:
+            return value
+        return self._format_mapped_target(value, replacement)
+
+    def _rewrite_wikilink_targets(self, body: str, mapping_by_key: dict[str, str]) -> str:
+        updated = body
+        for match in reversed(list(WIKILINK_PATTERN.finditer(body))):
+            raw = match.group(1)
+            replacement = self._mapped_wikilink_raw(raw, mapping_by_key)
+            if replacement == raw:
+                continue
+            updated = f"{updated[: match.start(1)]}{replacement}{updated[match.end(1) :]}"
+        return updated
+
+    def _mapped_wikilink_raw(self, raw: str, mapping_by_key: dict[str, str]) -> str:
+        target_part, separator, alias = raw.partition("|")
+        target_without_anchor, anchor_separator, anchor = target_part.partition("#")
+        clean = self._normalize_wiki_target(target_without_anchor)
+        replacement = mapping_by_key.get(clean.lower())
+        if not replacement:
+            return raw
+        next_target = self._format_mapped_target(target_without_anchor, replacement)
+        if anchor_separator:
+            next_target = f"{next_target}#{anchor}"
+        if separator:
+            return f"{next_target}|{alias}"
+        return next_target
+
+    def _format_mapped_target(self, original: str, replacement: str) -> str:
+        stripped = original.strip()
+        prefix = "/" if stripped.startswith("/") else ""
+        suffix = ".md" if stripped.lower().endswith(".md") else ""
+        return f"{prefix}{replacement}{suffix}"
+
+    def _normalize_wiki_target(self, raw: str) -> str:
+        target = str(raw or "").split("|", 1)[0].strip()
+        target = target.split("#", 1)[0].strip().replace("\\", "/")
+        target = target[:-3] if target.lower().endswith(".md") else target
+        return target.strip().strip("/")
 
     def resolve_note_media_asset(self, note_path: str, source: str) -> tuple[Path, str]:
         note_file = self._resolve_note_file(note_path)
@@ -1074,15 +1581,29 @@ class VaultManager:
             except OSError:
                 continue
 
-        for directory in sorted(self.media_root_path.rglob("*"), reverse=True):
-            if not directory.is_dir():
-                continue
-            try:
-                if any(directory.iterdir()):
+        self._cleanup_empty_media_directories()
+
+    def _cleanup_empty_media_directories(self) -> None:
+        if not self.media_root_path.exists() or not self.media_root_path.is_dir():
+            return
+
+        removed = True
+        while removed:
+            removed = False
+            directories = sorted(
+                (path for path in self.media_root_path.rglob("*") if path.is_dir()),
+                key=lambda item: len(item.parts),
+                reverse=True,
+            )
+            for directory in directories:
+                try:
+                    directory.relative_to(self.media_root_path)
+                    if any(directory.iterdir()):
+                        continue
+                    directory.rmdir()
+                    removed = True
+                except OSError:
                     continue
-                directory.rmdir()
-            except OSError:
-                continue
 
     def normalize_note_markdown_text(
         self,
@@ -1284,6 +1805,7 @@ class VaultManager:
         return destination, meta, changed
 
     def save_note_document(self, note_path: str, content: str, indexer: VaultIndexer) -> dict[str, Any]:
+        self._record_link_rewrite_result({"updated": 0, "paths": []})
         file_path = self._resolve_note_file_for_save(note_path, content)
         raw_meta, _raw_body = parse_markdown(file_path)
         raw_type = str(raw_meta.get("type", "")).strip().lower()
@@ -1305,6 +1827,11 @@ class VaultManager:
             touch_updated=True,
             rename_by_title=True,
         )
+        if final_path.resolve() != file_path.resolve():
+            self._record_link_rewrite_result(
+                self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, final_path)]), indexer)
+            )
+            self.enqueue_media_relocation(final_path)
         self._cleanup_orphan_media_assets()
 
         indexer.remove_projection_for_path(previous_path)
@@ -2615,6 +3142,7 @@ class VaultManager:
             "99_system",
             self.media_root_name,
         }
+        files.extend(self.vault_path.glob("*.md"))
         for child in self.vault_path.iterdir():
             if not child.is_dir() or child.name in excluded or self._is_hidden_legacy_root(child.name):
                 continue

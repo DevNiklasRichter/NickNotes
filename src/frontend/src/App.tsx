@@ -1747,7 +1747,14 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ counts: VaultCounts; path: string; title?: string; tagGroups?: unknown; graphStatus?: GraphIndexStatus }>(
+      const response = await apiRequest<{
+        counts: VaultCounts
+        path: string
+        title?: string
+        tagGroups?: unknown
+        graphStatus?: GraphIndexStatus
+        linkRewrite?: { paths?: string[] }
+      }>(
         backendUrl,
         '/notes/save',
         {
@@ -1789,6 +1796,7 @@ function App() {
         })
       )
       setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview(), refreshNoteGroups()])
       return true
     } catch (caught) {
@@ -3120,7 +3128,7 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts }>(
+      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
         backendUrl,
         '/note-groups/rename',
         {
@@ -3132,6 +3140,7 @@ function App() {
       setCounts(response.counts)
       remapOpenNotePaths(group.path, response.group.path)
       setMessage(`Ordner umbenannt: ${response.group.label}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
@@ -3152,7 +3161,7 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts }>(
+      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
         backendUrl,
         '/note-groups/move',
         {
@@ -3164,6 +3173,7 @@ function App() {
       setCounts(response.counts)
       remapOpenNotePaths(sourceGroup.path, response.group.path)
       setMessage(`Ordner verschoben: ${response.group.label}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
@@ -3178,7 +3188,7 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ deleted: boolean; groups: NoteGroup[]; counts: VaultCounts }>(
+      const response = await apiRequest<{ deleted: boolean; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
         backendUrl,
         '/note-groups/delete',
         {
@@ -3200,6 +3210,7 @@ function App() {
         })
       )
       setMessage(`Ordner geloescht: ${group.label}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
@@ -3238,13 +3249,14 @@ function App() {
 
     try {
       setError('')
-      const response = await apiRequest<{ renamedPath: string; counts: VaultCounts }>(backendUrl, '/notes/rename', {
+      const response = await apiRequest<{ renamedPath: string; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/rename', {
         method: 'POST',
         body: JSON.stringify({ path, newName: cleanName }),
       })
       setCounts(response.counts)
       remapOpenNotePaths(path, response.renamedPath)
       setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))
@@ -3310,12 +3322,13 @@ function App() {
     try {
       setError('')
       const response = await apiRequest<
-        { movedPaths: { fromPath: string; movedPath: string }[]; counts: VaultCounts }
+        { movedPaths: { fromPath: string; movedPath: string }[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }
       >(backendUrl, '/notes/move-batch', {
         method: 'POST',
         body: JSON.stringify({ paths: uniquePaths, targetGroupKey }),
       })
       applyMoveResult(Array.isArray(response.movedPaths) ? response.movedPaths : [], response.counts)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch {
       try {
@@ -3323,7 +3336,7 @@ function App() {
         let latestCounts: VaultCounts | null = null
 
         for (const path of uniquePaths) {
-          const response = await apiRequest<{ movedPath: string; counts: VaultCounts }>(backendUrl, '/notes/move', {
+          const response = await apiRequest<{ movedPath: string; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/move', {
             method: 'POST',
             body: JSON.stringify({ path, targetGroupKey }),
           })
@@ -3332,6 +3345,7 @@ function App() {
             fromPath: path,
             movedPath: response.movedPath,
           })
+          await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
         }
 
         if (latestCounts) {
@@ -3351,13 +3365,14 @@ function App() {
   const deleteExplorerFile = async (path: string) => {
     try {
       setError('')
-      const response = await apiRequest<{ deleted: boolean; counts: VaultCounts }>(backendUrl, '/notes/delete', {
+      const response = await apiRequest<{ deleted: boolean; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/delete', {
         method: 'POST',
         body: JSON.stringify({ path }),
       })
       setCounts(response.counts)
       setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
       setMessage(`Datei geloescht: ${toNoteDisplayName(path)}`)
+      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
       await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
     } catch (caught) {
       setError(String(caught))

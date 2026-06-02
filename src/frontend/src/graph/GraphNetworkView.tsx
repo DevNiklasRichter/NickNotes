@@ -62,6 +62,8 @@ export function GraphNetworkView({
   const applyingViewportRef = useRef(false)
   const viewportTimerRef = useRef<number | null>(null)
   const zoomStyleTimerRef = useRef<number | null>(null)
+  const activeLayoutRef = useRef<ReturnType<Core['layout']> | null>(null)
+  const relaxingNodeRef = useRef<string>('')
   const lastLayoutVersionRef = useRef(layoutVersion)
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
   const connectedEdgesByNode = useMemo(() => {
@@ -80,6 +82,19 @@ export function GraphNetworkView({
   }, [edges])
   const elements = useMemo<ElementDefinition[]>(() => buildElements(nodes, edges, searchText), [edges, nodes, searchText])
   const largeGraph = nodes.length > LARGE_GRAPH_NODE_WARNING || edges.length > LARGE_GRAPH_EDGE_WARNING
+  const nodeByIdRef = useLatest(nodeById)
+  const edgeByIdRef = useLatest(useMemo(() => new Map(edges.map((edge) => [edge.id, edge])), [edges]))
+  const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
+  const onOpenNodePathRef = useLatest(onOpenNodePath)
+  const onRevealNodePathRef = useLatest(onRevealNodePath)
+  const onSelectNodeRef = useLatest(onSelectNode)
+  const onPositionsChangeRef = useLatest(onPositionsChange)
+  const onViewportChangeRef = useLatest(onViewportChange)
+  const onShowNeighborsRef = useLatest(onShowNeighbors)
+  const onClearSelectionRef = useLatest(onClearSelection)
+  const viewportRef = useLatest(viewport)
+  const positionsRef = useLatest(positions)
+  const largeGraphRef = useLatest(largeGraph)
 
   useEffect(() => {
     if (!hostRef.current || cyRef.current) {
@@ -174,8 +189,31 @@ export function GraphNetworkView({
         setHoverText('')
       })
 
-      cy.on('dragfree', 'node', () => {
-        onPositionsChangeRef.current?.(collectPositions(cy))
+      cy.on('grab', 'node', () => {
+        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+      })
+
+      cy.on('dragfree', 'node', (event) => {
+        const nodeId = event.target.id()
+        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+        event.target.lock()
+        relaxingNodeRef.current = nodeId
+        activeLayoutRef.current = runLayout(cy, largeGraphRef.current, () => {
+          const relaxingNode = cy.getElementById(nodeId)
+          if (relaxingNode.length) {
+            relaxingNode.unlock()
+          }
+          if (relaxingNodeRef.current === nodeId) {
+            relaxingNodeRef.current = ''
+          }
+          activeLayoutRef.current = null
+          onPositionsChangeRef.current?.(collectPositions(cy))
+        }, {
+          animate: true,
+          fit: false,
+          randomize: false,
+          relaxation: true,
+        })
       })
 
       cy.on('zoom pan', () => {
@@ -198,7 +236,7 @@ export function GraphNetworkView({
         }, 160)
       })
     } catch (caught) {
-      setInitError(`Cytoscape konnte nicht initialisiert werden: ${String(caught)}`)
+      window.setTimeout(() => setInitError(`Cytoscape konnte nicht initialisiert werden: ${String(caught)}`), 0)
     }
     return () => {
       if (viewportTimerRef.current !== null) {
@@ -209,24 +247,14 @@ export function GraphNetworkView({
         window.clearTimeout(zoomStyleTimerRef.current)
         zoomStyleTimerRef.current = null
       }
-      cyRef.current?.destroy()
+      const cy = cyRef.current
+      if (cy) {
+        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+        cy.destroy()
+      }
       cyRef.current = null
     }
-  }, [])
-
-  const nodeByIdRef = useLatest(nodeById)
-  const edgeByIdRef = useLatest(useMemo(() => new Map(edges.map((edge) => [edge.id, edge])), [edges]))
-  const connectedEdgesByNodeRef = useLatest(connectedEdgesByNode)
-  const onOpenNodePathRef = useLatest(onOpenNodePath)
-  const onRevealNodePathRef = useLatest(onRevealNodePath)
-  const onSelectNodeRef = useLatest(onSelectNode)
-  const onPositionsChangeRef = useLatest(onPositionsChange)
-  const onViewportChangeRef = useLatest(onViewportChange)
-  const onShowNeighborsRef = useLatest(onShowNeighbors)
-  const onClearSelectionRef = useLatest(onClearSelection)
-  const viewportRef = useLatest(viewport)
-  const positionsRef = useLatest(positions)
-  const largeGraphRef = useLatest(largeGraph)
+  }, [connectedEdgesByNodeRef, edgeByIdRef, largeGraphRef, nodeByIdRef, onClearSelectionRef, onOpenNodePathRef, onPositionsChangeRef, onSelectNodeRef, onViewportChangeRef])
 
   useEffect(() => {
     const cy = cyRef.current
@@ -243,7 +271,9 @@ export function GraphNetworkView({
       const shouldRunLayout = layoutVersion !== lastLayoutVersionRef.current || !hasEnoughStoredPositions(nodes, positionsRef.current)
       lastLayoutVersionRef.current = layoutVersion
       if (shouldRunLayout) {
-        runLayout(cy, largeGraph, () => {
+        stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+        activeLayoutRef.current = runLayout(cy, largeGraph, () => {
+          activeLayoutRef.current = null
           onPositionsChangeRef.current?.(collectPositions(cy))
           applyViewport(cy, viewportRef.current, applyingViewportRef)
           window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
@@ -253,9 +283,9 @@ export function GraphNetworkView({
         window.setTimeout(() => applyZoomDensity(cy, largeGraph), 0)
       }
     } catch (caught) {
-      setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`)
+      window.setTimeout(() => setInitError(`Graph konnte nicht gerendert werden: ${String(caught)}`), 0)
     }
-  }, [elements, largeGraph, layoutVersion, nodes])
+  }, [elements, largeGraph, layoutVersion, nodes, onPositionsChangeRef, positionsRef, viewportRef])
 
   const fitGraph = () => {
     cyRef.current?.fit(undefined, 36)
@@ -275,7 +305,9 @@ export function GraphNetworkView({
     if (!cy) {
       return
     }
-    runLayout(cy, largeGraph, () => {
+    stopActiveLayout(cy, activeLayoutRef, relaxingNodeRef)
+    activeLayoutRef.current = runLayout(cy, largeGraph, () => {
+      activeLayoutRef.current = null
       onPositionsChangeRef.current?.(collectPositions(cy))
     })
   }
@@ -638,6 +670,9 @@ function clearSelectionFocus(cy: Core, largeGraph: boolean) {
 }
 
 function applyZoomDensity(cy: Core, largeGraph: boolean) {
+  if (cy.destroyed()) {
+    return
+  }
   const zoom = cy.zoom()
   const exponent = largeGraph ? 1.15 : 0.75
   const minFactor = largeGraph ? 0.28 : 0.42
@@ -679,25 +714,53 @@ function applyZoomDensity(cy: Core, largeGraph: boolean) {
   })
 }
 
-function runLayout(cy: Core, largeGraph: boolean, onDone?: () => void) {
+function stopActiveLayout(
+  cy: Core,
+  activeLayoutRef: { current: ReturnType<Core['layout']> | null },
+  relaxingNodeRef: { current: string },
+) {
+  activeLayoutRef.current?.stop()
+  activeLayoutRef.current = null
+  if (relaxingNodeRef.current) {
+    const relaxingNode = cy.getElementById(relaxingNodeRef.current)
+    if (relaxingNode.length) {
+      relaxingNode.unlock()
+    }
+    relaxingNodeRef.current = ''
+  }
+}
+
+function runLayout(
+  cy: Core,
+  largeGraph: boolean,
+  onDone?: () => void,
+  options: {
+    animate?: boolean
+    fit?: boolean
+    randomize?: boolean
+    relaxation?: boolean
+  } = {},
+) {
+  const relaxation = options.relaxation ?? false
   const layout = cy.layout({
     name: 'cose',
-    animate: !largeGraph,
-    animationDuration: 280,
-    randomize: true,
-    fit: true,
+    animate: options.animate ?? !largeGraph,
+    animationDuration: relaxation ? 620 : 280,
+    randomize: options.randomize ?? true,
+    fit: options.fit ?? true,
     padding: 42,
     nodeRepulsion: largeGraph ? 8500 : 11000,
     idealEdgeLength: largeGraph ? 90 : 115,
     edgeElasticity: 120,
     nestingFactor: 1.1,
     gravity: 1,
-    numIter: largeGraph ? 900 : 1600,
+    numIter: relaxation ? (largeGraph ? 420 : 900) : largeGraph ? 900 : 1600,
   })
   if (onDone) {
     layout.one('layoutstop', onDone)
   }
   layout.run()
+  return layout
 }
 
 function useLatest<T>(value: T) {

@@ -33,7 +33,6 @@ export type ParsedNoteDocument = {
 }
 
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
-const HASHTAG_PATTERN = /(^|\s)#([A-Za-z0-9][A-Za-z0-9_/-]{1,60})/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const TITLE_HEADING_PATTERN = /^\s{0,3}#\s+(.+?)\s*$/
 const TASK_STATUS_VALUES: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'on_hold', 'done']
@@ -259,16 +258,6 @@ export function extractAutoTags(body: string): string[] {
       found.add(key)
     }
     inlineMatch = INLINE_TAG_PATTERN.exec(body)
-  }
-
-  HASHTAG_PATTERN.lastIndex = 0
-  let hashtagMatch = HASHTAG_PATTERN.exec(body)
-  while (hashtagMatch) {
-    const key = normalizeTagKey(hashtagMatch[2] || '')
-    if (key) {
-      found.add(key)
-    }
-    hashtagMatch = HASHTAG_PATTERN.exec(body)
   }
 
   return Array.from(found).sort((a, b) => a.localeCompare(b))

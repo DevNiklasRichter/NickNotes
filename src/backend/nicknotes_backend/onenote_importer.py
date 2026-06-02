@@ -24,7 +24,8 @@ ONEPKG_EXTENSIONS = {".onepkg"}
 _ONEPKG_EXPORT_POWERSHELL = r"""
 param(
   [Parameter(Mandatory=$true)][string]$PackagePath,
-  [Parameter(Mandatory=$true)][string]$OutDir
+  [Parameter(Mandatory=$true)][string]$OutDir,
+  [Parameter(Mandatory=$true)][string]$ResultPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -201,10 +202,12 @@ foreach ($sectionFile in $sectionFiles) {
   }
 }
 
-[pscustomobject]@{
+$jsonResult = [pscustomobject]@{
   pages = $resultPages
   warnings = $warnings
 } | ConvertTo-Json -Depth 8 -Compress
+$jsonResult | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+Write-Output $jsonResult
 """
 
 
@@ -285,15 +288,20 @@ class OneNoteLocalImporter:
 
     def import_sources(self, source_paths: list[str], target_folder: str = "") -> dict[str, Any]:
         clean_sources = self._resolve_source_paths(source_paths)
-        self._progress("Quellen werden gelesen ...", 0, 0, None)
+        self._progress(f"{len(clean_sources)} OneNote-Paketdatei(en) werden gelesen ...", 0, len(clean_sources), None)
         pages: list[ImportPage] = []
         target_base = self._resolve_target_base(target_folder)
         result = ImportResult()
 
         with tempfile.TemporaryDirectory(prefix="nicknotes_onepkg_") as temp_dir:
-            for package_source in clean_sources:
+            for source_index, package_source in enumerate(clean_sources, start=1):
                 try:
-                    self._progress(f"{package_source.name} wird ueber OneNote Desktop vorbereitet ...", 0, 0, str(package_source))
+                    self._progress(
+                        f"{package_source.name} wird ueber OneNote Desktop vorbereitet ({source_index}/{len(clean_sources)}) ...",
+                        source_index - 1,
+                        len(clean_sources),
+                        str(package_source),
+                    )
                     exported_pages, export_warnings = self._export_onepkg_with_onenote(package_source, Path(temp_dir))
                 except RuntimeError as exc:
                     result.skipped_pages += 1
@@ -301,6 +309,16 @@ class OneNoteLocalImporter:
                     continue
                 pages.extend(exported_pages)
                 result.warnings.extend(export_warnings)
+                self._progress(
+                    f"{package_source.name} wurde vorbereitet ({source_index}/{len(clean_sources)}) ...",
+                    source_index,
+                    len(clean_sources),
+                    str(package_source),
+                )
+
+            if not pages and result.skipped_pages:
+                details = " | ".join(result.warnings) if result.warnings else "Keine importierbaren Seiten gefunden."
+                raise RuntimeError(f"Es wurden keine OneNote-Seiten importiert. {details}")
 
             planned_note_paths = self._planned_note_paths(pages, target_base)
             wiki_target_map = self._build_import_wiki_target_map(pages, planned_note_paths)
@@ -349,6 +367,7 @@ class OneNoteLocalImporter:
         package_output_dir = temp_root / self._safe_path_token(package_path.stem)
         package_output_dir.mkdir(parents=True, exist_ok=True)
         script_path = package_output_dir / "export_onepkg.ps1"
+        result_path = package_output_dir / "export_result.json"
         script_path.write_text(_ONEPKG_EXPORT_POWERSHELL, encoding="utf-8")
 
         powershell = "powershell.exe"
@@ -364,22 +383,35 @@ class OneNoteLocalImporter:
                 str(package_path),
                 "-OutDir",
                 str(package_output_dir),
+                "-ResultPath",
+                str(result_path),
             ],
             cwd=str(self.vault.vault_path),
             capture_output=True,
-            text=True,
             timeout=900,
             check=False,
         )
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()
+            detail = _decode_process_output(completed.stderr or completed.stdout)
             if not detail:
                 detail = "OneNote Desktop konnte die Paketdatei nicht exportieren."
             raise RuntimeError(
                 f"{package_path.name}: Import fehlgeschlagen. OneNote Desktop muss installiert sein und das Paket oeffnen koennen. Details: {detail}"
             )
 
-        raw_output = completed.stdout.strip()
+        raw_output = ""
+        if result_path.exists():
+            try:
+                raw_output = _clean_optional_text(result_path.read_text(encoding="utf-8-sig"))
+            except OSError:
+                raw_output = ""
+        if not raw_output:
+            raw_output = _decode_process_output(completed.stdout)
+        if not raw_output:
+            detail = _decode_process_output(completed.stderr)
+            if detail:
+                detail = f" Details: {detail}"
+            raise RuntimeError(f"{package_path.name}: OneNote-Export lieferte keine Ausgabe.{detail}")
         try:
             payload = json.loads(raw_output)
         except json.JSONDecodeError as exc:
@@ -411,7 +443,7 @@ class OneNoteLocalImporter:
                 for raw_binary in raw_binary_objects:
                     if not isinstance(raw_binary, dict):
                         continue
-                    callback_id = str(raw_binary.get("callbackId", "")).strip()
+                    callback_id = _clean_optional_text(raw_binary.get("callbackId"))
                     binary_path = Path(str(raw_binary.get("path", ""))).resolve()
                     if callback_id and binary_path.exists():
                         binary_objects[callback_id] = binary_path
@@ -491,10 +523,7 @@ class OneNoteLocalImporter:
         return target_map
 
     def _import_page(self, page: ImportPage, note_path: Path, wiki_target_map: dict[str, str]) -> tuple[Path, int]:
-        media_dir = self.vault.media_root_path / self._safe_path_token(page.notebook)
-        for section in page.section_parts:
-            media_dir = media_dir / self._safe_path_token(section)
-        media_dir = media_dir / note_path.stem
+        media_dir = self.vault.note_media_directory(note_path)
         media_dir.mkdir(parents=True, exist_ok=True)
 
         note_dir = note_path.parent
@@ -822,7 +851,7 @@ def _image_to_markdown(image: ET.Element, media_refs: dict[str, str]) -> str:
     callback_id = ""
     for child in image:
         if _local_name(child) == "CallbackID":
-            callback_id = child.attrib.get("callbackID", "").strip()
+            callback_id = _clean_optional_text(child.attrib.get("callbackID"))
             break
     source = media_refs.get(callback_id)
     if not source:
@@ -839,8 +868,8 @@ def _format_onenote_text(text_element: ET.Element, inherited_style: str = "") ->
     return _apply_onenote_text_style(formatted, style)
 
 
-def _apply_onenote_text_style(text: str, style: str) -> str:
-    clean = text.strip()
+def _apply_onenote_text_style(text: str, style: str | None) -> str:
+    clean = _clean_optional_text(text)
     if not clean:
         return ""
     traits = _parse_onenote_style(style)
@@ -853,9 +882,9 @@ def _apply_onenote_text_style(text: str, style: str) -> str:
     return clean
 
 
-def _parse_onenote_style(style: str) -> dict[str, str | bool]:
+def _parse_onenote_style(style: str | None) -> dict[str, str | bool]:
     traits: dict[str, str | bool] = {}
-    for declaration in style.split(";"):
+    for declaration in _clean_optional_text(style).split(";"):
         if ":" not in declaration:
             continue
         key, value = declaration.split(":", 1)
@@ -893,7 +922,7 @@ class _OneNoteInlineMarkdown(HTMLParser):
         attr = {key.lower(): value or "" for key, value in attrs}
         traits = _parse_onenote_style(attr.get("style", ""))
         if tag == "a":
-            href = attr.get("href", "").strip()
+            href = _clean_optional_text(attr.get("href", ""))
             wiki_target = _onenote_wiki_target_from_href(href)
             self.link_stack.append({"href": href, "wiki_target": wiki_target, "start": len(self.parts)})
             if not wiki_target:
@@ -955,12 +984,12 @@ class _OneNoteInlineMarkdown(HTMLParser):
         self.parts.append(f"]({_escape_markdown_link_target(href)})")
 
 
-def _escape_markdown_link_target(target: str) -> str:
-    return target.replace(" ", "%20").replace(")", "%29")
+def _escape_markdown_link_target(target: str | None) -> str:
+    return _clean_optional_text(target).replace(" ", "%20").replace(")", "%29")
 
 
-def _onenote_wiki_target_from_href(href: str) -> str:
-    clean = href.strip()
+def _onenote_wiki_target_from_href(href: str | None) -> str:
+    clean = _clean_optional_text(href)
     if not clean.lower().startswith("onenote:"):
         return ""
     parsed = urlparse(clean)
@@ -975,8 +1004,8 @@ def _onenote_wiki_target_from_href(href: str) -> str:
     return title[:160]
 
 
-def _normalize_wiki_compare(value: str) -> str:
-    clean = value.strip().replace("\\", "/")
+def _normalize_wiki_compare(value: str | None) -> str:
+    clean = _clean_optional_text(value).replace("\\", "/")
     clean = clean[:-3] if clean.lower().endswith(".md") else clean
     return clean.lower()
 
@@ -992,10 +1021,10 @@ def _rewrite_wikilinks_to_relative_paths(markdown: str, target_map: dict[str, st
         target, separator, alias = raw.partition("|")
         clean_target = _normalize_wiki_compare(target)
         relative_target = target_map.get(clean_target)
-        clean_alias = alias.strip()
+        clean_alias = _clean_optional_text(alias)
         if not relative_target:
             if separator and clean_alias and _normalize_wiki_compare(clean_alias) == clean_target:
-                return f"[[{target.strip()}]]"
+                return f"[[{_clean_optional_text(target)}]]"
             return match.group(0)
         relative_name = relative_target.rsplit("/", 1)[-1]
         if (
@@ -1038,3 +1067,22 @@ def _image_suffix_from_bytes(payload: bytes) -> str:
     if stripped.startswith(b"<svg") or stripped.startswith(b"<?xml"):
         return ".svg"
     return ".png"
+
+
+def _clean_optional_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _decode_process_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        for encoding in ("utf-8-sig", "utf-16", "cp1252"):
+            try:
+                return value.decode(encoding).strip()
+            except UnicodeError:
+                continue
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()

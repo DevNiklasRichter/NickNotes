@@ -10,11 +10,6 @@ FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 PROMOTION_MARKER_PATTERN = re.compile(r"\s*<!--\s*nn:todo:promoted:([A-Za-z0-9][A-Za-z0-9_-]{1,120})\s*-->\s*$")
 BLOCK_REF_PATTERN = re.compile(r"\s+\^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\s*$")
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
-HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
-CATEGORY_TAG_PATTERN = re.compile(
-    r"\b([a-zA-Z][a-zA-Z0-9_-]{1,60}):([a-zA-Z0-9][a-zA-Z0-9_-]{1,80})\b",
-    flags=re.IGNORECASE,
-)
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 
@@ -90,27 +85,6 @@ def _extract_tag_keys(text: str) -> list[str]:
         key = f"{slugify(match.group(1))}:{slugify(match.group(2))}"
         if ":" in key and not key.endswith(":"):
             found.add(key)
-
-    for match in HASHTAG_PATTERN.finditer(text):
-        raw = match.group(1).strip().strip("/")
-        if not raw:
-            continue
-        if "/" in raw:
-            left, right = raw.split("/", 1)
-            group = slugify(left)
-            tag = slugify(right)
-            if group and tag:
-                found.add(f"{group}:{tag}")
-            continue
-        topic = slugify(raw)
-        if topic:
-            found.add(f"topic:{topic}")
-
-    for match in CATEGORY_TAG_PATTERN.finditer(text):
-        group = slugify(match.group(1))
-        tag = slugify(match.group(2))
-        if group and tag:
-            found.add(f"{group}:{tag}")
 
     return sorted(found, key=lambda item: item.lower())
 

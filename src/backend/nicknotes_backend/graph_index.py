@@ -13,7 +13,6 @@ from .parser import slugify
 
 GRAPH_INDEX_VERSION = 1
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
-HASHTAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#([A-Za-z0-9][A-Za-z0-9_\-/]{1,60})")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
 
@@ -624,20 +623,6 @@ def _extract_tags(meta: dict[str, Any], body: str) -> list[str]:
         tag_key = _normalize_tag_key(f"{match.group(1)}:{match.group(2)}")
         if tag_key:
             found.add(tag_key)
-
-    for match in HASHTAG_PATTERN.finditer(body):
-        raw = match.group(1).strip().strip("/")
-        if not raw:
-            continue
-        if "/" in raw:
-            left, right = raw.split("/", 1)
-            tag_key = _normalize_tag_key(f"{left}:{right}")
-            if tag_key:
-                found.add(tag_key)
-            continue
-        topic = _normalize_tag_token(raw)
-        if topic:
-            found.add(f"topic:{topic}")
 
     return sorted(found, key=lambda item: item.lower())
 

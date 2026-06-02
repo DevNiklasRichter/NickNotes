@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -34,6 +35,10 @@ from .nicknotes_backend.vault import VaultManager
 
 
 logger = logging.getLogger(__name__)
+
+BACKEND_CAPABILITIES = {
+    "linkRewrite": "markdown-source-of-truth-v2",
+}
 
 
 @dataclass
@@ -389,7 +394,7 @@ class TodoToggleRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "vaultLoaded": state.vault is not None}
+    return {"ok": True, "vaultLoaded": state.vault is not None, "capabilities": BACKEND_CAPABILITIES}
 
 
 @app.get("/state")
@@ -544,10 +549,14 @@ def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
 @app.post("/vault/reindex")
 def reindex_vault() -> dict[str, Any]:
     vault, indexer = _require_loaded()
-    indexed = indexer.reindex_vault(vault.vault_path)
-    vault.rebuild_task_status_links(indexer)
-    tag_groups = vault.sync_tag_groups_with_index(indexer)
-    return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups}
+    try:
+        indexed = indexer.reindex_vault(vault.vault_path)
+        vault.rebuild_task_status_links(indexer)
+        tag_groups = vault.sync_tag_groups_with_index(indexer)
+        return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups}
+    except Exception as exc:
+        logger.exception("NoteBase reindex failed")
+        raise HTTPException(status_code=500, detail=f"Unerwarteter Fehler beim Reindex: {exc}") from exc
 
 
 @app.post("/notebase/open")
@@ -584,10 +593,22 @@ def start_onenote_import(req: OneNoteImportRequest) -> dict[str, Any]:
         state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
 
     try:
+        logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
         result = OneNoteLocalImporter(vault, progress_callback=update_progress).import_sources(req.source_paths, req.target_folder)
     except (RuntimeError, ValueError) as exc:
         state.update_import_status(phase="Import fehlgeschlagen.", done=True, error=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("OneNote import failed unexpectedly")
+        try:
+            error_log = Path.cwd() / ".tmp" / "onenote-import-error.log"
+            error_log.parent.mkdir(parents=True, exist_ok=True)
+            error_log.write_text(traceback.format_exc(), encoding="utf-8")
+        except OSError:
+            pass
+        detail = f"Unerwarteter Fehler beim OneNote-Import: {exc}"
+        state.update_import_status(phase="Import fehlgeschlagen.", done=True, error=detail)
+        raise HTTPException(status_code=500, detail=detail) from exc
     state.update_import_status(
         phase="NoteBase wird aktualisiert ...",
         processed=result.get("importedPages", 0),
@@ -934,11 +955,11 @@ def explorer_files() -> dict[str, Any]:
     }
 
     for file_path in root.rglob("*"):
-        if not file_path.is_file():
-            continue
         try:
+            if not file_path.is_file():
+                continue
             relative = file_path.resolve().relative_to(root).as_posix()
-        except ValueError:
+        except (OSError, ValueError):
             continue
         top = relative.split("/", 1)[0]
 
@@ -959,7 +980,10 @@ def explorer_files() -> dict[str, Any]:
         if extension and extension not in text_extensions:
             continue
 
-        stat = file_path.stat()
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
         note_type = "markdown" if extension == ".md" else "text"
         items.append(
             {
@@ -1021,6 +1045,7 @@ def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
         "tagGroups": tag_groups,
         "tagGroupsRebuilt": bool(tag_groups is not None),
         "graphStatus": graph_status,
+        "linkRewrite": vault.consume_last_link_rewrite_result(),
     }
 
 
@@ -1411,7 +1436,12 @@ def rename_note_group(req: NoteGroupRenameRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"group": renamed, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+    return {
+        "group": renamed,
+        "groups": vault.list_note_groups(),
+        "counts": _counts(indexer),
+        "linkRewrite": vault.consume_last_link_rewrite_result(),
+    }
 
 
 @app.post("/note-groups/delete")
@@ -1422,7 +1452,12 @@ def delete_note_group(req: NoteGroupDeleteRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"deleted": True, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+    return {
+        "deleted": True,
+        "groups": vault.list_note_groups(),
+        "counts": _counts(indexer),
+        "linkRewrite": vault.consume_last_link_rewrite_result(),
+    }
 
 
 @app.post("/note-groups/move")
@@ -1433,7 +1468,12 @@ def move_note_group(req: NoteGroupMoveRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"group": moved, "groups": vault.list_note_groups(), "counts": _counts(indexer)}
+    return {
+        "group": moved,
+        "groups": vault.list_note_groups(),
+        "counts": _counts(indexer),
+        "linkRewrite": vault.consume_last_link_rewrite_result(),
+    }
 
 
 @app.post("/note-groups/favorite")
@@ -1488,7 +1528,7 @@ def rename_note(req: NoteFileRenameRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"renamedPath": str(renamed_path), "counts": _counts(indexer)}
+    return {"renamedPath": str(renamed_path), "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
 
 
 @app.post("/notes/delete")
@@ -1499,7 +1539,7 @@ def delete_note(req: NoteFileDeleteRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"deleted": True, "counts": _counts(indexer)}
+    return {"deleted": True, "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
 
 
 @app.post("/notes/move")
@@ -1510,7 +1550,7 @@ def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"movedPath": str(moved_path), "counts": _counts(indexer)}
+    return {"movedPath": str(moved_path), "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
 
 
 @app.post("/notes/move-batch")
@@ -1521,7 +1561,7 @@ def move_notes_batch(req: NoteFileMoveBatchRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"movedPaths": moved_paths, "counts": _counts(indexer)}
+    return {"movedPaths": moved_paths, "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
 
 
 @app.post("/notes/migrate-templates")

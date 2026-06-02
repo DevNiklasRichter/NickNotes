@@ -46,11 +46,31 @@ function resolvePythonBinary() {
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 
+function stopProcessListeningOnBackendPort() {
+  if (process.platform !== 'win32') {
+    return
+  }
+
+  const script = `
+$connections = Get-NetTCPConnection -LocalPort ${BACKEND_PORT} -State Listen -ErrorAction SilentlyContinue
+foreach ($connection in $connections) {
+  if ($connection.OwningProcess -and $connection.OwningProcess -ne $PID) {
+    Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
+  }
+}
+`
+  spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+}
+
 function startBackend() {
   if (backendProcess) {
     return
   }
 
+  stopProcessListeningOnBackendPort()
   backendStopping = false
   const python = resolvePythonBinary()
   backendProcess = spawn(python, ['-m', 'src.backend.server'], {
@@ -59,6 +79,7 @@ function startBackend() {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
+      NICKNOTES_PARENT_PID: String(process.pid),
     },
   })
 
