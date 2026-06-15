@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 
 TODO_LINE_PATTERN = re.compile(r"^(\s*[-*+]\s+\[([ xX])\]\s+)(.*)$")
+from .task_domain import normalize_tag_id
 FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 PROMOTION_MARKER_PATTERN = re.compile(r"\s*<!--\s*nn:todo:promoted:([A-Za-z0-9][A-Za-z0-9_-]{1,120})\s*-->\s*$")
 BLOCK_REF_PATTERN = re.compile(r"\s+\^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\s*$")
@@ -45,13 +46,6 @@ class _TodoMatch:
     promoted_task_id: str | None
 
 
-def slugify(raw: str) -> str:
-    value = raw.strip().lower()
-    value = re.sub(r"[^a-z0-9_\-]+", "_", value)
-    value = re.sub(r"_+", "_", value)
-    return value.strip("_")
-
-
 def _normalized_for_id(value: str) -> str:
     return " ".join(value.strip().split()).lower()
 
@@ -82,7 +76,11 @@ def _extract_tag_keys(text: str) -> list[str]:
     found: set[str] = set()
 
     for match in INLINE_TAG_PATTERN.finditer(text):
-        key = f"{slugify(match.group(1))}:{slugify(match.group(2))}"
+        group = normalize_tag_id(match.group(1))
+        tag = normalize_tag_id(match.group(2))
+        if not group or not tag:
+            continue
+        key = f"{group}:{tag}"
         if ":" in key and not key.endswith(":"):
             found.add(key)
 

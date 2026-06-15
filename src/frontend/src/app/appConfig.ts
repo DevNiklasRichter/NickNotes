@@ -1,0 +1,8 @@
+export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8765"
+export const DEFAULT_DISPLAY_NAME = "Max"
+export const DEFAULT_NOTEBASE_NAME = "MeineNoteBase"
+export const EXPLORER_DEFAULT_WIDTH = 300
+export const CAPTURE_INLINE_HEIGHT_DEFAULT = 220
+export const CAPTURE_PANEL_MIN_HEIGHT = 120
+export const CAPTURE_PANEL_BOTTOM_OFFSET = 180
+export const EXPLORER_MATCH_DEBOUNCE_MS = 180

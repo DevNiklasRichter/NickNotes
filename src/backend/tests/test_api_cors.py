@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import unittest
+
+try:
+    from fastapi.testclient import TestClient
+    from src.backend import api as backend_api
+except Exception:  # pragma: no cover - optional dependency or backend import path issues in env
+    TestClient = None
+    backend_api = None
+
+
+@unittest.skipIf(
+    backend_api is None or TestClient is None,
+    "FastAPI TestClient oder Backend-API sind in dieser Umgebung nicht verfügbar.",
+)
+class ApiCorsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        backend_api.state.close()
+
+    def _preflight_headers(self, origin: str) -> dict[str, str]:
+        return {
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type",
+        }
+
+    def test_cors_allows_configured_origin(self) -> None:
+        client = TestClient(backend_api.app)
+        allowed = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:8765",
+            "http://127.0.0.1:8765",
+            "null",
+        ]
+        for origin in allowed:
+            response = client.options("/state", headers=self._preflight_headers(origin))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers.get("access-control-allow-origin"), origin)
+
+    def test_cors_rejects_untrusted_origin(self) -> None:
+        client = TestClient(backend_api.app)
+        response = client.options("/state", headers=self._preflight_headers("http://malicious.example"))
+        self.assertNotEqual(response.headers.get("access-control-allow-origin"), "http://malicious.example")
+        self.assertEqual(response.status_code, 400)

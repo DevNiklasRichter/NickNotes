@@ -1,3 +1,5 @@
+import type { OperatorNotification } from '../app/AppShared'
+
 type StatusBarPrefs = {
   showNoteBaseName: boolean
   showOpenTasks: boolean
@@ -8,8 +10,7 @@ type StatusBarPrefs = {
 
 type StatusBarProps = {
   prefs: StatusBarPrefs
-  message: string
-  error: string
+  notification: OperatorNotification | null
   noteBaseName: string
   counts: {
     notes: number
@@ -18,12 +19,24 @@ type StatusBarProps = {
   dueTodayCount: number
 }
 
-export function StatusBar({ prefs, message, error, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
+export function StatusBar({ prefs, notification, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
+  const statusClass =
+    notification?.severity === 'warn'
+      ? 'warn'
+      : notification?.severity === 'critical'
+        ? 'critical'
+        : notification?.severity === 'error'
+          ? 'error'
+          : notification?.severity === 'info'
+            ? 'info'
+            : ''
+  const statusText = notification ? notification.message : ''
+
   return (
     <footer className="status-bar">
       <div className="status-bar-left">
         {prefs.showStateMessage ? (
-          <span className={`status-item ${error ? 'error' : ''}`}>{error || message}</span>
+          <span className={`status-item${statusClass ? ` ${statusClass}` : ''}`}>{statusText}</span>
         ) : (
           <span className="status-item">&nbsp;</span>
         )}
@@ -37,4 +50,3 @@ export function StatusBar({ prefs, message, error, noteBaseName, counts, dueToda
     </footer>
   )
 }
-

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import {
   type FocusDashboardMode,
+  type FocusDashboardAggregateStats,
   taskPriorityDotClassName,
   taskPriorityLabel,
   taskStatusClassName,
@@ -28,6 +29,7 @@ type FocusDashboardCanvasProps = {
   tasks: TaskRow[]
   todos: TodoRow[]
   notes: SearchRow[]
+  focusStats: FocusDashboardAggregateStats
   noteBasePath: string
   filters: FocusDashboardFilters
   mitIds: string[]
@@ -268,6 +270,7 @@ export function FocusDashboardCanvas({
   notes,
   noteBasePath,
   filters,
+  focusStats,
   mitIds,
   taskFeatureSettings,
   onFiltersChange,
@@ -288,9 +291,10 @@ export function FocusDashboardCanvas({
         filters,
         todayIso,
         mitIds,
+        focusStats,
         taskFeatureSettings,
       }),
-    [filters, mitIds, notes, taskFeatureSettings, tasks, todayIso, todos]
+    [filters, focusStats, mitIds, notes, taskFeatureSettings, tasks, todayIso, todos]
   )
 
   const showAdvancedTaskSignals = taskFeatureSettings.advancedTaskHandling

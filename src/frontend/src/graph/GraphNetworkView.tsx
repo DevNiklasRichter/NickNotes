@@ -2,15 +2,16 @@ import cytoscape from 'cytoscape'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Core, ElementDefinition, EventObject, NodeSingular, StylesheetStyle } from 'cytoscape'
 import type { GraphEdge, GraphNode, GraphNodePosition, GraphViewport } from '../app/AppShared'
-import { LucideNamedIcon } from '../icons/lucideCatalog'
 
 type GraphNetworkViewProps = {
   nodes: GraphNode[]
   edges: GraphEdge[]
   searchText: string
+  searchMode: 'filter' | 'highlight'
   positions: Record<string, GraphNodePosition>
   viewport: GraphViewport
   layoutVersion: number
+  fitRequestVersion: number
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
   onRevealNodePath?: (path: string) => void
   onSelectNode?: (nodeId: string) => void
@@ -47,9 +48,11 @@ export function GraphNetworkView({
   nodes,
   edges,
   searchText,
+  searchMode,
   positions,
   viewport,
   layoutVersion,
+  fitRequestVersion,
   onOpenNodePath,
   onRevealNodePath,
   onSelectNode,
@@ -87,7 +90,7 @@ export function GraphNetworkView({
     }
     return map
   }, [displayEdges])
-  const elements = useMemo<ElementDefinition[]>(() => buildElements(nodes, displayEdges, searchText), [displayEdges, nodes, searchText])
+  const elements = useMemo<ElementDefinition[]>(() => buildElements(nodes, displayEdges, searchText, searchMode), [displayEdges, nodes, searchMode, searchText])
   const largeGraph = nodes.length > LARGE_GRAPH_NODE_WARNING || displayEdges.length > LARGE_GRAPH_EDGE_WARNING
   const nodeByIdRef = useLatest(nodeById)
   const edgeByIdRef = useLatest(useMemo(() => new Map(displayEdges.map((edge) => [edge.id, edge])), [displayEdges]))
@@ -111,12 +114,13 @@ export function GraphNetworkView({
       const cy = cytoscape({
         container: hostRef.current,
         elements: [],
-        style: cytoscapeStyles,
+        style: createCytoscapeStyles(readGraphThemeColors()),
         minZoom: 0.08,
         maxZoom: 3,
         autounselectify: true,
       })
       cyRef.current = cy
+      applyGraphThemeColors(cy)
       physicsSimulationRef.current = createGraphPhysicsSimulation(cy, largeGraphRef, () => {
         onPositionsChangeRef.current?.(collectPositions(cy))
       }, () => {
@@ -257,6 +261,23 @@ export function GraphNetworkView({
   }, [connectedEdgesByNodeRef, edgeByIdRef, largeGraphRef, nodeByIdRef, onClearSelectionRef, onOpenNodePathRef, onPositionsChangeRef, onSelectNodeRef, onViewportChangeRef])
 
   useEffect(() => {
+    const root = document.documentElement
+    const applyTheme = () => {
+      const cy = cyRef.current
+      if (!cy) {
+        return
+      }
+      applyGraphThemeColors(cy)
+    }
+    applyTheme()
+    const observer = new MutationObserver(applyTheme)
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'style'] })
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
     const cy = cyRef.current
     if (!cy) {
       return
@@ -283,46 +304,16 @@ export function GraphNetworkView({
     }
   }, [elements, largeGraph, layoutVersion, nodes, onPositionsChangeRef, positionsRef, viewportRef])
 
-  const fitGraph = () => {
-    cyRef.current?.fit(undefined, 36)
-  }
-
-  const resetView = () => {
+  useEffect(() => {
     const cy = cyRef.current
     if (!cy) {
       return
     }
-    cy.zoom(1)
-    cy.center()
-  }
-
-  const rerunLayout = () => {
-    const cy = cyRef.current
-    if (!cy) {
-      return
-    }
-    physicsSimulationRef.current?.reset(true, true)
-  }
+    fitGraphToViewport(cy)
+  }, [fitRequestVersion])
 
   return (
     <section className={`graph-network-shell ${compactChrome ? 'compact-chrome' : ''}`}>
-      <header className="graph-network-toolbar">
-        <div>
-          <h3>Interaktiver Graph</h3>
-          <p>{nodes.length} Nodes | {displayEdges.length} Edges</p>
-        </div>
-        <div className="graph-network-actions">
-          <button className="icon-button compact muted" onClick={fitGraph} title="Fit">
-            <LucideNamedIcon name="Maximize" size={14} />
-          </button>
-          <button className="icon-button compact muted" onClick={resetView} title="Ansicht zuruecksetzen">
-            <LucideNamedIcon name="LocateFixed" size={14} />
-          </button>
-          <button className="icon-button compact muted" onClick={rerunLayout} title="Layout neu starten">
-            <LucideNamedIcon name="RefreshCw" size={14} />
-          </button>
-        </div>
-      </header>
       {!compactChrome && largeGraph ? (
         <p className="graph-warning">
           Groesserer Graph sichtbar. Layout laeuft ohne Animation; Filter koennen die Ansicht fluessiger machen.
@@ -554,9 +545,10 @@ function Detail({ label, value }: { label: string; value: string }) {
   )
 }
 
-function buildElements(nodes: GraphNode[], edges: GraphEdge[], searchText: string): ElementDefinition[] {
+function buildElements(nodes: GraphNode[], edges: GraphEdge[], searchText: string, searchMode: 'filter' | 'highlight'): ElementDefinition[] {
   const nodeIds = new Set(nodes.map((node) => node.id))
   const query = searchText.trim().toLowerCase()
+  const matchedNodeIds = new Set(nodes.filter((node) => query && matchesNode(node, query)).map((node) => node.id))
   const nodeElements = nodes.map<ElementDefinition>((node) => ({
     group: 'nodes',
     data: {
@@ -564,7 +556,11 @@ function buildElements(nodes: GraphNode[], edges: GraphEdge[], searchText: strin
       label: node.label || node.id,
       type: node.type,
     },
-    classes: [node.type, query && matchesNode(node, query) ? 'search-match' : ''].filter(Boolean).join(' '),
+    classes: [
+      node.type,
+      query && matchedNodeIds.has(node.id) ? 'search-match' : '',
+      query && searchMode === 'highlight' && !matchedNodeIds.has(node.id) ? 'search-muted' : '',
+    ].filter(Boolean).join(' '),
   }))
   const edgeElements = edges
     .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
@@ -578,7 +574,10 @@ function buildElements(nodes: GraphNode[], edges: GraphEdge[], searchText: strin
         type: edge.type,
         weight: edge.weight,
       },
-      classes: edge.type,
+      classes: [
+        edge.type,
+        query && searchMode === 'highlight' && !matchedNodeIds.has(edge.source) && !matchedNodeIds.has(edge.target) ? 'search-muted' : '',
+      ].filter(Boolean).join(' '),
     }))
   return [...nodeElements, ...edgeElements]
 }
@@ -713,7 +712,6 @@ function applyZoomDensity(cy: Core, largeGraph: boolean) {
         'font-size': Math.max(3, Math.round(baseFontSize * factor)),
         'border-width': Math.max(0.5, 1.2 * factor),
         'text-opacity': labelOpacity,
-        'text-outline-width': largeGraph ? Math.max(0.5, 1.6 * factor) : Math.max(1, 2 * factor),
       })
     })
 
@@ -771,8 +769,10 @@ function createGraphPhysicsSimulation(
       window.cancelAnimationFrame(animationFrame)
       animationFrame = null
     }
+    heat = 0
     lastFrameTime = 0
     quietFrames = 0
+    velocities.clear()
   }
 
   const tick = (frameTime: number) => {
@@ -833,8 +833,9 @@ function createGraphPhysicsSimulation(
     })
 
     let maximumSpeed = 0
-    const damping = draggedNodeId ? 0.9 : 0.86
-    const effectiveHeat = Math.max(0.08, heat)
+    const isSettling = !draggedNodeId && heat < 0.18
+    const damping = draggedNodeId ? 0.9 : isSettling ? 0.62 : 0.82
+    const effectiveHeat = draggedNodeId ? Math.max(0.08, heat) : heat
     cy.batch(() => {
       graphNodes.forEach((node) => {
         const nodeId = node.id()
@@ -851,6 +852,10 @@ function createGraphPhysicsSimulation(
           x: clamp((currentVelocity.x + force.x * effectiveHeat * timeStep) * damping, -22, 22),
           y: clamp((currentVelocity.y + force.y * effectiveHeat * timeStep) * damping, -22, 22),
         }
+        if (isSettling && Math.abs(nextVelocity.x) + Math.abs(nextVelocity.y) < 0.04) {
+          velocities.set(nodeId, { x: 0, y: 0 })
+          return
+        }
         velocities.set(nodeId, nextVelocity)
         maximumSpeed = Math.max(maximumSpeed, Math.abs(nextVelocity.x) + Math.abs(nextVelocity.y))
         node.position({
@@ -860,9 +865,9 @@ function createGraphPhysicsSimulation(
       })
     })
 
-    heat = draggedNodeId ? Math.max(0.42, heat * 0.985) : heat * 0.968
-    quietFrames = !draggedNodeId && heat < 0.045 && maximumSpeed < 0.12 ? quietFrames + 1 : 0
-    if (quietFrames >= 12 || (!draggedNodeId && frameTime - lastInteractionTime > 5200)) {
+    heat = draggedNodeId ? Math.max(0.42, heat * 0.985) : heat * 0.95
+    quietFrames = !draggedNodeId && heat < 0.14 && maximumSpeed < 0.42 ? quietFrames + 1 : 0
+    if (quietFrames >= 8 || (!draggedNodeId && frameTime - lastInteractionTime > 3000)) {
       stop()
       onSettled()
       if (fitWhenSettled) {
@@ -946,19 +951,59 @@ function useLatest<T>(value: T) {
   return ref
 }
 
-const cytoscapeStyles: StylesheetStyle[] = [
+type GraphThemeColors = {
+  text: string
+  graphNote: string
+  graphTask: string
+  graphTag: string
+  line: string
+}
+
+function readCssVariable(name: string, fallback: string): string {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function readGraphThemeColors(): GraphThemeColors {
+  return {
+    text: readCssVariable('--text', '#edf0f5'),
+    graphNote: readCssVariable('--graph-note', '#91aeca'),
+    graphTask: readCssVariable('--graph-task', '#d4ae61'),
+    graphTag: readCssVariable('--graph-tag', '#c98989'),
+    line: readCssVariable('--line', '#99a3ad'),
+  }
+}
+
+function applyGraphThemeColors(cy: Core): void {
+  const colors = readGraphThemeColors()
+  cy.batch(() => {
+    cy.nodes().forEach((node) => {
+      const nodeType = String(node.data('type') ?? '')
+      const graphColor = nodeType === 'task' ? colors.graphTask : nodeType === 'tag' ? colors.graphTag : colors.graphNote
+      node.style({
+        color: colors.text,
+        'background-color': graphColor,
+        'border-color': graphColor,
+      })
+    })
+  })
+}
+
+function createCytoscapeStyles(colors: GraphThemeColors): StylesheetStyle[] {
+  return [
   {
     selector: 'node',
     style: {
       label: 'data(label)',
       'font-size': 10,
-      color: '#dce3ee',
-      'text-outline-color': '#1f252f',
-      'text-outline-width': 2,
+      color: colors.text,
+      'text-outline-width': 0,
       'text-valign': 'bottom',
       'text-halign': 'center',
-      'background-color': '#91aeca',
-      'border-color': '#d2e0ed',
+      'background-color': colors.graphNote,
+      'border-color': colors.graphNote,
       'border-width': 1,
       width: 16,
       height: 16,
@@ -968,8 +1013,8 @@ const cytoscapeStyles: StylesheetStyle[] = [
     selector: 'node.task',
     style: {
       shape: 'ellipse',
-      'background-color': '#d4ae61',
-      'border-color': '#f0d99e',
+      'background-color': colors.graphTask,
+      'border-color': colors.graphTask,
       width: 18,
       height: 18,
     },
@@ -978,8 +1023,8 @@ const cytoscapeStyles: StylesheetStyle[] = [
     selector: 'node.tag',
     style: {
       shape: 'ellipse',
-      'background-color': '#c98989',
-      'border-color': '#edc2c2',
+      'background-color': colors.graphTag,
+      'border-color': colors.graphTag,
       width: 14,
       height: 14,
       'font-size': 8,
@@ -988,17 +1033,34 @@ const cytoscapeStyles: StylesheetStyle[] = [
   {
     selector: 'node.search-match',
     style: {
-      'border-width': 4,
+      'border-width': 2.5,
       'border-color': '#ffffff',
+      'background-opacity': 1,
+      'z-index': 24,
+    },
+  },
+  {
+    selector: 'node.search-muted',
+    style: {
+      opacity: 0.22,
+      'text-opacity': 0.08,
+    },
+  },
+  {
+    selector: 'edge.search-muted',
+    style: {
+      opacity: 0.08,
     },
   },
   {
     selector: 'node.graph-focus-primary',
     style: {
       'border-color': '#ffffff',
-      'border-width': 3,
-      'overlay-color': '#ffffff',
-      'overlay-opacity': 0.1,
+      'border-width': 2.4,
+      'background-opacity': 1,
+      opacity: 1,
+      width: 21,
+      height: 21,
       'z-compound-depth': 'top',
       'z-index': 20,
     },
@@ -1029,7 +1091,7 @@ const cytoscapeStyles: StylesheetStyle[] = [
     selector: 'edge',
     style: {
       width: 'mapData(weight, 1, 8, 1, 5)',
-      'line-color': '#99a3ad',
+      'line-color': colors.line,
       'target-arrow-shape': 'none',
       'curve-style': 'bezier',
       opacity: 0.48,
@@ -1076,4 +1138,5 @@ const cytoscapeStyles: StylesheetStyle[] = [
       'target-arrow-shape': 'none',
     },
   },
-]
+  ]
+}

@@ -1,6 +1,9 @@
+import { normalizeTagCandidate } from '../tags/tagTypes'
+import type { TaskPriority, TaskStatus } from '../shared/taskDomain'
+export type { TaskPriority, TaskStatus } from '../shared/taskDomain'
+import { normalizeTaskPriorityValue, normalizeTaskStatusValue } from '../shared/taskDomain'
+
 export type NoteType = 'note' | 'task'
-export type TaskStatus = 'new_topic' | 'open' | 'in_progress' | 'on_hold' | 'done'
-export type TaskPriority = 'low' | 'medium' | 'high'
 
 export type NoteFrontmatter = {
   id: string
@@ -35,8 +38,6 @@ export type ParsedNoteDocument = {
 const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za-z0-9_-]*)\}/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
 const TITLE_HEADING_PATTERN = /^\s{0,3}#\s+(.+?)\s*$/
-const TASK_STATUS_VALUES: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'on_hold', 'done']
-const TASK_PRIORITY_VALUES: TaskPriority[] = ['low', 'medium', 'high']
 const KNOWN_KEYS = new Set([
   'id',
   'node_id',
@@ -62,36 +63,6 @@ const KNOWN_KEYS = new Set([
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
-}
-
-function slugify(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
-
-function normalizeTagKey(raw: string): string {
-  const clean = normalizeLabel(raw).replace(/^#+/, '')
-  if (!clean) {
-    return ''
-  }
-  if (clean.includes(':')) {
-    const [groupRaw, tagRaw] = clean.split(':', 2)
-    const group = slugify(groupRaw)
-    const tag = slugify(tagRaw)
-    return group && tag ? `${group}:${tag}` : ''
-  }
-  if (clean.includes('/')) {
-    const [groupRaw, tagRaw] = clean.split('/', 2)
-    const group = slugify(groupRaw)
-    const tag = slugify(tagRaw)
-    return group && tag ? `${group}:${tag}` : ''
-  }
-  const slug = slugify(clean)
-  return slug ? `topic:${slug}` : ''
 }
 
 function ensureListOfStrings(value: unknown): string[] {
@@ -123,31 +94,6 @@ function normalizeType(raw: unknown): NoteType {
     .toLowerCase()
     .replace(/[- ]+/g, '_')
   return clean === 'task' ? 'task' : 'note'
-}
-
-function normalizeStatus(raw: unknown): TaskStatus {
-  const clean = String(raw ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[- ]+/g, '_') as TaskStatus
-  return TASK_STATUS_VALUES.includes(clean) ? clean : 'open'
-}
-
-function normalizePriority(raw: unknown): TaskPriority {
-  const clean = String(raw ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[- ]+/g, '_')
-  if (clean === 'h' || clean === 'high') {
-    return 'high'
-  }
-  if (clean === 'l' || clean === 'low') {
-    return 'low'
-  }
-  if (clean === 'm' || clean === 'medium') {
-    return 'medium'
-  }
-  return TASK_PRIORITY_VALUES.includes(clean as TaskPriority) ? (clean as TaskPriority) : 'medium'
 }
 
 function normalizeDueDate(raw: unknown): string {
@@ -253,7 +199,7 @@ export function extractAutoTags(body: string): string[] {
   INLINE_TAG_PATTERN.lastIndex = 0
   let inlineMatch = INLINE_TAG_PATTERN.exec(body)
   while (inlineMatch) {
-    const key = normalizeTagKey(`${inlineMatch[1] || ''}:${inlineMatch[2] || ''}`)
+    const key = normalizeTagCandidate(`${inlineMatch[1] || ''}:${inlineMatch[2] || ''}`)
     if (key) {
       found.add(key)
     }
@@ -378,8 +324,8 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
 
   const id = String(rawFrontmatter.id || '').trim() || createNodeId(noteType)
   const nodeId = String(rawFrontmatter.node_id || '').trim() || id
-  const status = normalizeStatus(rawFrontmatter.status)
-  const priority = normalizePriority(rawFrontmatter.priority)
+  const status = normalizeTaskStatusValue(String(rawFrontmatter.status ?? ''))
+  const priority = normalizeTaskPriorityValue(String(rawFrontmatter.priority ?? ''))
   const dueDate = normalizeDueDate(rawFrontmatter.due_date)
   const estimateMinutes = normalizeEstimateMinutes(rawFrontmatter.estimate_minutes)
   const rawCompletedAt = normalizeIsoTimestamp(rawFrontmatter.completed_at)
@@ -389,7 +335,7 @@ export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNo
   const followUpDate = normalizeDueDate(rawFrontmatter.follow_up_date)
   const blockedReason = normalizeOptionalText(rawFrontmatter.blocked_reason)
   const nextActionHint = normalizeOptionalText(rawFrontmatter.next_action_hint)
-  const tags = Array.from(new Set(ensureListOfStrings(rawFrontmatter.tags).map(normalizeTagKey).filter(Boolean))).sort((a, b) =>
+  const tags = Array.from(new Set(ensureListOfStrings(rawFrontmatter.tags).map(normalizeTagCandidate).filter(Boolean))).sort((a, b) =>
     a.localeCompare(b)
   )
   const related = Array.from(

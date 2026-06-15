@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from .graph_index import GRAPH_INDEX_VERSION, GraphDiagnostic, GraphIndex, graph_index_from_dict
+from .projection_registry import GRAPH_STATE_SCHEMA_VERSION, quarantine_projection_file
 
 
-GRAPH_STATE_VERSION = 2
+GRAPH_STATE_VERSION = GRAPH_STATE_SCHEMA_VERSION
 
 
 def read_graph_index(path: Path) -> GraphIndex:
@@ -18,6 +19,7 @@ def read_graph_index(path: Path) -> GraphIndex:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return graph_index_from_dict(payload)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+        quarantine_projection_file(path, projection="graph-index")
         return GraphIndex.empty(
             GraphDiagnostic(
                 type="graphIndexReadFailed",
@@ -59,15 +61,18 @@ def read_graph_state(path: Path) -> dict[str, Any]:
         return default
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, json.JSONDecodeError):
+        quarantine_projection_file(path, projection="graph-state")
         return default
     if not isinstance(payload, dict):
+        quarantine_projection_file(path, projection="graph-state")
         return default
     try:
         version = int(payload.get("version", 0) or 0)
     except (TypeError, ValueError):
         version = 0
     if version < 1 or version > GRAPH_STATE_VERSION:
+        quarantine_projection_file(path, projection="graph-state")
         return default
     merged = {**default, **payload}
     merged["version"] = GRAPH_STATE_VERSION

@@ -156,6 +156,24 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(done_tasks, 2)
         self.assertEqual(done_todos, 2)
 
+    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
+    def test_open_endpoint_recovers_corrupt_index_db(self) -> None:
+        self.indexer.close()
+        self.vault.db_path.write_text("NOT A SQLITE DATABASE", encoding="utf-8")
+
+        backend_api.state.close()
+        client = TestClient(backend_api.app)
+        response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.json()
+        self.assertEqual(payload.get("vaultPath"), str(self.vault_path))
+        backups = list(self.vault.system_path.glob("index.db.*.corrupt.*.bak"))
+        self.assertEqual(len(backups), 1)
+        self.assertTrue(self.vault.db_path.exists())
+
+        self.indexer = VaultIndexer(self.vault.db_path)
+
     @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
     def test_compute_focus_stats_includes_phase_f_hygiene_counts(self) -> None:
         tasks = [

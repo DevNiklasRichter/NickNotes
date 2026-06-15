@@ -46,9 +46,25 @@ import {
   type TagFormValues,
   type TagGroupFormValues,
 } from './tags/TagActionDialogModal'
+import { BackendDataService } from './app/backendDataService'
+import { AppLifecycleService, type NoteBaseOpenStatus } from './app/appLifecycleService'
+import { AppSettingsService } from './app/appSettingsService'
+import { NoteCaptureService } from './app/noteCaptureService'
+import { ExplorerMutationService } from './app/explorerMutationService'
+import { TagManagementService } from './app/tagManagementService'
+import type { AppMutationEvent, MutationRefreshPlan } from './app/mutationEvents'
+import {
+  DEFAULT_BACKEND_URL,
+  DEFAULT_DISPLAY_NAME,
+  DEFAULT_NOTEBASE_NAME,
+  EXPLORER_DEFAULT_WIDTH,
+  CAPTURE_INLINE_HEIGHT_DEFAULT,
+  CAPTURE_PANEL_MIN_HEIGHT,
+  CAPTURE_PANEL_BOTTOM_OFFSET,
+  EXPLORER_MATCH_DEBOUNCE_MS,
+} from './app/appConfig'
 import './App.css'
 import {
-  SETTINGS_TAB_PATH,
   TODO_DASHBOARD_TAB_PATH,
   TASK_DASHBOARD_TAB_PATH,
   FOCUS_DASHBOARD_TAB_PATH,
@@ -63,10 +79,13 @@ import {
   DEFAULT_FOCUS_DASHBOARD_FILTERS,
   DEFAULT_REVIEW_DASHBOARD_FILTERS,
   TAG_COLOR_PRESETS,
+  DEFAULT_LIGHT_COLOR_PROFILE,
+  DEFAULT_DARK_COLOR_PROFILE,
   TASK_STATUS_OPTIONS,
   TASK_PRIORITY_OPTIONS,
   normalizeWikiLookup,
   getPreferredTheme,
+  applyColorProfileToDocument,
   apiRequest,
   toGermanTimestamp,
   getFileName,
@@ -88,22 +107,12 @@ import {
   taskPriorityLabel,
   taskPriorityDotClassName,
   taskPriorityOptionLabel,
-  isPermanentPinnedRootGroupKey,
   toStorageTagGroups,
   getStoredLastNoteBasePath,
-  storeLastNoteBasePath,
-  clearStoredLastNoteBasePath,
   areStatusBarPrefsEqual,
   areTaskFeatureSettingsEqual,
   areExplorerOptionsEqual,
-  toBoolean,
-  toBoundedNumber,
-  toThemeMode,
-  toStatusBarPrefsFromSettings,
-  toTaskFeatureSettingsFromSettings,
-  toExplorerOptionsFromSettings,
-  toExpandedTagGroups,
-  toExplorerViewStateFromSettings,
+  areColorProfilesEqual,
   areExplorerViewStatesEqual,
   toLocalIsoDate,
   getRelativeVaultPath,
@@ -114,8 +123,8 @@ import type {
   TaskRow,
   TodoRow,
   SearchRow,
+  OperatorNotification,
   MediaUploadResponse,
-  BackendState,
   ThemeMode,
   SidebarView,
   NoteTab,
@@ -124,34 +133,14 @@ import type {
   FocusDashboardFilters,
   ReviewDashboardFilters,
   ReviewDashboardResponse,
-  FocusDashboardAggregateResponse,
   EditorTabContextMenuState,
   StatusBarPrefs,
   TaskFeatureSettings,
-  UiSettingsPayload,
+  FocusDashboardAggregateStats,
   NoteGroup,
   GraphIndexStatus,
+  ColorProfile,
 } from './app/AppShared'
-
-const CAPTURE_PREVIEW_IDLE_MS = 1200
-const CAPTURE_PREVIEW_MIN_CHARS = 3
-const NOTEBASE_OPEN_POLL_MS = 160
-
-type NoteBaseOpenStatus = {
-  active: boolean
-  done: boolean
-  error: string | null
-  phase: string
-  processed: number
-  total: number
-  currentPath?: string | null
-  result?: {
-    counts: VaultCounts
-    noteBasePath?: string
-    vaultPath?: string
-    tagGroups?: unknown
-  } | null
-}
 
 type TagMatchCandidate = {
   id: string
@@ -195,6 +184,30 @@ function resolveGraphNodePath(path: string, vaultPath: string): string {
   return `${cleanVaultPath}\\${relativePath}`
 }
 
+const EMPTY_FOCUS_DASHBOARD_STATS: FocusDashboardAggregateStats = {
+  overdueCount: 0,
+  blockedCount: 0,
+  waitingCount: 0,
+  doneToday: 0,
+  doneTodayTasks: 0,
+  doneTodayTodos: 0,
+  openTasksWithoutEstimateCount: 0,
+  waitingWithoutFollowUpCount: 0,
+  unknownBlockerTaskCount: 0,
+  unknownBlockerReferenceCount: 0,
+}
+
+type AppOperatorNotification = Pick<OperatorNotification, 'id' | 'message' | 'severity'> & {
+  autoClearMs: number | null
+}
+
+const OPERATOR_NOTIFICATION_AUTO_CLEAR_MS: Record<OperatorNotification['severity'], number | null> = {
+  info: 7000,
+  warn: 9000,
+  error: null,
+  critical: null,
+}
+
 function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
@@ -204,8 +217,13 @@ function App() {
   const workspaceGridRef = useRef<HTMLDivElement | null>(null)
   const capturePreviewRequestSeqRef = useRef(0)
   const capturePreviewLastTextRef = useRef('')
-  const [backendUrl, setBackendUrl] = useState('http://127.0.0.1:8765')
+  const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL)
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
+  const [activeColorProfileId, setActiveColorProfileId] = useState<string>(getPreferredTheme())
+  const [colorProfiles, setColorProfiles] = useState<ColorProfile[]>([
+    { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
+    { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } },
+  ])
 
   const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath)
   const [vaultLoaded, setVaultLoaded] = useState(false)
@@ -225,6 +243,7 @@ function App() {
   const [reviewDashboardFilters, setReviewDashboardFilters] = useState<ReviewDashboardFilters>({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
   const [reviewDashboardData, setReviewDashboardData] = useState<ReviewDashboardResponse | null>(null)
   const [focusMitIds, setFocusMitIds] = useState<string[]>([])
+  const [focusDashboardStats, setFocusDashboardStats] = useState<FocusDashboardAggregateStats>(EMPTY_FOCUS_DASHBOARD_STATS)
   const [searchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchRow[]>([])
   const [allNotes, setAllNotes] = useState<SearchRow[]>([])
@@ -234,26 +253,32 @@ function App() {
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [displayName, setDisplayName] = useState('Max')
+  const [displayName, setDisplayName] = useState(DEFAULT_DISPLAY_NAME)
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [createNoteBaseDialogOpen, setCreateNoteBaseDialogOpen] = useState(false)
   const [createNoteBaseParentPath, setCreateNoteBaseParentPath] = useState('')
   const [createNoteBaseName, setCreateNoteBaseName] = useState('')
-  const [createNoteBaseDisplayName, setCreateNoteBaseDisplayName] = useState('Max')
+  const [createNoteBaseDisplayName, setCreateNoteBaseDisplayName] = useState(DEFAULT_NOTEBASE_NAME)
   const [createNoteBasePending, setCreateNoteBasePending] = useState(false)
   const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
   const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS })
   const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
   const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme)
-  const [savedDisplayName, setSavedDisplayName] = useState('Max')
+  const [savedActiveColorProfileId, setSavedActiveColorProfileId] = useState<string>(getPreferredTheme())
+  const [savedColorProfiles, setSavedColorProfiles] = useState<ColorProfile[]>([
+    { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
+    { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } },
+  ])
+  const [savedDisplayName, setSavedDisplayName] = useState(DEFAULT_DISPLAY_NAME)
   const [savedSidebarOpen, setSavedSidebarOpen] = useState(true)
   const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS })
   const [savedTaskFeatureSettings, setSavedTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS })
   const [savedExplorerOptions, setSavedExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS })
-  const [explorerWidth, setExplorerWidth] = useState(300)
+  const [explorerWidth, setExplorerWidth] = useState(EXPLORER_DEFAULT_WIDTH)
   const [editorPanelOpen, setEditorPanelOpen] = useState(true)
   const [capturePanelOpen, setCapturePanelOpen] = useState(true)
   const [capturePinned, setCapturePinned] = useState(true)
-  const [captureInlineHeight, setCaptureInlineHeight] = useState(220)
+  const [captureInlineHeight, setCaptureInlineHeight] = useState(CAPTURE_INLINE_HEIGHT_DEFAULT)
   const [captureResizing, setCaptureResizing] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     daily: true,
@@ -297,9 +322,117 @@ function App() {
   const leftEditorRef = useRef<MarkdownEditorApi | null>(null)
   const rightEditorRef = useRef<MarkdownEditorApi | null>(null)
   const captureEditorRef = useRef<MarkdownEditorApi | null>(null)
+  const [operatorNotifications, setOperatorNotifications] = useState<AppOperatorNotification[]>([
+    { id: 1, severity: 'info', message: 'Backend wird vorbereitet ...', autoClearMs: null },
+  ])
+  const operatorNotificationIdRef = useRef(2)
+  const operatorNotificationTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
 
-  const [message, setMessage] = useState('Backend wird vorbereitet ...')
-  const [error, setError] = useState('')
+  useEffect(() => {
+    return () => {
+      operatorNotificationTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout))
+      operatorNotificationTimeoutsRef.current.clear()
+    }
+  }, [])
+
+  const clearOperatorNotification = useCallback((id: number) => {
+    const timeout = operatorNotificationTimeoutsRef.current.get(id)
+    if (timeout) {
+      window.clearTimeout(timeout)
+      operatorNotificationTimeoutsRef.current.delete(id)
+    }
+    setOperatorNotifications((current) => current.filter((entry) => entry.id !== id))
+  }, [])
+
+  const clearOperatorNotificationsBySeverity = useCallback(
+    (severities?: Array<OperatorNotification['severity']>) => {
+      if (!severities || severities.length === 0) {
+        setOperatorNotifications([])
+        operatorNotificationTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout))
+        operatorNotificationTimeoutsRef.current.clear()
+        return
+      }
+
+      const severitySet = new Set(severities)
+      setOperatorNotifications((current) =>
+        current.filter((entry) => {
+          if (!severitySet.has(entry.severity)) {
+            return true
+          }
+
+          const timeout = operatorNotificationTimeoutsRef.current.get(entry.id)
+          if (timeout) {
+            window.clearTimeout(timeout)
+            operatorNotificationTimeoutsRef.current.delete(entry.id)
+          }
+          return false
+        })
+      )
+    },
+    []
+  )
+
+  const pushOperatorNotification = useCallback((message: string, severity: OperatorNotification['severity']) => {
+    const normalized = message.trim()
+    if (!normalized) {
+      return
+    }
+
+    const autoClearMs = OPERATOR_NOTIFICATION_AUTO_CLEAR_MS[severity]
+    const id = operatorNotificationIdRef.current
+    operatorNotificationIdRef.current += 1
+
+    setOperatorNotifications((current) => [
+      ...current,
+      { id, message: normalized, severity, autoClearMs },
+    ])
+
+    if (typeof autoClearMs === 'number') {
+      const timeout = window.setTimeout(() => {
+        clearOperatorNotification(id)
+      }, autoClearMs)
+      operatorNotificationTimeoutsRef.current.set(id, timeout)
+    }
+  }, [clearOperatorNotification])
+
+  const setMessage = useCallback((message: string) => {
+    const normalized = String(message ?? '').trim()
+    if (!normalized) {
+      clearOperatorNotificationsBySeverity(['info', 'warn'])
+      return
+    }
+    pushOperatorNotification(normalized, 'info')
+  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+
+  const setWarnMessage = useCallback((message: string) => {
+    const normalized = String(message ?? '').trim()
+    if (!normalized) {
+      clearOperatorNotificationsBySeverity(['warn'])
+      return
+    }
+    pushOperatorNotification(normalized, 'warn')
+  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+
+  const setError = useCallback((message: string) => {
+    const normalized = String(message ?? '').trim()
+    if (!normalized) {
+      clearOperatorNotificationsBySeverity(['error', 'critical'])
+      return
+    }
+    pushOperatorNotification(normalized, 'error')
+  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+
+  const setCriticalMessage = useCallback((message: string) => {
+    const normalized = String(message ?? '').trim()
+    if (!normalized) {
+      clearOperatorNotificationsBySeverity(['critical'])
+      return
+    }
+    pushOperatorNotification(normalized, 'critical')
+  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+
+  const latestOperatorNotification = operatorNotifications[operatorNotifications.length - 1] ?? null
+  const launchOperatorNotifications = operatorNotifications.slice(-3)
 
   useEffect(() => {
     explorerViewStateRef.current = explorerViewState
@@ -369,7 +502,7 @@ function App() {
       }
       const rect = host.getBoundingClientRect()
       const nextHeight = Math.round(rect.bottom - event.clientY)
-      const bounded = Math.max(120, Math.min(rect.height - 180, nextHeight))
+      const bounded = Math.max(CAPTURE_PANEL_MIN_HEIGHT, Math.min(rect.height - CAPTURE_PANEL_BOTTOM_OFFSET, nextHeight))
       setCaptureInlineHeight(bounded)
     }
 
@@ -430,46 +563,22 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
+    const activeProfile = colorProfiles.find((profile) => profile.id === activeColorProfileId) ?? colorProfiles.find((profile) => profile.id === theme)
+    if (activeProfile) {
+      applyColorProfileToDocument(activeProfile)
+    }
     if (window.nicknotes?.setWindowTheme) {
       void window.nicknotes.setWindowTheme(theme).catch(() => {
         // Best effort bridge for desktop titlebar.
       })
     }
-  }, [theme])
-
-  useEffect(() => {
-    if (!vaultLoaded || !uiSettingsReadyRef.current) {
-      return
-    }
-    if (appLayoutSaveTimerRef.current) {
-      window.clearTimeout(appLayoutSaveTimerRef.current)
-    }
-    appLayoutSaveTimerRef.current = window.setTimeout(() => {
-      void saveUiSettingsPatch({ app: buildLayoutUiSettings() }).catch(() => {
-        // Best effort.
-      })
-    }, 250)
-    return () => {
-      if (appLayoutSaveTimerRef.current) {
-        window.clearTimeout(appLayoutSaveTimerRef.current)
-        appLayoutSaveTimerRef.current = null
-      }
-    }
-  }, [
-    backendUrl,
-    capturePanelOpen,
-    capturePinned,
-    editorPanelOpen,
-    expandedFolders,
-    explorerWidth,
-    vaultLoaded,
-    workspaceState.layoutMode,
-    workspaceState.splitRatio,
-  ])
+  }, [activeColorProfileId, colorProfiles, theme])
 
   const settingsDirty = useMemo(
     () =>
       theme !== savedTheme ||
+      activeColorProfileId !== savedActiveColorProfileId ||
+      !areColorProfilesEqual(colorProfiles, savedColorProfiles) ||
       displayName !== savedDisplayName ||
       sidebarOpen !== savedSidebarOpen ||
       !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
@@ -479,6 +588,8 @@ function App() {
       displayName,
       explorerOptions,
       savedDisplayName,
+      savedActiveColorProfileId,
+      savedColorProfiles,
       savedExplorerOptions,
       savedSidebarOpen,
       savedStatusBarPrefs,
@@ -488,6 +599,8 @@ function App() {
       statusBarPrefs,
       taskFeatureSettings,
       theme,
+      activeColorProfileId,
+      colorProfiles,
     ]
   )
 
@@ -544,72 +657,239 @@ function App() {
   const activePaneId = workspaceState.lastFocusedPane
   const activeTab = paneActiveTabs[activePaneId] ?? paneActiveTabs.left ?? paneActiveTabs.right ?? null
 
-  const refreshTasks = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
+  const backendDataService = useMemo(
+    () =>
+      new BackendDataService(
+        {
+          getBackendUrl: () => backendUrl,
+          isVaultLoaded: () => vaultLoaded,
+          getReviewWindow: () => reviewDashboardFilters.window,
+        },
+        {
+          setTasks,
+          setTodos,
+          setExplorerFiles,
+          setSearchResults,
+          setAllNotes,
+          setReviewDashboardData,
+          setFocusDashboardStats,
+          setCounts,
+          setFocusMitIds,
+          setCustomTagGroups,
+          setNoteGroups,
+          setError,
+        }
+      ),
+    [backendUrl, vaultLoaded, reviewDashboardFilters.window]
+  )
 
-    const response = await apiRequest<{ items: TaskRow[] }>(backendUrl, '/tasks?include_done=true')
-    setTasks(response.items)
-  }
-
-  const refreshTodos = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    const response = await apiRequest<{ items: TodoRow[] }>(backendUrl, '/todos')
-    setTodos(response.items)
-  }
-
-  const refreshExplorerFiles = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    try {
-      const response = await apiRequest<{ items: SearchRow[] }>(backendUrl, '/explorer/files')
-      setExplorerFiles(response.items)
-    } catch {
-      // Fallback: Explorer can still render indexed rows.
-    }
-  }
-
-  const runSearch = async (query: string, force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    const cleanQuery = query.trim()
-    try {
-      const response = await apiRequest<{ items: SearchRow[] }>(
-        backendUrl,
-        `/search?query=${encodeURIComponent(query)}`
-      )
-      setSearchResults(response.items)
-      if (!cleanQuery) {
-        setAllNotes(response.items)
+  const refreshTasks = (force = false) => backendDataService.refreshTasks(force)
+  const refreshTodos = (force = false) => backendDataService.refreshTodos(force)
+  const runSearch = (query: string, force = false) => backendDataService.runSearch(query, force)
+  const refreshReview = (force = false) => backendDataService.refreshReview(force)
+  const refreshFocusAggregate = (force = false) => backendDataService.refreshFocusAggregate(force)
+  const refreshNoteGroups = (force = false) => backendDataService.refreshNoteGroups(force)
+  const refreshExplorerSidebarData = (force = false) => backendDataService.refreshExplorerSidebarData(force)
+  const refreshWorkspaceData = (force = false) => backendDataService.refreshWorkspaceData(searchQuery, force)
+  const emitMutationEvent = useCallback(
+    async (event: AppMutationEvent): Promise<void> => {
+      if (!vaultLoaded) {
         return
       }
 
-      void apiRequest<{ items: SearchRow[] }>(backendUrl, '/search?query=')
-        .then((allResponse) => {
-          setAllNotes(allResponse.items)
-        })
-        .catch(() => {
-          // Best effort refresh for wikilinks.
-        })
-    } catch (caught) {
-      setError(String(caught))
-      if (!cleanQuery) {
-        setSearchResults([])
-        setAllNotes([])
+      const defaultRefresh: MutationRefreshPlan = (() => {
+        if (event.refresh) {
+          return event.refresh
+        }
+        switch (event.kind) {
+          case 'note-saved':
+            return {
+              search: true,
+              tasks: event.noteType === 'task',
+              todos: true,
+              review: true,
+              noteGroups: true,
+              explorerSidebar: true,
+            }
+          case 'note-created':
+          case 'note-renamed':
+          case 'note-moved':
+          case 'note-deleted':
+            return {
+              search: true,
+              tasks: true,
+              todos: true,
+              review: true,
+              noteGroups: true,
+              explorerSidebar: true,
+            }
+          case 'note-group-mutated':
+            return {
+              search: true,
+              noteGroups: true,
+              explorerSidebar: true,
+            }
+          case 'notes-batch-updated':
+            return {
+              search: true,
+              tasks: true,
+              todos: true,
+              review: true,
+              explorerSidebar: true,
+            }
+          case 'tag-mutated':
+            return {
+              search: true,
+              review: true,
+            }
+          case 'capture-saved':
+            return {
+              search: true,
+              todos: true,
+              review: true,
+              noteGroups: true,
+              explorerSidebar: true,
+            }
+          case 'todo-updated':
+            return {
+              search: true,
+              tasks: true,
+              todos: true,
+              review: true,
+            }
+          case 'focus-updated':
+            return {
+              focusAggregate: true,
+              review: true,
+            }
+          case 'import-completed':
+            return {
+              search: true,
+              tasks: true,
+              todos: true,
+              review: true,
+              noteGroups: true,
+              explorerSidebar: true,
+            }
+          default:
+            return {}
+        }
+      })()
+
+      const shouldRefreshGraph = (() => {
+        if (event.graphStatus) {
+          return true
+        }
+        switch (event.kind) {
+          case 'note-saved':
+          case 'note-created':
+          case 'note-renamed':
+          case 'note-moved':
+          case 'note-deleted':
+          case 'note-group-mutated':
+          case 'notes-batch-updated':
+          case 'tag-mutated':
+          case 'capture-saved':
+          case 'import-completed':
+            return true
+          default:
+            return false
+        }
+      })()
+
+      if (shouldRefreshGraph) {
+        if (event.graphStatus) {
+          setLatestGraphStatus(event.graphStatus)
+        }
+        setGraphUpdateToken((current) => current + 1)
       }
-    } finally {
-      if (!cleanQuery) {
-        await refreshExplorerFiles(force)
+
+      const refreshTasksList: Promise<unknown>[] = []
+      const pushRefresh = (refresh: () => Promise<void> | void) => {
+        const next = refresh()
+        if (next && typeof (next as Promise<unknown>).then === 'function') {
+          refreshTasksList.push(next as Promise<unknown>)
+        }
       }
-    }
+
+      const refresh = {
+        search: defaultRefresh.search ?? false,
+        tasks: defaultRefresh.tasks ?? false,
+        todos: defaultRefresh.todos ?? false,
+        review: defaultRefresh.review ?? false,
+        noteGroups: defaultRefresh.noteGroups ?? false,
+        explorerSidebar: defaultRefresh.explorerSidebar ?? false,
+        focusAggregate: defaultRefresh.focusAggregate ?? false,
+      }
+
+      if (refresh.search) {
+        pushRefresh(() => runSearch(searchQuery))
+      }
+      if (refresh.tasks) {
+        pushRefresh(() => refreshTasks())
+      }
+      if (refresh.todos) {
+        pushRefresh(() => refreshTodos())
+      }
+      if (refresh.review) {
+        pushRefresh(() => refreshReview())
+      }
+      if (refresh.noteGroups) {
+        pushRefresh(() => refreshNoteGroups())
+      }
+      if (refresh.focusAggregate) {
+        pushRefresh(() => refreshFocusAggregate())
+      }
+      if (refresh.explorerSidebar) {
+        pushRefresh(() => refreshExplorerSidebarData())
+      }
+
+      const normalizedPaths = Array.from(new Set((event.paths ?? []).map(normalizeFilePathKey).filter(Boolean)))
+      if (normalizedPaths.length > 0) {
+        const byPath = new Map<string, string>()
+        for (const value of event.paths ?? []) {
+          const normalizedPath = normalizeFilePathKey(value)
+          if (normalizedPath && !byPath.has(normalizedPath)) {
+            byPath.set(normalizedPath, value)
+          }
+        }
+        pushRefresh(() => refreshOpenTabsFromDisk(Array.from(byPath.values())))
+      }
+
+      if (refreshTasksList.length > 0) {
+        await Promise.allSettled(refreshTasksList)
+      }
+    },
+    [
+      refreshExplorerSidebarData,
+      refreshFocusAggregate,
+      refreshNoteGroups,
+      refreshOpenTabsFromDisk,
+      refreshReview,
+      refreshTasks,
+      refreshTodos,
+      runSearch,
+      searchQuery,
+      vaultLoaded,
+    ]
+  )
+
+  const clearAppStateForClosedNoteBase = () => {
+    setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
+    setTasks([])
+    setTodos([])
+    setFocusMitIds([])
+    setFocusDashboardStats(EMPTY_FOCUS_DASHBOARD_STATS)
+    setSearchResults([])
+    setSuggestions([])
+    setSelectedTagKeys([])
+    setOpenTabs([])
+    dispatchWorkspace({ type: 'RESET' })
+    setCustomTagGroups([])
+    setNoteGroups([])
+    setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
+    setExplorerViewSeed(null)
+    setExplorerViewSeedId((prev) => prev + 1)
   }
 
   useEffect(() => {
@@ -626,74 +906,26 @@ function App() {
 
     let cancelled = false
     const timeout = window.setTimeout(() => {
-      void apiRequest<{ items: SearchRow[] }>(backendUrl, `/search?query=${encodeURIComponent(query)}`)
+      void backendDataService
+        .getExplorerContentMatchPathKeys(query)
         .then((response) => {
           if (cancelled) {
             return
           }
-          const next = new Set(
-            response.items.map((row) => row.path.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase())
-          )
-          setExplorerContentMatchPathKeys(next)
+          setExplorerContentMatchPathKeys(response)
         })
         .catch(() => {
           if (!cancelled) {
             setExplorerContentMatchPathKeys(new Set())
           }
         })
-    }, 180)
+    }, EXPLORER_MATCH_DEBOUNCE_MS)
 
     return () => {
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [backendUrl, explorerFilterQuery, vaultLoaded])
-
-  const refreshAllNotes = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    try {
-      const response = await apiRequest<{ items: SearchRow[] }>(backendUrl, '/search?query=')
-      setAllNotes(response.items)
-    } catch (caught) {
-      setError(String(caught))
-      setAllNotes([])
-    }
-  }
-
-  const toReviewWindowDays = (windowValue: ReviewDashboardFilters['window']): number => {
-    if (windowValue === 'today') {
-      return 1
-    }
-    if (windowValue === '7d') {
-      return 7
-    }
-    if (windowValue === '90d') {
-      return 90
-    }
-    return 30
-  }
-
-  const refreshReview = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    try {
-      const todayIso = toLocalIsoDate()
-      const reviewDays = toReviewWindowDays(reviewDashboardFilters.window)
-      const dashboard = await apiRequest<ReviewDashboardResponse>(
-        backendUrl,
-        `/review/dashboard?days=${reviewDays}&top=10&day=${encodeURIComponent(todayIso)}`
-      )
-      setReviewDashboardData(dashboard)
-    } catch (caught) {
-      setError(String(caught))
-      setReviewDashboardData(null)
-    }
-  }
+  }, [backendDataService, explorerFilterQuery, vaultLoaded])
 
   useEffect(() => {
     if (!vaultLoaded) {
@@ -701,287 +933,300 @@ function App() {
     }
     void refreshReview()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vaultLoaded, reviewDashboardFilters.window])
+  }, [vaultLoaded, reviewDashboardFilters.window, refreshReview])
 
-  const refreshFocusAggregate = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-    const todayIso = toLocalIsoDate()
-    const response = await apiRequest<FocusDashboardAggregateResponse>(
+      const appLifecycleService = useMemo(
+        () =>
+          new AppLifecycleService({
+            getBackendUrl: () => backendUrl,
+            snapshot: {
+              getTheme: () => theme,
+              getActiveColorProfileId: () => activeColorProfileId,
+              getColorProfiles: () => colorProfiles,
+              getDisplayName: () => displayName,
+              getVaultPath: () => vaultPath,
+              isSidebarOpen: () => sidebarOpen,
+              getStatusBarPrefs: () => statusBarPrefs,
+              getTaskFeatureSettings: () => taskFeatureSettings,
+              getExplorerOptions: () => explorerOptions,
+              getExplorerWidth: () => explorerWidth,
+              isEditorPanelOpen: () => editorPanelOpen,
+              isCapturePanelOpen: () => capturePanelOpen,
+              isCapturePinned: () => capturePinned,
+              getExpandedFolders: () => expandedFolders,
+              getWorkspaceLayoutMode: () => workspaceState.layoutMode,
+              getWorkspaceSplitRatio: () => workspaceState.splitRatio,
+              isCreateNoteBasePending: () => createNoteBasePending,
+              getCreateNoteBaseParentPath: () => createNoteBaseParentPath,
+              getCreateNoteBaseDisplayName: () => createNoteBaseDisplayName,
+              getCreateNoteBaseName: () => createNoteBaseName,
+            },
+            writer: {
+              setTheme,
+              setActiveColorProfileId,
+              setColorProfiles,
+              setDisplayName,
+              setSidebarOpen,
+              setStatusBarPrefs,
+              setTaskFeatureSettings,
+              setExplorerOptions,
+              setSavedTheme,
+              setSavedActiveColorProfileId,
+              setSavedColorProfiles,
+              setSavedDisplayName,
+              setSavedSidebarOpen,
+              setSavedStatusBarPrefs,
+              setSavedTaskFeatureSettings,
+              setSavedExplorerOptions,
+              setExplorerWidth,
+              setEditorPanelOpen,
+              setCapturePanelOpen,
+              setCapturePinned,
+              setExpandedFolders,
+              setExplorerViewState,
+              setExplorerViewSeed,
+              setExplorerViewSeedId,
+              setExplorerFilterQuery,
+          setUiSettingsReady: (ready) => {
+            uiSettingsReadyRef.current = ready
+          },
+          setVaultLoaded,
+          setNoteBaseOpenStatus,
+          setMessage,
+          setError,
+          setWarnMessage,
+          setCriticalMessage,
+          setCounts,
+          setCustomTagGroups,
+          setVaultPath,
+              setFocusMitIds,
+              setOpenTabs,
+              setCreateNoteBaseDialogOpen,
+              setCreateNoteBaseParentPath,
+              setCreateNoteBaseDisplayName,
+              setCreateNoteBaseName,
+              setCreateNoteBasePending,
+            },
+            pickDirectory: async () => {
+              if (!window.nicknotes?.selectDirectory) {
+                return window.prompt('Bitte absoluten Pfad eingeben:') || null
+              }
+              return window.nicknotes.selectDirectory()
+            },
+            dispatchWorkspace,
+            refreshWorkspaceData: (force) => refreshWorkspaceData(force),
+            openTagActionDialog,
+            refreshSearch: (force = false) => runSearch(searchQuery, force),
+            refreshFocusAggregate: (force = false) => refreshFocusAggregate(force),
+            refreshReview: (force = false) => refreshReview(force),
+            refreshNoteGroups: (force = false) => refreshNoteGroups(force),
+            resetWorkspaceForClosedVault: () => {
+              setVaultPath('')
+              clearAppStateForClosedNoteBase()
+            },
+            isNoteBaseOpenActive: () => !!noteBaseOpenStatus?.active,
+            isAutoOpenTried: () => autoOpenTriedRef.current,
+            setAutoOpenTried: (value) => {
+              autoOpenTriedRef.current = value
+            },
+      }),
+    [
+      activeColorProfileId,
+      autoOpenTriedRef,
+      autoOpenTriedRef.current,
       backendUrl,
-      `/focus/dashboard?date=${encodeURIComponent(todayIso)}`
-    )
-    setTasks(Array.isArray(response.tasks) ? response.tasks : [])
-    setTodos(Array.isArray(response.todos) ? response.todos : [])
-    setAllNotes(Array.isArray(response.notes) ? response.notes : [])
-    setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
-    if (response.counts) {
-      setCounts(response.counts)
-    }
-  }
-
-  const refreshTagGroups = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups')
-    setCustomTagGroups(toStorageTagGroups(response.groups))
-  }
-
-  const refreshNoteGroups = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-
-    try {
-      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, '/note-groups')
-      setNoteGroups(response.groups)
-    } catch (caught) {
-      setError(String(caught))
-      setNoteGroups([])
-    }
-  }
-
-  const refreshExplorerSidebarData = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-    await Promise.allSettled([refreshTasks(force), refreshNoteGroups(force), refreshAllNotes(force), refreshExplorerFiles(force)])
-  }
-
-  const refreshWorkspaceData = async (force = false) => {
-    if (!vaultLoaded && !force) {
-      return
-    }
-    await Promise.allSettled([
-      refreshTasks(force),
-      refreshFocusAggregate(force),
-      runSearch(searchQuery, force),
-      refreshReview(force),
-      refreshTagGroups(force),
-      refreshExplorerSidebarData(force),
-    ])
-  }
-
-  const saveUiSettingsPatch = useCallback(
-    async (patch: { app?: Record<string, unknown>; explorer?: ExplorerViewState }) => {
-      await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings', {
-        method: 'POST',
-        body: JSON.stringify(patch),
-      })
-    },
-    [backendUrl]
+      capturePanelOpen,
+      capturePinned,
+      colorProfiles,
+      displayName,
+      editorPanelOpen,
+      expandedFolders,
+      searchQuery,
+      explorerOptions,
+      explorerWidth,
+      openTagActionDialog,
+      clearAppStateForClosedNoteBase,
+      noteBaseOpenStatus,
+      refreshWorkspaceData,
+      createNoteBaseDisplayName,
+      createNoteBaseName,
+      createNoteBaseParentPath,
+              createNoteBasePending,
+              vaultPath,
+              sidebarOpen,
+              statusBarPrefs,
+              taskFeatureSettings,
+              theme,
+              workspaceState.layoutMode,
+      workspaceState.splitRatio,
+    ],
   )
 
-  const buildFullAppUiSettings = (): Record<string, unknown> => ({
-    theme,
-    displayName,
-    sidebarOpen,
-    statusBarPrefs,
-    taskFeatureSettings,
-    explorerOptions,
-    explorerWidth,
-    editorPanelOpen,
+  const saveUiSettingsPatch = appLifecycleService.saveUiSettingsPatch
+  const buildFullAppUiSettings = appLifecycleService.buildFullAppUiSettings
+  const buildLayoutUiSettings = appLifecycleService.buildLayoutUiSettings
+  const loadState = appLifecycleService.loadState
+  const createVault = appLifecycleService.openCreateNoteBaseDialog
+  const closeCreateNoteBaseDialog = appLifecycleService.closeCreateNoteBaseDialog
+  const chooseCreateNoteBaseParentDirectory = appLifecycleService.chooseCreateNoteBaseParentDirectory
+  const submitCreateNoteBaseDialog = appLifecycleService.submitCreateNoteBaseDialog
+  const pickAndOpenVault = appLifecycleService.pickAndOpenVault
+  const renameNoteBase = appLifecycleService.renameNoteBase
+  const deleteNoteBase = appLifecycleService.deleteNoteBase
+
+  const noteCaptureService = useMemo(
+    () =>
+      new NoteCaptureService(
+        {
+          getBackendUrl: () => backendUrl,
+          isVaultLoaded: () => vaultLoaded,
+          getCaptureText: () => captureText,
+          getIgnoredCaptureTagKeys: () => ignoredCaptureTagKeys,
+          getSelectedTagKeys: () => selectedTagKeys,
+          getCapturePreviewSeq: () => capturePreviewRequestSeqRef.current,
+          setCapturePreviewSeq: (value) => {
+            capturePreviewRequestSeqRef.current = value
+          },
+          getCapturePreviewLastText: () => capturePreviewLastTextRef.current,
+          setCapturePreviewLastText: (value) => {
+            capturePreviewLastTextRef.current = value
+          },
+          emitMutation: emitMutationEvent,
+        },
+        {
+          setSuggestions,
+          setSelectedTagKeys,
+          setIgnoredCaptureTagKeys,
+          setCaptureText,
+          setMessage,
+          setError,
+          setCounts,
+        }
+      ),
+      [
+        backendUrl,
+        captureText,
+        emitMutationEvent,
+        ignoredCaptureTagKeys,
+        selectedTagKeys,
+        vaultLoaded,
+      ]
+  )
+
+  const previewCapture = noteCaptureService.previewCapture
+  const toggleCaptureTag = noteCaptureService.toggleCaptureTag
+  const rejectCaptureTag = noteCaptureService.rejectCaptureTag
+  const saveCapture = noteCaptureService.saveCapture
+
+  const appSettingsService = useMemo(
+    () =>
+      new AppSettingsService({
+        snapshot: {
+          getTheme: () => theme,
+          getActiveColorProfileId: () => activeColorProfileId,
+          getColorProfiles: () => colorProfiles,
+          getDisplayName: () => displayName,
+          isSidebarOpen: () => sidebarOpen,
+          getStatusBarPrefs: () => statusBarPrefs,
+          getTaskFeatureSettings: () => taskFeatureSettings,
+          getExplorerOptions: () => explorerOptions,
+          getSavedTheme: () => savedTheme,
+          getSavedActiveColorProfileId: () => savedActiveColorProfileId,
+          getSavedColorProfiles: () => savedColorProfiles,
+          getSavedDisplayName: () => savedDisplayName,
+          getSavedSidebarOpen: () => savedSidebarOpen,
+          getSavedStatusBarPrefs: () => savedStatusBarPrefs,
+          getSavedTaskFeatureSettings: () => savedTaskFeatureSettings,
+          getSavedExplorerOptions: () => savedExplorerOptions,
+        },
+        writer: {
+          setTheme,
+          setActiveColorProfileId,
+          setColorProfiles,
+          setDisplayName,
+          setSidebarOpen,
+          setStatusBarPrefs,
+          setTaskFeatureSettings,
+          setExplorerOptions,
+          setSavedTheme,
+          setSavedActiveColorProfileId,
+          setSavedColorProfiles,
+          setSavedDisplayName,
+          setSavedSidebarOpen,
+          setSavedStatusBarPrefs,
+          setSavedTaskFeatureSettings,
+          setSavedExplorerOptions,
+          setMessage,
+          setError,
+        },
+        isVaultLoaded: () => vaultLoaded,
+        setSettingsDialogOpen,
+        saveUiSettingsPatch,
+        buildFullAppUiSettings,
+      }),
+    [
+      activeColorProfileId,
+      buildFullAppUiSettings,
+      colorProfiles,
+      displayName,
+      explorerOptions,
+      saveUiSettingsPatch,
+      savedActiveColorProfileId,
+      savedColorProfiles,
+      savedDisplayName,
+      savedExplorerOptions,
+      savedSidebarOpen,
+      savedStatusBarPrefs,
+      savedTaskFeatureSettings,
+      savedTheme,
+      sidebarOpen,
+      statusBarPrefs,
+      taskFeatureSettings,
+      theme,
+      vaultLoaded,
+    ],
+  )
+
+  const saveSettings = appSettingsService.saveSettings
+  const discardSettings = appSettingsService.discardSettings
+  const requestSaveSettings = appSettingsService.requestSaveSettings
+  const setSettingsDisplayName = appSettingsService.setDisplayName
+  const setSettingsColorProfiles = appSettingsService.setColorProfiles
+  const handleActiveColorProfileChange = appSettingsService.handleActiveColorProfileChange
+  const openSettingsDialog = appSettingsService.openSettingsDialog
+  const closeSettingsDialog = appSettingsService.closeSettingsDialog
+  const toggleThemeMode = appSettingsService.toggleThemeMode
+
+  useEffect(() => {
+    if (!vaultLoaded || !uiSettingsReadyRef.current) {
+      return
+    }
+    if (appLayoutSaveTimerRef.current) {
+      window.clearTimeout(appLayoutSaveTimerRef.current)
+    }
+    appLayoutSaveTimerRef.current = window.setTimeout(() => {
+      void saveUiSettingsPatch({ app: buildLayoutUiSettings() }).catch(() => {
+        // Best effort.
+      })
+    }, 250)
+    return () => {
+      if (appLayoutSaveTimerRef.current) {
+        window.clearTimeout(appLayoutSaveTimerRef.current)
+        appLayoutSaveTimerRef.current = null
+      }
+    }
+  }, [
+    saveUiSettingsPatch,
+    buildLayoutUiSettings,
     capturePanelOpen,
     capturePinned,
-    tagExpandedGroups: expandedFolders,
-    workspaceLayoutMode: workspaceState.layoutMode,
-    workspaceSplitRatio: workspaceState.splitRatio,
-  })
-
-  const buildLayoutUiSettings = (): Record<string, unknown> => ({
-    explorerWidth,
     editorPanelOpen,
-    capturePanelOpen,
-    capturePinned,
-    tagExpandedGroups: expandedFolders,
-    workspaceLayoutMode: workspaceState.layoutMode,
-    workspaceSplitRatio: workspaceState.splitRatio,
-  })
-
-  const applyUiSettings = (settings: UiSettingsPayload) => {
-    const appSettings = settings.app ?? {}
-
-    const nextTheme = toThemeMode(appSettings.theme, getPreferredTheme())
-    const nextDisplayName = normalizeLabel(typeof appSettings.displayName === 'string' ? appSettings.displayName : '') || 'Max'
-    const nextSidebarOpen = toBoolean(appSettings.sidebarOpen, true)
-    const nextStatusBarPrefs = toStatusBarPrefsFromSettings(appSettings.statusBarPrefs)
-    const nextTaskFeatureSettings = toTaskFeatureSettingsFromSettings(appSettings.taskFeatureSettings)
-    const nextExplorerOptions = toExplorerOptionsFromSettings(appSettings.explorerOptions)
-    const nextExplorerWidth = toBoundedNumber(appSettings.explorerWidth, 300, 220, 520)
-    const nextEditorPanelOpen = toBoolean(appSettings.editorPanelOpen, true)
-    const nextCapturePanelOpen = toBoolean(appSettings.capturePanelOpen, true)
-    const nextCapturePinned = toBoolean(appSettings.capturePinned, true)
-    const nextExpandedGroups = toExpandedTagGroups(appSettings.tagExpandedGroups)
-    const nextWorkspaceLayoutMode = appSettings.workspaceLayoutMode === 'split' ? 'split' : 'single'
-    const nextWorkspaceSplitRatio = toBoundedNumber(appSettings.workspaceSplitRatio, 0.5, 0.15, 0.85)
-
-    setTheme(nextTheme)
-    setDisplayName(nextDisplayName)
-    setSidebarOpen(nextSidebarOpen)
-    setStatusBarPrefs(nextStatusBarPrefs)
-    setTaskFeatureSettings(nextTaskFeatureSettings)
-    setExplorerOptions(nextExplorerOptions)
-    setSavedTheme(nextTheme)
-    setSavedDisplayName(nextDisplayName)
-    setSavedSidebarOpen(nextSidebarOpen)
-    setSavedStatusBarPrefs(nextStatusBarPrefs)
-    setSavedTaskFeatureSettings(nextTaskFeatureSettings)
-    setSavedExplorerOptions(nextExplorerOptions)
-    setExplorerWidth(nextExplorerWidth)
-    setEditorPanelOpen(nextEditorPanelOpen)
-    setCapturePanelOpen(nextCapturePanelOpen)
-    setCapturePinned(nextCapturePinned)
-    setExpandedFolders(nextExpandedGroups)
-    dispatchWorkspace({
-      type: 'TOGGLE_SPLIT_MODE',
-      enabled: nextWorkspaceLayoutMode === 'split',
-    })
-    dispatchWorkspace({
-      type: 'SET_SPLIT_RATIO',
-      splitRatio: nextWorkspaceSplitRatio,
-    })
-
-    const nextExplorerViewState = toExplorerViewStateFromSettings(settings.explorer)
-    setExplorerViewState(nextExplorerViewState)
-    setExplorerViewSeed(nextExplorerViewState)
-    setExplorerViewSeedId((prev) => prev + 1)
-    setExplorerFilterQuery('')
-    uiSettingsReadyRef.current = true
-  }
-
-  const loadUiSettings = async () => {
-    try {
-      const response = await apiRequest<{ settings: UiSettingsPayload }>(backendUrl, '/ui-settings')
-      applyUiSettings(response.settings ?? {})
-    } catch {
-      uiSettingsReadyRef.current = true
-    }
-  }
-
-  const waitForNoteBaseOpen = async (): Promise<NonNullable<NoteBaseOpenStatus['result']>> => {
-    while (true) {
-      const status = await apiRequest<NoteBaseOpenStatus>(backendUrl, '/notebase/open/status')
-      setNoteBaseOpenStatus(status)
-      if (status.done) {
-        if (status.error) {
-          throw new Error(status.error)
-        }
-        if (!status.result) {
-          throw new Error('NoteBase wurde geladen, aber das Ergebnis fehlt.')
-        }
-        return status.result
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, NOTEBASE_OPEN_POLL_MS))
-    }
-  }
-
-  const openVaultAtPath = async (rawPath: string, successMessage: string): Promise<boolean> => {
-    const path = normalizeLabel(rawPath)
-    if (!path) {
-      throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
-    }
-
-    setVaultLoaded(false)
-    setNoteBaseOpenStatus({
-      active: true,
-      done: false,
-      error: null,
-      phase: 'NoteBase wird vorbereitet ...',
-      processed: 0,
-      total: 0,
-      result: null,
-    })
-    setMessage('NoteBase wird geladen ...')
-    await apiRequest<{ started: boolean; path: string }>(backendUrl, '/notebase/open/start', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    })
-    const response = await waitForNoteBaseOpen()
-    const loadedPath = response.noteBasePath ?? response.vaultPath ?? path
-    uiSettingsReadyRef.current = false
-    setVaultPath(loadedPath)
-    setVaultLoaded(true)
-    setCounts(response.counts)
-    if (response.tagGroups) {
-      setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-    }
-    storeLastNoteBasePath(loadedPath)
-    setMessage(successMessage)
-    setError('')
-    setNoteBaseOpenStatus(null)
-
-    await loadUiSettings()
-    await refreshWorkspaceData(true)
-    return true
-  }
-
-  const isMissingNoteBasePathError = (value: unknown): boolean => {
-    const text = String(value || '').toLowerCase()
-    return text.includes('notebase path not found') || text.includes('path not found') || text.includes('enoent')
-  }
-
-  const loadState = async () => {
-    try {
-      const state = await apiRequest<BackendState>(backendUrl, '/state')
-      if (!state.vaultLoaded) {
-        uiSettingsReadyRef.current = false
-        setVaultLoaded(false)
-        if (!noteBaseOpenStatus?.active) {
-          setNoteBaseOpenStatus(null)
-        }
-        setFocusMitIds([])
-        setOpenTabs([])
-        dispatchWorkspace({ type: 'RESET' })
-        setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
-        setExplorerViewSeed(null)
-        setExplorerViewSeedId((prev) => prev + 1)
-        let missingRememberedPathHandled = false
-        const rememberedPath = getStoredLastNoteBasePath()
-        if (rememberedPath && !autoOpenTriedRef.current) {
-          autoOpenTriedRef.current = true
-          setVaultPath(rememberedPath)
-          try {
-            await openVaultAtPath(rememberedPath, 'Letzte NoteBase automatisch geladen.')
-            return
-          } catch (autoOpenError) {
-            if (isMissingNoteBasePathError(autoOpenError)) {
-              clearStoredLastNoteBasePath()
-              setVaultPath('')
-              setError('')
-              setMessage('Letzte NoteBase nicht gefunden. Bitte waehle eine NoteBase aus.')
-              missingRememberedPathHandled = true
-            } else {
-              setError(String(autoOpenError))
-            }
-          }
-        }
-        if (!missingRememberedPathHandled) {
-          setMessage('Keine NoteBase geladen.')
-        }
-        return
-      }
-
-      setVaultLoaded(true)
-      setNoteBaseOpenStatus(null)
-      const loadedPath = state.noteBasePath ?? state.vaultPath ?? ''
-      setVaultPath(loadedPath)
-      storeLastNoteBasePath(loadedPath)
-      uiSettingsReadyRef.current = false
-      if (state.counts) {
-        setCounts(state.counts)
-      }
-      setMessage('NoteBase geladen.')
-      setError('')
-
-      await loadUiSettings()
-      await refreshWorkspaceData(true)
-    } catch (caught) {
-      setError(`Backend nicht erreichbar: ${String(caught)}`)
-    }
-  }
+    expandedFolders,
+    explorerWidth,
+    vaultLoaded,
+    workspaceState.layoutMode,
+    workspaceState.splitRatio,
+  ])
 
   useEffect(() => {
     void loadState()
@@ -1020,45 +1265,10 @@ function App() {
     if (!vaultLoaded) {
       return
     }
+    void previewCapture(captureText)
 
-    const normalizedCapture = captureText.trim()
-    if (!normalizedCapture) {
-      setSuggestions([])
-      setSelectedTagKeys([])
-      setIgnoredCaptureTagKeys([])
-      capturePreviewLastTextRef.current = ''
-      capturePreviewRequestSeqRef.current += 1
-      return
-    }
-
-    if (normalizedCapture.length < CAPTURE_PREVIEW_MIN_CHARS) {
-      setSuggestions([])
-      setSelectedTagKeys([])
-      capturePreviewLastTextRef.current = ''
-      capturePreviewRequestSeqRef.current += 1
-      return
-    }
-
-    const timeout = window.setTimeout(() => {
-      void previewCapture(normalizedCapture)
-    }, CAPTURE_PREVIEW_IDLE_MS)
-
-    return () => {
-      window.clearTimeout(timeout)
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captureText, vaultLoaded])
-
-  useEffect(() => {
-    setOpenTabs((prev) =>
-      prev.map((tab) => {
-        if (tab.path !== SETTINGS_TAB_PATH || tab.dirty === settingsDirty) {
-          return tab
-        }
-        return { ...tab, dirty: settingsDirty }
-      })
-    )
-  }, [settingsDirty])
 
   const sortedNotes = useMemo(() => {
     return [...searchResults].sort((left, right) => {
@@ -1237,9 +1447,6 @@ function App() {
   const tabContextTarget = tabContextMenu ? tabsById[tabContextMenu.tabId] ?? null : null
   const resolveNoteTabIconName = (tab: NoteTab): string => {
     if (tab.kind !== 'note') {
-      if (tab.kind === 'settings') {
-        return 'Settings'
-      }
       if (tab.kind === 'todo_dashboard') {
         return 'ListTodo'
       }
@@ -1315,199 +1522,6 @@ function App() {
       })
       .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
   }, [explorerRows, toWikiTargetForRow, vaultPath])
-
-  const pickDirectory = async (): Promise<string | null> => {
-    if (!window.nicknotes?.selectDirectory) {
-      return window.prompt('Bitte absoluten Pfad eingeben:') || null
-    }
-    return window.nicknotes.selectDirectory()
-  }
-
-  const deriveParentDirectory = (path: string): string => {
-    const cleanPath = normalizeLabel(path).replace(/[\\/]+$/g, '')
-    if (!cleanPath) {
-      return ''
-    }
-    const splitIndex = Math.max(cleanPath.lastIndexOf('/'), cleanPath.lastIndexOf('\\'))
-    if (splitIndex < 0) {
-      return ''
-    }
-    const parent = cleanPath.slice(0, splitIndex)
-    if (/^[A-Za-z]:$/i.test(parent)) {
-      return `${parent}\\`
-    }
-    return parent
-  }
-
-  const suggestNoteBaseName = (name: string): string => {
-    const cleanName = normalizeLabel(name)
-    if (!cleanName) {
-      return 'NeueNoteBase'
-    }
-    return `${cleanName}NoteBase`
-  }
-
-  const closeCreateNoteBaseDialog = () => {
-    if (createNoteBasePending) {
-      return
-    }
-    setCreateNoteBaseDialogOpen(false)
-  }
-
-  const createVault = () => {
-    setCreateNoteBaseParentPath(deriveParentDirectory(vaultPath))
-    setCreateNoteBaseDisplayName(displayName)
-    setCreateNoteBaseName(suggestNoteBaseName(displayName))
-    setCreateNoteBaseDialogOpen(true)
-  }
-
-  const chooseCreateNoteBaseParentDirectory = async () => {
-    try {
-      setError('')
-      const selectedPath = await pickDirectory()
-      if (!selectedPath) {
-        return
-      }
-      setCreateNoteBaseParentPath(selectedPath)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const submitCreateNoteBaseDialog = async () => {
-    const parentPath = normalizeLabel(createNoteBaseParentPath)
-    const name = normalizeLabel(createNoteBaseName)
-    const nextDisplayName = normalizeLabel(createNoteBaseDisplayName)
-    if (!parentPath) {
-      setError('Bitte zuerst einen Speicherort fuer die neue NoteBase auswaehlen.')
-      return
-    }
-    if (!name) {
-      setError('Bitte einen Namen fuer die neue NoteBase eingeben.')
-      return
-    }
-    if (/[\\/]/.test(name) || name === '.' || name === '..') {
-      setError('Der NoteBase-Name darf keine Pfadtrenner enthalten.')
-      return
-    }
-
-    try {
-      setError('')
-      setCreateNoteBasePending(true)
-      const response = await apiRequest<{
-        vaultPath: string
-        noteBasePath?: string
-        counts: VaultCounts
-        tagGroups?: unknown
-      }>(backendUrl, '/notebase/create', {
-        method: 'POST',
-        body: JSON.stringify({ parentPath, name }),
-      })
-
-      const loadedPath = response.noteBasePath ?? response.vaultPath
-      setVaultPath(loadedPath)
-      setVaultLoaded(true)
-      setCounts(response.counts)
-      uiSettingsReadyRef.current = false
-      storeLastNoteBasePath(loadedPath)
-      if (response.tagGroups) {
-        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      if (nextDisplayName) {
-        setDisplayName(nextDisplayName)
-      }
-      setCreateNoteBaseDialogOpen(false)
-      setMessage(`Neue NoteBase erstellt: ${loadedPath}`)
-      await loadUiSettings()
-      await refreshWorkspaceData(true)
-    } catch (caught) {
-      setError(String(caught))
-    } finally {
-      setCreateNoteBasePending(false)
-    }
-  }
-
-  const pickAndOpenVault = async () => {
-    try {
-      setError('')
-      const path = await pickDirectory()
-      if (!path) {
-        return
-      }
-      setVaultPath(path)
-      await openVaultAtPath(path, 'NoteBase automatisch geladen.')
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const saveSettings = async (): Promise<boolean> => {
-    try {
-      if (vaultLoaded) {
-        await saveUiSettingsPatch({
-          app: buildFullAppUiSettings(),
-        })
-      }
-      setSavedTheme(theme)
-      setSavedDisplayName(displayName)
-      setSavedSidebarOpen(sidebarOpen)
-      setSavedStatusBarPrefs({ ...statusBarPrefs })
-      setSavedTaskFeatureSettings({ ...taskFeatureSettings })
-      setSavedExplorerOptions({ ...explorerOptions })
-      setMessage('Einstellungen gespeichert.')
-      setError('')
-      return true
-    } catch (caught) {
-      setError(String(caught))
-      return false
-    }
-  }
-
-  const discardSettings = () => {
-    setTheme(savedTheme)
-    setDisplayName(savedDisplayName)
-    setSidebarOpen(savedSidebarOpen)
-    setStatusBarPrefs({ ...savedStatusBarPrefs })
-    setTaskFeatureSettings({ ...savedTaskFeatureSettings })
-    setExplorerOptions({ ...savedExplorerOptions })
-    setMessage('Nicht gespeicherte Einstellungen verworfen.')
-  }
-
-  const openSettingsTab = () => {
-    const existing = findTabByPath(SETTINGS_TAB_PATH, openTabs)
-    const targetPane = workspaceStateRef.current.lastFocusedPane
-    if (existing) {
-      setEditorPanelOpen(true)
-      dispatchWorkspace({
-        type: 'OPEN_TAB',
-        paneId: targetPane,
-        tabId: existing.id,
-        activate: true,
-      })
-      return
-    }
-
-    const nextTabId = createTabId()
-    setOpenTabs((prev) => [
-      ...prev,
-      {
-        id: nextTabId,
-        kind: 'settings',
-        path: SETTINGS_TAB_PATH,
-        title: 'Einstellungen',
-        content: '',
-        loading: false,
-        dirty: settingsDirty,
-      },
-    ])
-    setEditorPanelOpen(true)
-    dispatchWorkspace({
-      type: 'OPEN_TAB',
-      paneId: targetPane,
-      tabId: nextTabId,
-      activate: true,
-    })
-  }
 
   const openTodoDashboardTab = () => {
     const existing = findTabByPath(TODO_DASHBOARD_TAB_PATH, openTabs)
@@ -1796,8 +1810,20 @@ function App() {
         })
       )
       setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview(), refreshNoteGroups()])
+      await emitMutationEvent({
+        kind: 'note-saved',
+        noteType: targetTab.noteType === 'task' ? 'task' : 'note',
+        paths: [savedPath || path, ...(response.linkRewrite?.paths ?? [])],
+        graphStatus: response.graphStatus,
+        refresh: {
+          search: true,
+          tasks: targetTab.noteType === 'task',
+          todos: true,
+          review: true,
+          noteGroups: true,
+          explorerSidebar: true,
+        },
+      })
       return true
     } catch (caught) {
       setError(String(caught))
@@ -1809,9 +1835,6 @@ function App() {
     const targetTab = findTabByPath(path)
     if (!targetTab) {
       return true
-    }
-    if (targetTab.kind === 'settings') {
-      return saveSettings()
     }
     if (
       targetTab.kind === 'todo_dashboard' ||
@@ -1825,199 +1848,6 @@ function App() {
     return saveNoteTab(path)
   }
 
-  const renameNoteBase = async () => {
-    const renameDialog = await openTagActionDialog({
-      kind: 'input',
-      title: 'NoteBase umbenennen',
-      message: 'Neuen Namen festlegen',
-      initialValue: noteBaseName,
-      actions: [
-        { id: 'confirm', label: 'Speichern', tone: 'primary' },
-        { id: 'cancel', label: 'Abbrechen' },
-      ],
-    })
-    if (renameDialog.actionId !== 'confirm') {
-      return
-    }
-    const newName = normalizeLabel(renameDialog.value)
-    if (!newName || newName === noteBaseName) {
-      return
-    }
-
-    try {
-      setError('')
-      const previousName = noteBaseName
-      const response = await apiRequest<{
-        counts: VaultCounts
-        vaultPath: string
-        noteBasePath?: string
-        tagGroups?: unknown
-      }>(backendUrl, '/notebase/rename', {
-        method: 'POST',
-        body: JSON.stringify({ newName }),
-      })
-      const loadedPath = response.noteBasePath ?? response.vaultPath
-      setVaultPath(loadedPath)
-      setVaultLoaded(true)
-      setCounts(response.counts)
-      setOpenTabs([])
-      dispatchWorkspace({ type: 'RESET' })
-      storeLastNoteBasePath(loadedPath)
-      if (response.tagGroups) {
-        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      setMessage(`NoteBase umbenannt: ${previousName} -> ${getPathTail(loadedPath)}`)
-      await Promise.all([
-        refreshFocusAggregate(true),
-        runSearch(searchQuery, true),
-        refreshReview(true),
-        refreshNoteGroups(true),
-      ])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const deleteNoteBase = async () => {
-    const confirmed = await askTagChoice(
-      'NoteBase loeschen',
-      `Soll die NoteBase "${noteBaseName}" wirklich mit allen Dateien geloescht werden?`,
-      [{ id: 'delete', label: 'Loeschen', tone: 'danger' }]
-    )
-    if (confirmed !== 'delete') {
-      return
-    }
-    const secondCheckDialog = await openTagActionDialog({
-      kind: 'input',
-      title: 'Loeschen bestaetigen',
-      message: 'Bitte "LOESCHEN" eingeben, um das vollstaendige Loeschen zu bestaetigen.',
-      initialValue: '',
-      actions: [
-        { id: 'confirm', label: 'Endgueltig loeschen', tone: 'danger' },
-        { id: 'cancel', label: 'Abbrechen' },
-      ],
-    })
-    if (secondCheckDialog.actionId !== 'confirm') {
-      return
-    }
-    const secondCheck = normalizeLabel(secondCheckDialog.value)
-    if (secondCheck.toUpperCase() !== 'LOESCHEN') {
-      setMessage('Loeschen abgebrochen.')
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ deleted: boolean; deletedPath: string }>(backendUrl, '/notebase/delete', {
-        method: 'POST',
-        body: JSON.stringify({ confirmDelete: true }),
-      })
-      setVaultLoaded(false)
-      uiSettingsReadyRef.current = false
-      setVaultPath('')
-      setCounts({ notes: 0, openTasks: 0, doneTasks: 0 })
-      setTasks([])
-      setTodos([])
-      setFocusMitIds([])
-      setSearchResults([])
-      setSuggestions([])
-      setSelectedTagKeys([])
-      setOpenTabs([])
-      dispatchWorkspace({ type: 'RESET' })
-      setCustomTagGroups([])
-      setNoteGroups([])
-      setExplorerViewState({ ...DEFAULT_EXPLORER_VIEW_STATE })
-      setExplorerViewSeed(null)
-      setExplorerViewSeedId((prev) => prev + 1)
-      clearStoredLastNoteBasePath()
-      setMessage(`NoteBase geloescht: ${response.deletedPath}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const previewCapture = async (text: string) => {
-    if (!vaultLoaded) {
-      return
-    }
-
-    const normalizedText = text.trim()
-    if (normalizedText.length < CAPTURE_PREVIEW_MIN_CHARS) {
-      return
-    }
-    if (capturePreviewLastTextRef.current === normalizedText) {
-      return
-    }
-
-    const requestSeq = capturePreviewRequestSeqRef.current + 1
-    capturePreviewRequestSeqRef.current = requestSeq
-
-    try {
-      const response = await apiRequest<{
-        suggestions: Suggestion[]
-      }>(backendUrl, '/capture/preview', {
-        method: 'POST',
-        body: JSON.stringify({ text: normalizedText }),
-      })
-
-      if (requestSeq !== capturePreviewRequestSeqRef.current) {
-        return
-      }
-
-      capturePreviewLastTextRef.current = normalizedText
-      const ignoredKeys = new Set(ignoredCaptureTagKeys)
-      const visibleSuggestions = response.suggestions.filter((item) => !ignoredKeys.has(item.key))
-      setSuggestions(visibleSuggestions)
-      setSelectedTagKeys((prev) => prev.filter((key) => visibleSuggestions.some((item) => item.key === key)))
-    } catch {
-      if (requestSeq !== capturePreviewRequestSeqRef.current) {
-        return
-      }
-    }
-  }
-
-  const toggleCaptureTag = (tagKey: string) => {
-    setSuggestions((prev) => prev.filter((item) => item.key !== tagKey))
-    setSelectedTagKeys((prev) => prev.filter((item) => item !== tagKey))
-  }
-
-  const rejectCaptureTag = (tagKey: string) => {
-    setIgnoredCaptureTagKeys((prev) => (prev.includes(tagKey) ? prev : [...prev, tagKey]))
-    setSuggestions((prev) => prev.filter((item) => item.key !== tagKey))
-    setSelectedTagKeys((prev) => prev.filter((item) => item !== tagKey))
-  }
-
-  const saveCapture = async (rawText?: string) => {
-    try {
-      const text = (rawText ?? captureEditorRef.current?.getMarkdown() ?? captureText).trim()
-      if (!text) {
-        return
-      }
-
-      const response = await apiRequest<{ counts: VaultCounts; date: string; notePath: string }>(
-        backendUrl,
-        '/capture/save',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            text,
-            selectedTagKeys,
-          }),
-        }
-      )
-
-      setCounts(response.counts)
-      setCaptureText('')
-      setSuggestions([])
-      setSelectedTagKeys([])
-      setIgnoredCaptureTagKeys([])
-      setMessage(`Quick Capture in Daily ${response.date} gespeichert.`)
-      await Promise.all([refreshTodos(), runSearch(searchQuery), refreshReview(), refreshNoteGroups(), refreshExplorerSidebarData()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
   const openOrCreateTodayDaily = async (): Promise<void> => {
     const todayIso = toLocalIsoDate()
     try {
@@ -2029,7 +1859,19 @@ function App() {
       setCounts(response.counts)
       setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geoeffnet: ${response.date}`)
       setError('')
-      await Promise.all([runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
+      await emitMutationEvent({
+        kind: response.created ? 'note-created' : 'note-saved',
+        noteType: 'note',
+        paths: [response.notePath],
+        refresh: {
+          search: true,
+          tasks: false,
+          todos: true,
+          review: true,
+          noteGroups: true,
+          explorerSidebar: true,
+        },
+      })
       await openNoteInCurrentEditor(response.notePath, response.title || response.date)
     } catch (caught) {
       setError(String(caught))
@@ -2047,7 +1889,13 @@ function App() {
     })
     setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
     setCounts(response.counts)
-    await Promise.all([refreshFocusAggregate(), refreshReview()])
+    await emitMutationEvent({
+      kind: 'focus-updated',
+      refresh: {
+        focusAggregate: true,
+        review: true,
+      },
+    })
     return Array.isArray(response.mitIds) ? response.mitIds : []
   }
 
@@ -2066,7 +1914,13 @@ function App() {
     })
     setCounts(response.counts)
     setMessage(`Todo fuer heute erfasst: ${response.todoText}`)
-    await Promise.all([refreshFocusAggregate(), refreshReview()])
+    await emitMutationEvent({
+      kind: 'focus-updated',
+      refresh: {
+        focusAggregate: true,
+        review: true,
+      },
+    })
   }
 
   const toggleTodo = async (todoId: string, checked?: boolean) => {
@@ -2076,7 +1930,15 @@ function App() {
         body: JSON.stringify(typeof checked === 'boolean' ? { checked } : {}),
       })
       setMessage(`Todo aktualisiert (${todoId}).`)
-      await Promise.all([refreshTodos(), runSearch(searchQuery)])
+      await emitMutationEvent({
+        kind: 'todo-updated',
+        refresh: {
+          search: true,
+          tasks: true,
+          todos: true,
+          review: true,
+        },
+      })
     } catch (caught) {
       setError(String(caught))
     }
@@ -2093,7 +1955,15 @@ function App() {
       )
       const verb = response.created === false ? 'bereits verknuepft' : 'zu Task promoted'
       setMessage(`Todo ${verb}: ${response.taskId}`)
-      await Promise.all([refreshTodos(), refreshTasks(), refreshReview(), runSearch(searchQuery)])
+      await emitMutationEvent({
+        kind: 'todo-updated',
+        refresh: {
+          search: true,
+          tasks: true,
+          todos: true,
+          review: true,
+        },
+      })
       if (response.taskPath) {
         await openNoteInTab(response.taskPath, undefined, { initialNoteType: 'task' })
       }
@@ -2411,11 +2281,11 @@ function App() {
           : explorerRows.filter((row) => normalizeWikiLookup(toNoteDisplayName(row.path)) === lookup)
 
       if (titleMatches.length === 0) {
-        setMessage(`Wiki-Link nicht gefunden: ${normalizedTarget}`)
+        setWarnMessage(`Wiki-Link nicht gefunden: ${normalizedTarget}`)
         return
       }
       if (titleMatches.length > 1) {
-        setMessage(`Wiki-Link ist nicht eindeutig: ${normalizedTarget}`)
+        setWarnMessage(`Wiki-Link ist nicht eindeutig: ${normalizedTarget}`)
         return
       }
 
@@ -2973,7 +2843,7 @@ function App() {
     }
 
     const rewritePath = (path: string): string => {
-      if (!path || path === SETTINGS_TAB_PATH) {
+      if (!path) {
         return path
       }
       const normalized = normalizePath(path)
@@ -3003,383 +2873,8 @@ function App() {
     )
   }
 
-  const createExplorerFolder = async (parentGroupKey: string, groupName: string) => {
-    const cleanGroupName = normalizeLabel(groupName)
-    if (!cleanGroupName) {
-      return
-    }
 
-    const effectiveParentKey = parentGroupKey && noteGroupsByKey.has(parentGroupKey) ? parentGroupKey : ''
-    const targetGroup = noteGroupsByKey.get(effectiveParentKey)
-    if (targetGroup?.canCreateGroups === false) {
-      setMessage('In diesem Ordner koennen keine neuen Unterordner angelegt werden.')
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[] }>(backendUrl, '/note-groups/add-group', {
-        method: 'POST',
-        body: JSON.stringify({ groupName: cleanGroupName, parentKey: effectiveParentKey }),
-      })
-      setNoteGroups(response.groups)
-      setMessage(`Ordner angelegt: ${response.group.label}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const createExplorerFile = async (groupKey: string, title: string) => {
-    const cleanTitle = normalizeLabel(title)
-    if (!cleanTitle) {
-      return
-    }
-
-    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : ''
-    const targetGroup = noteGroupsByKey.get(effectiveGroupKey)
-    if (targetGroup?.canCreateNotes === false) {
-      setMessage('In diesem Ordner koennen keine neuen Notizen angelegt werden.')
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
-        backendUrl,
-        '/note-groups/add-note',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'note', status: 'open' }),
-        }
-      )
-      setCounts(response.counts)
-      setNoteGroups(response.groups)
-      setMessage(`Notiz erstellt (${response.noteId}).`)
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-      await openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'note' })
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const migrateExistingNotesToTemplate = async () => {
-    if (!vaultLoaded) {
-      return
-    }
-    try {
-      setError('')
-      const response = await apiRequest<{ updated: number; counts: VaultCounts; tagGroups?: unknown }>(
-        backendUrl,
-        '/notes/migrate-templates',
-        {
-          method: 'POST',
-        }
-      )
-      setCounts(response.counts)
-      if (response.tagGroups) {
-        setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      setMessage(`Templates angewendet: ${response.updated} Dateien aktualisiert.`)
-      await Promise.all([refreshTasks(), refreshTodos(), runSearch(searchQuery), refreshReview(), refreshExplorerSidebarData()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const createExplorerTask = async (groupKey: string, title: string) => {
-    const cleanTitle = normalizeLabel(title)
-    if (!cleanTitle) {
-      return
-    }
-
-    const effectiveGroupKey = groupKey && noteGroupsByKey.has(groupKey) ? groupKey : ''
-    const targetGroup = noteGroupsByKey.get(effectiveGroupKey)
-    if (targetGroup?.canCreateNotes === false) {
-      setMessage('In diesem Ordner koennen keine neuen Tasks angelegt werden.')
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
-        backendUrl,
-        '/note-groups/add-note',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'task', status: 'open' }),
-        }
-      )
-      setCounts(response.counts)
-      setNoteGroups(response.groups)
-      setMessage(`Task erstellt (${response.noteId}).`)
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-      await openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'task' })
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const renameExplorerFolder = async (groupKey: string, newName: string) => {
-    const cleanName = normalizeLabel(newName)
-    const group = noteGroupsByKey.get(groupKey)
-    if (!group || !cleanName || cleanName === group.label || group.canDelete === false) {
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
-        backendUrl,
-        '/note-groups/rename',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey, newName: cleanName }),
-        }
-      )
-      setNoteGroups(response.groups)
-      setCounts(response.counts)
-      remapOpenNotePaths(group.path, response.group.path)
-      setMessage(`Ordner umbenannt: ${response.group.label}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const moveExplorerFolder = async (groupKey: string, targetParentKey: string) => {
-    const sourceGroup = noteGroupsByKey.get(groupKey)
-    if (!sourceGroup || sourceGroup.canDelete === false) {
-      return
-    }
-
-    const targetParent = noteGroupsByKey.get(targetParentKey)
-    if (targetParent?.canCreateGroups === false) {
-      setMessage('In diesen Zielordner kann nicht verschoben werden.')
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ group: NoteGroup; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
-        backendUrl,
-        '/note-groups/move',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey, targetParentKey }),
-        }
-      )
-      setNoteGroups(response.groups)
-      setCounts(response.counts)
-      remapOpenNotePaths(sourceGroup.path, response.group.path)
-      setMessage(`Ordner verschoben: ${response.group.label}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const deleteExplorerFolder = async (groupKey: string) => {
-    const group = noteGroupsByKey.get(groupKey)
-    if (!group || group.canDelete === false) {
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ deleted: boolean; groups: NoteGroup[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(
-        backendUrl,
-        '/note-groups/delete',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey }),
-        }
-      )
-      setNoteGroups(response.groups)
-      setCounts(response.counts)
-      const groupPath = normalizePath(group.path)
-      const groupPathLower = groupPath.toLowerCase()
-      setOpenTabs((prev) =>
-        prev.filter((tab) => {
-          if (tab.kind !== 'note') {
-            return true
-          }
-          const tabPath = normalizePath(tab.path).toLowerCase()
-          return tabPath !== groupPathLower && !tabPath.startsWith(`${groupPathLower}/`)
-        })
-      )
-      setMessage(`Ordner geloescht: ${group.label}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const toggleFavoriteFolder = async (groupKey: string) => {
-    const group = noteGroupsByKey.get(groupKey)
-    if (!group) {
-      return
-    }
-    if (group.favorite && isPermanentPinnedRootGroupKey(group.key)) {
-      setMessage('Die Ordner daily, tags und tasks sind immer fixiert.')
-      return
-    }
-
-    try {
-      setError('')
-      const endpoint = group.favorite ? '/note-groups/unfavorite' : '/note-groups/favorite'
-      const response = await apiRequest<{ groups: NoteGroup[] }>(backendUrl, endpoint, {
-        method: 'POST',
-        body: JSON.stringify({ groupKey }),
-      })
-      setNoteGroups(response.groups)
-      setMessage(group.favorite ? 'Fixierung aufgehoben.' : 'Ordner fixiert.')
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const renameExplorerFile = async (path: string, newName: string) => {
-    const cleanName = normalizeLabel(newName)
-    if (!cleanName) {
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ renamedPath: string; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/rename', {
-        method: 'POST',
-        body: JSON.stringify({ path, newName: cleanName }),
-      })
-      setCounts(response.counts)
-      remapOpenNotePaths(path, response.renamedPath)
-      setMessage(`Datei umbenannt: ${toNoteDisplayName(response.renamedPath)}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const moveExplorerFiles = async (paths: string[], targetGroupKey: string) => {
-    const uniquePaths = Array.from(new Set(paths.map((item) => String(item ?? '').trim()).filter(Boolean)))
-    if (uniquePaths.length === 0) {
-      return
-    }
-
-    const applyMoveResult = (
-      movedEntries: { fromPath: string; movedPath: string }[],
-      counts: VaultCounts,
-      fallbackUsed = false
-    ) => {
-      setCounts(counts)
-
-      const moveMap = new Map<string, string>()
-      const changedTargets: string[] = []
-      for (const entry of movedEntries) {
-        const fromPath = normalizePath(String(entry?.fromPath ?? ''))
-        const movedPath = normalizePath(String(entry?.movedPath ?? ''))
-        if (!fromPath || !movedPath) {
-          continue
-        }
-        moveMap.set(fromPath.toLowerCase(), movedPath)
-        if (fromPath.toLowerCase() !== movedPath.toLowerCase()) {
-          changedTargets.push(movedPath)
-        }
-      }
-
-      if (moveMap.size > 0) {
-        setOpenTabs((prev) =>
-          prev.map((tab) => {
-            if (tab.kind !== 'note') {
-              return tab
-            }
-            const key = normalizePath(tab.path).toLowerCase()
-            const nextPath = moveMap.get(key)
-            if (!nextPath || nextPath === tab.path) {
-              return tab
-            }
-            return {
-              ...tab,
-              path: nextPath,
-              title: toNoteDisplayName(nextPath),
-            }
-          })
-        )
-      }
-
-      if (changedTargets.length === 1) {
-        setMessage(`Datei verschoben: ${toNoteDisplayName(changedTargets[0])}`)
-      } else if (changedTargets.length > 1) {
-        setMessage(`Dateien verschoben: ${changedTargets.length}${fallbackUsed ? ' (Fallback)' : ''}`)
-      } else {
-        setMessage('Keine Dateien verschoben.')
-      }
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<
-        { movedPaths: { fromPath: string; movedPath: string }[]; counts: VaultCounts; linkRewrite?: { paths?: string[] } }
-      >(backendUrl, '/notes/move-batch', {
-        method: 'POST',
-        body: JSON.stringify({ paths: uniquePaths, targetGroupKey }),
-      })
-      applyMoveResult(Array.isArray(response.movedPaths) ? response.movedPaths : [], response.counts)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch {
-      try {
-        const movedEntries: { fromPath: string; movedPath: string }[] = []
-        let latestCounts: VaultCounts | null = null
-
-        for (const path of uniquePaths) {
-          const response = await apiRequest<{ movedPath: string; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/move', {
-            method: 'POST',
-            body: JSON.stringify({ path, targetGroupKey }),
-          })
-          latestCounts = response.counts
-          movedEntries.push({
-            fromPath: path,
-            movedPath: response.movedPath,
-          })
-          await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-        }
-
-        if (latestCounts) {
-          applyMoveResult(movedEntries, latestCounts, true)
-        }
-        await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-      } catch (caughtFallback) {
-        setError(String(caughtFallback))
-      }
-    }
-  }
-
-  const moveExplorerFile = async (path: string, targetGroupKey: string) => {
-    await moveExplorerFiles([path], targetGroupKey)
-  }
-
-  const deleteExplorerFile = async (path: string) => {
-    try {
-      setError('')
-      const response = await apiRequest<{ deleted: boolean; counts: VaultCounts; linkRewrite?: { paths?: string[] } }>(backendUrl, '/notes/delete', {
-        method: 'POST',
-        body: JSON.stringify({ path }),
-      })
-      setCounts(response.counts)
-      setOpenTabs((prev) => prev.filter((tab) => tab.path !== path))
-      setMessage(`Datei geloescht: ${toNoteDisplayName(path)}`)
-      await refreshOpenTabsFromDisk(response.linkRewrite?.paths ?? [])
-      await Promise.all([runSearch(searchQuery), refreshTasks(), refreshTodos(), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const openTagActionDialog = (config: {
+  function openTagActionDialog(config: {
     kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form'
     title: string
     message?: string
@@ -3389,8 +2884,8 @@ function App() {
     initialTagValues?: TagFormValues
     tagGroupOptions?: Array<{ id: string; displayName: string }>
     actions: TagActionDialogAction[]
-  }): Promise<TagActionDialogResult> =>
-    new Promise((resolve) => {
+  }): Promise<TagActionDialogResult> {
+    return new Promise((resolve) => {
       setTagActionDialog({
         kind: config.kind,
         title: config.title,
@@ -3404,6 +2899,7 @@ function App() {
         resolve,
       })
     })
+  }
 
   const closeTagActionDialog = (actionId: string) => {
     const current = tagActionDialogRef.current
@@ -3540,518 +3036,49 @@ function App() {
     }
   }
 
-  const resolveTagGroupById = (groupId: string): TagGroupDefinition | null => {
-    const clean = normalizeTagId(groupId)
-    if (!clean) {
-      return null
-    }
-    return mergedTagGroupsById.get(clean.toLowerCase()) ?? null
-  }
-
-  const createTagGroup = async () => {
-    const form = await openTagGroupFormDialog({
-      title: 'Neue Tag-Gruppe',
-      confirmLabel: 'Anlegen',
-      initialValues: {
-        id: 'projekt',
-        displayName: 'Projekte',
-        color: TAG_COLOR_PRESETS[0],
+  const tagManagementService = useMemo(
+    () =>
+    new TagManagementService(
+      {
+        getBackendUrl: () => backendUrl,
+        getMergedTagGroups: () => mergedTagGroups,
+        getMergedTagGroupsById: () => mergedTagGroupsById,
+        openTagGroupFormDialog,
+        openTagFormDialog,
+        askTagChoice,
+        emitMutation: emitMutationEvent,
       },
-    })
-    if (!form) {
-      return
-    }
-    const nextGroupId = normalizeTagId(form.id)
-    if (!nextGroupId) {
-      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const duplicate = resolveTagGroupById(nextGroupId)
-    if (duplicate) {
-      setMessage(`Die Tag-Gruppe "${duplicate.displayName}" (${duplicate.id}) existiert bereits.`)
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-group', {
-        method: 'POST',
-        body: JSON.stringify({
-          groupId: nextGroupId,
-          displayName: normalizeLabel(form.displayName) || nextGroupId,
-          color: normalizeTagColor(form.color),
-        }),
-      })
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setFolderOpen(`tag-group-${nextGroupId}`)
-      setMessage(`Tag-Gruppe angelegt: ${form.displayName || nextGroupId}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const createTagInExistingGroup = async (preferredGroup: string | null) => {
-    if (mergedTagGroups.length === 0) {
-      setMessage('Lege zuerst eine Tag-Gruppe an.')
-      return
-    }
-
-    const firstGroup = mergedTagGroups[0] ?? null
-    const requestedGroup = preferredGroup ? resolveTagGroupById(preferredGroup) : null
-    const group = requestedGroup ?? firstGroup
-    if (!group) {
-      setMessage('Keine gueltige Tag-Gruppe gefunden.')
-      return
-    }
-
-    const form = await openTagFormDialog({
-      title: `Neuer Tag in "${group.displayName}"`,
-      confirmLabel: 'Anlegen',
-      initialValues: {
-        id: 'neuer-tag',
-        displayName: 'Neuer Tag',
-      },
-    })
-    if (!form) {
-      return
-    }
-    const tagId = normalizeTagId(form.id)
-    if (!tagId) {
-      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const duplicateTag = group.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
-    if (duplicateTag) {
-      setMessage(`Der Tag "${duplicateTag.displayName}" (${duplicateTag.id}) existiert in "${group.displayName}" bereits.`)
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-tag', {
-        method: 'POST',
-        body: JSON.stringify({
-          groupId: group.id,
-          tagId,
-          displayName: normalizeLabel(form.displayName) || tagId,
-        }),
-      })
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setFolderOpen(`tag-group-${group.id}`)
-      setMessage(`Tag hinzugefuegt: ${group.displayName} / ${form.displayName || tagId}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const createTagFromEditorSelection = async (
-    selectedText: string,
-    replaceSelection: (tagSyntax: string) => void
-  ): Promise<void> => {
-    const displayName = normalizeLabel(selectedText)
-    if (!displayName) {
-      return
-    }
-    if (mergedTagGroups.length === 0) {
-      setMessage('Lege zuerst eine Tag-Gruppe an.')
-      return
-    }
-
-    const firstGroup = mergedTagGroups[0]
-    const form = await openTagFormDialog({
-      title: 'Neuen Tag aus Auswahl erstellen',
-      message: 'Waehle die Tag-Gruppe und pruefe ID sowie Anzeigename.',
-      confirmLabel: 'Anlegen und einfuegen',
-      initialValues: {
-        groupId: firstGroup.id,
-        id: normalizeTagId(displayName),
-        displayName,
-      },
-      tagGroupOptions: mergedTagGroups.map((group) => ({ id: group.id, displayName: group.displayName })),
-    })
-    if (!form) {
-      return
-    }
-
-    const creatingNewGroup = form.groupId === 'create-new-tag-group'
-    const groupId = creatingNewGroup ? normalizeTagId(form.newGroupId || '') : normalizeTagId(form.groupId || firstGroup.id)
-
-    const tagId = normalizeTagId(form.id)
-    if (!tagId) {
-      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const tagDisplayName = normalizeLabel(form.displayName) || displayName
-    if (!groupId) {
-      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const existingGroup = resolveTagGroupById(groupId)
-    if (!creatingNewGroup && !existingGroup) {
-      setMessage(`Tag-Gruppe nicht gefunden: ${groupId}`)
-      return
-    }
-
-    if (creatingNewGroup && existingGroup) {
-      setMessage(`Die Tag-Gruppe "${existingGroup.displayName}" (${existingGroup.id}) existiert bereits.`)
-      return
-    }
-
-    const tagSyntax = `{tag:${groupId}/${tagId}}`
-    const duplicateTag = existingGroup?.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
-    if (duplicateTag && existingGroup) {
-      replaceSelection(tagSyntax)
-      setMessage(`Bestehenden Tag eingefuegt: ${existingGroup.displayName} / ${duplicateTag.displayName}`)
-      return
-    }
-
-    try {
-      setError('')
-      let latestGroups: unknown = null
-      let groupDisplayName = existingGroup?.displayName || normalizeLabel(form.newGroupDisplayName || '') || groupId
-      if (creatingNewGroup) {
-        const groupResponse = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-group', {
-          method: 'POST',
-          body: JSON.stringify({
-            groupId,
-            displayName: groupDisplayName,
-            color: TAG_COLOR_PRESETS[0],
-          }),
-        })
-        latestGroups = groupResponse.groups
-      }
-
-      const response = await apiRequest<{ groups: unknown }>(backendUrl, '/tag-groups/add-tag', {
-        method: 'POST',
-        body: JSON.stringify({
-          groupId,
-          tagId,
-          displayName: tagDisplayName,
-        }),
-      })
-      latestGroups = response.groups ?? latestGroups
-      const normalizedGroups = toStorageTagGroups(latestGroups)
-      const createdGroup = normalizedGroups.find((group) => group.id.toLowerCase() === groupId.toLowerCase())
-      groupDisplayName = createdGroup?.displayName || groupDisplayName
-      setCustomTagGroups(normalizedGroups)
-      setFolderOpen(`tag-group-${groupId}`)
-      replaceSelection(tagSyntax)
-      setMessage(`Tag angelegt und eingefuegt: ${groupDisplayName} / ${tagDisplayName}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const renameTagGroup = async (groupName: string) => {
-    const group = resolveTagGroupById(groupName)
-    if (!group) {
-      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
-      return
-    }
-
-    const form = await openTagGroupFormDialog({
-      title: `Tag-Gruppe bearbeiten (${group.displayName})`,
-      confirmLabel: 'Speichern',
-      initialValues: {
-        id: group.id,
-        displayName: group.displayName,
-        color: group.color || TAG_COLOR_PRESETS[0],
-      },
-    })
-    if (!form) {
-      return
-    }
-    const newGroupId = normalizeTagId(form.id)
-    if (!newGroupId) {
-      setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const duplicateGroup = resolveTagGroupById(newGroupId)
-    if (duplicateGroup && duplicateGroup.id.toLowerCase() !== group.id.toLowerCase()) {
-      setMessage(`Die Tag-Gruppe "${duplicateGroup.displayName}" (${duplicateGroup.id}) existiert bereits.`)
-      return
-    }
-
-    const nextDisplayName = normalizeLabel(form.displayName) || newGroupId
-    const newColor = normalizeTagColor(form.color)
-
-    const idChanged = newGroupId.toLowerCase() !== group.id.toLowerCase()
-    const displayChanged = normalizeLabel(nextDisplayName) !== group.displayName
-    const colorChanged = newColor !== group.color
-    if (!idChanged && !displayChanged && !colorChanged) {
-      return
-    }
-
-    let applyToNotes = false
-    if (idChanged) {
-      const applyChoice = await askTagChoice(
-        'Notiz-Tags mit umbenennen?',
-        `Sollen bestehende Notiz-Tags von "${group.id}:*" automatisch auf "${newGroupId}:*" umgestellt werden?`,
-        [
-          { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
-        ]
-      )
-      if (!applyChoice) {
-        return
-      }
-      applyToNotes = applyChoice === 'apply'
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/rename-group',
         {
-          method: 'POST',
-          body: JSON.stringify({
-            groupId: group.id,
-            newGroupId,
-            newDisplayName: normalizeLabel(nextDisplayName) || newGroupId,
-            newColor,
-            applyToNotes,
-          }),
+          setMessage,
+          setError,
+          setCounts,
+          setCustomTagGroups,
+          setFolderOpen,
         }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setFolderOpen(`tag-group-${newGroupId}`)
-      setMessage(
-        idChanged && applyToNotes
-          ? `Tag-Gruppe umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
-          : 'Tag-Gruppe aktualisiert.'
-      )
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const setTagGroupColor = async (groupName: string) => {
-    const group = resolveTagGroupById(groupName)
-    if (!group) {
-      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
-      return
-    }
-
-    const form = await openTagGroupFormDialog({
-      title: `Farbe fuer "${group.displayName}"`,
-      confirmLabel: 'Speichern',
-      initialValues: {
-        id: group.id,
-        displayName: group.displayName,
-        color: group.color || TAG_COLOR_PRESETS[0],
-      },
-      colorOnly: true,
-    })
-    if (!form) {
-      return
-    }
-
-    const newColor = normalizeTagColor(form.color)
-    if (newColor === group.color) {
-      return
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/rename-group',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            groupId: group.id,
-            newGroupId: group.id,
-            newDisplayName: group.displayName,
-            newColor,
-            applyToNotes: false,
-          }),
-        }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setMessage(`Farbe aktualisiert: ${group.displayName}`)
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const deleteTagGroup = async (groupName: string) => {
-    const group = resolveTagGroupById(groupName)
-    const groupLabel = group ? `${group.displayName} (${group.id})` : groupName
-    const option = await askTagChoice(
-      `Tag-Gruppe "${groupLabel}" loeschen`,
-      'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
+      ),
       [
-        { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
-        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
+        backendUrl,
+        emitMutationEvent,
+        mergedTagGroups,
+        mergedTagGroupsById,
+        openTagGroupFormDialog,
+        openTagFormDialog,
+        askTagChoice,
+        setCustomTagGroups,
+        setError,
+        setFolderOpen,
+        setMessage,
       ]
-    )
-    if (!option) {
-      return
-    }
-    const removeFromNotes = option === 'remove'
+  )
 
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/delete-group',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupId: groupName, removeFromNotes }),
-        }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setMessage(
-        removeFromNotes
-          ? `Tag-Gruppe geloescht und Tags aus ${response.notesUpdated} Notizen entfernt.`
-          : 'Tag-Gruppe aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.'
-      )
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const renameTag = async (groupName: string, tagName: string) => {
-    const group = resolveTagGroupById(groupName)
-    if (!group) {
-      setMessage(`Tag-Gruppe nicht gefunden: ${groupName}`)
-      return
-    }
-
-    const tag = group.tags.find((entry) => entry.id.toLowerCase() === tagName.toLowerCase())
-    if (!tag) {
-      setMessage(`Tag nicht gefunden: ${groupName}/${tagName}`)
-      return
-    }
-
-    const form = await openTagFormDialog({
-      title: `Tag bearbeiten (${group.displayName} / ${tag.displayName})`,
-      confirmLabel: 'Speichern',
-      initialValues: {
-        id: tag.id,
-        displayName: tag.displayName,
-      },
-    })
-    if (!form) {
-      return
-    }
-    const newTagId = normalizeTagId(form.id)
-    if (!newTagId) {
-      setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
-      return
-    }
-
-    const duplicate = group.tags.find(
-      (entry) => entry.id.toLowerCase() === newTagId.toLowerCase() && entry.id.toLowerCase() !== tag.id.toLowerCase()
-    )
-    if (duplicate) {
-      setMessage(`Der Tag "${duplicate.displayName}" (${duplicate.id}) existiert in "${group.displayName}" bereits.`)
-      return
-    }
-
-    const nextDisplayName = normalizeLabel(form.displayName) || newTagId
-
-    const idChanged = newTagId.toLowerCase() !== tag.id.toLowerCase()
-    const displayChanged = normalizeLabel(nextDisplayName) !== tag.displayName
-    if (!idChanged && !displayChanged) {
-      return
-    }
-
-    let applyToNotes = false
-    if (idChanged) {
-      const applyChoice = await askTagChoice(
-        'Notiz-Tags mit umbenennen?',
-        `Soll "${group.id}:${tag.id}" in allen Notizen automatisch in "${group.id}:${newTagId}" umbenannt werden?`,
-        [
-          { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
-        ]
-      )
-      if (!applyChoice) {
-        return
-      }
-      applyToNotes = applyChoice === 'apply'
-    }
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/rename-tag',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            groupId: group.id,
-            tagId: tag.id,
-            newTagId,
-            newDisplayName: normalizeLabel(nextDisplayName) || newTagId,
-            applyToNotes,
-          }),
-        }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setMessage(
-        idChanged && applyToNotes
-          ? `Tag umbenannt und ${response.notesUpdated} Notizen aktualisiert.`
-          : 'Tag aktualisiert.'
-      )
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
-
-  const deleteTag = async (groupName: string, tagName: string) => {
-    const group = resolveTagGroupById(groupName)
-    const tag = group?.tags.find((entry) => entry.id.toLowerCase() === tagName.toLowerCase()) ?? null
-    const tagLabel = tag && group ? `${group.displayName} / ${tag.displayName}` : `${groupName}:${tagName}`
-    const option = await askTagChoice(
-      `Tag "${tagLabel}" loeschen`,
-      'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
-      [
-        { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
-        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
-      ]
-    )
-    if (!option) {
-      return
-    }
-    const removeFromNotes = option === 'remove'
-
-    try {
-      setError('')
-      const response = await apiRequest<{ groups: unknown; notesUpdated: number; counts: VaultCounts }>(
-        backendUrl,
-        '/tag-groups/delete-tag',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupId: groupName, tagId: tagName, removeFromNotes }),
-        }
-      )
-      setCustomTagGroups(toStorageTagGroups(response.groups))
-      setCounts(response.counts)
-      setMessage(
-        removeFromNotes
-          ? `Tag geloescht und aus ${response.notesUpdated} Notizen entfernt.`
-          : 'Tag aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.'
-      )
-      await Promise.all([runSearch(searchQuery), refreshReview()])
-    } catch (caught) {
-      setError(String(caught))
-    }
-  }
+  const createTagGroup = tagManagementService.createTagGroup
+  const createTagInExistingGroup = tagManagementService.createTagInExistingGroup
+  const createTagFromEditorSelection = tagManagementService.createTagFromEditorSelection
+  const renameTagGroup = tagManagementService.renameTagGroup
+  const setTagGroupColor = tagManagementService.setTagGroupColor
+  const deleteTagGroup = tagManagementService.deleteTagGroup
+  const renameTag = tagManagementService.renameTag
+  const deleteTag = tagManagementService.deleteTag
 
   const openTagMatchAssistant = async () => {
     if (!vaultLoaded) {
@@ -4166,7 +3193,19 @@ function App() {
           return { ...tab, dirty: false, loading: true }
         })
       )
-      await Promise.all([refreshWorkspaceData(true), refreshOpenTabsFromDisk(response.paths)])
+      await emitMutationEvent({
+        kind: 'notes-batch-updated',
+        refresh: {
+          search: true,
+          tasks: true,
+          todos: true,
+          review: true,
+          noteGroups: true,
+          explorerSidebar: true,
+          focusAggregate: true,
+        },
+        paths: response.paths,
+      })
       setTagMatchAssistant((current) => {
         const appliedIds = new Set(uniqueMatches.map((item) => item.id))
         const items = current.items.filter((item) => !appliedIds.has(item.id))
@@ -4206,7 +3245,7 @@ function App() {
     void applyTagMatches(visibleTagMatchItems)
   }
 
-  const refreshOpenTabsFromDisk = async (paths: string[]) => {
+  async function refreshOpenTabsFromDisk(paths: string[]) {
     if (paths.length === 0) {
       return
     }
@@ -4307,10 +3346,6 @@ function App() {
     setCapturePanelOpen(true)
   }
 
-  const setThemeMode = (nextMode: ThemeMode) => {
-    setTheme(nextMode)
-  }
-
   const handleOneNoteImportComplete = (response: {
     counts?: VaultCounts
     tagGroups?: unknown
@@ -4329,7 +3364,17 @@ function App() {
     const importedPages = response.import?.importedPages ?? 0
     setMessage(`OneNote-Import abgeschlossen: ${importedPages} Seiten importiert.`)
     setError('')
-    void Promise.allSettled([refreshExplorerSidebarData(true), runSearch(searchQuery, true), refreshReview()])
+    void emitMutationEvent({
+      kind: 'import-completed',
+      refresh: {
+        search: true,
+        tasks: true,
+        todos: true,
+        review: true,
+        noteGroups: true,
+        explorerSidebar: true,
+      },
+    })
   }
 
   const openSidebarView = (view: SidebarView) => {
@@ -4346,6 +3391,10 @@ function App() {
     const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
+        if (settingsDialogOpen) {
+          void saveSettings()
+          return
+        }
         if (!activeTab) {
           return
         }
@@ -4357,7 +3406,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', onGlobalKeyDown)
     }
-  }, [activeTab, saveTab])
+  }, [activeTab, saveTab, saveSettings, settingsDialogOpen])
 
   const renderWorkspacePaneContent = (paneId: PaneId, paneTab: NoteTab | null) => {
     if (!paneTab) {
@@ -4366,33 +3415,6 @@ function App() {
 
     if (paneTab.loading) {
       return <p className="empty-copy">Lade Notiz ...</p>
-    }
-
-    if (paneTab.kind === 'settings') {
-      return (
-        <SettingsEditorPanel
-          displayName={displayName}
-          theme={theme}
-          backendUrl={backendUrl}
-          vaultLoaded={vaultLoaded}
-          sidebarOpen={sidebarOpen}
-          explorerOptions={explorerOptions}
-          statusBarPrefs={statusBarPrefs}
-          taskFeatureSettings={taskFeatureSettings}
-          settingsDirty={settingsDirty}
-          setSidebarOpen={setSidebarOpen}
-          setExplorerOptions={setExplorerOptions}
-          setStatusBarPrefs={setStatusBarPrefs}
-          setTaskFeatureSettings={setTaskFeatureSettings}
-          onDisplayNameChange={(nextRawValue) => setDisplayName(normalizeLabel(nextRawValue) || 'Max')}
-          onThemeChange={setThemeMode}
-          onSave={() => {
-            void saveSettings()
-          }}
-          onDiscard={discardSettings}
-          onOneNoteImportComplete={handleOneNoteImportComplete}
-        />
-      )
     }
 
     if (paneTab.kind === 'todo_dashboard') {
@@ -4455,6 +3477,7 @@ function App() {
           noteBasePath={vaultPath}
           filters={focusDashboardFilters}
           mitIds={focusMitIds}
+          focusStats={focusDashboardStats}
           taskFeatureSettings={taskFeatureSettings}
           onFiltersChange={setFocusDashboardFilters}
           onSaveMit={saveFocusMit}
@@ -4609,7 +3632,7 @@ function App() {
             onChange={(event) => {
               setCreateNoteBaseDisplayName(normalizeLabel(event.target.value))
             }}
-            placeholder="z. B. Max"
+                placeholder={`z. B. ${DEFAULT_DISPLAY_NAME}`}
             autoFocus
           />
 
@@ -4622,7 +3645,7 @@ function App() {
             onChange={(event) => {
               setCreateNoteBaseName(normalizeLabel(event.target.value))
             }}
-            placeholder="z. B. MeineNoteBase"
+                placeholder={`z. B. ${DEFAULT_NOTEBASE_NAME}`}
           />
 
           <label className="create-notebase-label" htmlFor="create-notebase-parent-path">
@@ -4659,6 +3682,33 @@ function App() {
         </form>
       </aside>
     </div>
+  ) : null
+
+  const settingsDialog = settingsDialogOpen ? (
+    <SettingsEditorPanel
+      displayName={displayName}
+      theme={theme}
+      activeColorProfileId={activeColorProfileId}
+      colorProfiles={colorProfiles}
+      backendUrl={backendUrl}
+      vaultLoaded={vaultLoaded}
+      sidebarOpen={sidebarOpen}
+      explorerOptions={explorerOptions}
+      statusBarPrefs={statusBarPrefs}
+      taskFeatureSettings={taskFeatureSettings}
+      settingsDirty={settingsDirty}
+      onClose={closeSettingsDialog}
+      setSidebarOpen={setSidebarOpen}
+      setExplorerOptions={setExplorerOptions}
+      setStatusBarPrefs={setStatusBarPrefs}
+      setTaskFeatureSettings={setTaskFeatureSettings}
+      onDisplayNameChange={setSettingsDisplayName}
+      onActiveColorProfileChange={handleActiveColorProfileChange}
+      onColorProfilesChange={setSettingsColorProfiles}
+      onSave={requestSaveSettings}
+      onDiscard={discardSettings}
+      onOneNoteImportComplete={handleOneNoteImportComplete}
+    />
   ) : null
 
   const renderTagMatchPreview = (match: TagMatchCandidate, mode: 'before' | 'after') => (
@@ -4813,8 +3863,8 @@ function App() {
               <input
                 id="launch-display-name"
                 value={displayName}
-                onChange={(event) => setDisplayName(normalizeLabel(event.target.value) || 'Max')}
-                placeholder="Dein Name"
+                onChange={(event) => setSettingsDisplayName(event.target.value)}
+                placeholder={`z. B. ${DEFAULT_DISPLAY_NAME}`}
               />
 
               <div className="launch-actions">
@@ -4824,7 +3874,7 @@ function App() {
                 <button onClick={() => void createVault()} disabled={noteBaseOpenStatus?.active}>
                   NoteBase anlegen
                 </button>
-                <button onClick={() => setThemeMode(theme === 'light' ? 'dark' : 'light')}>
+                <button onClick={toggleThemeMode}>
                   {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
                 </button>
               </div>
@@ -4850,8 +3900,15 @@ function App() {
                 </div>
               ) : null}
 
-              {message ? <p className="launch-message">{message}</p> : null}
-              {error ? <p className="launch-error">{error}</p> : null}
+              {launchOperatorNotifications.length > 0 ? (
+                <div className="launch-notifications">
+                  {launchOperatorNotifications.map((notification) => (
+                    <p key={notification.id} className={`launch-notification ${notification.severity}`}>
+                      {notification.message}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -4859,6 +3916,49 @@ function App() {
       </div>
     )
   }
+
+  const explorerMutationService = useMemo(
+    () =>
+    new ExplorerMutationService(
+      {
+        getBackendUrl: () => backendUrl,
+        getVaultLoaded: () => vaultLoaded,
+        getNoteGroupsByKey: () => noteGroupsByKey,
+        openNoteInTab: (path, title, options) => openNoteInTab(path, title, options),
+        emitMutation: emitMutationEvent,
+        remapOpenNotePaths,
+      },
+        {
+          setMessage,
+          setError,
+          setCounts,
+          setNoteGroups,
+          setOpenTabs,
+          setCustomTagGroups,
+        }
+      ),
+      [
+        backendUrl,
+        emitMutationEvent,
+        noteGroupsByKey,
+        openNoteInTab,
+        remapOpenNotePaths,
+        vaultLoaded,
+      ]
+    )
+
+  const createExplorerFolder = explorerMutationService.createExplorerFolder
+  const createExplorerFile = explorerMutationService.createExplorerFile
+  const migrateExistingNotesToTemplate = explorerMutationService.migrateExistingNotesToTemplate
+  const createExplorerTask = explorerMutationService.createExplorerTask
+  const renameExplorerFolder = explorerMutationService.renameExplorerFolder
+  const moveExplorerFolder = explorerMutationService.moveExplorerFolder
+  const deleteExplorerFolder = explorerMutationService.deleteExplorerFolder
+  const toggleFavoriteFolder = explorerMutationService.toggleFavoriteFolder
+  const renameExplorerFile = explorerMutationService.renameExplorerFile
+  const moveExplorerFiles = explorerMutationService.moveExplorerFiles
+  const moveExplorerFile = explorerMutationService.moveExplorerFile
+  const deleteExplorerFile = explorerMutationService.deleteExplorerFile
 
   return (
     <div className="window-frame">
@@ -4876,7 +3976,7 @@ function App() {
       <ActivityRail
         sidebarView={sidebarView}
         onOpenSidebarView={openSidebarView}
-        onOpenSettings={openSettingsTab}
+        onOpenSettings={openSettingsDialog}
       />
 
       {sidebarOpen ? (
@@ -5169,8 +4269,7 @@ function App() {
 
       <StatusBar
         prefs={statusBarPrefs}
-        message={message}
-        error={error}
+        notification={latestOperatorNotification}
         noteBaseName={noteBaseName}
         counts={counts}
         dueTodayCount={dueTodayCount}
@@ -5184,6 +4283,7 @@ function App() {
       />
       {tagMatchAssistantModal}
       {createNoteBaseDialog}
+      {settingsDialog}
 
         </div>
         </GraphWorkspaceProvider>

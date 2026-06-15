@@ -30,6 +30,25 @@ function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
 }
 
+export function normalizeTagCandidate(raw: string): string {
+  const cleanRaw = normalizeLabel(raw).replace(/^\{tag:/i, '').replace(/\}$/g, '').replace(/^#+/, '')
+  if (!cleanRaw) {
+    return ''
+  }
+  const delimiter = cleanRaw.includes(':') ? ':' : cleanRaw.includes('/') ? '/' : ''
+  if (delimiter) {
+    const [groupRaw, tagRaw] = cleanRaw.split(delimiter, 2)
+    const group = normalizeTagId(groupRaw)
+    const tag = normalizeTagId(tagRaw)
+    if (!group || !tag) {
+      return ''
+    }
+    return `${group}:${tag}`
+  }
+  const topic = normalizeTagId(cleanRaw)
+  return topic ? `topic:${topic}` : ''
+}
+
 export function normalizeTagId(value: string): string {
   return value
     .trim()
@@ -234,4 +253,3 @@ export function findTagDefinition(
   }
   return { group, tag }
 }
-

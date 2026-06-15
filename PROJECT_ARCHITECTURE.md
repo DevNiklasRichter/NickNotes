@@ -81,7 +81,7 @@ MeineNoteBase/
     index.db                    # wiederherstellbare SQLite-Projektion
     tag_groups.json             # eindeutige Tag-Definitionen
     favorite_folders.json       # favorisierte Ordner
-    ui_settings.json            # persistente UI-Einstellungen
+    ui_settings.json            # persistente UI-Einstellungen inkl. aktivem Theme
     task_status_links.json      # Hilfsindex fuer Task-Statusverknuepfungen
     graph-index.json            # wiederherstellbare Graph-Projektion
     graph-state.json            # gespeicherter Graph-UI-State
@@ -163,7 +163,7 @@ Quick Capture schreibt Inhalte in die heutige Tagesnotiz. Das Frontend bietet zu
 
 `VaultManager` besitzt die Dateisystemlogik. `VaultIndexer` baut daraus `.system/index.db` mit `notes`, `notes_fts`, `tags`, `note_tags`, `tasks` und `todos`. Ein Reindex muss die wesentlichen Projektionen aus Markdown wiederherstellen koennen.
 
-Der Graph wird ebenfalls aus Markdown abgeleitet. Er umfasst Datei- und Tag-Knoten sowie Link-, Tag-Nutzungs- und Shared-Tag-Kanten. Details stehen in `docs/graph-feature.md`.
+Der Graph wird ebenfalls aus Markdown abgeleitet. Er umfasst Datei- und Tag-Knoten sowie Link-, Tag-Nutzungs- und Shared-Tag-Kanten. Die Projektion `.system/graph-index.json` wird beim Oeffnen, Reindex, Speichern sowie bei Datei-, Ordner- und Tag-Aenderungen aus Markdown aktualisiert; die sichtbare Graph-Canvas kann davon unabhaengig eine aeltere geladene Kopie halten. Details stehen in `docs/graph-feature.md`.
 
 ## Frontend Und Desktop
 
@@ -176,7 +176,13 @@ Das React-Frontend bietet:
 - Eigenschaften fuer Metadaten, Tags und Beziehungen
 - Quick Capture
 - Task-, To-do-, Fokus-, Review- und Graph-Dashboards
-- Dark/Light Theme und persistente Layout-Einstellungen
+- Light/Dark Theme, eigene Themes und persistente Layout-Einstellungen
+
+Farben werden im Frontend ueber zentrale CSS-Tokens wie `--text`, `--surface`, `--accent`, Statusfarben,
+Highlight-Farbe und Graph-Farben gesteuert. Die eingebauten Themes `light` und `dark` bilden den aktuellen
+Standard-Look ab. Benutzerdefinierte Themes liegen in `.system/ui_settings.json` unter `app.themes`;
+`app.activeThemeId` speichert das zuletzt gewaehlte Theme. Das Backend normalisiert diese UI-Einstellungen
+beim Schreiben, fachliche Daten bleiben davon unberuehrt.
 
 `App.tsx` orchestriert aktuell einen grossen Teil des UI-State und der API-Aufrufe. Neue Frontend-Funktionen sollten vorhandene Bereichsmodule nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
 
@@ -200,4 +206,3 @@ Das React-Frontend bietet:
 4. Bei Tag-Aenderungen Definitionen, Markdown-Referenzen, Tag-Uebersichten, Index und Graph gemeinsam betrachten.
 5. Bei Task-Aenderungen Task-Markdown, Statusverknuepfungen, To-do-Promotion, Index und Dashboards gemeinsam betrachten.
 6. UI-Aenderungen auf Verstaendlichkeit, direktes Feedback und moeglichst wenige Bedien-Schritte pruefen.
-

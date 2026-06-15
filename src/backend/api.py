@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import binascii
@@ -6,39 +6,132 @@ import logging
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
+import uuid
 import threading
 import time
-import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
+from .contracts import (
+    API_CONTRACT_VERSION,
+    BackendStateResponse,
+    CapturePreviewResponse,
+    DailyOpenResponse,
+    FocusDashboardAggregateResponse,
+    FocusMitResponse,
+    FocusMitSaveResponse,
+    GraphIndexRebuildResponse,
+    GraphIndexResponse,
+    GraphIndexStatusResponse,
+    GraphStateResponse,
+    NoteAddResponse,
+    NoteBaseOpenStartResponse,
+    NoteContentResponse,
+    NoteFavoritesResponse,
+    NoteGroupAddResponse,
+    NoteGroupDeleteResponse,
+    NoteGroupMoveResponse,
+    NoteGroupRenameResponse,
+    NoteGroupsResponse,
+    NoteMutationResponse,
+    NoteMediaResponse,
+    OneNoteImportPreviewResponse,
+    OneNoteImportResponse,
+    OneNoteImportStatusResponse,
+    OpenNoteResponse,
+    OperationStatusResponse,
+    QuickCaptureFocusTodoResponse,
+    ReindexResponse,
+    ReviewDashboardResponse,
+    ReviewResponse,
+    SaveCaptureResponse,
+    SearchResponse,
+    TagGroupsResponse,
+    TagMatchCandidatesResponse,
+    TagOverviewResponse,
+    TaskDoneResponse,
+    TaskListResponse,
+    TemplateMigrationResponse,
+    TodoListResponse,
+    TodoPromoteResponse,
+    TodoToggleResponse,
+    UiSettingsResponse,
+    VaultDeleteResponse,
+    VaultOpenResponse,
+)
+from .config import (
+    DEFAULT_CORS_ORIGINS,
+    FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT,
+    REVIEW_DASHBOARD_DEFAULT_DAYS,
+    REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
+    REVIEW_DASHBOARD_DAYS_MAX,
+    REVIEW_DASHBOARD_DAYS_MIN,
+    REVIEW_DASHBOARD_TOP_NOTES_MAX,
+    REVIEW_DASHBOARD_TOP_NOTES_MIN,
+    TAG_GROUP_DEFAULT_COLOR,
+    TAG_MATCH_CONTEXT_RADIUS,
+)
 from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update_graph_index_for_file
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
-from .nicknotes_backend.onenote_importer import OneNoteLocalImporter
+from .nicknotes_backend.ai_client import OpenAISuggester
+from .application_services import BackendApiService
+from .use_cases import GetFocusDashboardUseCase
 from .nicknotes_backend.parser import CaptureParser
 from .nicknotes_backend.vault import VaultManager
+from .errors import DomainError
+from .operation_context import clear_operation_context, get_operation_context, set_operation_context
 
 
 logger = logging.getLogger(__name__)
 
 BACKEND_CAPABILITIES = {
     "linkRewrite": "markdown-source-of-truth-v2",
+    "contractVersion": API_CONTRACT_VERSION,
 }
+
+
+def _normalize_allowed_origins(raw_origins: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for origin in raw_origins:
+        normalized_origin = origin.strip()
+        if not normalized_origin:
+            continue
+        if normalized_origin == "*":
+            logger.warning("Ignoring wildcard CORS origin ('*') from env for security reasons.")
+            continue
+        if normalized_origin not in seen:
+            normalized.append(normalized_origin)
+            seen.add(normalized_origin)
+    if not normalized:
+        return DEFAULT_CORS_ORIGINS.copy()
+    return normalized
+
+
+def _build_allowed_cors_origins() -> list[str]:
+    raw_origins = os.getenv("NICKNOTES_ALLOWED_ORIGINS", "").strip()
+    if raw_origins:
+        return _normalize_allowed_origins(raw_origins.split(","))
+    return DEFAULT_CORS_ORIGINS.copy()
+
+
+def _build_cors_origin_regex() -> str | None:
+    raw_regex = os.getenv("NICKNOTES_ALLOWED_ORIGIN_REGEX", "").strip()
+    return raw_regex or None
 
 
 @dataclass
@@ -54,6 +147,8 @@ class NoteBaseLoadStatus:
     active: bool = False
     done: bool = False
     error: str | None = None
+    error_code: str | None = None
+    error_details: dict[str, Any] | None = None
     phase: str = ""
     processed: int = 0
     total: int = 0
@@ -65,10 +160,16 @@ class NoteBaseLoadStatus:
 
 @dataclass
 class RuntimeState:
+    pass
+
+
+@dataclass
+class VaultSession:
     vault: VaultManager | None = None
     indexer: VaultIndexer | None = None
     parser: CaptureParser = field(default_factory=CaptureParser)
     openai: OpenAISuggester | None = None
+    projection_lock: threading.RLock = field(default_factory=threading.RLock)
     graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
     watcher_stop: threading.Event | None = None
     watcher_thread: threading.Thread | None = None
@@ -77,16 +178,20 @@ class RuntimeState:
     import_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
     import_lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def close(self) -> None:
+    def dispose(self) -> None:
         self.stop_graph_watcher()
         if self.indexer:
             self.indexer.close()
             self.indexer = None
         self.vault = None
         self.openai = None
+        with self.load_lock:
+            self.load_status = NoteBaseLoadStatus()
+        with self.import_lock:
+            self.import_status = NoteBaseLoadStatus()
         self.graph_status = GraphRuntimeStatus()
 
-    def start_graph_watcher(self) -> None:
+    def start_graph_watcher(self, runtime: "RuntimeState") -> None:
         if not self.vault or not self.indexer or self.watcher_thread:
             return
         stop_event = threading.Event()
@@ -94,7 +199,7 @@ class RuntimeState:
         self.graph_status.watcher_enabled = True
         self.watcher_thread = threading.Thread(
             target=_graph_watcher_loop,
-            args=(self, self.vault, self.indexer, stop_event),
+            args=(runtime, self.vault, self.indexer, stop_event),
             name="nicknotes-graph-watcher",
             daemon=True,
         )
@@ -122,6 +227,8 @@ class RuntimeState:
         current_path: str | None = None,
         done: bool | None = None,
         error: str | None = None,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
         result: dict[str, Any] | None = None,
     ) -> None:
         with self.load_lock:
@@ -136,6 +243,10 @@ class RuntimeState:
                 status.current_path = current_path
             if error is not None:
                 status.error = error
+            if error_code is not None:
+                status.error_code = error_code
+            if error_details is not None:
+                status.error_details = error_details
             if result is not None:
                 status.result = result
             if done is not None:
@@ -151,6 +262,8 @@ class RuntimeState:
                 "active": status.active,
                 "done": status.done,
                 "error": status.error,
+                "errorCode": status.error_code,
+                "errorDetails": status.error_details,
                 "phase": status.phase,
                 "processed": status.processed,
                 "total": status.total,
@@ -173,6 +286,8 @@ class RuntimeState:
         current_path: str | None = None,
         done: bool | None = None,
         error: str | None = None,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
         result: dict[str, Any] | None = None,
     ) -> None:
         with self.import_lock:
@@ -187,6 +302,10 @@ class RuntimeState:
                 status.current_path = current_path
             if error is not None:
                 status.error = error
+            if error_code is not None:
+                status.error_code = error_code
+            if error_details is not None:
+                status.error_details = error_details
             if result is not None:
                 status.result = result
             if done is not None:
@@ -202,6 +321,8 @@ class RuntimeState:
                 "active": status.active,
                 "done": status.done,
                 "error": status.error,
+                "errorCode": status.error_code,
+                "errorDetails": status.error_details,
                 "phase": status.phase,
                 "processed": status.processed,
                 "total": status.total,
@@ -212,15 +333,370 @@ class RuntimeState:
             }
 
 
+@dataclass
+class RuntimeState:
+    _session: VaultSession = field(default_factory=VaultSession)
+    session_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def vault(self) -> VaultManager | None:
+        return self._session.vault
+
+    @vault.setter
+    def vault(self, value: VaultManager | None) -> None:
+        self._session.vault = value
+
+    @property
+    def indexer(self) -> VaultIndexer | None:
+        return self._session.indexer
+
+    @indexer.setter
+    def indexer(self, value: VaultIndexer | None) -> None:
+        self._session.indexer = value
+
+    @property
+    def parser(self) -> CaptureParser:
+        return self._session.parser
+
+    @parser.setter
+    def parser(self, value: CaptureParser) -> None:
+        self._session.parser = value
+
+    @property
+    def openai(self) -> OpenAISuggester | None:
+        return self._session.openai
+
+    @openai.setter
+    def openai(self, value: OpenAISuggester | None) -> None:
+        self._session.openai = value
+
+    @property
+    def graph_status(self) -> GraphRuntimeStatus:
+        return self._session.graph_status
+
+    @graph_status.setter
+    def graph_status(self, value: GraphRuntimeStatus) -> None:
+        self._session.graph_status = value
+
+    @property
+    def projection_lock(self) -> threading.RLock:
+        return self._session.projection_lock
+
+    @property
+    def watcher_stop(self) -> threading.Event | None:
+        return self._session.watcher_stop
+
+    @watcher_stop.setter
+    def watcher_stop(self, value: threading.Event | None) -> None:
+        self._session.watcher_stop = value
+
+    @property
+    def watcher_thread(self) -> threading.Thread | None:
+        return self._session.watcher_thread
+
+    @watcher_thread.setter
+    def watcher_thread(self, value: threading.Thread | None) -> None:
+        self._session.watcher_thread = value
+
+    @property
+    def load_status(self) -> NoteBaseLoadStatus:
+        return self._session.load_status
+
+    @load_status.setter
+    def load_status(self, value: NoteBaseLoadStatus) -> None:
+        self._session.load_status = value
+
+    @property
+    def load_lock(self) -> threading.Lock:
+        return self._session.load_lock
+
+    @property
+    def import_status(self) -> NoteBaseLoadStatus:
+        return self._session.import_status
+
+    @import_status.setter
+    def import_status(self, value: NoteBaseLoadStatus) -> None:
+        self._session.import_status = value
+
+    @property
+    def import_lock(self) -> threading.Lock:
+        return self._session.import_lock
+
+    @property
+    def session(self) -> VaultSession:
+        return self._session
+
+    def start_session(
+        self,
+        *,
+        vault: VaultManager | None,
+        indexer: VaultIndexer | None,
+        openai: OpenAISuggester | None = None,
+        parser: CaptureParser | None = None,
+    ) -> None:
+        with self.session_lock:
+            self._session.dispose()
+            self._session.vault = vault
+            self._session.indexer = indexer
+            self._session.openai = openai
+            if parser is not None:
+                self._session.parser = parser
+
+    def stop_session(self) -> None:
+        with self.session_lock:
+            self._session.stop_graph_watcher()
+            if self._session.indexer:
+                self._session.indexer.close()
+
+    def dispose_session(self) -> None:
+        with self.session_lock:
+            self._session.dispose()
+
+    def close(self) -> None:
+        with self.session_lock:
+            self._session.dispose()
+
+    def start_graph_watcher(self) -> None:
+        with self.session_lock:
+            self._session.start_graph_watcher(self)
+
+    def stop_graph_watcher(self) -> None:
+        with self.session_lock:
+            self._session.stop_graph_watcher()
+
+    def reset_load_status(self, phase: str) -> None:
+        self._session.reset_load_status(phase)
+
+    def update_load_status(
+        self,
+        *,
+        phase: str | None = None,
+        processed: int | None = None,
+        total: int | None = None,
+        current_path: str | None = None,
+        done: bool | None = None,
+        error: str | None = None,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        self._session.update_load_status(
+            phase=phase,
+            processed=processed,
+            total=total,
+            current_path=current_path,
+            done=done,
+            error=error,
+            error_code=error_code,
+            error_details=error_details,
+            result=result,
+        )
+
+    def get_load_status(self) -> dict[str, Any]:
+        return self._session.get_load_status()
+
+    def reset_import_status(self, phase: str) -> None:
+        self._session.reset_import_status(phase)
+
+    def update_import_status(
+        self,
+        *,
+        phase: str | None = None,
+        processed: int | None = None,
+        total: int | None = None,
+        current_path: str | None = None,
+        done: bool | None = None,
+        error: str | None = None,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        self._session.update_import_status(
+            phase=phase,
+            processed=processed,
+            total=total,
+            current_path=current_path,
+            done=done,
+            error=error,
+            error_code=error_code,
+            error_details=error_details,
+            result=result,
+        )
+
+    def get_import_status(self) -> dict[str, Any]:
+        return self._session.get_import_status()
+
+
 state = RuntimeState()
+backend_api_service = BackendApiService()
 
 app = FastAPI(title="NickNotes Backend", version="2.0.0")
+allowed_origins = _build_allowed_cors_origins()
+allowed_origin_regex = _build_cors_origin_regex()
+logger.info(
+    "CORS configured",
+    extra={
+        "allow_origins": allowed_origins,
+        "allow_origin_regex": allowed_origin_regex,
+    },
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=allowed_origin_regex,
 )
+
+
+def _active_vault_id() -> str | None:
+    if state.vault and state.vault.vault_path:
+        return str(state.vault.vault_path)
+    return None
+
+
+def _timestamp_utc() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _build_error_payload(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    vault_id: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ctx = get_operation_context()
+    return {
+        "ok": False,
+        "status": status_code,
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details,
+            "operationId": ctx.operation_id,
+            "vaultId": vault_id or ctx.vault_id,
+            "traceId": ctx.trace_id,
+        },
+        "timestamp": _timestamp_utc(),
+    }
+
+
+def _http_error_code(status_code: int) -> str:
+    if status_code in (400, 422):
+        return "request.validation"
+    if status_code == 404:
+        return "resource.notFound"
+    if status_code == 409:
+        return "request.conflict"
+    if status_code >= 500:
+        return "service.unexpected"
+    return "request.failed"
+
+
+def _public_error_message(message: str, status_code: int) -> str:
+    if status_code >= 500:
+        return "Ein unerwarteter Fehler ist aufgetreten."
+    return message
+
+
+def _request_log_payload(request: Request, *, status_code: int | None = None, error_code: str | None = None) -> dict[str, Any]:
+    ctx = get_operation_context()
+    return {
+        "operationId": ctx.operation_id,
+        "traceId": ctx.trace_id,
+        "vaultId": ctx.vault_id,
+        "method": request.method,
+        "path": request.url.path,
+        "statusCode": status_code,
+        "errorCode": error_code,
+        "client": request.client.host if request.client else None,
+    }
+
+
+@app.middleware("http")
+async def request_observability_middleware(request: Request, call_next):
+    operation_id = request.headers.get("X-Operation-Id") or str(uuid.uuid4())
+    trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())
+    tokens = set_operation_context(
+        operation_id=operation_id,
+        trace_id=trace_id,
+        vault_id=_active_vault_id(),
+    )
+    started_at = time.perf_counter()
+    logger.info("Request start", extra=_request_log_payload(request))
+    try:
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        logger.info(
+            "Request finished",
+            extra=_request_log_payload(request, status_code=response.status_code, error_code="request.completed"),
+        )
+        response.headers["X-Operation-Id"] = operation_id
+        response.headers["X-Trace-Id"] = trace_id
+        response.headers["X-Request-Duration-Ms"] = str(duration_ms)
+        return response
+    finally:
+        clear_operation_context(tokens)
+
+
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    ctx = get_operation_context()
+    payload = _build_error_payload(
+        exc.status_code,
+        exc.error_code,
+        _public_error_message(exc.public_message, exc.status_code),
+        vault_id=exc.vault_id or ctx.vault_id,
+        details=exc.details,
+    )
+    if exc.status_code >= 500:
+        logger.error(
+            "Domain error",
+            extra=_request_log_payload(request, status_code=exc.status_code, error_code=exc.error_code),
+        )
+        logger.exception("Domain error details: %s", exc.internal_message or exc.public_message)
+    else:
+        logger.warning(
+            "Domain error",
+            extra=_request_log_payload(request, status_code=exc.status_code, error_code=exc.error_code),
+        )
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    del exc
+    payload = _build_error_payload(
+        422,
+        "request.validation",
+        "Ungültige Anfrageparameter.",
+    )
+    logger.warning("Request validation failed", extra=_request_log_payload(request, status_code=422, error_code="request.validation"))
+    return JSONResponse(status_code=422, content=payload)
+
+
+@app.exception_handler(HTTPException)
+async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    status_code = int(exc.status_code)
+    code = _http_error_code(status_code)
+    message = _public_error_message(str(exc.detail), status_code)
+    payload = _build_error_payload(status_code, code, message)
+    logger.warning(
+        "HTTP error",
+        extra=_request_log_payload(request, status_code=status_code, error_code=code),
+    )
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled error", extra=_request_log_payload(request), exc_info=exc)
+    payload = _build_error_payload(500, "service.unexpected", "Ein unerwarteter Fehler ist aufgetreten.")
+    return JSONResponse(status_code=500, content=payload)
+
 
 
 class VaultOpenRequest(BaseModel):
@@ -392,13 +868,20 @@ class TodoToggleRequest(BaseModel):
     checked: bool | None = None
 
 
-@app.get("/health")
-def health() -> dict[str, Any]:
+@app.get("/health", response_model=BackendStateResponse)
+def health()-> dict[str, Any]:
+    return backend_api_service.health()
+
+def health_impl()-> dict[str, Any]:
     return {"ok": True, "vaultLoaded": state.vault is not None, "capabilities": BACKEND_CAPABILITIES}
 
 
-@app.get("/state")
-def get_state() -> dict[str, Any]:
+
+@app.get("/state", response_model=BackendStateResponse)
+def get_state()-> dict[str, Any]:
+    return backend_api_service.get_state()
+
+def get_state_impl()-> dict[str, Any]:
     if not state.vault or not state.indexer:
         return {"vaultLoaded": False}
     return {
@@ -409,130 +892,40 @@ def get_state() -> dict[str, Any]:
     }
 
 
-@app.post("/vault/open")
-def open_vault(req: VaultOpenRequest) -> dict[str, Any]:
-    return _open_vault_impl(req)
+
+@app.post("/vault/open", response_model=VaultOpenResponse)
+def open_vault(req: VaultOpenRequest)-> dict[str, Any]:
+    return backend_api_service.open_vault(req)
+
+def open_vault_impl(req: VaultOpenRequest)-> dict[str, Any]:
+    return backend_api_service.open_vault(req)
 
 
-def _open_vault_impl(req: VaultOpenRequest, progress_callback: Any | None = None) -> dict[str, Any]:
-    vault_path = Path(req.path).expanduser().resolve()
-    if not vault_path.exists():
-        raise HTTPException(status_code=400, detail=f"NoteBase path not found: {vault_path}")
+@app.post("/notebase/open/start", response_model=NoteBaseOpenStartResponse)
+def start_notebase_open(req: VaultOpenRequest)-> dict[str, Any]:
+    return backend_api_service.start_notebase_open(req)
 
-    state.close()
-    indexer: VaultIndexer | None = None
-    try:
-        vault = VaultManager(vault_path)
-        vault.ensure_structure()
-        indexer = VaultIndexer(vault.db_path)
-
-        cfg = vault.read_config()
-        openai_cfg = cfg.get("openai", {})
-        smart_enabled = cfg.get("mode", "core") == "smart" and bool(openai_cfg.get("enabled"))
-        openai = OpenAISuggester(
-            OpenAIConfig(
-                enabled=smart_enabled,
-                model=str(openai_cfg.get("model", "gpt-4.1-mini")),
-                api_key_env=str(openai_cfg.get("api_key_env", "OPENAI_API_KEY")),
-            )
-        )
-
-        if progress_callback:
-            progress_callback("Index wird vorbereitet ...", 0, 0, None)
-        indexed = indexer.reindex_vault(vault_path, progress_callback=progress_callback)
-        if progress_callback:
-            progress_callback("Aufgabenstatus wird aktualisiert ...", indexed.get("notes", 0) + indexed.get("tasks", 0), indexed.get("notes", 0) + indexed.get("tasks", 0), None)
-        try:
-            vault.bootstrap_task_status_links(indexer)
-        except OSError:
-            # Task-Link bootstrap is best-effort and should not block opening the NoteBase.
-            pass
-        if progress_callback:
-            progress_callback("Tags werden synchronisiert ...", indexed.get("notes", 0) + indexed.get("tasks", 0), indexed.get("notes", 0) + indexed.get("tasks", 0), None)
-        tag_groups = vault.sync_tag_groups_with_index(indexer)
-        state.vault = vault
-        state.indexer = indexer
-        state.openai = openai
-        try:
-            state.start_graph_watcher()
-        except Exception as exc:
-            state.graph_status.last_error = f"Graph watcher could not be started: {exc}"
-            logger.exception("Graph watcher could not be started.")
-    except sqlite3.OperationalError as exc:
-        if indexer:
-            indexer.close()
-        state.close()
-        detail = f"Could not open NoteBase index database: {exc}"
-        if "locked" in str(exc).lower():
-            detail = f"Could not open NoteBase because its index database is locked: {vault_path}"
-        raise HTTPException(status_code=409, detail=detail) from exc
-    except Exception as exc:
-        if indexer:
-            indexer.close()
-        state.close()
-        logger.exception("Could not open NoteBase.")
-        raise HTTPException(status_code=500, detail=f"Could not open NoteBase: {exc}") from exc
-
-    return {
-        "vaultPath": str(vault_path),
-        "noteBasePath": str(vault_path),
-        "indexed": indexed,
-        "mode": "smart" if smart_enabled else "core",
-        "tagGroups": tag_groups,
-        "counts": _counts(indexer),
-    }
+def start_notebase_open_impl(req: VaultOpenRequest)-> dict[str, Any]:
+    return backend_api_service.start_notebase_open(req)
 
 
-def _open_notebase_background(req: VaultOpenRequest) -> None:
-    def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-        state.update_load_status(
-            phase=phase,
-            processed=processed,
-            total=total,
-            current_path=current_path,
-        )
-
-    try:
-        result = _open_vault_impl(req, progress_callback=update_progress)
-        state.update_load_status(
-            phase="NoteBase ist bereit.",
-            done=True,
-            error=None,
-            result=result,
-        )
-    except HTTPException as exc:
-        state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.detail), result=None)
-    except Exception as exc:
-        logger.exception("Could not open NoteBase in background.")
-        state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
 
 
-@app.post("/notebase/open/start")
-def start_notebase_open(req: VaultOpenRequest) -> dict[str, Any]:
-    vault_path = Path(req.path).expanduser().resolve()
-    if not vault_path.exists():
-        raise HTTPException(status_code=400, detail=f"NoteBase path not found: {vault_path}")
-    with state.load_lock:
-        if state.load_status.active:
-            raise HTTPException(status_code=409, detail="A NoteBase is already being loaded.")
-    state.reset_load_status("NoteBase wird vorbereitet ...")
-    thread = threading.Thread(
-        target=_open_notebase_background,
-        args=(VaultOpenRequest(path=str(vault_path)),),
-        name="nicknotes-notebase-open",
-        daemon=True,
-    )
-    thread.start()
-    return {"started": True, "path": str(vault_path)}
+
+@app.get("/notebase/open/status", response_model=OperationStatusResponse)
+def get_notebase_open_status()-> dict[str, Any]:
+    return backend_api_service.get_notebase_open_status()
+
+def get_notebase_open_status_impl()-> dict[str, Any]:
+    return backend_api_service.get_notebase_open_status()
 
 
-@app.get("/notebase/open/status")
-def get_notebase_open_status() -> dict[str, Any]:
-    return state.get_load_status()
 
+@app.post("/vault/create", response_model=VaultOpenResponse)
+def create_vault(req: VaultCreateRequest)-> dict[str, Any]:
+    return backend_api_service.create_vault(req)
 
-@app.post("/vault/create")
-def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
+def create_vault_impl(req: VaultCreateRequest)-> dict[str, Any]:
     parent = Path(req.parent_path).expanduser().resolve()
     if not parent.exists() or not parent.is_dir():
         raise HTTPException(status_code=400, detail=f"Parent path not found: {parent}")
@@ -546,105 +939,85 @@ def create_vault(req: VaultCreateRequest) -> dict[str, Any]:
     return open_vault(VaultOpenRequest(path=str(vault_path)))
 
 
-@app.post("/vault/reindex")
-def reindex_vault() -> dict[str, Any]:
+
+@app.post("/vault/reindex", response_model=ReindexResponse)
+def reindex_vault()-> dict[str, Any]:
+    return backend_api_service.reindex_vault()
+
+def reindex_vault_impl()-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
-        indexed = indexer.reindex_vault(vault.vault_path)
-        vault.rebuild_task_status_links(indexer)
-        tag_groups = vault.sync_tag_groups_with_index(indexer)
-        return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups}
+        with state.projection_lock:
+            indexed = indexer.reindex_vault(vault.vault_path)
+            vault.rebuild_task_status_links(indexer)
+            tag_groups = vault.sync_tag_groups_with_index(indexer)
+            graph_status = _rebuild_graph_projection(vault)
+        return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups, "graphStatus": graph_status}
     except Exception as exc:
         logger.exception("NoteBase reindex failed")
         raise HTTPException(status_code=500, detail=f"Unerwarteter Fehler beim Reindex: {exc}") from exc
 
 
-@app.post("/notebase/open")
-def open_notebase(req: VaultOpenRequest) -> dict[str, Any]:
+
+@app.post("/notebase/open", response_model=VaultOpenResponse)
+def open_notebase(req: VaultOpenRequest)-> dict[str, Any]:
+    return backend_api_service.open_notebase(req)
+
+def open_notebase_impl(req: VaultOpenRequest)-> dict[str, Any]:
     return open_vault(req)
 
 
-@app.post("/notebase/create")
-def create_notebase(req: VaultCreateRequest) -> dict[str, Any]:
+
+@app.post("/notebase/create", response_model=VaultOpenResponse)
+def create_notebase(req: VaultCreateRequest)-> dict[str, Any]:
+    return backend_api_service.create_notebase(req)
+
+def create_notebase_impl(req: VaultCreateRequest)-> dict[str, Any]:
     return create_vault(req)
 
 
-@app.post("/notebase/reindex")
-def reindex_notebase() -> dict[str, Any]:
+
+@app.post("/notebase/reindex", response_model=ReindexResponse)
+def reindex_notebase()-> dict[str, Any]:
+    return backend_api_service.reindex_notebase()
+
+def reindex_notebase_impl()-> dict[str, Any]:
     return reindex_vault()
 
 
-@app.post("/imports/onenote/preview")
-def preview_onenote_import(req: OneNoteImportPreviewRequest) -> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    try:
-        preview = OneNoteLocalImporter(vault).preview(req.source_paths)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return preview
+
+@app.post("/imports/onenote/preview", response_model=OneNoteImportPreviewResponse)
+def preview_onenote_import(req: OneNoteImportPreviewRequest)-> dict[str, Any]:
+    return backend_api_service.preview_onenote_import(req)
+
+def preview_onenote_import_impl(req: OneNoteImportPreviewRequest)-> dict[str, Any]:
+    return backend_api_service.preview_onenote_import(req)
 
 
-@app.post("/imports/onenote/start")
-def start_onenote_import(req: OneNoteImportRequest) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    state.reset_import_status("Import wird vorbereitet ...")
 
-    def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-        state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
+@app.post("/imports/onenote/start", response_model=OneNoteImportResponse)
+def start_onenote_import(req: OneNoteImportRequest)-> dict[str, Any]:
+    return backend_api_service.start_onenote_import(req)
 
-    try:
-        logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
-        result = OneNoteLocalImporter(vault, progress_callback=update_progress).import_sources(req.source_paths, req.target_folder)
-    except (RuntimeError, ValueError) as exc:
-        state.update_import_status(phase="Import fehlgeschlagen.", done=True, error=str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("OneNote import failed unexpectedly")
-        try:
-            error_log = Path.cwd() / ".tmp" / "onenote-import-error.log"
-            error_log.parent.mkdir(parents=True, exist_ok=True)
-            error_log.write_text(traceback.format_exc(), encoding="utf-8")
-        except OSError:
-            pass
-        detail = f"Unerwarteter Fehler beim OneNote-Import: {exc}"
-        state.update_import_status(phase="Import fehlgeschlagen.", done=True, error=detail)
-        raise HTTPException(status_code=500, detail=detail) from exc
-    state.update_import_status(
-        phase="NoteBase wird aktualisiert ...",
-        processed=result.get("importedPages", 0),
-        total=max(result.get("importedPages", 0), 1),
-        current_path="",
-    )
-    indexed = indexer.reindex_vault(vault.vault_path)
-    try:
-        vault.rebuild_task_status_links(indexer)
-    except OSError:
-        pass
-    tag_groups = vault.sync_tag_groups_with_index(indexer)
-    response = {
-        "import": result,
-        "indexed": indexed,
-        "counts": _counts(indexer),
-        "tagGroups": tag_groups,
-        "groups": vault.list_note_groups(),
-    }
-    state.update_import_status(
-        phase="Import abgeschlossen.",
-        processed=result.get("importedPages", 0),
-        total=max(result.get("importedPages", 0), 1),
-        done=True,
-        result=response,
-    )
-    return response
+def start_onenote_import_impl(req: OneNoteImportRequest)-> dict[str, Any]:
+    return backend_api_service.start_onenote_import(req)
 
 
-@app.get("/imports/onenote/status")
-def get_onenote_import_status() -> dict[str, Any]:
+
+@app.get("/imports/onenote/status", response_model=OneNoteImportStatusResponse)
+def get_onenote_import_status()-> dict[str, Any]:
+    return backend_api_service.get_onenote_import_status()
+
+def get_onenote_import_status_impl()-> dict[str, Any]:
     return state.get_import_status()
 
 
-@app.post("/notebase/rename")
-def rename_notebase(req: NoteBaseRenameRequest) -> dict[str, Any]:
+
+@app.post("/notebase/rename", response_model=VaultOpenResponse)
+def rename_notebase(req: NoteBaseRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_notebase(req)
+
+def rename_notebase_impl(req: NoteBaseRenameRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     old_path = vault.vault_path.resolve()
     new_name = req.new_name.strip()
@@ -666,7 +1039,7 @@ def rename_notebase(req: NoteBaseRenameRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Target path already exists: {new_path}")
 
     try:
-        state.close()
+        state.dispose_session()
         old_path.rename(new_path)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not rename NoteBase: {exc}") from exc
@@ -674,15 +1047,19 @@ def rename_notebase(req: NoteBaseRenameRequest) -> dict[str, Any]:
     return open_vault(VaultOpenRequest(path=str(new_path)))
 
 
-@app.post("/notebase/delete")
-def delete_notebase(req: NoteBaseDeleteRequest) -> dict[str, Any]:
+
+@app.post("/notebase/delete", response_model=VaultDeleteResponse)
+def delete_notebase(req: NoteBaseDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_notebase(req)
+
+def delete_notebase_impl(req: NoteBaseDeleteRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     if not req.confirm_delete:
         raise HTTPException(status_code=400, detail="confirmDelete must be true to delete a NoteBase")
 
     target = vault.vault_path.resolve()
     try:
-        state.close()
+        state.dispose_session()
         shutil.rmtree(target)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not delete NoteBase: {exc}") from exc
@@ -690,8 +1067,12 @@ def delete_notebase(req: NoteBaseDeleteRequest) -> dict[str, Any]:
     return {"deleted": True, "deletedPath": str(target), "vaultLoaded": False}
 
 
-@app.post("/capture/preview")
-def preview_capture(req: CapturePreviewRequest) -> dict[str, Any]:
+
+@app.post("/capture/preview", response_model=CapturePreviewResponse)
+def preview_capture(req: CapturePreviewRequest)-> dict[str, Any]:
+    return backend_api_service.preview_capture(req)
+
+def preview_capture_impl(req: CapturePreviewRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     merged = _compute_capture(req.text, vault, indexer)
     auto_count = sum(1 for item in merged if item.auto_apply or item.source == "explicit")
@@ -704,8 +1085,12 @@ def preview_capture(req: CapturePreviewRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/capture/save")
-def save_capture(req: CaptureSaveRequest) -> dict[str, Any]:
+
+@app.post("/capture/save", response_model=SaveCaptureResponse)
+def save_capture(req: CaptureSaveRequest)-> dict[str, Any]:
+    return backend_api_service.save_capture(req)
+
+def save_capture_impl(req: CaptureSaveRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
 
     text = req.text.strip()
@@ -731,8 +1116,12 @@ def save_capture(req: CaptureSaveRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/focus/mit")
-def get_focus_mit(date: str | None = None) -> dict[str, Any]:
+
+@app.get("/focus/mit", response_model=FocusMitResponse)
+def get_focus_mit(date: str | None = None)-> dict[str, Any]:
+    return backend_api_service.get_focus_mit(date)
+
+def get_focus_mit_impl(date: str | None = None)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     state = vault.get_daily_mit(day_iso=date)
     return {
@@ -742,8 +1131,12 @@ def get_focus_mit(date: str | None = None) -> dict[str, Any]:
     }
 
 
-@app.post("/focus/mit")
-def save_focus_mit(req: FocusMitUpdateRequest) -> dict[str, Any]:
+
+@app.post("/focus/mit", response_model=FocusMitSaveResponse)
+def save_focus_mit(req: FocusMitUpdateRequest)-> dict[str, Any]:
+    return backend_api_service.save_focus_mit(req)
+
+def save_focus_mit_impl(req: FocusMitUpdateRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     state = vault.set_daily_mit(day_iso=req.date, mit_ids=req.mit_ids, indexer=indexer)
     return {
@@ -755,8 +1148,12 @@ def save_focus_mit(req: FocusMitUpdateRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/focus/quick-capture")
-def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
+
+@app.post("/focus/quick-capture", response_model=QuickCaptureFocusTodoResponse)
+def quick_capture_focus_todo(req: FocusQuickCaptureRequest)-> dict[str, Any]:
+    return backend_api_service.quick_capture_focus_todo(req)
+
+def quick_capture_focus_todo_impl(req: FocusQuickCaptureRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         result = vault.add_quick_todo_to_daily(text=req.text, indexer=indexer, day_iso=req.date)
@@ -771,8 +1168,12 @@ def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/daily/open-today")
-def open_or_create_daily(date: str | None = None) -> dict[str, Any]:
+
+@app.post("/daily/open-today", response_model=DailyOpenResponse)
+def open_or_create_daily(date: str | None = None)-> dict[str, Any]:
+    return backend_api_service.open_or_create_daily(date)
+
+def open_or_create_daily_impl(date: str | None = None)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     state = vault.ensure_daily_note(day_iso=date, indexer=indexer)
     return {
@@ -784,27 +1185,41 @@ def open_or_create_daily(date: str | None = None) -> dict[str, Any]:
     }
 
 
-@app.get("/focus/dashboard")
-def get_focus_dashboard(date: str | None = None) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    day_iso = _normalize_iso_day_param(date)
-    return _build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
+
+@app.get("/focus/dashboard", response_model=FocusDashboardAggregateResponse)
+def get_focus_dashboard(date: str | None = None)-> dict[str, Any]:
+    return backend_api_service.get_focus_dashboard(date)
+
+def get_focus_dashboard_impl(date: str | None = None)-> dict[str, Any]:
+    return GetFocusDashboardUseCase().execute(backend_api_service, date_param=date)
 
 
-@app.get("/tasks")
-def list_tasks(include_done: bool = False) -> dict[str, Any]:
+
+@app.get("/tasks", response_model=TaskListResponse)
+def list_tasks(include_done: bool = False)-> dict[str, Any]:
+    return backend_api_service.list_tasks(include_done)
+
+def list_tasks_impl(include_done: bool = False)-> dict[str, Any]:
     _vault, indexer = _require_loaded()
     return {"items": indexer.list_tasks(include_done=include_done)}
 
 
-@app.get("/todos")
-def list_todos() -> dict[str, Any]:
+
+@app.get("/todos", response_model=TodoListResponse)
+def list_todos()-> dict[str, Any]:
+    return backend_api_service.list_todos()
+
+def list_todos_impl()-> dict[str, Any]:
     _vault, indexer = _require_loaded()
     return {"items": indexer.list_todos()}
 
 
-@app.post("/todos/{todo_id}/toggle")
-def toggle_todo(todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
+
+@app.post("/todos/{todo_id}/toggle", response_model=TodoToggleResponse)
+def toggle_todo(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
+    return backend_api_service.toggle_todo(todo_id, req)
+
+def toggle_todo_impl(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         result = vault.toggle_todo(todo_id=todo_id, indexer=indexer, checked=req.checked)
@@ -813,8 +1228,12 @@ def toggle_todo(todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
     return result
 
 
-@app.post("/todos/{todo_id}/promote")
-def promote_todo(todo_id: str) -> dict[str, Any]:
+
+@app.post("/todos/{todo_id}/promote", response_model=TodoPromoteResponse)
+def promote_todo(todo_id: str)-> dict[str, Any]:
+    return backend_api_service.promote_todo(todo_id)
+
+def promote_todo_impl(todo_id: str)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         result = vault.promote_todo_to_task(todo_id=todo_id, indexer=indexer)
@@ -823,8 +1242,12 @@ def promote_todo(todo_id: str) -> dict[str, Any]:
     return result
 
 
-@app.post("/tasks/{task_id}/done")
-def mark_task_done(task_id: str) -> dict[str, Any]:
+
+@app.post("/tasks/{task_id}/done", response_model=TaskDoneResponse)
+def mark_task_done(task_id: str)-> dict[str, Any]:
+    return backend_api_service.mark_task_done(task_id)
+
+def mark_task_done_impl(task_id: str)-> dict[str, Any]:
     vault, indexer = _require_loaded()
 
     rows = [r for r in indexer.list_tasks(include_done=True) if r["id"] == task_id]
@@ -912,14 +1335,22 @@ def mark_task_done(task_id: str) -> dict[str, Any]:
     return {"done": True, "taskId": task_id}
 
 
-@app.get("/search")
-def search_notes(query: str = "") -> dict[str, Any]:
+
+@app.get("/search", response_model=SearchResponse)
+def search_notes(query: str = "")-> dict[str, Any]:
+    return backend_api_service.search_notes(query)
+
+def search_notes_impl(query: str = "")-> dict[str, Any]:
     _vault, indexer = _require_loaded()
     return {"items": indexer.search_notes(query)}
 
 
-@app.get("/explorer/files")
-def explorer_files() -> dict[str, Any]:
+
+@app.get("/explorer/files", response_model=SearchResponse)
+def explorer_files()-> dict[str, Any]:
+    return backend_api_service.explorer_files()
+
+def explorer_files_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     items: list[dict[str, Any]] = []
 
@@ -999,58 +1430,33 @@ def explorer_files() -> dict[str, Any]:
     return {"items": items}
 
 
-@app.get("/notes/content")
-def read_note_content(path: str) -> dict[str, Any]:
+
+@app.get("/notes/content", response_model=NoteContentResponse)
+def read_note_content(path: str)-> dict[str, Any]:
+    return backend_api_service.read_note_content(path)
+
+def read_note_content_impl(path: str)-> dict[str, Any]:
     file_path = Path(path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
     return {"path": str(file_path), "content": file_path.read_text(encoding="utf-8")}
 
 
-@app.post("/notes/save")
-def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    vault_root = vault.vault_path.resolve()
-    candidate = Path(req.path).expanduser()
-    if candidate.is_absolute():
-        file_path = candidate.resolve()
-    else:
-        clean_path = req.path.replace("\\", "/").strip().strip("/")
-        file_path = (vault_root / clean_path).resolve()
 
-    try:
-        file_path.relative_to(vault_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Can only save files inside the loaded NoteBase") from exc
+@app.post("/notes/save", response_model=NoteAddResponse)
+def save_note_content(req: NoteSaveRequest)-> dict[str, Any]:
+    return backend_api_service.save_note_content(req)
 
-    if file_path.exists() and not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {file_path}")
-
-    try:
-        result = vault.save_note_document(req.path, req.content, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    tag_groups = vault.sync_tag_groups_with_index(indexer) if bool(result.get("tag_rebuild_required")) else None
-    graph_status = _update_graph_after_note_save(
-        vault=vault,
-        saved_path=Path(result["path"]),
-        previous_path=file_path,
-        tag_groups=tag_groups,
-    )
-    return {
-        "saved": True,
-        "path": str(result["path"]),
-        "title": str(result["title"]),
-        "counts": _counts(indexer),
-        "tagGroups": tag_groups,
-        "tagGroupsRebuilt": bool(tag_groups is not None),
-        "graphStatus": graph_status,
-        "linkRewrite": vault.consume_last_link_rewrite_result(),
-    }
+def save_note_content_impl(req: NoteSaveRequest)-> dict[str, Any]:
+    return backend_api_service.save_note_content(req)
 
 
-@app.post("/notes/media/add")
-def add_note_media_asset(req: NoteMediaAddRequest) -> dict[str, Any]:
+
+@app.post("/notes/media/add", response_model=NoteMediaResponse)
+def add_note_media_asset(req: NoteMediaAddRequest)-> dict[str, Any]:
+    return backend_api_service.add_note_media_asset(req)
+
+def add_note_media_asset_impl(req: NoteMediaAddRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     try:
         payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
@@ -1074,8 +1480,12 @@ def add_note_media_asset(req: NoteMediaAddRequest) -> dict[str, Any]:
     }
 
 
+
 @app.get("/notes/media/content")
-def get_note_media_content(path: str, source: str) -> FileResponse:
+def get_note_media_content(path: str, source: str)-> FileResponse:
+    return backend_api_service.get_note_media_content(path, source)
+
+def get_note_media_content_impl(path: str, source: str)-> FileResponse:
     vault, _indexer = _require_loaded()
     try:
         asset_path, mime_type = vault.resolve_note_media_asset(note_path=path, source=source)
@@ -1084,8 +1494,12 @@ def get_note_media_content(path: str, source: str) -> FileResponse:
     return FileResponse(path=asset_path, media_type=mime_type, filename=asset_path.name)
 
 
-@app.post("/notes/open")
-def open_note_file(req: NoteOpenRequest) -> dict[str, Any]:
+
+@app.post("/notes/open", response_model=OpenNoteResponse)
+def open_note_file(req: NoteOpenRequest)-> dict[str, Any]:
+    return backend_api_service.open_note_file(req)
+
+def open_note_file_impl(req: NoteOpenRequest)-> dict[str, Any]:
     file_path = Path(req.path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
@@ -1103,8 +1517,12 @@ def open_note_file(req: NoteOpenRequest) -> dict[str, Any]:
     return {"opened": True, "path": str(file_path)}
 
 
-@app.get("/review")
-def get_review() -> dict[str, Any]:
+
+@app.get("/review", response_model=ReviewResponse)
+def get_review()-> dict[str, Any]:
+    return backend_api_service.get_review()
+
+def get_review_impl()-> dict[str, Any]:
     _vault, indexer = _require_loaded()
     today = date.today()
     return {
@@ -1113,8 +1531,16 @@ def get_review() -> dict[str, Any]:
     }
 
 
-@app.get("/review/dashboard")
-def get_review_dashboard(days: int = 30, day: str | None = None, top: int = 8) -> dict[str, Any]:
+
+@app.get("/review/dashboard", response_model=ReviewDashboardResponse)
+def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES)-> dict[str, Any]:
+    return backend_api_service.get_review_dashboard(days, day, top)
+
+def get_review_dashboard_impl(
+    days: int = REVIEW_DASHBOARD_DEFAULT_DAYS,
+    day: str | None = None,
+    top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
+) -> dict[str, Any]:
     _vault, indexer = _require_loaded()
     day_iso = _normalize_iso_day_param(day)
     try:
@@ -1122,57 +1548,99 @@ def get_review_dashboard(days: int = 30, day: str | None = None, top: int = 8) -
     except ValueError:
         end_day = date.today()
 
-    safe_days = max(1, min(int(days), 120))
-    safe_top = max(3, min(int(top), 20))
+    safe_days = max(REVIEW_DASHBOARD_DAYS_MIN, min(int(days), REVIEW_DASHBOARD_DAYS_MAX))
+    safe_top = max(REVIEW_DASHBOARD_TOP_NOTES_MIN, min(int(top), REVIEW_DASHBOARD_TOP_NOTES_MAX))
     return indexer.review_dashboard(end_day=end_day, window_days=safe_days, top_notes_limit=safe_top)
 
 
-@app.get("/ui-settings")
-def get_ui_settings() -> dict[str, Any]:
+
+@app.get("/ui-settings", response_model=UiSettingsResponse)
+def get_ui_settings()-> dict[str, Any]:
+    return backend_api_service.get_ui_settings()
+
+def get_ui_settings_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"settings": vault.read_ui_settings()}
 
 
-@app.post("/ui-settings")
-def update_ui_settings(req: UiSettingsUpdateRequest) -> dict[str, Any]:
+
+@app.post("/ui-settings", response_model=UiSettingsResponse)
+def update_ui_settings(req: UiSettingsUpdateRequest)-> dict[str, Any]:
+    return backend_api_service.update_ui_settings(req)
+
+def update_ui_settings_impl(req: UiSettingsUpdateRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     settings = vault.update_ui_settings(app_settings=req.app, explorer_settings=req.explorer)
     return {"settings": settings}
 
 
-@app.get("/tag-groups")
-def get_tag_groups() -> dict[str, Any]:
+
+@app.get("/tag-groups", response_model=TagGroupsResponse)
+def get_tag_groups()-> dict[str, Any]:
+    return backend_api_service.get_tag_groups()
+
+def get_tag_groups_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"groups": vault.read_tag_groups()}
 
 
-@app.get("/graph-index")
-def get_graph_index() -> dict[str, Any]:
+
+@app.get("/graph-index", response_model=GraphIndexResponse)
+def get_graph_index()-> dict[str, Any]:
+    return backend_api_service.get_graph_index()
+
+def get_graph_index_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"index": read_graph_index(vault.graph_index_path).to_dict()}
 
 
-@app.get("/graph-index/status")
-def get_graph_index_status() -> dict[str, Any]:
+
+@app.get("/graph-index/status", response_model=GraphIndexStatusResponse)
+def get_graph_index_status()-> dict[str, Any]:
+    return backend_api_service.get_graph_index_status()
+
+def get_graph_index_status_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return _graph_index_status(vault)
 
 
-@app.post("/graph-index/rebuild")
-def rebuild_graph_index() -> dict[str, Any]:
+
+@app.post("/graph-index/rebuild", response_model=GraphIndexRebuildResponse)
+def rebuild_graph_index()-> dict[str, Any]:
+    return backend_api_service.rebuild_graph_index()
+
+def rebuild_graph_index_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
-    state.graph_status.is_updating = True
-    state.graph_status.last_error = None
-    try:
-        index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
-        write_graph_index(vault.graph_index_path, index)
-        return {"index": index.to_dict(), "status": _graph_index_status(vault, index)}
-    except Exception as exc:
-        state.graph_status.last_error = str(exc)
-        logger.exception("Graph index rebuild failed.")
-        raise
-    finally:
-        state.graph_status.is_updating = False
+    with state.projection_lock:
+        state.graph_status.is_updating = True
+        state.graph_status.last_error = None
+        try:
+            index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
+            write_graph_index(vault.graph_index_path, index)
+            return {"index": index.to_dict(), "status": _graph_index_status(vault, index)}
+        except Exception as exc:
+            state.graph_status.last_error = str(exc)
+            logger.exception("Graph index rebuild failed.")
+            raise
+        finally:
+            state.graph_status.is_updating = False
+
+
+
+def _rebuild_graph_projection(vault: VaultManager) -> dict[str, Any]:
+    with state.projection_lock:
+        state.graph_status.is_updating = True
+        state.graph_status.last_error = None
+        try:
+            index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
+            write_graph_index(vault.graph_index_path, index)
+            return _graph_index_status(vault, index)
+        except Exception as exc:
+            state.graph_status.last_error = str(exc)
+            logger.exception("Graph projection rebuild failed.")
+            return _graph_index_status(vault)
+        finally:
+            state.graph_status.is_updating = False
 
 
 def _update_graph_after_note_save(
@@ -1182,32 +1650,33 @@ def _update_graph_after_note_save(
     previous_path: Path,
     tag_groups: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    state.graph_status.is_updating = True
-    state.graph_status.last_error = None
-    try:
-        groups = tag_groups if tag_groups is not None else vault.read_tag_groups()
-        if not vault.graph_index_path.exists():
-            index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
-        else:
-            index = read_graph_index(vault.graph_index_path)
-            if _graph_index_needs_rebuild(index):
+    with state.projection_lock:
+        state.graph_status.is_updating = True
+        state.graph_status.last_error = None
+        try:
+            groups = tag_groups if tag_groups is not None else vault.read_tag_groups()
+            if not vault.graph_index_path.exists():
                 index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
             else:
-                index = update_graph_index_for_file(
-                    vault_path=vault.vault_path,
-                    tag_groups=groups,
-                    index=index,
-                    file_path=saved_path,
-                    previous_path=previous_path if previous_path.resolve() != saved_path.resolve() else None,
-                )
-        write_graph_index(vault.graph_index_path, index)
-        return _graph_index_status(vault, index)
-    except Exception as exc:
-        state.graph_status.last_error = str(exc)
-        logger.exception("Incremental graph update failed.")
-        return _graph_index_status(vault)
-    finally:
-        state.graph_status.is_updating = False
+                index = read_graph_index(vault.graph_index_path)
+                if _graph_index_needs_rebuild(index):
+                    index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
+                else:
+                    index = update_graph_index_for_file(
+                        vault_path=vault.vault_path,
+                        tag_groups=groups,
+                        index=index,
+                        file_path=saved_path,
+                        previous_path=previous_path if previous_path.resolve() != saved_path.resolve() else None,
+                    )
+            write_graph_index(vault.graph_index_path, index)
+            return _graph_index_status(vault, index)
+        except Exception as exc:
+            state.graph_status.last_error = str(exc)
+            logger.exception("Incremental graph update failed.")
+            return _graph_index_status(vault)
+        finally:
+            state.graph_status.is_updating = False
 
 
 def _graph_index_needs_rebuild(index: GraphIndex) -> bool:
@@ -1240,6 +1709,7 @@ def _graph_watcher_loop(runtime: RuntimeState, vault: VaultManager, indexer: Vau
             deleted_paths = set(snapshot) - set(current)
             now = time.monotonic()
             for path in changed_paths | deleted_paths:
+                # Coordinate with mutating note operations to avoid interleaving graph/index updates.
                 pending[path] = now
             ready = [path for path, first_seen in pending.items() if now - first_seen >= 1.2]
             if not ready:
@@ -1247,32 +1717,44 @@ def _graph_watcher_loop(runtime: RuntimeState, vault: VaultManager, indexer: Vau
                 continue
             for path in sorted(ready, key=lambda item: item.as_posix().lower()):
                 pending.pop(path, None)
-                if path.exists():
-                    indexer.reindex_markdown_file(vault.vault_path, path)
-                else:
-                    indexer.remove_projection_for_path(str(path))
-                _update_graph_after_note_save(vault=vault, saved_path=path, previous_path=path, tag_groups=None)
-                runtime.graph_status.last_external_update = datetime.now().isoformat(timespec="seconds")
+                with runtime.projection_lock:
+                    if path.exists():
+                        indexer.reindex_markdown_file(vault.vault_path, path)
+                    else:
+                        indexer.remove_projection_for_path(str(path))
+                    _update_graph_after_note_save(vault=vault, saved_path=path, previous_path=path, tag_groups=None)
+                    runtime.graph_status.last_external_update = datetime.now().isoformat(timespec="seconds")
             snapshot = current
         except Exception as exc:
             runtime.graph_status.last_error = str(exc)
             logger.exception("Graph watcher update failed.")
 
 
-@app.get("/graph-state")
-def get_graph_state() -> dict[str, Any]:
+@app.get("/graph-state", response_model=GraphStateResponse)
+def get_graph_state()-> dict[str, Any]:
+    return backend_api_service.get_graph_state()
+
+def get_graph_state_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"state": read_graph_state(vault.graph_state_path)}
 
 
-@app.put("/graph-state")
-def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+
+@app.put("/graph-state", response_model=GraphStateResponse)
+def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
+    return backend_api_service.update_graph_state(state_payload)
+
+def update_graph_state_impl(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"state": write_graph_state(vault.graph_state_path, state_payload)}
 
 
-@app.get("/tags/overview")
-def get_tag_overview(groupId: str, tagId: str) -> dict[str, Any]:
+
+@app.get("/tags/overview", response_model=TagOverviewResponse)
+def get_tag_overview(groupId: str, tagId: str)-> dict[str, Any]:
+    return backend_api_service.get_tag_overview(groupId, tagId)
+
+def get_tag_overview_impl(groupId: str, tagId: str)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         result = vault.resolve_tag_overview_note(group_id=groupId, tag_id=tagId, indexer=indexer)
@@ -1284,22 +1766,34 @@ def get_tag_overview(groupId: str, tagId: str) -> dict[str, Any]:
     }
 
 
-@app.post("/tag-groups/add-group")
-def add_tag_group(req: TagGroupRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/add-group", response_model=TagGroupsResponse)
+def add_tag_group(req: TagGroupRequest)-> dict[str, Any]:
+    return backend_api_service.add_tag_group(req)
+
+def add_tag_group_impl(req: TagGroupRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     groups = vault.add_tag_group(req.group_id, req.display_name, req.color, indexer)
     return {"groups": groups}
 
 
-@app.post("/tag-groups/add-tag")
-def add_tag(req: TagCreateRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/add-tag", response_model=TagGroupsResponse)
+def add_tag(req: TagCreateRequest)-> dict[str, Any]:
+    return backend_api_service.add_tag(req)
+
+def add_tag_impl(req: TagCreateRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     groups = vault.add_tag_to_group(req.group_id, req.tag_id, req.display_name, indexer)
-    return {"groups": groups}
+    return {"groups": groups, "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.post("/tag-groups/rename-group")
-def rename_tag_group(req: TagGroupRenameRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/rename-group", response_model=TagGroupsResponse)
+def rename_tag_group(req: TagGroupRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_tag_group(req)
+
+def rename_tag_group_impl(req: TagGroupRenameRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.rename_tag_group(
@@ -1313,11 +1807,15 @@ def rename_tag_group(req: TagGroupRenameRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.post("/tag-groups/delete-group")
-def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/delete-group", response_model=TagGroupsResponse)
+def delete_tag_group(req: TagGroupDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_tag_group(req)
+
+def delete_tag_group_impl(req: TagGroupDeleteRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.delete_tag_group(
@@ -1328,11 +1826,15 @@ def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.post("/tag-groups/rename-tag")
-def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/rename-tag", response_model=TagGroupsResponse)
+def rename_tag(req: TagRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_tag(req)
+
+def rename_tag_impl(req: TagRenameRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.rename_tag(
@@ -1346,11 +1848,15 @@ def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.post("/tag-groups/move-tag")
-def move_tag(req: TagMoveRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/move-tag", response_model=TagGroupsResponse)
+def move_tag(req: TagMoveRequest)-> dict[str, Any]:
+    return backend_api_service.move_tag(req)
+
+def move_tag_impl(req: TagMoveRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.move_tag(
@@ -1363,11 +1869,15 @@ def move_tag(req: TagMoveRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.post("/tag-groups/delete-tag")
-def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/delete-tag", response_model=TagGroupsResponse)
+def delete_tag(req: TagDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_tag(req)
+
+def delete_tag_impl(req: TagDeleteRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         groups, touched = vault.delete_tag(
@@ -1379,11 +1889,15 @@ def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer)}
+    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
 
 
-@app.get("/tag-groups/match-candidates")
-def scan_tag_match_candidates() -> dict[str, Any]:
+
+@app.get("/tag-groups/match-candidates", response_model=TagMatchCandidatesResponse)
+def scan_tag_match_candidates()-> dict[str, Any]:
+    return backend_api_service.scan_tag_match_candidates()
+
+def scan_tag_match_candidates_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     matches = _scan_tag_match_candidates(vault)
     return {
@@ -1392,8 +1906,12 @@ def scan_tag_match_candidates() -> dict[str, Any]:
     }
 
 
-@app.post("/tag-groups/apply-matches")
-def apply_tag_match_candidates(req: TagMatchApplyRequest) -> dict[str, Any]:
+
+@app.post("/tag-groups/apply-matches", response_model=TagGroupsResponse)
+def apply_tag_match_candidates(req: TagMatchApplyRequest)-> dict[str, Any]:
+    return backend_api_service.apply_tag_match_candidates(req)
+
+def apply_tag_match_candidates_impl(req: TagMatchApplyRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     applied, touched_paths = _apply_tag_match_candidates(vault, req.matches)
     if touched_paths:
@@ -1408,17 +1926,26 @@ def apply_tag_match_candidates(req: TagMatchApplyRequest) -> dict[str, Any]:
         "paths": [str(path) for path in touched_paths],
         "counts": _counts(indexer),
         "tagGroups": tag_groups,
+        "graphStatus": _rebuild_graph_projection(vault),
     }
 
 
-@app.get("/note-groups")
-def get_note_groups() -> dict[str, Any]:
+
+@app.get("/note-groups", response_model=NoteGroupsResponse)
+def get_note_groups()-> dict[str, Any]:
+    return backend_api_service.get_note_groups()
+
+def get_note_groups_impl()-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     return {"groups": vault.list_note_groups()}
 
 
-@app.post("/note-groups/add-group")
-def add_note_group(req: NoteGroupCreateRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/add-group", response_model=NoteGroupAddResponse)
+def add_note_group(req: NoteGroupCreateRequest)-> dict[str, Any]:
+    return backend_api_service.add_note_group(req)
+
+def add_note_group_impl(req: NoteGroupCreateRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     try:
         created = vault.create_note_group(req.group_name, req.parent_key)
@@ -1428,8 +1955,12 @@ def add_note_group(req: NoteGroupCreateRequest) -> dict[str, Any]:
     return {"group": created, "groups": vault.list_note_groups()}
 
 
-@app.post("/note-groups/rename")
-def rename_note_group(req: NoteGroupRenameRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/rename", response_model=NoteGroupRenameResponse)
+def rename_note_group(req: NoteGroupRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_note_group(req)
+
+def rename_note_group_impl(req: NoteGroupRenameRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         renamed = vault.rename_note_group(req.group_key, req.new_name, indexer)
@@ -1440,12 +1971,17 @@ def rename_note_group(req: NoteGroupRenameRequest) -> dict[str, Any]:
         "group": renamed,
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
+        "graphStatus": _rebuild_graph_projection(vault),
         "linkRewrite": vault.consume_last_link_rewrite_result(),
     }
 
 
-@app.post("/note-groups/delete")
-def delete_note_group(req: NoteGroupDeleteRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/delete", response_model=NoteGroupDeleteResponse)
+def delete_note_group(req: NoteGroupDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_note_group(req)
+
+def delete_note_group_impl(req: NoteGroupDeleteRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         vault.delete_note_group(req.group_key, indexer)
@@ -1456,12 +1992,17 @@ def delete_note_group(req: NoteGroupDeleteRequest) -> dict[str, Any]:
         "deleted": True,
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
+        "graphStatus": _rebuild_graph_projection(vault),
         "linkRewrite": vault.consume_last_link_rewrite_result(),
     }
 
 
-@app.post("/note-groups/move")
-def move_note_group(req: NoteGroupMoveRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/move", response_model=NoteGroupMoveResponse)
+def move_note_group(req: NoteGroupMoveRequest)-> dict[str, Any]:
+    return backend_api_service.move_note_group(req)
+
+def move_note_group_impl(req: NoteGroupMoveRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         moved = vault.move_note_group(req.group_key, req.target_parent_key, indexer)
@@ -1472,12 +2013,17 @@ def move_note_group(req: NoteGroupMoveRequest) -> dict[str, Any]:
         "group": moved,
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
+        "graphStatus": _rebuild_graph_projection(vault),
         "linkRewrite": vault.consume_last_link_rewrite_result(),
     }
 
 
-@app.post("/note-groups/favorite")
-def favorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/favorite", response_model=NoteFavoritesResponse)
+def favorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
+    return backend_api_service.favorite_note_group(req)
+
+def favorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     try:
         favorites = vault.add_favorite_folder(req.group_key)
@@ -1486,8 +2032,12 @@ def favorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
     return {"favorites": favorites, "groups": vault.list_note_groups()}
 
 
-@app.post("/note-groups/unfavorite")
-def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/unfavorite", response_model=NoteFavoritesResponse)
+def unfavorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
+    return backend_api_service.unfavorite_note_group(req)
+
+def unfavorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
     vault, _indexer = _require_loaded()
     try:
         favorites = vault.remove_favorite_folder(req.group_key)
@@ -1496,8 +2046,12 @@ def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
     return {"favorites": favorites, "groups": vault.list_note_groups()}
 
 
-@app.post("/note-groups/add-note")
-def add_note(req: NoteCreateRequest) -> dict[str, Any]:
+
+@app.post("/note-groups/add-note", response_model=NoteAddResponse)
+def add_note(req: NoteCreateRequest)-> dict[str, Any]:
+    return backend_api_service.add_note(req)
+
+def add_note_impl(req: NoteCreateRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         created = vault.create_note_in_group(
@@ -1517,74 +2071,80 @@ def add_note(req: NoteCreateRequest) -> dict[str, Any]:
         "noteType": req.note_type,
         "groups": vault.list_note_groups(),
         "counts": _counts(indexer),
+        "graphStatus": _rebuild_graph_projection(vault),
     }
 
 
-@app.post("/notes/rename")
-def rename_note(req: NoteFileRenameRequest) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        renamed_path = vault.rename_note_file(req.path, req.new_name, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"renamedPath": str(renamed_path), "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
+@app.post("/notes/rename", response_model=NoteMutationResponse)
+def rename_note(req: NoteFileRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_note(req)
+
+def rename_note_impl(req: NoteFileRenameRequest)-> dict[str, Any]:
+    return backend_api_service.rename_note(req)
 
 
-@app.post("/notes/delete")
-def delete_note(req: NoteFileDeleteRequest) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        vault.delete_note_file(req.path, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"deleted": True, "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
+@app.post("/notes/delete", response_model=NoteMutationResponse)
+def delete_note(req: NoteFileDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_note(req)
+
+def delete_note_impl(req: NoteFileDeleteRequest)-> dict[str, Any]:
+    return backend_api_service.delete_note(req)
 
 
-@app.post("/notes/move")
-def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        moved_path = vault.move_note_file(req.path, req.target_group_key, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"movedPath": str(moved_path), "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
+@app.post("/notes/move", response_model=NoteMutationResponse)
+def move_note(req: NoteFileMoveRequest)-> dict[str, Any]:
+    return backend_api_service.move_note(req)
+
+def move_note_impl(req: NoteFileMoveRequest)-> dict[str, Any]:
+    return backend_api_service.move_note(req)
 
 
-@app.post("/notes/move-batch")
-def move_notes_batch(req: NoteFileMoveBatchRequest) -> dict[str, Any]:
+
+@app.post("/notes/move-batch", response_model=NoteMutationResponse)
+def move_notes_batch(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
+    return backend_api_service.move_notes_batch(req)
+
+def move_notes_batch_impl(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
     vault, indexer = _require_loaded()
     try:
         moved_paths = vault.move_note_files(req.paths, req.target_group_key, indexer)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"movedPaths": moved_paths, "counts": _counts(indexer), "linkRewrite": vault.consume_last_link_rewrite_result()}
-
-
-@app.post("/notes/migrate-templates")
-def migrate_note_templates() -> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    result = vault.migrate_note_templates(indexer)
-    tag_groups = vault.sync_tag_groups_with_index(indexer)
     return {
-        "updated": int(result.get("updated", 0)),
-        "paths": result.get("paths", []),
+        "movedPaths": moved_paths,
         "counts": _counts(indexer),
-        "tagGroups": tag_groups,
+        "graphStatus": _rebuild_graph_projection(vault),
+        "linkRewrite": vault.consume_last_link_rewrite_result(),
     }
+
+
+
+@app.post("/notes/migrate-templates", response_model=TemplateMigrationResponse)
+def migrate_note_templates()-> dict[str, Any]:
+    return backend_api_service.migrate_note_templates()
+
+def migrate_note_templates_impl()-> dict[str, Any]:
+    return backend_api_service.migrate_note_templates()
+
 
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
-    state.close()
+    state.dispose_session()
 
 
 def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
     if not state.vault or not state.indexer:
-        raise HTTPException(status_code=400, detail="No NoteBase loaded")
+        raise DomainError(
+            "No NoteBase loaded",
+            status_code=400,
+            error_code="request.validation",
+            operation="require_loaded",
+        )
     return state.vault, state.indexer
 
 
@@ -1619,7 +2179,7 @@ def _tag_match_intersects(ranges: list[tuple[int, int]], start: int, end: int) -
     return any(start < range_end and end > range_start for range_start, range_end in ranges)
 
 
-def _tag_match_context(markdown: str, start: int, end: int, radius: int = 170) -> dict[str, Any]:
+def _tag_match_context(markdown: str, start: int, end: int, radius: int = TAG_MATCH_CONTEXT_RADIUS) -> dict[str, Any]:
     before_start = max(0, start - radius)
     after_end = min(len(markdown), end + radius)
     line_start = markdown.rfind("\n", 0, start) + 1
@@ -1650,7 +2210,7 @@ def _scan_tag_match_candidates(vault: VaultManager) -> list[dict[str, Any]]:
                     {
                         "groupId": group_id,
                         "groupDisplayName": str(group.get("displayName", "")).strip() or group_id,
-                        "groupColor": str(group.get("color", "")).strip() or "#4f8cff",
+                "groupColor": str(group.get("color", "")).strip() or TAG_GROUP_DEFAULT_COLOR,
                         "tagId": tag_id,
                         "tagDisplayName": str(tag.get("displayName", "")).strip() or tag_id,
                         "alias": alias,
@@ -1869,173 +2429,34 @@ def _counts(indexer: VaultIndexer) -> dict[str, int]:
 
 
 def _normalize_iso_day_param(raw: str | None) -> str:
-    clean = (raw or "").strip()
-    if len(clean) >= 10:
-        candidate = clean[:10]
-        try:
-            datetime.fromisoformat(candidate)
-            return candidate
-        except ValueError:
-            pass
-    return date.today().isoformat()
+    return GetFocusDashboardUseCase._normalize_iso_day_param(raw)
 
 
 def _to_iso_day(value: Any) -> str:
-    clean = str(value or "").strip()
-    if not clean:
-        return ""
-    candidate = clean[:10]
-    try:
-        datetime.fromisoformat(candidate)
-    except ValueError:
-        return ""
-    return candidate
+    return GetFocusDashboardUseCase._to_iso_day(value)
 
 
 def _compute_done_today_counts(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> tuple[int, int]:
-    done_tasks = 0
-    for task in tasks:
-        status = str(task.get("status", "")).strip().lower().replace("-", "_")
-        if status != "done":
-            continue
-        completed_day = _to_iso_day(task.get("completed_at"))
-        updated_day = _to_iso_day(task.get("updated_at"))
-        # Transitional fallback for legacy items without completed_at.
-        effective_day = completed_day or updated_day
-        if effective_day == day_iso:
-            done_tasks += 1
-
-    done_todos = 0
-    for todo in todos:
-        if not bool(todo.get("checked")):
-            continue
-        completed_day = _to_iso_day(todo.get("completed_at"))
-        updated_day = _to_iso_day(todo.get("updated_at"))
-        # Transitional fallback for legacy items without completed_at.
-        effective_day = completed_day or updated_day
-        if effective_day == day_iso:
-            done_todos += 1
-
-    return done_tasks, done_todos
+    return GetFocusDashboardUseCase._compute_done_today_counts(tasks=tasks, todos=todos, day_iso=day_iso)
 
 
 def _to_blocked_by_ids(raw: Any) -> list[str]:
-    if isinstance(raw, list):
-        values = [str(item).strip() for item in raw]
-    elif isinstance(raw, str):
-        values = [item.strip() for item in raw.split(",")]
-    else:
-        values = []
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for value in values:
-        if not value:
-            continue
-        key = value.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append(value)
-    return normalized
+    return GetFocusDashboardUseCase._to_blocked_by_ids(raw)
 
 
 def _to_estimate_minutes(raw: Any) -> int | None:
-    if raw is None:
-        return None
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return value
+    return GetFocusDashboardUseCase._to_estimate_minutes(raw)
 
 
 def _is_task_blocked(task: dict[str, Any], status_by_id: dict[str, str]) -> bool:
-    status = str(task.get("status", "")).strip().lower().replace("-", "_")
-    if status == "done":
-        return False
-
-    waiting_for = str(task.get("waiting_for", "")).strip()
-    if waiting_for:
-        return True
-
-    blocked_by_ids = _to_blocked_by_ids(task.get("blocked_by_ids"))
-    for blocker_id in blocked_by_ids:
-        blocker_status = status_by_id.get(blocker_id.lower())
-        if not blocker_status:
-            return True
-        normalized_blocker_status = blocker_status.strip().lower().replace("-", "_")
-        if normalized_blocker_status != "done":
-            return True
-    return False
+    return GetFocusDashboardUseCase._is_task_blocked(task=task, status_by_id=status_by_id)
 
 
 def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> dict[str, int]:
-    status_by_id = {str(task.get("id", "")).strip().lower(): str(task.get("status", "")) for task in tasks if task.get("id")}
-    overdue_count = 0
-    blocked_count = 0
-    waiting_count = 0
-    open_tasks_without_estimate_count = 0
-    waiting_without_follow_up_count = 0
-    unknown_blocker_task_count = 0
-    unknown_blocker_reference_count = 0
-    for task in tasks:
-        status = str(task.get("status", "")).strip().lower().replace("-", "_")
-        if status == "done":
-            continue
-        if _to_estimate_minutes(task.get("estimate_minutes")) is None:
-            open_tasks_without_estimate_count += 1
-        due_date = str(task.get("due_date", "")).strip()
-        if len(due_date) >= 10:
-            due_iso = due_date[:10]
-            if due_iso < day_iso:
-                overdue_count += 1
-        waiting_for = str(task.get("waiting_for", "")).strip()
-        follow_up_day = _to_iso_day(task.get("follow_up_date"))
-        if waiting_for:
-            waiting_count += 1
-            if not follow_up_day:
-                waiting_without_follow_up_count += 1
-        blocked_by_ids = _to_blocked_by_ids(task.get("blocked_by_ids"))
-        unknown_refs_for_task = 0
-        for blocker_id in blocked_by_ids:
-            if blocker_id.lower() not in status_by_id:
-                unknown_refs_for_task += 1
-        if unknown_refs_for_task > 0:
-            unknown_blocker_task_count += 1
-            unknown_blocker_reference_count += unknown_refs_for_task
-        if _is_task_blocked(task, status_by_id):
-            blocked_count += 1
-
-    done_today_tasks, done_today_todos = _compute_done_today_counts(tasks, todos, day_iso)
-
-    return {
-        "overdueCount": overdue_count,
-        "blockedCount": blocked_count,
-        "waitingCount": waiting_count,
-        "doneToday": done_today_tasks + done_today_todos,
-        "doneTodayTasks": done_today_tasks,
-        "doneTodayTodos": done_today_todos,
-        "openTasksWithoutEstimateCount": open_tasks_without_estimate_count,
-        "waitingWithoutFollowUpCount": waiting_without_follow_up_count,
-        "unknownBlockerTaskCount": unknown_blocker_task_count,
-        "unknownBlockerReferenceCount": unknown_blocker_reference_count,
-    }
+    return GetFocusDashboardUseCase._compute_focus_stats(tasks=tasks, todos=todos, day_iso=day_iso)
 
 
 def _build_focus_dashboard_payload(vault: VaultManager, indexer: VaultIndexer, day_iso: str) -> dict[str, Any]:
-    tasks = indexer.list_tasks(include_done=True)
-    todos = indexer.list_todos()
-    notes = indexer.search_notes(query="", limit=500)
-    mit_state = vault.get_daily_mit(day_iso=day_iso)
-    return {
-        "date": day_iso,
-        "tasks": tasks,
-        "todos": todos,
-        "notes": notes,
-        "mitIds": mit_state.get("mit_ids", []),
-        "mitNotePath": str(mit_state.get("note_path", "")),
-        "stats": _compute_focus_stats(tasks=tasks, todos=todos, day_iso=day_iso),
-        "counts": _counts(indexer),
-    }
+    return GetFocusDashboardUseCase._build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
+
+

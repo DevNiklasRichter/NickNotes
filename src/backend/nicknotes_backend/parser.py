@@ -7,6 +7,7 @@ from datetime import datetime
 from difflib import SequenceMatcher, get_close_matches
 
 from .models import ParsedTask, TAG_CATEGORIES, TagSuggestion
+from .task_domain import normalize_tag_id, normalize_task_priority, normalize_task_status
 
 
 TAG_PATTERN = re.compile(
@@ -15,14 +16,6 @@ TAG_PATTERN = re.compile(
 )
 TODO_PATTERN = re.compile(r"^\s*todo:\s*(.+)$", flags=re.IGNORECASE)
 WORD_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_\-]{2,}")
-
-
-def slugify(raw: str) -> str:
-    value = raw.strip().lower()
-    value = re.sub(r"[^a-z0-9_\-]+", "_", value)
-    value = re.sub(r"_+", "_", value)
-    return value.strip("_")
-
 
 @dataclass
 class CaptureParseResult:
@@ -51,8 +44,8 @@ class CaptureParser:
     def parse_explicit_tags(self, text: str) -> list[TagSuggestion]:
         found: dict[str, TagSuggestion] = {}
         for match in TAG_PATTERN.finditer(text):
-            category = slugify(match.group(1))
-            slug = slugify(match.group(2))
+            category = normalize_tag_id(match.group(1))
+            slug = normalize_tag_id(match.group(2))
             if not category or not slug:
                 continue
             key = f"{category}:{slug}"
@@ -147,14 +140,14 @@ class CaptureParser:
                 if key == "due":
                     task.due_date = value
                 elif key in {"prio", "priority"}:
-                    task.priority = value.upper()[0]
+                    task.priority = normalize_task_priority(value)
                 elif key == "status":
-                    task.status = value.lower()
+                    task.status = normalize_task_status(value)
                 elif key == "project":
-                    task.project_tag = slugify(value)
+                    task.project_tag = normalize_tag_id(value)
                     task.tags.append(f"project:{task.project_tag}")
                 elif key in TAG_CATEGORIES:
-                    task.tags.append(f"{key}:{slugify(value)}")
+                    task.tags.append(f"{key}:{normalize_tag_id(value)}")
 
             tasks.append(task)
         return tasks

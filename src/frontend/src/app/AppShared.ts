@@ -1,23 +1,53 @@
-﻿import type { ParsedNoteDocument, TaskPriority, TaskStatus } from '../editor/noteDocument'
+import type { ParsedNoteDocument } from '../editor/noteDocument'
+import type { TaskPriority, TaskStatus } from '../shared/taskDomain'
 import type { ExplorerOptions, ExplorerViewState } from '../explorer/types'
-import { normalizeTagGroups, normalizeTagId, type TagGroupDefinition } from '../tags/tagTypes'
+import { normalizeTagGroups, type TagGroupDefinition } from '../tags/tagTypes'
+import {
+  API_CONTRACT_VERSION as BACKEND_API_CONTRACT_VERSION,
+} from '../contracts/apiContracts'
 
+export { normalizeTagCandidate } from '../tags/tagTypes'
 
-export type VaultCounts = {
-  notes: number
-  openTasks: number
-  doneTasks: number
-}
+export {
+  TASK_STATUS_OPTIONS,
+  TASK_PRIORITY_OPTIONS,
+  TASK_STATUS_LABELS,
+  TASK_PRIORITY_LABELS,
+  normalizeTaskStatusValue,
+  taskStatusLabel,
+  taskStatusClassName,
+  taskStatusDotClassName,
+  taskStatusOptionLabel,
+  normalizeTaskPriorityValue,
+  taskPriorityLabel,
+  taskPriorityDotClassName,
+  taskPriorityOptionLabel,
+} from '../shared/taskDomain'
 
-export type Suggestion = {
-  key: string
-  category: string
-  slug: string
-  displayName: string
-  confidence: number
-  source: string
-  autoApply: boolean
-}
+import type {
+  VaultCounts as ContractVaultCounts,
+  SuggestionResponse as ContractSuggestionResponse,
+  SearchRow as ContractSearchRow,
+  SearchResponse as ContractSearchResponse,
+  TaskRow as ContractTaskRow,
+  TodoRow as ContractTodoRow,
+  FocusDashboardAggregateStats as ContractFocusDashboardAggregateStats,
+  FocusDashboardAggregateResponse as ContractFocusDashboardAggregateResponse,
+  GraphIndexStatusResponse as ContractGraphIndexStatus,
+  BackendStateResponse as ContractBackendState,
+} from '../contracts/apiContracts'
+
+export const API_CONTRACT_VERSION = BACKEND_API_CONTRACT_VERSION
+export type VaultCounts = ContractVaultCounts
+export type Suggestion = ContractSuggestionResponse
+export type SearchRow = ContractSearchRow
+export type SearchResponse = ContractSearchResponse
+export type TaskRow = ContractTaskRow
+export type TodoRow = ContractTodoRow
+export type FocusDashboardAggregateStats = ContractFocusDashboardAggregateStats
+export type FocusDashboardAggregateResponse = ContractFocusDashboardAggregateResponse
+export type GraphIndexStatus = ContractGraphIndexStatus
+export type BackendState = ContractBackendState
 
 export type ParsedTask = {
   title: string
@@ -33,45 +63,6 @@ export type ParsedTask = {
   followUpDate?: string | null
   blockedReason?: string | null
   nextActionHint?: string | null
-}
-
-export type TaskRow = {
-  id: string
-  title: string
-  status: string
-  priority: string
-  due_date: string | null
-  project_tag: string | null
-  estimate_minutes?: number | null
-  completed_at?: string | null
-  blocked_by_ids?: string[]
-  waiting_for?: string | null
-  follow_up_date?: string | null
-  blocked_reason?: string | null
-  next_action_hint?: string | null
-  tags?: string[]
-  related?: string[]
-  updated_at: string
-  path: string | null
-}
-
-export type TodoRow = {
-  id: string
-  note_id: string
-  note_title: string
-  note_path: string
-  line_no: number
-  block_ref: string | null
-  checked: boolean
-  raw_text: string
-  explicit_tags: string[]
-  inherited_tags: string[]
-  links: string[]
-  promoted: boolean
-  promoted_task_id: string | null
-  created_at?: string | null
-  completed_at?: string | null
-  updated_at: string
 }
 
 export type TodoGroupingMode = 'note' | 'tag' | 'tag_group' | 'updated_at'
@@ -118,38 +109,6 @@ export type FocusDashboardFilters = {
   scope: FocusDashboardScope
   mode: FocusDashboardMode
   maxItems: number
-}
-
-export type FocusDashboardAggregateStats = {
-  overdueCount: number
-  blockedCount: number
-  waitingCount: number
-  doneToday: number
-  doneTodayTasks: number
-  doneTodayTodos: number
-  openTasksWithoutEstimateCount?: number
-  waitingWithoutFollowUpCount?: number
-  unknownBlockerTaskCount?: number
-  unknownBlockerReferenceCount?: number
-}
-
-export type FocusDashboardAggregateResponse = {
-  date: string
-  tasks: TaskRow[]
-  todos: TodoRow[]
-  notes: SearchRow[]
-  mitIds: string[]
-  mitNotePath: string
-  stats: FocusDashboardAggregateStats
-  counts: VaultCounts
-}
-
-export type SearchRow = {
-  id: string
-  title: string
-  note_type: string
-  updated_at: string
-  path: string
 }
 
 export type MediaUploadResponse = {
@@ -304,6 +263,14 @@ export type GraphDiagnostic = {
   tag?: string
 }
 
+export type OperatorNotificationSeverity = 'info' | 'warn' | 'error' | 'critical'
+
+export type OperatorNotification = {
+  id: number
+  severity: OperatorNotificationSeverity
+  message: string
+}
+
 export type GraphIndex = {
   version: number
   updated_at: string
@@ -327,6 +294,7 @@ export type GraphFilters = {
   showSharedTagEdges: boolean
   minimumEdgeWeight: number
   searchText: string
+  searchMode: 'filter' | 'highlight'
 }
 
 export type GraphNodePosition = {
@@ -350,30 +318,51 @@ export type GraphState = {
   positions?: Record<string, GraphNodePosition>
 }
 
-export type GraphIndexStatus = {
-  available: boolean
-  updated_at: string | null
-  node_count: number
-  edge_count: number
-  diagnostic_count: number
-  is_updating: boolean
-  last_error: string | null
-  watcher_enabled?: boolean
-  last_external_update?: string | null
-}
-
-export type BackendState = {
-  vaultLoaded: boolean
-  vaultPath?: string
-  noteBasePath?: string
-  counts?: VaultCounts
-}
-
 export type ThemeMode = 'light' | 'dark'
+export type ColorProfileId = string
+export type ThemeColorToken =
+  | 'text'
+  | 'muted'
+  | 'surface'
+  | 'editorNoteBg'
+  | 'surfaceStrong'
+  | 'surfaceContrast'
+  | 'line'
+  | 'lineStrong'
+  | 'accent'
+  | 'accentStrong'
+  | 'accentSoft'
+  | 'codeBg'
+  | 'tableRow'
+  | 'bgLayer1'
+  | 'bgLayer2'
+  | 'bgLayer3'
+  | 'okBg'
+  | 'okBorder'
+  | 'okText'
+  | 'errorBg'
+  | 'errorBorder'
+  | 'errorText'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'info'
+  | 'neutral'
+  | 'highlight'
+  | 'graphNote'
+  | 'graphTask'
+  | 'graphTag'
+
+export type ColorProfile = {
+  id: ColorProfileId
+  name: string
+  baseTheme: ThemeMode
+  colors: Record<ThemeColorToken, string>
+  builtin?: boolean
+}
 export type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review' | 'graph'
 export type NoteTabKind =
   | 'note'
-  | 'settings'
   | 'todo_dashboard'
   | 'task_dashboard'
   | 'focus_dashboard'
@@ -400,7 +389,6 @@ export type EditorTabContextMenuState = {
 } | null
 
 export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
-export const SETTINGS_TAB_PATH = '__nicknotes_settings__'
 export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
@@ -500,18 +488,6 @@ export const TAG_COLOR_PRESETS = [
   '#f43f5e',
 ]
 
-export const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: 'new_topic', label: 'New Topic' },
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'on_hold', label: 'On Hold' },
-  { value: 'done', label: 'Done' },
-]
-export const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   new_topic: '#4f8cff',
   open: '#cf5d5d',
@@ -524,18 +500,175 @@ export const TASK_PRIORITY_COLORS: Record<TaskPriority, string> = {
   medium: '#cea73d',
   high: '#cf5d5d',
 }
-export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  new_topic: 'New Topic',
-  open: 'Open',
-  in_progress: 'In Progress',
-  on_hold: 'On Hold',
-  done: 'Done',
+
+export const THEME_COLOR_TOKEN_LABELS: Record<ThemeColorToken, string> = {
+  text: 'Text',
+  muted: 'Sekundaertext',
+  surface: 'Flaeche',
+  editorNoteBg: 'Editor-Hintergrund',
+  surfaceStrong: 'Starke Flaeche',
+  surfaceContrast: 'Kontrastflaeche',
+  line: 'Linien',
+  lineStrong: 'Starke Linien',
+  accent: 'Akzent',
+  accentStrong: 'Starker Akzent',
+  accentSoft: 'Weicher Akzent',
+  codeBg: 'Code-Hintergrund',
+  tableRow: 'Tabellenzeile',
+  bgLayer1: 'Fensterflaeche',
+  bgLayer2: 'Ebene 2',
+  bgLayer3: 'Ebene 3',
+  okBg: 'OK-Hintergrund',
+  okBorder: 'OK-Rahmen',
+  okText: 'OK-Text',
+  errorBg: 'Fehler-Hintergrund',
+  errorBorder: 'Fehler-Rahmen',
+  errorText: 'Fehler-Text',
+  success: 'Erfolg',
+  warning: 'Warnung',
+  danger: 'Gefahr',
+  info: 'Info',
+  neutral: 'Neutral',
+  highlight: 'Highlight',
+  graphNote: 'Graph Notiz',
+  graphTask: 'Graph Task',
+  graphTag: 'Graph Tag',
 }
-export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
+
+export const THEME_COLOR_TOKEN_GROUPS: Array<{ title: string; tokens: ThemeColorToken[] }> = [
+  {
+    title: 'Grundfarben',
+    tokens: ['text', 'muted', 'surface', 'editorNoteBg', 'surfaceStrong', 'surfaceContrast', 'line', 'lineStrong'],
+  },
+  {
+    title: 'Akzente',
+    tokens: ['accent', 'accentStrong', 'accentSoft', 'highlight', 'codeBg', 'tableRow'],
+  },
+  {
+    title: 'Zustaende',
+    tokens: ['okBg', 'okBorder', 'okText', 'errorBg', 'errorBorder', 'errorText', 'success', 'warning', 'danger', 'info', 'neutral'],
+  },
+  {
+    title: 'Graph',
+    tokens: ['graphNote', 'graphTask', 'graphTag'],
+  },
+]
+
+export const THEME_COLOR_CSS_VARIABLES: Record<ThemeColorToken, string> = {
+  text: '--text',
+  muted: '--muted',
+  surface: '--surface',
+  editorNoteBg: '--editor-note-bg',
+  surfaceStrong: '--surface-strong',
+  surfaceContrast: '--surface-contrast',
+  line: '--line',
+  lineStrong: '--line-strong',
+  accent: '--accent',
+  accentStrong: '--accent-strong',
+  accentSoft: '--accent-soft',
+  codeBg: '--code-bg',
+  tableRow: '--table-row',
+  bgLayer1: '--bg-layer-1',
+  bgLayer2: '--bg-layer-2',
+  bgLayer3: '--bg-layer-3',
+  okBg: '--ok-bg',
+  okBorder: '--ok-border',
+  okText: '--ok-text',
+  errorBg: '--error-bg',
+  errorBorder: '--error-border',
+  errorText: '--error-text',
+  success: '--success',
+  warning: '--warning',
+  danger: '--danger',
+  info: '--info',
+  neutral: '--neutral',
+  highlight: '--highlight',
+  graphNote: '--graph-note',
+  graphTask: '--graph-task',
+  graphTag: '--graph-tag',
 }
+
+export const DEFAULT_LIGHT_COLOR_PROFILE: ColorProfile = {
+  id: 'light',
+  name: 'Light Mode',
+  baseTheme: 'light',
+  builtin: true,
+  colors: {
+    text: '#1f2328',
+    muted: '#6a727f',
+    surface: '#f3f4f6',
+    editorNoteBg: '#f6f7f9',
+    surfaceStrong: '#eceef2',
+    surfaceContrast: '#fbfbfc',
+    line: '#d6dae1',
+    lineStrong: '#c6cbd4',
+    accent: '#3d7fe0',
+    accentStrong: '#2f68bc',
+    accentSoft: 'rgba(61, 127, 224, 0.16)',
+    codeBg: '#f2f4f8',
+    tableRow: '#f7f8fa',
+    bgLayer1: '#eceef2',
+    bgLayer2: '#e6e8ed',
+    bgLayer3: '#e0e3ea',
+    okBg: '#edf4ff',
+    okBorder: '#c8daf8',
+    okText: '#1f355b',
+    errorBg: '#fff0f1',
+    errorBorder: '#efc7cc',
+    errorText: '#8a2d3b',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    info: '#3b82f6',
+    neutral: '#8d8fa0',
+    highlight: '#facc15',
+    graphNote: '#91aeca',
+    graphTask: '#d4ae61',
+    graphTag: '#c98989',
+  },
+}
+
+export const DEFAULT_DARK_COLOR_PROFILE: ColorProfile = {
+  id: 'dark',
+  name: 'Dark Mode',
+  baseTheme: 'dark',
+  builtin: true,
+  colors: {
+    text: '#edf0f5',
+    muted: '#a7afbd',
+    surface: '#1f242d',
+    editorNoteBg: '#1f242d',
+    surfaceStrong: '#262c36',
+    surfaceContrast: '#2b313d',
+    line: '#3b4351',
+    lineStrong: '#4a5466',
+    accent: '#6ea7f3',
+    accentStrong: '#4f8fe8',
+    accentSoft: 'rgba(110, 167, 243, 0.24)',
+    codeBg: '#232a35',
+    tableRow: '#313949',
+    bgLayer1: '#1f252f',
+    bgLayer2: '#171c26',
+    bgLayer3: '#1a202b',
+    okBg: '#23344f',
+    okBorder: '#325073',
+    okText: '#d9e9ff',
+    errorBg: '#4d2a33',
+    errorBorder: '#7a3f4c',
+    errorText: '#ffdce2',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    info: '#3b82f6',
+    neutral: '#8a8da1',
+    highlight: '#facc15',
+    graphNote: '#91aeca',
+    graphTask: '#d4ae61',
+    graphTag: '#c98989',
+  },
+}
+
+export const BUILTIN_COLOR_PROFILES = [DEFAULT_LIGHT_COLOR_PROFILE, DEFAULT_DARK_COLOR_PROFILE]
 
 export type UiSettingsPayload = {
   updated_at?: string
@@ -630,25 +763,6 @@ export function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
 }
 
-export function normalizeTagCandidate(raw: string): string {
-  const cleanRaw = normalizeLabel(raw).replace(/^\{tag:/i, '').replace(/\}$/g, '').replace(/^#+/, '')
-  if (!cleanRaw) {
-    return ''
-  }
-  const delimiter = cleanRaw.includes(':') ? ':' : cleanRaw.includes('/') ? '/' : ''
-  if (delimiter) {
-    const [groupRaw, tagRaw] = cleanRaw.split(delimiter, 2)
-    const group = normalizeTagId(groupRaw)
-    const tag = normalizeTagId(tagRaw)
-    if (!group || !tag) {
-      return ''
-    }
-    return `${group}:${tag}`
-  }
-  const topic = normalizeTagId(cleanRaw)
-  return topic ? `topic:${topic}` : ''
-}
-
 export function normalizeRelatedCandidate(raw: string): string {
   let clean = normalizeLabel(raw)
   if (!clean) {
@@ -689,55 +803,6 @@ export function readFileAsBase64(file: File): Promise<string> {
     }
     reader.readAsDataURL(file)
   })
-}
-
-export function normalizeTaskStatusValue(raw: string): TaskStatus {
-  const clean = raw.trim().toLowerCase().replace(/[- ]+/g, '_') as TaskStatus
-  return TASK_STATUS_OPTIONS.some((entry) => entry.value === clean) ? clean : 'open'
-}
-
-export function taskStatusLabel(raw: string): string {
-  return TASK_STATUS_LABELS[normalizeTaskStatusValue(raw)]
-}
-
-export function taskStatusClassName(raw: string): string {
-  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
-  return `status-badge status-${normalized}`
-}
-
-export function taskStatusDotClassName(raw: string): string {
-  const normalized = normalizeTaskStatusValue(raw).replace(/_/g, '-')
-  return `status-dot status-${normalized}`
-}
-
-export function taskStatusOptionLabel(value: TaskStatus): string {
-  return TASK_STATUS_LABELS[value]
-}
-
-export function normalizeTaskPriorityValue(raw: string): TaskPriority {
-  const clean = raw.trim().toLowerCase()
-  if (clean === 'h') {
-    return 'high'
-  }
-  if (clean === 'l') {
-    return 'low'
-  }
-  if (clean === 'm') {
-    return 'medium'
-  }
-  return TASK_PRIORITY_OPTIONS.some((entry) => entry.value === (clean as TaskPriority)) ? (clean as TaskPriority) : 'medium'
-}
-
-export function taskPriorityLabel(raw: string): string {
-  return TASK_PRIORITY_LABELS[normalizeTaskPriorityValue(raw)]
-}
-
-export function taskPriorityDotClassName(raw: string): string {
-  return `priority-dot priority-${normalizeTaskPriorityValue(raw)}`
-}
-
-export function taskPriorityOptionLabel(value: TaskPriority): string {
-  return TASK_PRIORITY_LABELS[value]
 }
 
 export function isPermanentPinnedRootGroupKey(groupKey: string): boolean {
@@ -830,6 +895,103 @@ export function toBoundedNumber(value: unknown, fallback: number, min: number, m
 
 export function toThemeMode(value: unknown, fallback: ThemeMode): ThemeMode {
   return value === 'light' || value === 'dark' ? value : fallback
+}
+
+export function normalizeCssColor(value: unknown, fallback: string): string {
+  const clean = String(value ?? '').trim()
+  if (!clean) {
+    return fallback
+  }
+  if (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(clean)) {
+    return clean.toLowerCase()
+  }
+  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(clean)) {
+    return clean
+  }
+  return fallback
+}
+
+export function normalizeColorProfile(value: unknown, fallback: ColorProfile): ColorProfile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...fallback, colors: { ...fallback.colors } }
+  }
+  const source = value as Record<string, unknown>
+  const rawId = String(source.id ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+  const id = rawId && rawId !== 'light' && rawId !== 'dark' ? rawId : fallback.id
+  const name = normalizeLabel(String(source.name ?? '')) || fallback.name
+  const baseTheme = toThemeMode(source.baseTheme, fallback.baseTheme)
+  const sourceColors = source.colors && typeof source.colors === 'object' && !Array.isArray(source.colors) ? (source.colors as Record<string, unknown>) : {}
+  const colors = { ...fallback.colors }
+  for (const token of Object.keys(THEME_COLOR_CSS_VARIABLES) as ThemeColorToken[]) {
+    colors[token] = normalizeCssColor(sourceColors[token], colors[token])
+  }
+  return { id, name, baseTheme, colors }
+}
+
+export function toColorProfilesFromSettings(value: unknown): ColorProfile[] {
+  const byId = new Map<string, ColorProfile>()
+  for (const profile of BUILTIN_COLOR_PROFILES) {
+    byId.set(profile.id, { ...profile, colors: { ...profile.colors } })
+  }
+  if (Array.isArray(value)) {
+    for (const rawProfile of value) {
+      const baseTheme = rawProfile && typeof rawProfile === 'object' && !Array.isArray(rawProfile) ? toThemeMode((rawProfile as Record<string, unknown>).baseTheme, 'light') : 'light'
+      const fallback = baseTheme === 'dark' ? DEFAULT_DARK_COLOR_PROFILE : DEFAULT_LIGHT_COLOR_PROFILE
+      const normalized = normalizeColorProfile(rawProfile, {
+        ...fallback,
+        id: `custom-${byId.size + 1}`,
+        name: 'Eigenes Profil',
+        builtin: false,
+      })
+      if (normalized.id === 'light' || normalized.id === 'dark') {
+        continue
+      }
+      byId.set(normalized.id, normalized)
+    }
+  }
+  return [...byId.values()]
+}
+
+export function toActiveColorProfileId(value: unknown, profiles: ColorProfile[], fallbackTheme: ThemeMode): string {
+  const candidate = String(value ?? '').trim()
+  if (candidate && profiles.some((profile) => profile.id === candidate)) {
+    return candidate
+  }
+  return fallbackTheme
+}
+
+export function applyColorProfileToDocument(profile: ColorProfile): void {
+  if (typeof document === 'undefined') {
+    return
+  }
+  const rootStyle = document.documentElement.style
+  for (const [token, variableName] of Object.entries(THEME_COLOR_CSS_VARIABLES) as Array<[ThemeColorToken, string]>) {
+    rootStyle.setProperty(variableName, profile.colors[token])
+  }
+}
+
+export function areColorProfilesEqual(left: ColorProfile[], right: ColorProfile[]): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const leftProfile = left[index]
+    const rightProfile = right[index]
+    if (
+      leftProfile.id !== rightProfile.id ||
+      leftProfile.name !== rightProfile.name ||
+      leftProfile.baseTheme !== rightProfile.baseTheme ||
+      Boolean(leftProfile.builtin) !== Boolean(rightProfile.builtin)
+    ) {
+      return false
+    }
+    for (const token of Object.keys(THEME_COLOR_CSS_VARIABLES) as ThemeColorToken[]) {
+      if (leftProfile.colors[token] !== rightProfile.colors[token]) {
+        return false
+      }
+    }
+  }
+  return true
 }
 
 export function toStatusBarPrefsFromSettings(value: unknown): StatusBarPrefs {

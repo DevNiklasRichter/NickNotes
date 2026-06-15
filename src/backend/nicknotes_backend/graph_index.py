@@ -9,9 +9,10 @@ from typing import Any
 
 from .markdown_io import parse_markdown
 from .parser import slugify
+from .projection_registry import GRAPH_INDEX_SCHEMA_VERSION
 
 
-GRAPH_INDEX_VERSION = 1
+GRAPH_INDEX_VERSION = GRAPH_INDEX_SCHEMA_VERSION
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")

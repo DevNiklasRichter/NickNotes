@@ -15,6 +15,79 @@ let backendStopping = false
 const unsavedByWebContentsId = new Map()
 const pendingSaveBeforeCloseByWebContentsId = new Set()
 const allowCloseByWebContentsId = new Set()
+const EXTERNAL_URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'file:'])
+
+const NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS = process.env.NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS?.split(',')
+  .map((value) => value.trim())
+  .filter(Boolean) ?? []
+const NICKNOTES_ALLOWED_EXTERNAL_URL_HOST_REGEX = process.env.NICKNOTES_ALLOWED_EXTERNAL_URL_HOST_REGEX?.trim() || ''
+
+let externalUrlHostRegex = null
+if (NICKNOTES_ALLOWED_EXTERNAL_URL_HOST_REGEX) {
+  try {
+    externalUrlHostRegex = new RegExp(NICKNOTES_ALLOWED_EXTERNAL_URL_HOST_REGEX, 'i')
+  } catch (error) {
+    console.warn('[nicknotes-security] Invalid NICKNOTES_ALLOWED_EXTERNAL_URL_HOST_REGEX value, disabled regex rule', error)
+    externalUrlHostRegex = null
+  }
+}
+
+function isHostAllowed(rawUrl) {
+  if (!rawUrl || !rawUrl.hostname) {
+    return false
+  }
+  if (NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS.length === 0 && externalUrlHostRegex === null) {
+    return true
+  }
+  const hostname = rawUrl.hostname.toLowerCase()
+  const exact = NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS.some((value) => {
+    const lowered = value.toLowerCase()
+    if (lowered === '*') {
+      return true
+    }
+    if (lowered.startsWith('*.')) {
+      return hostname === lowered.slice(2) || hostname.endsWith(`.${lowered.slice(2)}`)
+    }
+    return hostname === lowered
+  })
+  if (exact) {
+    return true
+  }
+  if (externalUrlHostRegex && externalUrlHostRegex.test(hostname)) {
+    return true
+  }
+  return false
+}
+
+function validateExternalUrl(rawUrl) {
+  const cleanUrl = typeof rawUrl === 'string' ? rawUrl.trim() : ''
+  if (!cleanUrl) {
+    return { allowed: false, code: 'invalid_url', message: 'URL ist leer.' }
+  }
+
+  let parsedUrl
+  try {
+    parsedUrl = new URL(cleanUrl)
+  } catch {
+    return { allowed: false, code: 'invalid_url', message: 'URL-Format ist ungültig.' }
+  }
+
+  if (!EXTERNAL_URL_SCHEME_ALLOWLIST.has(parsedUrl.protocol)) {
+    return {
+      allowed: false,
+      code: 'unsupported_scheme',
+      message: `Schema \"${parsedUrl.protocol}\" ist nicht erlaubt.`,
+    }
+  }
+
+  if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+    if (!isHostAllowed(parsedUrl)) {
+      return { allowed: false, code: 'host_blocked', message: 'Hostname ist nicht in der erlaubten URL-Policy.' }
+    }
+  }
+
+  return { allowed: true, code: 'ok', message: '' }
+}
 
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
@@ -253,12 +326,19 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('shell:openExternal', async (_event, url) => {
-    const cleanUrl = typeof url === 'string' ? url.trim() : ''
-    if (!/^(https?:\/\/|mailto:|file:\/\/)/i.test(cleanUrl)) {
-      return { ok: false }
+    const decision = validateExternalUrl(url)
+    if (!decision.allowed) {
+      console.warn('[nicknotes-security] blocked external URL', { url, code: decision.code })
+      return { ok: false, code: decision.code, message: decision.message }
     }
-    await shell.openExternal(cleanUrl)
-    return { ok: true }
+
+    try {
+      await shell.openExternal(url.trim())
+      return { ok: true, code: 'ok', message: '' }
+    } catch (error) {
+      console.warn('[nicknotes-security] failed to open external URL', { url, error: String(error) })
+      return { ok: false, code: 'launch_failed', message: 'Externe URL konnte nicht geöffnet werden.' }
+    }
   })
 
   ipcMain.handle('window:set-theme', async (_event, theme) => {

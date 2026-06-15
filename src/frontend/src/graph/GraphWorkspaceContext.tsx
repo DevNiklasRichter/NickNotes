@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   GraphEdge,
   GraphFilters,
@@ -38,6 +38,7 @@ type GraphWorkspaceValue = {
   positions: Record<string, GraphNodePosition>
   viewport: GraphViewport
   layoutVersion: number
+  fitRequestVersion: number
   graphStale: boolean
   error: string
   filtered: { nodes: GraphNode[]; edges: GraphEdge[] }
@@ -57,6 +58,7 @@ type GraphWorkspaceValue = {
   resetFilters: () => void
   resetLayoutState: () => void
   rerunLayout: () => void
+  requestFitGraph: () => void
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
   onRevealNodePath?: (path: string) => void
 }
@@ -95,14 +97,17 @@ export function GraphWorkspaceProvider({
   const [positions, setPositions] = useState<Record<string, GraphNodePosition>>({})
   const [viewport, setViewport] = useState<GraphViewport>(DEFAULT_GRAPH_VIEWPORT)
   const [layoutVersion, setLayoutVersion] = useState(0)
+  const [fitRequestVersion, setFitRequestVersion] = useState(0)
   const [graphStale, setGraphStale] = useState(false)
   const [error, setError] = useState('')
   const saveTimerRef = useRef<number | null>(null)
   const seenGraphUpdateTokenRef = useRef(graphUpdateToken)
 
-  const loadGraph = async () => {
+  const loadGraph = useCallback(async () => {
     if (!vaultLoaded) {
       setIndex(null)
+      setStateLoaded(false)
+      setGraphStale(false)
       return
     }
     setLoading(true)
@@ -127,7 +132,7 @@ export function GraphWorkspaceProvider({
     } finally {
       setLoading(false)
     }
-  }
+  }, [backendUrl, vaultLoaded])
 
   useEffect(() => {
     void loadGraph()
@@ -136,7 +141,7 @@ export function GraphWorkspaceProvider({
         window.clearTimeout(saveTimerRef.current)
       }
     }
-  }, [backendUrl, vaultLoaded])
+  }, [loadGraph])
 
   useEffect(() => {
     if (!stateLoaded || !vaultLoaded) {
@@ -164,30 +169,19 @@ export function GraphWorkspaceProvider({
       return
     }
     seenGraphUpdateTokenRef.current = graphUpdateToken
+
+    setGraphStale(true)
     if (latestGraphStatus) {
       setGraphStatus(latestGraphStatus)
     }
-    setGraphStale(true)
-  }, [graphUpdateToken, latestGraphStatus, vaultLoaded])
 
-  useEffect(() => {
-    if (!vaultLoaded || !stateLoaded) {
+    if (!latestGraphStatus || !index?.updated_at || !latestGraphStatus.updated_at || latestGraphStatus.updated_at !== index.updated_at) {
+      void loadGraph()
       return
     }
-    const timer = window.setInterval(() => {
-      fetchGraphIndexStatus(backendUrl)
-        .then((nextStatus) => {
-          setGraphStatus(nextStatus)
-          if (index?.updated_at && nextStatus.updated_at && nextStatus.updated_at !== index.updated_at) {
-            setGraphStale(true)
-          }
-        })
-        .catch(() => {
-          // Status polling must not disturb the graph view.
-        })
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [backendUrl, index?.updated_at, stateLoaded, vaultLoaded])
+
+    setGraphStale(false)
+  }, [graphUpdateToken, index?.updated_at, latestGraphStatus, loadGraph, vaultLoaded])
 
   const graphFilterFocusNodeId = mode === 'focus' ? focusNodeId : ''
   const filtered = useMemo(() => filterGraph(index, mode, filters, graphFilterFocusNodeId), [filters, graphFilterFocusNodeId, index, mode])
@@ -231,6 +225,7 @@ export function GraphWorkspaceProvider({
     positions,
     viewport,
     layoutVersion,
+    fitRequestVersion,
     graphStale,
     error,
     filtered,
@@ -248,7 +243,8 @@ export function GraphWorkspaceProvider({
     loadGraph,
     triggerRebuild,
     resetFilters: () => {
-      setMode('debug')
+      setMode('link')
+      setViewMode('graph')
       setFilters({ ...DEFAULT_GRAPH_FILTERS })
     },
     resetLayoutState: () => {
@@ -257,6 +253,7 @@ export function GraphWorkspaceProvider({
       setLayoutVersion((current) => current + 1)
     },
     rerunLayout: () => setLayoutVersion((current) => current + 1),
+    requestFitGraph: () => setFitRequestVersion((current) => current + 1),
     onOpenNodePath,
     onRevealNodePath,
   }

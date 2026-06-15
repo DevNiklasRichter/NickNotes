@@ -10,9 +10,31 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .markdown_io import parse_markdown
+from .projection_registry import INDEXER_SCHEMA_VERSION
 from .models import ParsedTask, TagRef
 from .parser import slugify
 from .todos import ExtractedTodo, extract_todos_from_body
+from ..config import (
+    INDEXER_REVIEW_COMPLETED_LIST_BASE,
+    INDEXER_REVIEW_COMPLETED_LIST_PADDING,
+    INDEXER_REVIEW_BACKLOG_DELTA_WARNING_MIN,
+    INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_FACTOR,
+    INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_OFFSET,
+    INDEXER_REVIEW_COMPLETION_RATIO_WARNING,
+    INDEXER_REVIEW_COMPLETION_RATIO_HIGH_RISK,
+    INDEXER_REVIEW_MIN_NEW_WORK_FOR_RATIO,
+    INDEXER_REVIEW_OVERDUE_WARNING,
+    INDEXER_REVIEW_OVERDUE_HIGH_RISK,
+    INDEXER_REVIEW_NEW_WORK_WARNING_MIN,
+    INDEXER_REVIEW_BACKLOG_DELTA_HIGH_RISK,
+    REVIEW_DASHBOARD_DEFAULT_DAYS,
+    REVIEW_DASHBOARD_DAYS_MIN,
+    REVIEW_DASHBOARD_DAYS_MAX,
+    REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
+    REVIEW_DASHBOARD_TOP_NOTES_MIN,
+    REVIEW_DASHBOARD_TOP_NOTES_MAX,
+    TASK_ESTIMATE_MINUTES_MAX,
+)
 
 
 INLINE_TITLE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}", re.IGNORECASE)
@@ -36,6 +58,7 @@ class VaultIndexer:
         self.conn.row_factory = sqlite3.Row
         self._configure_connection()
         self._init_schema()
+        self._ensure_schema_version()
 
     def close(self) -> None:
         with self._lock:
@@ -145,6 +168,21 @@ class VaultIndexer:
             )
             self._ensure_tasks_schema(cur)
             self._ensure_todos_schema(cur)
+            self.conn.commit()
+
+    def _ensure_schema_version(self) -> None:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("PRAGMA user_version;")
+            current_version = int((cur.fetchone() or [0])[0] or 0)
+            if current_version == INDEXER_SCHEMA_VERSION:
+                return
+            if current_version > INDEXER_SCHEMA_VERSION:
+                raise sqlite3.DatabaseError(
+                    f"Unsupported indexer schema version: {current_version}. Expected version <= {INDEXER_SCHEMA_VERSION}."
+                )
+            self._init_schema()
+            cur.execute(f"PRAGMA user_version={INDEXER_SCHEMA_VERSION};")
             self.conn.commit()
 
     def _ensure_tasks_schema(self, cur: sqlite3.Cursor) -> None:
@@ -746,9 +784,14 @@ class VaultIndexer:
             "tasks_done": done_week,
         }
 
-    def review_dashboard(self, end_day: date, window_days: int = 30, top_notes_limit: int = 8) -> dict[str, Any]:
-        safe_window = max(1, min(int(window_days), 120))
-        safe_top_limit = max(3, min(int(top_notes_limit), 20))
+    def review_dashboard(
+        self,
+        end_day: date,
+        window_days: int = REVIEW_DASHBOARD_DEFAULT_DAYS,
+        top_notes_limit: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
+    ) -> dict[str, Any]:
+        safe_window = max(REVIEW_DASHBOARD_DAYS_MIN, min(int(window_days), REVIEW_DASHBOARD_DAYS_MAX))
+        safe_top_limit = max(REVIEW_DASHBOARD_TOP_NOTES_MIN, min(int(top_notes_limit), REVIEW_DASHBOARD_TOP_NOTES_MAX))
         start_day = end_day - timedelta(days=safe_window - 1)
         start_iso = start_day.isoformat()
         end_iso = end_day.isoformat()
@@ -1048,7 +1091,7 @@ class VaultIndexer:
                     entry["todo_events"] += todo_events
                     entry["activity_events"] += todo_events
 
-            completed_limit = max(6, safe_top_limit + 2)
+            completed_limit = max(INDEXER_REVIEW_COMPLETED_LIST_BASE, safe_top_limit + INDEXER_REVIEW_COMPLETED_LIST_PADDING)
             cur.execute(
                 """
                 SELECT
@@ -1146,16 +1189,23 @@ class VaultIndexer:
         open_total_now = open_tasks_now + open_todos_now
 
         risk_reasons: list[str] = []
-        if backlog_delta >= max(3, int(new_work_period * 0.2) + 1):
+        if backlog_delta >= max(
+            INDEXER_REVIEW_BACKLOG_DELTA_WARNING_MIN,
+            int(new_work_period * INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_FACTOR) + INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_OFFSET,
+        ):
             risk_reasons.append("Backlog steigt im gewaehlten Zeitraum.")
-        if completion_ratio < 0.75 and new_work_period >= 4:
+        if completion_ratio < INDEXER_REVIEW_COMPLETION_RATIO_WARNING and new_work_period >= INDEXER_REVIEW_MIN_NEW_WORK_FOR_RATIO:
             risk_reasons.append("Erledigungsquote liegt unter 75%.")
-        if overdue_open_tasks >= 5:
+        if overdue_open_tasks >= INDEXER_REVIEW_OVERDUE_WARNING:
             risk_reasons.append("Viele offene ueberfaellige Tasks.")
-        if open_total_now >= 30:
+        if open_total_now >= INDEXER_REVIEW_NEW_WORK_WARNING_MIN:
             risk_reasons.append("Hoher aktueller Gesamt-Backlog.")
 
-        if overdue_open_tasks >= 8 or (backlog_delta >= 10 and completion_ratio < 0.7) or len(risk_reasons) >= 3:
+        if (
+            overdue_open_tasks >= INDEXER_REVIEW_OVERDUE_HIGH_RISK
+            or (backlog_delta >= INDEXER_REVIEW_BACKLOG_DELTA_HIGH_RISK and completion_ratio < INDEXER_REVIEW_COMPLETION_RATIO_HIGH_RISK)
+            or len(risk_reasons) >= 3
+        ):
             risk_level = "high"
         elif risk_reasons:
             risk_level = "medium"
@@ -1235,7 +1285,7 @@ class VaultIndexer:
             completed_items,
             key=lambda item: str(item.get("completed_at", "")),
             reverse=True,
-        )[: max(6, safe_top_limit + 2)]
+        )[: max(INDEXER_REVIEW_COMPLETED_LIST_BASE, safe_top_limit + INDEXER_REVIEW_COMPLETED_LIST_PADDING)]
 
         return {
             "period": {
@@ -1568,7 +1618,7 @@ def _normalize_estimate_minutes(raw: Any) -> int | None:
             return None
     if value <= 0:
         return None
-    return min(value, 10000)
+    return min(value, TASK_ESTIMATE_MINUTES_MAX)
 
 
 def _normalize_task_id_list(raw: Any, exclude_id: str = "") -> list[str]:

@@ -21,10 +21,11 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
   showSharedTagEdges: false,
   minimumEdgeWeight: 0,
   searchText: '',
+  searchMode: 'filter',
 }
 
 export const DEFAULT_GRAPH_STATE: GraphState = {
-  activeMode: 'debug',
+  activeMode: 'link',
   viewMode: 'graph',
   filters: { ...DEFAULT_GRAPH_FILTERS },
   viewport: { zoom: 1, pan: { x: 0, y: 0 } },
@@ -107,7 +108,7 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
     if (node.type === 'tag' && !filters.showTags) {
       return false
     }
-    if (!normalizedSearch) {
+    if (!normalizedSearch || filters.searchMode === 'highlight') {
       return true
     }
     return [node.label, node.path, node.group, node.tag, node.id].some((value) => String(value ?? '').toLowerCase().includes(normalizedSearch))
@@ -172,6 +173,7 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
         ? Math.max(0, Math.min(20, source.minimumEdgeWeight))
         : DEFAULT_GRAPH_FILTERS.minimumEdgeWeight,
     searchText: typeof source.searchText === 'string' ? source.searchText : DEFAULT_GRAPH_FILTERS.searchText,
+    searchMode: source.searchMode === 'highlight' ? 'highlight' : DEFAULT_GRAPH_FILTERS.searchMode,
   }
 }
 

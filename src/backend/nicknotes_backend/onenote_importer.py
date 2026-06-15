@@ -16,10 +16,49 @@ from xml.etree import ElementTree as ET
 
 from .markdown_io import dump_markdown
 from .parser import make_note_id, slugify
+from .config import (
+    ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS,
+    ONENOTE_IMPORT_MAX_RESULT_BYTES,
+    ONENOTE_IMPORT_MAX_SOURCE_FILE_BYTES,
+    ONENOTE_IMPORT_MAX_SOURCE_FILES,
+    ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH,
+)
 from .vault import VaultManager
 
 
 ONEPKG_EXTENSIONS = {".onepkg"}
+
+
+class OneNoteImportError(RuntimeError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        is_validation: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details: dict[str, Any] = details or {}
+        self.is_validation = is_validation
+
+    def payload(self) -> dict[str, Any]:
+        payload = {"code": self.code, "message": self.message}
+        if self.details:
+            payload["details"] = self.details
+        return payload
+
+
+class OneNoteImportValidationError(OneNoteImportError):
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(code, message, details=details, is_validation=True)
+
+
+class OneNoteImportExecutionError(OneNoteImportError):
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(code, message, details=details, is_validation=False)
 
 _ONEPKG_EXPORT_POWERSHELL = r"""
 param(
@@ -303,9 +342,9 @@ class OneNoteLocalImporter:
                         str(package_source),
                     )
                     exported_pages, export_warnings = self._export_onepkg_with_onenote(package_source, Path(temp_dir))
-                except RuntimeError as exc:
+                except OneNoteImportError as exc:
                     result.skipped_pages += 1
-                    result.warnings.append(str(exc))
+                    result.warnings.append(f"{exc.code}: {exc.message}")
                     continue
                 pages.extend(exported_pages)
                 result.warnings.extend(export_warnings)
@@ -317,8 +356,11 @@ class OneNoteLocalImporter:
                 )
 
             if not pages and result.skipped_pages:
-                details = " | ".join(result.warnings) if result.warnings else "Keine importierbaren Seiten gefunden."
-                raise RuntimeError(f"Es wurden keine OneNote-Seiten importiert. {details}")
+                raise OneNoteImportValidationError(
+                    "onenote.import.no_pages",
+                    "Es wurden keine importierbaren Seiten fuer den OneNote-Import gefunden.",
+                    details={"skippedPackages": result.skipped_pages, "warnings": len(result.warnings)},
+                )
 
             planned_note_paths = self._planned_note_paths(pages, target_base)
             wiki_target_map = self._build_import_wiki_target_map(pages, planned_note_paths)
@@ -343,24 +385,85 @@ class OneNoteLocalImporter:
     def _resolve_source_paths(self, source_paths: list[str]) -> list[Path]:
         paths: list[Path] = []
         seen: set[str] = set()
+
+        if len(source_paths) > ONENOTE_IMPORT_MAX_SOURCE_FILES:
+            raise OneNoteImportValidationError(
+                "onenote.import.too_many_sources",
+                f"Zu viele Quellpakete ausgewaehlt: max. {ONENOTE_IMPORT_MAX_SOURCE_FILES} erlaubt.",
+                details={"maxSources": ONENOTE_IMPORT_MAX_SOURCE_FILES, "provided": len(source_paths)},
+            )
+
+        source_index = 0
         for raw_path in source_paths:
+            source_index += 1
             clean = str(raw_path or "").strip().strip('"')
             if not clean:
-                continue
+                raise OneNoteImportValidationError(
+                    "onenote.import.empty_source",
+                    "Leerer Dateipfad wurde uebergeben.",
+                    details={"index": source_index},
+                )
             path = Path(clean).expanduser().resolve()
             key = str(path).lower()
             if key in seen:
                 continue
             seen.add(key)
+
+            if len(str(path)) > ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH:
+                raise OneNoteImportValidationError(
+                    "onenote.import.path_too_long",
+                    f"Ein Quellpfad ist zu lang: {path}",
+                    details={"maxLength": ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH, "pathLength": len(str(path))},
+                )
+
             if not path.exists():
-                raise ValueError(f"Quelle nicht gefunden: {path}")
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_not_found",
+                    f"Quelle nicht gefunden: {path}",
+                    details={"path": str(path)},
+                )
+            if path.is_symlink():
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_not_supported",
+                    f"Symbolische Links sind nicht erlaubt: {path}",
+                    details={"path": str(path)},
+                )
             if path.is_dir():
-                raise ValueError(f"Bitte einzelne .onepkg-Dateien auswaehlen, keine ganzen Ordner: {path}.")
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_is_directory",
+                    f"Bitte einzelne .onepkg-Dateien auswaehlen, keine ganzen Ordner: {path}.",
+                    details={"path": str(path)},
+                )
             if path.suffix.lower() not in ONEPKG_EXTENSIONS:
-                raise ValueError(f"Bitte nur OneNote-Paketdateien (.onepkg) auswaehlen: {path}")
+                raise OneNoteImportValidationError(
+                    "onenote.import.invalid_extension",
+                    f"Bitte nur OneNote-Paketdateien (.onepkg) auswaehlen: {path}",
+                    details={"path": str(path), "extension": path.suffix.lower()},
+                )
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_not_accessible",
+                    f"Quelle konnte nicht gelesen werden: {path}",
+                    details={"path": str(path), "reason": str(exc)},
+                )
+            if size <= 0:
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_empty_file",
+                    f"Quellpaket ist leer: {path}",
+                    details={"path": str(path)},
+                )
+            if size > ONENOTE_IMPORT_MAX_SOURCE_FILE_BYTES:
+                raise OneNoteImportValidationError(
+                    "onenote.import.source_too_large",
+                    f"Quellpaket ist zu gross: {path}",
+                    details={"path": str(path), "sizeBytes": size, "maxBytes": ONENOTE_IMPORT_MAX_SOURCE_FILE_BYTES},
+                )
             paths.append(path)
+
         if not paths:
-            raise ValueError("Bitte mindestens eine .onepkg-Datei auswaehlen.")
+            raise OneNoteImportValidationError("onenote.import.no_sources", "Bitte mindestens eine .onepkg-Datei auswaehlen.")
         return paths
 
     def _export_onepkg_with_onenote(self, package_path: Path, temp_root: Path) -> tuple[list[ImportPage], list[str]]:
@@ -370,33 +473,39 @@ class OneNoteLocalImporter:
         result_path = package_output_dir / "export_result.json"
         script_path.write_text(_ONEPKG_EXPORT_POWERSHELL, encoding="utf-8")
 
-        powershell = "powershell.exe"
+        if len(str(package_path)) > ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH:
+            raise OneNoteImportValidationError(
+                "onenote.import.path_too_long",
+                "Der Quellpfad ist zu lang fuer die Verarbeitung.",
+                details={"path": str(package_path), "maxLength": ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH},
+            )
+
         completed = subprocess.run(
-            [
-                powershell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script_path),
-                "-PackagePath",
-                str(package_path),
-                "-OutDir",
-                str(package_output_dir),
-                "-ResultPath",
-                str(result_path),
-            ],
+            self._build_export_command(script_path=script_path, package_path=package_path, output_dir=package_output_dir, result_path=result_path),
             cwd=str(self.vault.vault_path),
             capture_output=True,
-            timeout=900,
+            timeout=ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS,
             check=False,
         )
         if completed.returncode != 0:
             detail = _decode_process_output(completed.stderr or completed.stdout)
             if not detail:
                 detail = "OneNote Desktop konnte die Paketdatei nicht exportieren."
-            raise RuntimeError(
-                f"{package_path.name}: Import fehlgeschlagen. OneNote Desktop muss installiert sein und das Paket oeffnen koennen. Details: {detail}"
+            raise OneNoteImportExecutionError(
+                "onenote.import.powershell_failed",
+                f"{package_path.name}: Import fehlgeschlagen. OneNote Desktop muss installiert sein und das Paket oeffnen koennen.",
+                details={
+                    "returnCode": completed.returncode,
+                    "detail": detail,
+                    "packagePath": str(package_path),
+                },
+            )
+        result_payload_size = len(completed.stdout) + len(completed.stderr)
+        if result_payload_size > ONENOTE_IMPORT_MAX_RESULT_BYTES:
+            raise OneNoteImportExecutionError(
+                "onenote.import.result_too_large",
+                "OneNote-Export hat zu grosse direkte Ausgabe erzeugt.",
+                details={"sizeBytes": result_payload_size, "maxBytes": ONENOTE_IMPORT_MAX_RESULT_BYTES},
             )
 
         raw_output = ""
@@ -411,11 +520,25 @@ class OneNoteLocalImporter:
             detail = _decode_process_output(completed.stderr)
             if detail:
                 detail = f" Details: {detail}"
-            raise RuntimeError(f"{package_path.name}: OneNote-Export lieferte keine Ausgabe.{detail}")
+            raise OneNoteImportExecutionError(
+                "onenote.import.empty_result",
+                f"{package_path.name}: OneNote-Export lieferte keine Ausgabe.",
+                details={"packagePath": str(package_path), "detail": detail.strip() or None},
+            )
         try:
             payload = json.loads(raw_output)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"{package_path.name}: OneNote-Export lieferte keine lesbare Antwort.") from exc
+            raise OneNoteImportExecutionError(
+                "onenote.import.invalid_result_json",
+                f"{package_path.name}: OneNote-Export lieferte keine lesbare Antwort.",
+                details={"jsonError": str(exc)},
+            ) from exc
+        if len(raw_output) > ONENOTE_IMPORT_MAX_RESULT_BYTES:
+            raise OneNoteImportExecutionError(
+                "onenote.import.result_too_large",
+                f"{package_path.name}: OneNote-Export-Resultat war unerwartet gross.",
+                details={"sizeBytes": len(raw_output), "maxBytes": ONENOTE_IMPORT_MAX_RESULT_BYTES},
+            )
 
         raw_pages = payload.get("pages", []) if isinstance(payload, dict) else []
         raw_warnings = payload.get("warnings", []) if isinstance(payload, dict) else []
@@ -423,14 +546,31 @@ class OneNoteLocalImporter:
         if isinstance(raw_warnings, list) and raw_warnings:
             warning_detail = " Details: " + " | ".join(str(warning) for warning in raw_warnings if str(warning).strip())
         if not isinstance(raw_pages, list) or not raw_pages:
-            raise RuntimeError(f"{package_path.name}: OneNote Desktop hat keine Seiten aus dem Paket exportiert.{warning_detail}")
+            raise OneNoteImportValidationError(
+                "onenote.import.no_pages_exported",
+                f"{package_path.name}: OneNote Desktop hat keine Seiten aus dem Paket exportiert.{warning_detail}",
+                details={"packagePath": str(package_path)},
+            )
 
         pages: list[ImportPage] = []
         package_notebook = self._safe_display_name(package_path.stem)
+        package_output_root = package_output_dir.resolve()
         for raw_page in raw_pages:
             if not isinstance(raw_page, dict):
                 continue
-            exported_path = Path(str(raw_page.get("path", ""))).resolve()
+            raw_exported_path = _clean_optional_text(raw_page.get("path"))
+            if not raw_exported_path:
+                continue
+            try:
+                exported_path = Path(raw_exported_path).resolve()
+            except OSError:
+                continue
+            if not self._is_within(package_output_root, exported_path):
+                raise OneNoteImportExecutionError(
+                    "onenote.import.path_escape",
+                    f"{package_path.name}: Exportpfad war unerwartet ausserhalb des Quellordners.",
+                    details={"exportPath": raw_exported_path},
+                )
             if not exported_path.exists() or exported_path.suffix.lower() != ".xml":
                 continue
             notebook = self._safe_display_name(str(raw_page.get("notebook", "")) or package_notebook)
@@ -444,7 +584,19 @@ class OneNoteLocalImporter:
                     if not isinstance(raw_binary, dict):
                         continue
                     callback_id = _clean_optional_text(raw_binary.get("callbackId"))
-                    binary_path = Path(str(raw_binary.get("path", ""))).resolve()
+                    raw_binary_path = _clean_optional_text(raw_binary.get("path"))
+                    if not raw_binary_path:
+                        continue
+                    try:
+                        binary_path = Path(raw_binary_path).resolve()
+                    except OSError:
+                        continue
+                    if not self._is_within(package_output_root, binary_path):
+                        raise OneNoteImportExecutionError(
+                            "onenote.import.path_escape",
+                            f"{package_path.name}: Exportpfad fuer Medien war unerwartet ausserhalb des Quellordners.",
+                            details={"mediaPath": raw_binary_path},
+                        )
                     if callback_id and binary_path.exists():
                         binary_objects[callback_id] = binary_path
             pages.append(
@@ -459,7 +611,11 @@ class OneNoteLocalImporter:
             )
 
         if not pages:
-            raise RuntimeError(f"{package_path.name}: OneNote Desktop hat keine importierbaren Seiten erzeugt.")
+            raise OneNoteImportValidationError(
+                "onenote.import.no_pages_importable",
+                f"{package_path.name}: OneNote Desktop hat keine importierbaren Seiten erzeugt.",
+                details={"packagePath": str(package_path)},
+            )
 
         warnings = [
             f"{package_path.name}: {len(pages)} Seiten ueber OneNote Desktop exportiert. OneNote kann waehrenddessen sichtbar geoeffnet werden."
@@ -468,19 +624,57 @@ class OneNoteLocalImporter:
             warnings.extend(str(warning) for warning in raw_warnings if str(warning).strip())
         return pages, warnings
 
+    @staticmethod
+    def _build_export_command(
+        *,
+        script_path: Path,
+        package_path: Path,
+        output_dir: Path,
+        result_path: Path,
+    ) -> list[str]:
+        return [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-PackagePath",
+            str(package_path),
+            "-OutDir",
+            str(output_dir),
+            "-ResultPath",
+            str(result_path),
+        ]
+
+    @staticmethod
+    def _is_within(allowed_root: Path, candidate: Path) -> bool:
+        try:
+            return candidate.resolve().is_relative_to(allowed_root.resolve())
+        except OSError:
+            return False
+
     def _resolve_target_base(self, target_folder: str) -> Path:
         clean = target_folder.replace("\\", "/").strip().strip("/")
         if not clean:
             return self.vault.vault_path
         if clean.startswith(".") or clean.startswith("/"):
-            raise ValueError("Der Zielordner muss ein relativer Ordner innerhalb der NoteBase sein.")
+            raise OneNoteImportValidationError(
+                "onenote.import.invalid_target_folder",
+                "Der Zielordner muss ein relativer Ordner innerhalb der NoteBase sein.",
+                details={"targetFolder": target_folder},
+            )
         parts = [self._safe_path_token(part) for part in clean.split("/") if part.strip()]
         if not parts:
             return self.vault.vault_path
         target = self.vault.vault_path.joinpath(*parts).resolve()
         target.relative_to(self.vault.vault_path.resolve())
         if target.name in {self.vault.system_root_name, self.vault.media_root_name}:
-            raise ValueError("System- und Medienordner koennen nicht als Importziel verwendet werden.")
+            raise OneNoteImportValidationError(
+                "onenote.import.reserved_target_folder",
+                "System- und Medienordner koennen nicht als Importziel verwendet werden.",
+                details={"targetFolder": str(target)},
+            )
         target.mkdir(parents=True, exist_ok=True)
         return target
 

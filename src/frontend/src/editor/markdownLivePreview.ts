@@ -1603,13 +1603,20 @@ function normalizeExternalUrl(rawUrl: string): string {
   return ''
 }
 
-function openExternalUrl(url: string): void {
+async function openExternalUrl(url: string): Promise<void> {
   const normalizedUrl = normalizeExternalUrl(url)
   if (!normalizedUrl) {
     return
   }
   if (window.nicknotes?.openExternalUrl) {
-    void window.nicknotes.openExternalUrl(normalizedUrl)
+    try {
+      const result = await window.nicknotes.openExternalUrl(normalizedUrl)
+      if (!result?.ok) {
+        window.alert(result?.message || 'Externer Link wurde von den Sicherheitsregeln blockiert.')
+      }
+    } catch {
+      window.alert('Externer Link konnte nicht geöffnet werden.')
+    }
     return
   }
   window.open(normalizedUrl, '_blank', 'noopener,noreferrer')
@@ -1630,7 +1637,7 @@ function openLinkFromPointerEvent(view: EditorView, event: MouseEvent | PointerE
 
   event.preventDefault()
   event.stopPropagation()
-  openExternalUrl(url)
+  void openExternalUrl(url)
   return true
 }
 

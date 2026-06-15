@@ -6,6 +6,7 @@ import {
   type FocusDashboardMode,
   normalizeTaskPriorityValue,
   normalizeTaskStatusValue,
+  type FocusDashboardAggregateStats,
   type FocusDashboardFilters,
   type SearchRow,
   type TaskRow,
@@ -1786,10 +1787,12 @@ export function buildFocusDashboardData(args: {
   filters: FocusDashboardFilters
   todayIso: string
   mitIds: string[]
+  focusStats?: FocusDashboardAggregateStats
   taskFeatureSettings?: TaskFeatureSettings
 }): FocusDashboardData {
   const { tasks, todos, notes, filters, todayIso, mitIds } = args
   const taskFeatures = normalizeTaskFeatureSettings(args.taskFeatureSettings)
+  const focusStats = args.focusStats
   const { includeTasks, includeTodos, includeNotes } = toSectionFlags(filters)
   const mode = normalizeFocusMode(filters.mode)
   const maxItems = normalizeMaxItems(filters.maxItems)
@@ -1911,21 +1914,37 @@ export function buildFocusDashboardData(args: {
 
   const dueTodayTaskCount = openTasks.filter((task) => toTaskDueIso(task.due_date) === todayIso).length
   const inProgressTaskCount = openTasks.filter((task) => normalizeTaskStatusValue(task.status) === 'in_progress').length
-  const blockedTaskCount = blockingPool.filter((item) => item.isBlocked).length
-  const waitingTaskCount = blockingPool.filter((item) => item.hasExternalWaiting).length
+  const derivedBlockedTaskCount = blockingPool.filter((item) => item.isBlocked).length
+  const derivedWaitingTaskCount = blockingPool.filter((item) => item.hasExternalWaiting).length
+  const blockedTaskCount = taskFeatures.advancedTaskHandling ? (focusStats?.blockedCount ?? derivedBlockedTaskCount) : 0
+  const waitingTaskCount = taskFeatures.advancedTaskHandling ? (focusStats?.waitingCount ?? derivedWaitingTaskCount) : 0
   const followUpTodayCount = blockingPool.filter((item) => item.hasExternalWaiting && item.followUpDate === todayIso).length
 
   const todayEstimatedMinutes = taskFeatures.taskTimeManagement ? sumEstimatedMinutes(dedupeFocusItems([...mitItems, ...overdueItems, ...focusItems])) : 0
   const mitEstimatedMinutes = taskFeatures.taskTimeManagement ? sumEstimatedMinutes(mitItems) : 0
   const focusEstimatedMinutes = taskFeatures.taskTimeManagement ? sumEstimatedMinutes(focusItems) : 0
   const withoutEstimateCount = taskFeatures.taskTimeManagement ? countWithoutEstimate([...mitItems, ...focusItems]) : 0
-  const planningHints = toPlanningHints({ mitItems, focusItems, blockingPool, taskFeatures })
+  const computedPlanningHints = toPlanningHints({ mitItems, focusItems, blockingPool, taskFeatures })
+  const planningHints = taskFeatures.advancedTaskHandling
+    ? {
+        ...computedPlanningHints,
+        waitingWithoutFollowUpCount: focusStats?.waitingWithoutFollowUpCount ?? computedPlanningHints.waitingWithoutFollowUpCount,
+        unknownBlockerTaskCount: focusStats?.unknownBlockerTaskCount ?? computedPlanningHints.unknownBlockerTaskCount,
+        unknownBlockerReferenceCount: focusStats?.unknownBlockerReferenceCount ?? computedPlanningHints.unknownBlockerReferenceCount,
+      }
+    : {
+        focusWithoutEstimateCount: 0,
+        mitWithoutEstimateCount: 0,
+        waitingWithoutFollowUpCount: 0,
+        unknownBlockerTaskCount: 0,
+        unknownBlockerReferenceCount: 0,
+      }
   const capacitySummary = taskFeatures.taskTimeManagement
     ? toCapacitySummary({
         estimatedMitMinutes: mitEstimatedMinutes,
         estimatedFocusMinutes: focusEstimatedMinutes,
         withoutEstimateCount,
-        blockedTaskCount: taskFeatures.advancedTaskHandling ? blockedTaskCount : 0,
+        blockedTaskCount,
         unknownBlockerReferenceCount: taskFeatures.advancedTaskHandling ? planningHints.unknownBlockerReferenceCount : 0,
       })
     : {
@@ -1961,6 +1980,9 @@ export function buildFocusDashboardData(args: {
     const fallbackDay = toUpdatedDay(todo.updated_at)
     return (completedDay || fallbackDay) === todayIso
   }).length
+  const effectiveDoneTodayTasks = focusStats?.doneTodayTasks ?? doneTodayTasks
+  const effectiveDoneTodayTodos = focusStats?.doneTodayTodos ?? doneTodayTodos
+  const effectiveDoneToday = focusStats?.doneToday ?? effectiveDoneTodayTasks + effectiveDoneTodayTodos
 
   return {
     selectedScope: filters.scope,
@@ -1970,11 +1992,11 @@ export function buildFocusDashboardData(args: {
     dueTodayTaskCount,
     openTodoCount: openTodos.length,
     notesTodayCount: notesToday.length,
-    doneToday: doneTodayTasks + doneTodayTodos,
-    doneTodayTasks,
-    doneTodayTodos,
-    blockedTaskCount: taskFeatures.advancedTaskHandling ? blockedTaskCount : 0,
-    waitingTaskCount: taskFeatures.advancedTaskHandling ? waitingTaskCount : 0,
+    doneToday: effectiveDoneToday,
+    doneTodayTasks: effectiveDoneTodayTasks,
+    doneTodayTodos: effectiveDoneTodayTodos,
+    blockedTaskCount,
+    waitingTaskCount,
     followUpTodayCount: taskFeatures.advancedTaskHandling ? followUpTodayCount : 0,
     estimatedLoadTodayMinutes: capacitySummary.estimatedLoadTodayMinutes,
     estimatedMitMinutes: mitEstimatedMinutes,

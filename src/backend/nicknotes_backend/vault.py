@@ -15,8 +15,24 @@ from typing import Any
 from .indexer import VaultIndexer
 from .markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .models import ParsedTask, TagSuggestion
-from .parser import make_note_id, make_task_id, slugify
+from .parser import make_note_id, make_task_id
+from .projection_registry import TASK_LINK_INDEX_SCHEMA_VERSION, quarantine_projection_file
+from .task_domain import (
+    normalize_tag_id as _normalize_tag_id,
+    normalize_tag_key as _normalize_tag_key,
+    normalize_task_priority as _normalize_task_priority,
+    normalize_task_status as _normalize_task_status,
+    slugify,
+    task_status_folder_token as _task_status_folder_token,
+)
 from .todos import mark_todo_promoted, toggle_todo_checkbox
+from ..config import (
+    TAG_GROUP_DEFAULT_COLOR,
+    TASK_ESTIMATE_MINUTES_MAX,
+    VAULT_MAX_DAILY_MIT_ITEMS,
+    VAULT_MAX_MEDIA_ASSET_BYTES,
+    VAULT_NOTE_TITLE_FALLBACK_LENGTH,
+)
 
 
 def _normalize_label(value: str) -> str:
@@ -27,11 +43,42 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
     return sorted(set(values), key=lambda item: item.lower())
 
 
-DEFAULT_TAG_GROUP_COLOR = "#4f8cff"
+THEME_COLOR_TOKENS = {
+    "text",
+    "muted",
+    "surface",
+    "editorNoteBg",
+    "surfaceStrong",
+    "surfaceContrast",
+    "line",
+    "lineStrong",
+    "accent",
+    "accentStrong",
+    "accentSoft",
+    "codeBg",
+    "tableRow",
+    "bgLayer1",
+    "bgLayer2",
+    "bgLayer3",
+    "okBg",
+    "okBorder",
+    "okText",
+    "errorBg",
+    "errorBorder",
+    "errorText",
+    "success",
+    "warning",
+    "danger",
+    "info",
+    "neutral",
+    "highlight",
+    "graphNote",
+    "graphTask",
+    "graphTag",
+}
 TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
 TASK_PRIORITIES = ("low", "medium", "high")
 TASK_LINK_NOTE_TYPE = "task_link"
-TASK_LINK_INDEX_VERSION = 1
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
@@ -47,17 +94,7 @@ MEDIA_IMAGE_CONTENT_TYPES = {
     "image/avif": ".avif",
 }
 MEDIA_IMAGE_EXTENSIONS = set(MEDIA_IMAGE_CONTENT_TYPES.values())
-MAX_MEDIA_ASSET_BYTES = 20 * 1024 * 1024
 ISO_DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-MAX_DAILY_MIT_ITEMS = 3
-
-
-def _normalize_tag_id(value: str) -> str:
-    clean = _normalize_label(value).strip().lower()
-    clean = re.sub(r"[^a-z0-9]+", "-", clean)
-    clean = clean.strip("-")
-    return clean
-
 
 def _normalize_tag_color(value: str) -> str:
     clean = value.strip().lower()
@@ -65,19 +102,22 @@ def _normalize_tag_color(value: str) -> str:
         return clean
     if len(clean) == 7 and clean.startswith("#") and all(char in "0123456789abcdef" for char in clean[1:]):
         return clean
-    return DEFAULT_TAG_GROUP_COLOR
+    return TAG_GROUP_DEFAULT_COLOR
 
 
-def _normalize_tag_key(raw: str) -> str:
-    if ":" not in raw:
-        return ""
-    group, tag = raw.split(":", 1)
-    group_slug = slugify(group)
-    tag_slug = slugify(tag)
-    if not group_slug or not tag_slug:
-        return ""
-    return f"{group_slug}:{tag_slug}"
+def _normalize_css_color(value: Any) -> str:
+    clean = str(value or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", clean):
+        return clean.lower()
+    if re.fullmatch(r"rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*(0|1|0?\.\d+))?\s*\)", clean, flags=re.IGNORECASE):
+        return clean
+    return ""
 
+
+def _normalize_color_profile_id(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    clean = re.sub(r"[^a-z0-9_-]+", "-", clean).strip("-")
+    return clean[:64]
 
 def _tag_ref_for_suggestion(tag: TagSuggestion) -> tuple[str, str, str]:
     group_slug = slugify(str(tag.category))
@@ -205,30 +245,6 @@ def _normalize_note_type(raw: str) -> str:
     clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
     return "task" if clean == "task" else "note"
 
-
-def _normalize_task_status(raw: str) -> str:
-    clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
-    return clean if clean in TASK_STATUSES else "open"
-
-
-def _normalize_task_priority(raw: str) -> str:
-    clean = raw.strip().lower().replace("-", "_").replace(" ", "_")
-    if clean in {"h", "high"}:
-        return "high"
-    if clean in {"m", "medium"}:
-        return "medium"
-    if clean in {"l", "low"}:
-        return "low"
-    return clean if clean in TASK_PRIORITIES else "medium"
-
-
-def _task_status_folder_token(raw: str) -> str:
-    clean = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    clean = re.sub(r"[^a-z0-9_]+", "_", clean)
-    clean = re.sub(r"_+", "_", clean).strip("_")
-    return clean or "open"
-
-
 def _task_link_token(raw: str) -> str:
     clean = _normalize_label(str(raw or "")).lower()
     clean = re.sub(r"[^a-z0-9]+", "_", clean)
@@ -271,7 +287,7 @@ def _normalize_estimate_minutes(raw: Any) -> int | None:
             return None
     if value <= 0:
         return None
-    return min(value, 10000)
+    return min(value, TASK_ESTIMATE_MINUTES_MAX)
 
 
 def _normalize_optional_text(raw: Any) -> str:
@@ -306,7 +322,7 @@ def _extract_title_from_body(body: str) -> str:
             return _normalize_label(match.group(1))
         stripped = line.strip()
         if stripped:
-            return _normalize_label(stripped[:120])
+            return _normalize_label(stripped[:VAULT_NOTE_TITLE_FALLBACK_LENGTH])
     return ""
 
 
@@ -385,7 +401,7 @@ def _daily_month_folder(day_iso: str) -> str:
     return day_iso[:7].replace("-", ".")
 
 
-def _normalize_mit_ids(raw_value: Any, limit: int = MAX_DAILY_MIT_ITEMS) -> list[str]:
+def _normalize_mit_ids(raw_value: Any, limit: int = VAULT_MAX_DAILY_MIT_ITEMS) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for item in _ensure_string_list(raw_value):
@@ -500,16 +516,19 @@ class VaultManager:
             return {}
         try:
             payload = json.loads(self.task_status_links_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, ValueError):
+            quarantine_projection_file(self.task_status_links_path, projection="task-status-links")
             return {}
         if not isinstance(payload, dict):
+            quarantine_projection_file(self.task_status_links_path, projection="task-status-links")
             return {}
         raw_version = payload.get("version")
         try:
             version = int(raw_version)
         except (TypeError, ValueError):
             version = 0
-        if version != TASK_LINK_INDEX_VERSION:
+        if version != TASK_LINK_INDEX_SCHEMA_VERSION:
+            quarantine_projection_file(self.task_status_links_path, projection="task-status-links")
             return {}
         raw_links = payload.get("links", {})
         if not isinstance(raw_links, dict):
@@ -525,7 +544,7 @@ class VaultManager:
     def _write_task_status_link_index(self, mapping: dict[str, str]) -> None:
         links = {str(task_id): str(relative).replace("\\", "/").strip().strip("/") for task_id, relative in mapping.items()}
         payload = {
-            "version": TASK_LINK_INDEX_VERSION,
+            "version": TASK_LINK_INDEX_SCHEMA_VERSION,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "links": links,
         }
@@ -982,7 +1001,7 @@ class VaultManager:
         payload = bytes(data)
         if not payload:
             raise ValueError("Die Bilddatei ist leer.")
-        if len(payload) > MAX_MEDIA_ASSET_BYTES:
+        if len(payload) > VAULT_MAX_MEDIA_ASSET_BYTES:
             raise ValueError("Bilddatei ist zu gross (maximal 20 MB).")
 
         clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
@@ -2279,9 +2298,59 @@ class VaultManager:
 
         return {
             "updated_at": updated_at if isinstance(updated_at, str) else "",
-            "app": app_settings if isinstance(app_settings, dict) else {},
+            "app": self._normalize_ui_app_settings(app_settings if isinstance(app_settings, dict) else {}),
             "explorer": explorer_settings if isinstance(explorer_settings, dict) else {},
         }
+
+    def _normalize_ui_app_settings(self, app_settings: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(app_settings)
+
+        raw_profiles = normalized.get("themes")
+        if not isinstance(raw_profiles, list):
+            raw_profiles = normalized.get("colorProfiles")
+        clean_profiles: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        if isinstance(raw_profiles, list):
+            for raw_profile in raw_profiles:
+                if not isinstance(raw_profile, dict):
+                    continue
+                profile_id = _normalize_color_profile_id(raw_profile.get("id"))
+                if not profile_id or profile_id in {"light", "dark"} or profile_id in seen_ids:
+                    continue
+                seen_ids.add(profile_id)
+                name = _normalize_label(str(raw_profile.get("name", "")))[:80] or "Eigenes Profil"
+                base_theme = str(raw_profile.get("baseTheme", "")).strip().lower()
+                if base_theme not in {"light", "dark"}:
+                    base_theme = "light"
+                raw_colors = raw_profile.get("colors")
+                clean_colors: dict[str, str] = {}
+                if isinstance(raw_colors, dict):
+                    for token, raw_color in raw_colors.items():
+                        if str(token) not in THEME_COLOR_TOKENS:
+                            continue
+                        color = _normalize_css_color(raw_color)
+                        if color:
+                            clean_colors[str(token)] = color
+                if clean_colors:
+                    clean_profiles.append(
+                        {
+                            "id": profile_id,
+                            "name": name,
+                            "baseTheme": base_theme,
+                            "colors": clean_colors,
+                        }
+                    )
+        normalized.pop("colorProfiles", None)
+        normalized["themes"] = clean_profiles
+
+        active_profile_id = _normalize_color_profile_id(normalized.get("activeThemeId") or normalized.get("activeColorProfileId"))
+        valid_profile_ids = {"light", "dark", *seen_ids}
+        if active_profile_id not in valid_profile_ids:
+            theme = str(normalized.get("theme", "")).strip().lower()
+            active_profile_id = theme if theme in {"light", "dark"} else "light"
+        normalized.pop("activeColorProfileId", None)
+        normalized["activeThemeId"] = active_profile_id
+        return normalized
 
     def update_ui_settings(
         self,
@@ -2297,6 +2366,7 @@ class VaultManager:
         if app_settings is not None:
             if isinstance(app_settings, dict):
                 next_app.update(app_settings)
+                next_app = self._normalize_ui_app_settings(next_app)
             else:
                 next_app = {}
 
@@ -2388,7 +2458,7 @@ class VaultManager:
             target_group = {
                 "id": clean_group_id,
                 "displayName": clean_group_id,
-                "color": DEFAULT_TAG_GROUP_COLOR,
+                "color": TAG_GROUP_DEFAULT_COLOR,
                 "tags": [],
             }
             groups.append(target_group)
@@ -2564,7 +2634,7 @@ class VaultManager:
             target_group = {
                 "id": clean_target_group,
                 "displayName": clean_target_group,
-                "color": DEFAULT_TAG_GROUP_COLOR,
+                "color": TAG_GROUP_DEFAULT_COLOR,
                 "tags": [],
             }
             groups.append(target_group)
@@ -3844,7 +3914,7 @@ class VaultManager:
                 normalized[group_id] = {
                     "id": group_id,
                     "displayName": display_name,
-                    "color": DEFAULT_TAG_GROUP_COLOR,
+                    "color": TAG_GROUP_DEFAULT_COLOR,
                     "tags": tags,
                 }
         elif isinstance(value, list):
@@ -3873,7 +3943,7 @@ class VaultManager:
                 normalized[group_id] = {
                     "id": group_id,
                     "displayName": display_name or existing.get("displayName", group_id),
-                    "color": color or existing.get("color", DEFAULT_TAG_GROUP_COLOR),
+                    "color": color or existing.get("color", TAG_GROUP_DEFAULT_COLOR),
                     "tags": merged_tags,
                 }
 

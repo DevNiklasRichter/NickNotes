@@ -58,6 +58,7 @@ function makeTodo(id: string, rawText: string, updatedAt: string): TodoRow {
     links: [],
     promoted: false,
     promoted_task_id: null,
+    created_at: null,
     completed_at: null,
     updated_at: updatedAt,
   }
@@ -178,6 +179,35 @@ export function runPhaseFFocusModelAssertions(): void {
     { name: 'feature-toggle-mit-reasons' },
     'MIT reason badges should be hidden when advanced task handling is disabled'
   )
+
+  const statsOverrideData = buildFocusDashboardData({
+    tasks,
+    todos,
+    notes: [],
+    filters: baseFilters('execution'),
+    todayIso,
+    mitIds: ['task:tk_mit'],
+    focusStats: {
+      overdueCount: 7,
+      blockedCount: 4,
+      waitingCount: 5,
+      doneToday: 3,
+      doneTodayTasks: 1,
+      doneTodayTodos: 2,
+      openTasksWithoutEstimateCount: 8,
+      waitingWithoutFollowUpCount: 6,
+      unknownBlockerTaskCount: 3,
+      unknownBlockerReferenceCount: 4,
+    },
+    taskFeatureSettings: {
+      advancedTaskHandling: true,
+      taskTimeManagement: true,
+    },
+  })
+  assert(statsOverrideData.blockedTaskCount === 4, { name: 'focus-stats-override' }, 'blocked task count should be sourced from backend stats when provided')
+  assert(statsOverrideData.waitingTaskCount === 5, { name: 'focus-stats-override' }, 'waiting task count should be sourced from backend stats when provided')
+  assert(statsOverrideData.doneToday === 3, { name: 'focus-stats-override' }, 'done today totals should be sourced from backend stats')
+  assert(statsOverrideData.planningHints.waitingWithoutFollowUpCount === 6, { name: 'focus-stats-override' }, 'planning hints should use backend stats when provided')
 
   const contextTask: TaskRow = makeTask({
     id: 'tk_context_generic',
