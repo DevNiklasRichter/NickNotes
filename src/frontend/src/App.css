@@ -6599,10 +6599,26 @@ textarea:focus-visible {
 }
 
 .editor-tabs.workspace-toolbar {
+  --tab-edge-color: color-mix(in srgb, var(--line-strong) 78%, var(--text));
+  --tab-edge-width: 1px;
+  position: relative;
+  align-items: flex-end;
   gap: 0.32rem;
-  padding: 0.24rem 0.34rem;
+  padding: 0.24rem 0.34rem 0;
   border-bottom: none;
   background: transparent;
+}
+
+.editor-tabs.workspace-toolbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--tab-edge-width);
+  background: var(--tab-edge-color);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .workspace-toolbar-spacer {
@@ -6611,6 +6627,8 @@ textarea:focus-visible {
 }
 
 .workspace-toolbar .editor-tab-actions {
+  position: relative;
+  z-index: 1;
   border-left: none;
   padding-left: 0;
 }
@@ -6672,6 +6690,8 @@ textarea:focus-visible {
 }
 
 .toolbar-tab-bar {
+  position: relative;
+  z-index: 1;
   min-width: 0;
   flex: 1 1 auto;
   padding: 0;
@@ -6705,22 +6725,34 @@ textarea:focus-visible {
 .pane-tab {
   display: flex;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  position: relative;
+  border: var(--tab-edge-width) solid color-mix(in srgb, var(--line) 20%, transparent);
   border-radius: 0;
   background: transparent;
-  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  color: color-mix(in srgb, var(--muted) 32%, transparent);
   flex: 0 0 auto;
 }
 
 .pane-tab.active {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  z-index: 2;
+  border-color: var(--tab-edge-color);
+  border-bottom-color: var(--surface);
+  background: var(--surface);
   box-shadow: none;
+}
+
+.pane-tab:not(.active) {
+  background: color-mix(in srgb, var(--surface) 18%, transparent);
 }
 
 .pane-tab:not(.active) .tab-kind-icon,
 .pane-tab:not(.active) .tab-close {
-  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  color: color-mix(in srgb, var(--muted) 28%, transparent);
+}
+
+.pane-tab:not(.active) .tab-open {
+  opacity: 0.46;
 }
 
 .pane-tab[draggable='true'] {

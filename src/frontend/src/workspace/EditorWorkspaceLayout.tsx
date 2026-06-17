@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { NoteTab } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
@@ -6,6 +6,9 @@ import type { PaneId, WorkspaceState } from './workspaceState'
 
 const WORKSPACE_TAB_MIME = 'application/x-nicknotes-workspace-tab'
 const MIN_SPLIT_PANE_PX = 320
+const OVERFLOW_BUTTON_WIDTH_PX = 30
+const FALLBACK_TAB_WIDTH_PX = 140
+const TAB_GAP_PX = 4
 
 type InternalTabDragPayload = {
   tabId: string
@@ -121,9 +124,6 @@ export function EditorWorkspaceLayout({
   resolveTabIconName,
   getTabTooltip,
 }: EditorWorkspaceLayoutProps) {
-  const OVERFLOW_BUTTON_WIDTH_PX = 30
-  const FALLBACK_TAB_WIDTH_PX = 140
-  const TAB_GAP_PX = 4
   const splitRootRef = useRef<HTMLDivElement | null>(null)
   const paneTabListRefs = useRef<Record<PaneId, HTMLDivElement | null>>({
     left: null,
@@ -205,7 +205,7 @@ export function EditorWorkspaceLayout({
     event.preventDefault()
   }
 
-  const computeHiddenTabIdsForPane = (paneId: PaneId): string[] => {
+  const computeHiddenTabIdsForPane = useCallback((paneId: PaneId): string[] => {
     const tabs = paneTabs[paneId]
     if (tabs.length === 0) {
       return []
@@ -258,7 +258,7 @@ export function EditorWorkspaceLayout({
     }
 
     return tabs.slice(fitCount).map((tab) => tab.id)
-  }
+  }, [paneTabs])
 
   useEffect(() => {
     const recalc = () => {
@@ -302,7 +302,7 @@ export function EditorWorkspaceLayout({
       observer.disconnect()
       window.removeEventListener('resize', recalc)
     }
-  }, [paneTabs, workspace.layoutMode, workspace.splitRatio])
+  }, [computeHiddenTabIdsForPane, workspace.layoutMode, workspace.splitRatio])
 
   useEffect(() => {
     if (!overflowMenuPaneId) {
@@ -312,7 +312,12 @@ export function EditorWorkspaceLayout({
     if (hiddenTabIds.length > 0) {
       return
     }
-    setOverflowMenuPaneId(null)
+    const frameId = window.requestAnimationFrame(() => {
+      setOverflowMenuPaneId(null)
+    })
+    return () => {
+      window.cancelAnimationFrame(frameId)
+    }
   }, [hiddenTabIdsByPane, overflowMenuPaneId])
 
   useEffect(() => {
