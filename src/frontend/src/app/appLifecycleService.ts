@@ -5,6 +5,7 @@ import type { WorkspaceAction } from '../workspace/workspaceState'
 import type {
   BackendState,
   ColorProfile,
+  RecentNoteBase,
   StatusBarPrefs,
   TaskFeatureSettings,
   ThemeMode,
@@ -18,7 +19,9 @@ import {
   getPreferredTheme,
   getPathTail,
   getStoredLastNoteBasePath,
+  getStoredRecentNoteBases,
   normalizeLabel,
+  removeStoredRecentNoteBasePath,
   storeLastNoteBasePath,
   toActiveColorProfileId,
   toBoolean,
@@ -121,6 +124,7 @@ type AppLifecycleWriter = {
   setCounts: (counts: VaultCounts) => void
   setCustomTagGroups: (groups: TagGroupDefinition[]) => void
   setVaultPath: (path: string) => void
+  setRecentNoteBases: (items: RecentNoteBase[]) => void
   setFocusMitIds: (ids: string[]) => void
   setOpenTabs: (tabs: NoteTab[]) => void
   setCreateNoteBaseDialogOpen: (open: boolean) => void
@@ -143,6 +147,7 @@ type AppLifecycleContext = {
   refreshReview: (force?: boolean) => Promise<void>
   refreshNoteGroups: (force?: boolean) => Promise<void>
   resetWorkspaceForClosedVault: () => void
+  requestSaveBeforeNoteBaseSwitch: () => Promise<boolean>
   isNoteBaseOpenActive: () => boolean
   isAutoOpenTried: () => boolean
   setAutoOpenTried: (value: boolean) => void
@@ -167,6 +172,10 @@ export class AppLifecycleService {
 
   private get writer() {
     return this.context.writer
+  }
+
+  private refreshRecentNoteBases = () => {
+    this.writer.setRecentNoteBases(getStoredRecentNoteBases())
   }
 
   private setUiReady(ready: boolean) {
@@ -325,6 +334,11 @@ export class AppLifecycleService {
       throw new Error('Bitte zuerst einen NoteBase-Pfad angeben.')
     }
 
+    const canSwitch = await this.context.requestSaveBeforeNoteBaseSwitch()
+    if (!canSwitch) {
+      return false
+    }
+
     this.writer.setVaultLoaded(false)
     this.writer.setNoteBaseOpenStatus({
       active: true,
@@ -342,6 +356,7 @@ export class AppLifecycleService {
     })
     const response = await this.waitForNoteBaseOpen()
     const loadedPath = response.noteBasePath ?? response.vaultPath ?? path
+    this.context.resetWorkspaceForClosedVault()
     this.setUiReady(false)
     this.writer.setVaultPath(loadedPath)
     this.writer.setVaultLoaded(true)
@@ -350,6 +365,7 @@ export class AppLifecycleService {
       this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups))
     }
     storeLastNoteBasePath(loadedPath)
+    this.refreshRecentNoteBases()
     this.writer.setMessage(successMessage)
     this.writer.setError('')
     this.writer.setNoteBaseOpenStatus(null)
@@ -406,6 +422,11 @@ export class AppLifecycleService {
 
     try {
       this.writer.setError('')
+      const canSwitch = await this.context.requestSaveBeforeNoteBaseSwitch()
+      if (!canSwitch) {
+        return
+      }
+      this.writer.setVaultLoaded(false)
       this.writer.setCreateNoteBasePending(true)
       const response = await apiRequest<{
         vaultPath: string
@@ -418,11 +439,13 @@ export class AppLifecycleService {
       })
 
       const loadedPath = response.noteBasePath ?? response.vaultPath
+      this.context.resetWorkspaceForClosedVault()
       this.writer.setVaultPath(loadedPath)
       this.writer.setVaultLoaded(true)
       this.writer.setCounts(response.counts)
       this.setUiReady(false)
       storeLastNoteBasePath(loadedPath)
+      this.refreshRecentNoteBases()
       if (response.tagGroups) {
         this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
@@ -478,6 +501,7 @@ export class AppLifecycleService {
     try {
       this.writer.setError('')
       const previousName = currentName
+      const previousPath = this.snapshot.getVaultPath()
       const response = await apiRequest<{
         counts: VaultCounts
         vaultPath: string
@@ -496,7 +520,9 @@ export class AppLifecycleService {
       this.context.dispatchWorkspace({
         type: 'RESET',
       })
+      removeStoredRecentNoteBasePath(previousPath)
       storeLastNoteBasePath(loadedPath)
+      this.refreshRecentNoteBases()
       if (response.tagGroups) {
         this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups))
       }
@@ -557,6 +583,8 @@ export class AppLifecycleService {
       this.writer.setUiSettingsReady(false)
       this.context.resetWorkspaceForClosedVault()
       clearStoredLastNoteBasePath()
+      removeStoredRecentNoteBasePath(response.deletedPath)
+      this.refreshRecentNoteBases()
       this.writer.setMessage(`NoteBase geloescht: ${response.deletedPath}`)
     } catch (caught) {
       this.writer.setError(String(caught))
@@ -594,6 +622,8 @@ export class AppLifecycleService {
           } catch (autoOpenError) {
             if (this.isMissingNoteBasePathError(autoOpenError)) {
               clearStoredLastNoteBasePath()
+              removeStoredRecentNoteBasePath(rememberedPath)
+              this.refreshRecentNoteBases()
               this.writer.setVaultPath('')
               this.writer.setError('')
               this.writer.setMessage('Letzte NoteBase nicht gefunden. Bitte waehle eine NoteBase aus.')
@@ -614,6 +644,7 @@ export class AppLifecycleService {
       const loadedPath = state.noteBasePath ?? state.vaultPath ?? ''
       this.writer.setVaultPath(loadedPath)
       storeLastNoteBasePath(loadedPath)
+      this.refreshRecentNoteBases()
       this.setUiReady(false)
       if (state.counts) {
         this.writer.setCounts(state.counts)

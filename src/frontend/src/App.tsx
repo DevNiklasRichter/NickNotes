@@ -111,6 +111,7 @@ import {
   taskPriorityOptionLabel,
   toStorageTagGroups,
   getStoredLastNoteBasePath,
+  getStoredRecentNoteBases,
   areStatusBarPrefsEqual,
   areTaskFeatureSettingsEqual,
   areExplorerOptionsEqual,
@@ -121,6 +122,7 @@ import {
 } from './app/AppShared'
 import type {
   VaultCounts,
+  RecentNoteBase,
   Suggestion,
   TaskRow,
   TodoRow,
@@ -173,6 +175,7 @@ function App() {
   const autoOpenTriedRef = useRef(false)
   const explorerRecoveryRef = useRef(false)
   const uiSettingsReadyRef = useRef(false)
+  const settingsDirtyRef = useRef(false)
   const explorerViewSaveTimerRef = useRef<number | null>(null)
   const appLayoutSaveTimerRef = useRef<number | null>(null)
   const workspaceGridRef = useRef<HTMLDivElement | null>(null)
@@ -187,6 +190,7 @@ function App() {
   ])
 
   const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath)
+  const [recentNoteBases, setRecentNoteBases] = useState<RecentNoteBase[]>(getStoredRecentNoteBases)
   const [vaultLoaded, setVaultLoaded] = useState(false)
   const [noteBaseOpenStatus, setNoteBaseOpenStatus] = useState<NoteBaseOpenStatus | null>(null)
   const [counts, setCounts] = useState<VaultCounts>({ notes: 0, openTasks: 0, doneTasks: 0 })
@@ -466,6 +470,7 @@ function App() {
       colorProfiles,
     ]
   )
+  settingsDirtyRef.current = settingsDirty
 
   const hasUnsavedChanges = useMemo(
     () => settingsDirty || openTabs.some((tab) => tab.kind === 'note' && tab.dirty),
@@ -870,9 +875,10 @@ function App() {
           setError,
           setWarnMessage,
           setCriticalMessage,
-          setCounts,
-          setCustomTagGroups,
-          setVaultPath,
+              setCounts,
+              setCustomTagGroups,
+              setVaultPath,
+              setRecentNoteBases,
               setFocusMitIds,
               setOpenTabs,
               setCreateNoteBaseDialogOpen,
@@ -890,6 +896,7 @@ function App() {
             dispatchWorkspace,
             refreshWorkspaceData: (force) => refreshWorkspaceData(force),
             openTagActionDialog,
+            requestSaveBeforeNoteBaseSwitch,
             refreshSearch: (force = false) => runSearch(searchQuery, force),
             refreshFocusAggregate: (force = false) => refreshFocusAggregate(force),
             refreshReview: (force = false) => refreshReview(force),
@@ -919,6 +926,7 @@ function App() {
       explorerOptions,
       explorerWidth,
       openTagActionDialog,
+      requestSaveBeforeNoteBaseSwitch,
       clearAppStateForClosedNoteBase,
       noteBaseOpenStatus,
       refreshWorkspaceData,
@@ -2812,6 +2820,46 @@ function App() {
     return result.actionId
   }
 
+  async function requestSaveBeforeNoteBaseSwitch(): Promise<boolean> {
+    const dirtyTabs = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty)
+    if (!settingsDirtyRef.current && dirtyTabs.length === 0) {
+      return true
+    }
+
+    const decision = await askTagChoice(
+      'Ungespeicherte Aenderungen',
+      'Vor dem Wechsel der NoteBase speichern?',
+      [
+        { id: 'save', label: 'Speichern', tone: 'primary' },
+        { id: 'discard', label: 'Nicht speichern', tone: 'danger' },
+      ]
+    )
+    if (!decision) {
+      return false
+    }
+    if (decision === 'discard') {
+      return true
+    }
+    if (decision !== 'save') {
+      return false
+    }
+
+    if (settingsDirtyRef.current) {
+      const settingsSaved = await saveSettings()
+      if (!settingsSaved) {
+        return false
+      }
+    }
+
+    for (const tab of dirtyTabs) {
+      const saved = await saveTab(tab.path)
+      if (!saved) {
+        return false
+      }
+    }
+    return true
+  }
+
   const requestSaveBeforeAppClose = useCallback(async (): Promise<boolean> => {
     if (settingsDirty) {
       const settingsSaved = await saveSettings()
@@ -3803,6 +3851,7 @@ function App() {
             sidebarView={sidebarView}
             noteBaseName={noteBaseName}
             vaultLoaded={vaultLoaded}
+            recentNoteBases={recentNoteBases}
             explorerWidth={explorerWidth}
             onExplorerWidthChange={setExplorerWidth}
             onRenameNoteBase={() => {
@@ -3816,6 +3865,9 @@ function App() {
             }}
             onCreateVault={() => {
               void createVault()
+            }}
+            onOpenRecentNoteBase={(path) => {
+              void appLifecycleService.openVaultAtPath(path, 'NoteBase gewechselt.')
             }}
             onMigrateExistingNotesToTemplate={() => {
               void migrateExistingNotesToTemplate()

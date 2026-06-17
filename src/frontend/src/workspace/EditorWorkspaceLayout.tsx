@@ -377,7 +377,7 @@ export function EditorWorkspaceLayout({
     }
   }, [workspace.layoutMode, workspace.splitRatio])
 
-  const renderPane = (paneId: PaneId) => {
+  const renderPaneTabBar = (paneId: PaneId, variant: 'pane' | 'toolbar' = 'pane') => {
     const tabs = paneTabs[paneId]
     const hiddenTabIdSet = new Set(hiddenTabIdsByPane[paneId])
     const visibleEntries = tabs
@@ -387,9 +387,202 @@ export function EditorWorkspaceLayout({
     const activeTab = paneActiveTabs[paneId]
     const isDropTarget = dragOverPaneId === paneId
     const tabInsertIndex = insertIndexByPane[paneId]
-    const isActivePane = activePaneId === paneId
     const showInsertMarker = isDropTarget && draggedTabId !== null
     const overflowMenuOpen = overflowMenuPaneId === paneId && hiddenTabs.length > 0
+    const tabBarClassName = `pane-tab-bar ${variant === 'toolbar' ? 'toolbar-tab-bar' : ''} ${
+      isDropTarget ? 'drop-active' : ''
+    }`.trim()
+
+    return (
+      <div
+        className={tabBarClassName}
+        onPointerDown={() => {
+          onFocusPane(paneId, activeTab?.id ?? null)
+        }}
+        onDragOver={(event) => {
+          event.preventDefault()
+          if (dragOverPaneId !== paneId) {
+            setDragOverPaneId(paneId)
+          }
+          const target = event.target
+          if (target instanceof HTMLElement && target.closest('.pane-tab')) {
+            return
+          }
+          setInsertIndexByPane((current) => ({ ...current, [paneId]: tabs.length }))
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+            setDragOverPaneId((current) => (current === paneId ? null : current))
+            setInsertIndexByPane((current) => ({ ...current, [paneId]: null }))
+          }
+        }}
+        onDrop={(event) => handleTabDropOnPane(event, paneId, true)}
+      >
+        <div
+          className="pane-tab-list"
+          ref={(node) => {
+            paneTabListRefs.current[paneId] = node
+          }}
+        >
+          {visibleEntries.map((entry) => {
+            const { tab, index } = entry
+            const isActive = activeTab?.id === tab.id
+            const isDragging = draggedTabId === tab.id
+            const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
+            const showMarkerBefore = showInsertMarker && tabInsertIndex === index
+            return (
+              <div
+                key={`${paneId}-tab-wrap-${tab.id}`}
+                className="pane-tab-wrap"
+                ref={(node) => {
+                  paneTabItemRefs.current[paneId][tab.id] = node
+                }}
+              >
+                {showMarkerBefore ? <div className="pane-tab-insert-marker" aria-hidden="true" /> : null}
+                <div
+                  className={`pane-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+                  draggable={
+                    tab.kind === 'note' ||
+                    tab.kind === 'todo_dashboard' ||
+                    tab.kind === 'task_dashboard' ||
+                    tab.kind === 'focus_dashboard' ||
+                    tab.kind === 'review_dashboard' ||
+                    tab.kind === 'graph_dashboard'
+                  }
+                  onDragStart={(event) => {
+                    if (
+                      tab.kind !== 'note' &&
+                      tab.kind !== 'todo_dashboard' &&
+                      tab.kind !== 'task_dashboard' &&
+                      tab.kind !== 'focus_dashboard' &&
+                      tab.kind !== 'review_dashboard' &&
+                      tab.kind !== 'graph_dashboard'
+                    ) {
+                      event.preventDefault()
+                      return
+                    }
+                    const payload: InternalTabDragPayload = {
+                      tabId: tab.id,
+                      sourcePaneId: paneId,
+                    }
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData(WORKSPACE_TAB_MIME, JSON.stringify(payload))
+                    if (tab.kind === 'note') {
+                      event.dataTransfer.setData('application/x-open-tab-path', tab.path)
+                      event.dataTransfer.setData('application/x-open-tab-title', tab.title)
+                      event.dataTransfer.setData('text/plain', tab.path)
+                    }
+                    setDraggedTabId(tab.id)
+                    setDragOverPaneId(paneId)
+                    setInsertIndexByPane((current) => ({ ...current, [paneId]: index + 1 }))
+                  }}
+                  onDragEnd={resetDragState}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    if (dragOverPaneId !== paneId) {
+                      setDragOverPaneId(paneId)
+                    }
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    const placeBefore = event.clientX < rect.left + rect.width / 2
+                    const nextInsertIndex = placeBefore ? index : index + 1
+                    setInsertIndexByPane((current) =>
+                      current[paneId] === nextInsertIndex ? current : { ...current, [paneId]: nextInsertIndex }
+                    )
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    onTabContextMenu(tab.id, event.clientX, event.clientY)
+                  }}
+                >
+                  <button
+                    className="tab-open"
+                    onClick={() => {
+                      onActivateTab(paneId, tab.id)
+                    }}
+                    title={getTabTooltip(tab)}
+                  >
+                    <span className="tab-kind-icon" aria-hidden="true">
+                      <LucideNamedIcon name={resolveTabIconName(tab)} size={13} />
+                    </span>
+                    <span className="tab-title-text">{displayTitle}</span>
+                    {tab.dirty ? (
+                      <span className="tab-dirty-dot">
+                        <LucideNamedIcon name="Circle" size={8} />
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    className="tab-close"
+                    onClick={() => {
+                      onCloseTab(tab.id)
+                    }}
+                    title="Tab schliessen"
+                  >
+                    <LucideNamedIcon name="X" size={14} />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          {showInsertMarker && tabInsertIndex === tabs.length ? (
+            <div className="pane-tab-insert-marker pane-tab-insert-marker-tail" aria-hidden="true" />
+          ) : null}
+        </div>
+        {hiddenTabs.length > 0 ? (
+          <div className="pane-tab-overflow">
+            <button
+              type="button"
+              className={`pane-tab-overflow-toggle ${overflowMenuOpen ? 'active' : ''}`}
+              onClick={() => {
+                setOverflowMenuPaneId((current) => (current === paneId ? null : paneId))
+              }}
+              title="Weitere Tabs anzeigen"
+            >
+              <LucideNamedIcon name="ChevronDown" size={14} />
+            </button>
+            {overflowMenuOpen ? (
+              <div className="pane-tab-overflow-menu">
+                {hiddenTabs.map((tab) => {
+                  const isActive = activeTab?.id === tab.id
+                  return (
+                    <button
+                      key={`${paneId}-overflow-tab-${tab.id}`}
+                      type="button"
+                      className={`pane-tab-overflow-item ${isActive ? 'active' : ''}`}
+                      title={getTabTooltip(tab)}
+                      onClick={() => {
+                        const fromIndex = tabs.findIndex((entry) => entry.id === tab.id)
+                        if (fromIndex > 0) {
+                          onMoveTabWithinPane(paneId, fromIndex, 0)
+                        }
+                        onActivateTab(paneId, tab.id)
+                        setOverflowMenuPaneId(null)
+                      }}
+                    >
+                      <span className="tab-kind-icon" aria-hidden="true">
+                        <LucideNamedIcon name={resolveTabIconName(tab)} size={13} />
+                      </span>
+                      <span className="pane-tab-overflow-item-label">{tab.title.replace(/\.md$/i, '')}</span>
+                      {tab.dirty ? (
+                        <span className="tab-dirty-dot">
+                          <LucideNamedIcon name="Circle" size={8} />
+                        </span>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderPane = (paneId: PaneId, showTabBar = true) => {
+    const activeTab = paneActiveTabs[paneId]
+    const isDropTarget = dragOverPaneId === paneId
+    const isActivePane = activePaneId === paneId
 
     return (
       <article
@@ -412,185 +605,7 @@ export function EditorWorkspaceLayout({
         }}
         onDrop={(event) => handleTabDropOnPane(event, paneId, false)}
       >
-        <div
-          className={`pane-tab-bar ${isDropTarget ? 'drop-active' : ''}`}
-          onDragOver={(event) => {
-            event.preventDefault()
-            if (dragOverPaneId !== paneId) {
-              setDragOverPaneId(paneId)
-            }
-            const target = event.target
-            if (target instanceof HTMLElement && target.closest('.pane-tab')) {
-              return
-            }
-            setInsertIndexByPane((current) => ({ ...current, [paneId]: tabs.length }))
-          }}
-          onDragLeave={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-              setDragOverPaneId((current) => (current === paneId ? null : current))
-              setInsertIndexByPane((current) => ({ ...current, [paneId]: null }))
-            }
-          }}
-          onDrop={(event) => handleTabDropOnPane(event, paneId, true)}
-        >
-          <div
-            className="pane-tab-list"
-            ref={(node) => {
-              paneTabListRefs.current[paneId] = node
-            }}
-          >
-            {visibleEntries.map((entry) => {
-              const { tab, index } = entry
-              const isActive = activeTab?.id === tab.id
-              const isDragging = draggedTabId === tab.id
-              const displayTitle = tab.kind === 'note' ? tab.title.replace(/\.md$/i, '') : tab.title
-              const showMarkerBefore = showInsertMarker && tabInsertIndex === index
-              return (
-                <div
-                  key={`${paneId}-tab-wrap-${tab.id}`}
-                  className="pane-tab-wrap"
-                  ref={(node) => {
-                    paneTabItemRefs.current[paneId][tab.id] = node
-                  }}
-                >
-                  {showMarkerBefore ? <div className="pane-tab-insert-marker" aria-hidden="true" /> : null}
-                  <div
-                    className={`pane-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
-                    draggable={
-                      tab.kind === 'note' ||
-                      tab.kind === 'todo_dashboard' ||
-                      tab.kind === 'task_dashboard' ||
-                      tab.kind === 'focus_dashboard' ||
-                      tab.kind === 'review_dashboard' ||
-                      tab.kind === 'graph_dashboard'
-                    }
-                    onDragStart={(event) => {
-                      if (
-                        tab.kind !== 'note' &&
-                        tab.kind !== 'todo_dashboard' &&
-                        tab.kind !== 'task_dashboard' &&
-                        tab.kind !== 'focus_dashboard' &&
-                        tab.kind !== 'review_dashboard' &&
-                        tab.kind !== 'graph_dashboard'
-                      ) {
-                        event.preventDefault()
-                        return
-                      }
-                      const payload: InternalTabDragPayload = {
-                        tabId: tab.id,
-                        sourcePaneId: paneId,
-                      }
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData(WORKSPACE_TAB_MIME, JSON.stringify(payload))
-                      if (tab.kind === 'note') {
-                        event.dataTransfer.setData('application/x-open-tab-path', tab.path)
-                        event.dataTransfer.setData('application/x-open-tab-title', tab.title)
-                        event.dataTransfer.setData('text/plain', tab.path)
-                      }
-                      setDraggedTabId(tab.id)
-                      setDragOverPaneId(paneId)
-                      setInsertIndexByPane((current) => ({ ...current, [paneId]: index + 1 }))
-                    }}
-                    onDragEnd={resetDragState}
-                    onDragOver={(event) => {
-                      event.preventDefault()
-                      if (dragOverPaneId !== paneId) {
-                        setDragOverPaneId(paneId)
-                      }
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      const placeBefore = event.clientX < rect.left + rect.width / 2
-                      const nextInsertIndex = placeBefore ? index : index + 1
-                      setInsertIndexByPane((current) =>
-                        current[paneId] === nextInsertIndex ? current : { ...current, [paneId]: nextInsertIndex }
-                      )
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      onTabContextMenu(tab.id, event.clientX, event.clientY)
-                    }}
-                  >
-                    <button
-                      className="tab-open"
-                      onClick={() => {
-                        onActivateTab(paneId, tab.id)
-                      }}
-                      title={getTabTooltip(tab)}
-                    >
-                      <span className="tab-kind-icon" aria-hidden="true">
-                        <LucideNamedIcon name={resolveTabIconName(tab)} size={13} />
-                      </span>
-                      <span className="tab-title-text">{displayTitle}</span>
-                      {tab.dirty ? (
-                        <span className="tab-dirty-dot">
-                          <LucideNamedIcon name="Circle" size={8} />
-                        </span>
-                      ) : null}
-                    </button>
-                    <button
-                      className="tab-close"
-                      onClick={() => {
-                        onCloseTab(tab.id)
-                      }}
-                      title="Tab schliessen"
-                    >
-                      <LucideNamedIcon name="X" size={14} />
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-            {showInsertMarker && tabInsertIndex === tabs.length ? (
-              <div className="pane-tab-insert-marker pane-tab-insert-marker-tail" aria-hidden="true" />
-            ) : null}
-          </div>
-          {hiddenTabs.length > 0 ? (
-            <div className="pane-tab-overflow">
-              <button
-                type="button"
-                className={`pane-tab-overflow-toggle ${overflowMenuOpen ? 'active' : ''}`}
-                onClick={() => {
-                  setOverflowMenuPaneId((current) => (current === paneId ? null : paneId))
-                }}
-                title="Weitere Tabs anzeigen"
-              >
-                <LucideNamedIcon name="ChevronDown" size={14} />
-              </button>
-              {overflowMenuOpen ? (
-                <div className="pane-tab-overflow-menu">
-                  {hiddenTabs.map((tab) => {
-                    const isActive = activeTab?.id === tab.id
-                    return (
-                      <button
-                        key={`${paneId}-overflow-tab-${tab.id}`}
-                        type="button"
-                        className={`pane-tab-overflow-item ${isActive ? 'active' : ''}`}
-                        title={getTabTooltip(tab)}
-                        onClick={() => {
-                          const fromIndex = tabs.findIndex((entry) => entry.id === tab.id)
-                          if (fromIndex > 0) {
-                            onMoveTabWithinPane(paneId, fromIndex, 0)
-                          }
-                          onActivateTab(paneId, tab.id)
-                          setOverflowMenuPaneId(null)
-                        }}
-                      >
-                        <span className="tab-kind-icon" aria-hidden="true">
-                          <LucideNamedIcon name={resolveTabIconName(tab)} size={13} />
-                        </span>
-                        <span className="pane-tab-overflow-item-label">{tab.title.replace(/\.md$/i, '')}</span>
-                        {tab.dirty ? (
-                          <span className="tab-dirty-dot">
-                            <LucideNamedIcon name="Circle" size={8} />
-                          </span>
-                        ) : null}
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+        {showTabBar ? renderPaneTabBar(paneId) : null}
 
         <div className="workspace-pane-content">{activeTab ? renderPaneContent(paneId, activeTab) : <EmptyPanePlaceholder />}</div>
       </article>
@@ -600,9 +615,11 @@ export function EditorWorkspaceLayout({
   return (
     <article className="workspace-panel editor-workspace-panel">
       <div className="editor-tabs workspace-toolbar">
-        <div className="workspace-toolbar-label">
-          <span>{workspace.layoutMode === 'split' ? 'Split-Editor' : 'Editor'}</span>
-        </div>
+        {workspace.layoutMode === 'split' ? (
+          <div className="workspace-toolbar-spacer" aria-hidden="true" />
+        ) : (
+          renderPaneTabBar('left', 'toolbar')
+        )}
         <div className="editor-tab-actions">
           <button className="icon-button compact muted" onClick={onSaveActive} disabled={disableSave} title="Speichern">
             <LucideNamedIcon name="Save" size={14} />
@@ -641,7 +658,7 @@ export function EditorWorkspaceLayout({
           {renderPane('right')}
         </div>
       ) : (
-        <div className="editor-workspace-single">{renderPane('left')}</div>
+        <div className="editor-workspace-single">{renderPane('left', false)}</div>
       )}
     </article>
   )

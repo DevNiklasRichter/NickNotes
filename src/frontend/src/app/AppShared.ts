@@ -388,7 +388,14 @@ export type EditorTabContextMenuState = {
   tabId: string
 } | null
 
+export type RecentNoteBase = {
+  path: string
+  name: string
+}
+
 export const LAST_NOTEBASE_STORAGE_KEY = 'nicknotes-last-notebase-path'
+export const RECENT_NOTEBASES_STORAGE_KEY = 'nicknotes-recent-notebases'
+export const RECENT_NOTEBASES_LIMIT = 8
 export const TODO_DASHBOARD_TAB_PATH = '__nicknotes_todo_dashboard__'
 export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
@@ -818,6 +825,98 @@ export function toStorageTagGroups(value: unknown): TagGroupDefinition[] {
   return normalizeTagGroups(value)
 }
 
+function toRecentNoteBasePathKey(path: string): string {
+  return normalizeLabel(path).replace(/\//g, '\\').toLowerCase()
+}
+
+function toRecentNoteBase(path: string): RecentNoteBase | null {
+  const cleanPath = normalizeLabel(path)
+  if (!cleanPath) {
+    return null
+  }
+  return {
+    path: cleanPath,
+    name: getPathTail(cleanPath) || cleanPath,
+  }
+}
+
+function normalizeRecentNoteBases(value: unknown): RecentNoteBase[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const next: RecentNoteBase[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    const path =
+      typeof item === 'string'
+        ? item
+        : item && typeof item === 'object' && 'path' in item
+          ? String((item as { path?: unknown }).path || '')
+          : ''
+    const entry = toRecentNoteBase(path)
+    if (!entry) {
+      continue
+    }
+    const key = toRecentNoteBasePathKey(entry.path)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    next.push(entry)
+    if (next.length >= RECENT_NOTEBASES_LIMIT) {
+      break
+    }
+  }
+  return next
+}
+
+function writeStoredRecentNoteBases(items: RecentNoteBase[]): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.localStorage.setItem(RECENT_NOTEBASES_STORAGE_KEY, JSON.stringify(items))
+  } catch {
+    // Best effort.
+  }
+}
+
+export function getStoredRecentNoteBases(): RecentNoteBase[] {
+  if (typeof window === 'undefined') {
+    return []
+  }
+
+  try {
+    return normalizeRecentNoteBases(JSON.parse(window.localStorage.getItem(RECENT_NOTEBASES_STORAGE_KEY) || '[]'))
+  } catch {
+    return []
+  }
+}
+
+export function storeRecentNoteBasePath(path: string): void {
+  const entry = toRecentNoteBase(path)
+  if (!entry) {
+    return
+  }
+
+  const entryKey = toRecentNoteBasePathKey(entry.path)
+  const next = [
+    entry,
+    ...getStoredRecentNoteBases().filter((candidate) => toRecentNoteBasePathKey(candidate.path) !== entryKey),
+  ].slice(0, RECENT_NOTEBASES_LIMIT)
+  writeStoredRecentNoteBases(next)
+}
+
+export function removeStoredRecentNoteBasePath(path: string): void {
+  const key = toRecentNoteBasePathKey(path)
+  if (!key) {
+    return
+  }
+  const next = getStoredRecentNoteBases().filter((candidate) => toRecentNoteBasePathKey(candidate.path) !== key)
+  writeStoredRecentNoteBases(next)
+}
+
 export function getStoredLastNoteBasePath(): string {
   if (typeof window === 'undefined') {
     return ''
@@ -840,6 +939,7 @@ export function storeLastNoteBasePath(path: string): void {
   }
   try {
     window.localStorage.setItem(LAST_NOTEBASE_STORAGE_KEY, cleanPath)
+    storeRecentNoteBasePath(cleanPath)
   } catch {
     // Best effort.
   }

@@ -16,11 +16,11 @@ export function ActivityRail({ sidebarView, onOpenSidebarView, onOpenSettings }:
       </div>
 
       <div className="rail-menu">
-        <button className={sidebarView === 'vault' ? 'active' : ''} onClick={() => onOpenSidebarView('vault')} title="Board">
+        <button className={sidebarView === 'vault' ? 'active' : ''} onClick={() => onOpenSidebarView('vault')} title="NoteBase">
           <span className="rail-glyph">
             <LucideNamedIcon name="LayoutGrid" size={14} />
           </span>
-          <span className="rail-label">Board</span>
+          <span className="rail-label">NoteBase</span>
         </button>
         <button className={sidebarView === 'notes' ? 'active' : ''} onClick={() => onOpenSidebarView('notes')} title="Notizen">
           <span className="rail-glyph">

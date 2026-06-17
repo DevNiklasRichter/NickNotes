@@ -15,6 +15,7 @@ import {
   TASK_PRIORITY_COLORS,
   normalizeRelatedCandidate,
   normalizeTagCandidate,
+  type RecentNoteBase,
   type TaskDashboardFilters,
   type FocusDashboardFilters,
   type TaskDueBucket,
@@ -32,12 +33,14 @@ type WorkbenchSidebarContentProps = {
   sidebarView: SidebarView
   noteBaseName: string
   vaultLoaded: boolean
+  recentNoteBases: RecentNoteBase[]
   explorerWidth: number
   onExplorerWidthChange: (nextWidth: number) => void
   onRenameNoteBase: () => void
   onDeleteNoteBase: () => void
   onPickAndOpenVault: () => void
   onCreateVault: () => void
+  onOpenRecentNoteBase: (path: string) => void
   onMigrateExistingNotesToTemplate: () => void
   tasks: TaskRow[]
   taskFilters: TaskDashboardFilters
@@ -117,6 +120,10 @@ type TodoMultiSelectOption = {
 type TodoDropdownKey = 'status' | 'tag_groups' | 'tags' | 'promotions'
 type TaskDropdownKey = 'status' | 'priority' | 'due' | 'tag_groups' | 'tags' | 'related'
 
+function noteBasePathKey(path: string): string {
+  return path.trim().replace(/\//g, '\\').toLowerCase()
+}
+
 function summarizeTodoSelection(selectedValues: string[], allOptions: TodoMultiSelectOption[], fallbackAllLabel: string): string {
   if (allOptions.length === 0) {
     return 'Keine Optionen'
@@ -138,12 +145,14 @@ export function WorkbenchSidebarContent({
   sidebarView,
   noteBaseName,
   vaultLoaded,
+  recentNoteBases,
   explorerWidth,
   onExplorerWidthChange,
   onRenameNoteBase,
   onDeleteNoteBase,
   onPickAndOpenVault,
   onCreateVault,
+  onOpenRecentNoteBase,
   onMigrateExistingNotesToTemplate,
   tasks,
   taskFilters,
@@ -1060,11 +1069,12 @@ export function WorkbenchSidebarContent({
   const resetReviewFilters = () => {
     onReviewFiltersChange({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
   }
+  const currentNoteBasePathKey = noteBasePathKey(vaultPath)
 
   if (sidebarView === 'vault') {
     return (
       <div className="sidebar-content">
-        <h3>Board</h3>
+        <h3>NoteBase</h3>
         <p className="muted-label">Aktive NoteBase</p>
         <div className="active-notebase-row">
           <strong>{noteBaseName || 'Keine NoteBase'}</strong>
@@ -1087,6 +1097,37 @@ export function WorkbenchSidebarContent({
           <button onClick={onMigrateExistingNotesToTemplate} disabled={!vaultLoaded}>
             Templates migrieren
           </button>
+        </div>
+
+        <div className="recent-notebases">
+          <p className="muted-label">Zuletzt geoeffnet</p>
+          {recentNoteBases.length > 0 ? (
+            <div className="recent-notebase-list">
+              {recentNoteBases.map((recent) => {
+                const isCurrent = currentNoteBasePathKey !== '' && noteBasePathKey(recent.path) === currentNoteBasePathKey
+                return (
+                  <div className="recent-notebase-row" key={recent.path} title={recent.path}>
+                    <div className="recent-notebase-main">
+                      <strong>{recent.name}</strong>
+                      <span>{recent.path}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="recent-notebase-open-button"
+                      onClick={() => onOpenRecentNoteBase(recent.path)}
+                      disabled={isCurrent}
+                      title={isCurrent ? 'Diese NoteBase ist bereits geoeffnet' : `NoteBase oeffnen: ${recent.name}`}
+                    >
+                      <LucideNamedIcon name="FolderOpen" size={13} />
+                      <span>{isCurrent ? 'Aktiv' : 'Oeffnen'}</span>
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="recent-notebases-empty">Noch keine NoteBase-Historie.</p>
+          )}
         </div>
       </div>
     )

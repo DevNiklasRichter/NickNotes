@@ -315,6 +315,76 @@
   gap: 0.45rem;
 }
 
+.recent-notebases {
+  display: grid;
+  gap: 0.42rem;
+  min-height: 0;
+}
+
+.recent-notebase-list {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.recent-notebase-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 82%, var(--surface) 18%);
+  padding: 0.42rem 0.48rem;
+}
+
+.recent-notebase-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.recent-notebase-main strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.recent-notebase-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.recent-notebase-open-button {
+  min-height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.recent-notebases-empty {
+  margin: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 0.5rem 0.55rem;
+  font-size: 0.78rem;
+}
+
 .active-notebase-row {
   display: flex;
   align-items: center;
@@ -6525,17 +6595,24 @@ textarea:focus-visible {
 /* Workspace V2 */
 .workspace-toolbar {
   justify-content: space-between;
+  min-height: 34px;
 }
 
-.workspace-toolbar-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.36rem;
-  min-height: 24px;
-  color: var(--muted);
-  font-size: 0.74rem;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+.editor-tabs.workspace-toolbar {
+  gap: 0.32rem;
+  padding: 0.24rem 0.34rem;
+  border-bottom: none;
+  background: transparent;
+}
+
+.workspace-toolbar-spacer {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-toolbar .editor-tab-actions {
+  border-left: none;
+  padding-left: 0;
 }
 
 .editor-workspace-single,
@@ -6564,7 +6641,7 @@ textarea:focus-visible {
 }
 
 .workspace-pane.focused {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: none;
 }
 
 .workspace-pane-content {
@@ -6586,12 +6663,19 @@ textarea:focus-visible {
   overflow: visible;
   position: relative;
   z-index: 6;
-  gap: 0.3rem;
-  padding: 0.32rem 0.4rem;
-  min-height: 42px;
+  gap: 0.2rem;
+  padding: 0.22rem 0.34rem 0;
+  min-height: 34px;
   box-sizing: border-box;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-bottom: none;
   background: transparent;
+}
+
+.toolbar-tab-bar {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  min-height: 28px;
 }
 
 .pane-tab-bar.drop-active {
@@ -6601,7 +6685,7 @@ textarea:focus-visible {
 .pane-tab-list {
   display: flex;
   align-items: center;
-  gap: 0.28rem;
+  gap: 0;
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -6610,22 +6694,33 @@ textarea:focus-visible {
 .pane-tab-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
+  gap: 0;
   flex: 0 0 auto;
+}
+
+.pane-tab-wrap + .pane-tab-wrap {
+  margin-left: -1px;
 }
 
 .pane-tab {
   display: flex;
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-contrast);
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
   flex: 0 0 auto;
 }
 
 .pane-tab.active {
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  box-shadow: none;
+}
+
+.pane-tab:not(.active) .tab-kind-icon,
+.pane-tab:not(.active) .tab-close {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
 .pane-tab[draggable='true'] {
