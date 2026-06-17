@@ -52,6 +52,8 @@ import { AppSettingsService } from './app/appSettingsService'
 import { NoteCaptureService } from './app/noteCaptureService'
 import { ExplorerMutationService } from './app/explorerMutationService'
 import { TagManagementService } from './app/tagManagementService'
+import { useOperatorNotifications } from './app/operatorNotifications'
+import { useTagMatchAssistantState, type TagMatchCandidate } from './app/tagMatchAssistantState'
 import type { AppMutationEvent, MutationRefreshPlan } from './app/mutationEvents'
 import {
   DEFAULT_BACKEND_URL,
@@ -123,7 +125,6 @@ import type {
   TaskRow,
   TodoRow,
   SearchRow,
-  OperatorNotification,
   MediaUploadResponse,
   ThemeMode,
   SidebarView,
@@ -141,35 +142,6 @@ import type {
   GraphIndexStatus,
   ColorProfile,
 } from './app/AppShared'
-
-type TagMatchCandidate = {
-  id: string
-  path: string
-  relativePath: string
-  start: number
-  end: number
-  line: number
-  lineOffset: number
-  matchedText: string
-  alias: string
-  replacement: string
-  groupId: string
-  groupDisplayName: string
-  groupColor: string
-  tagId: string
-  tagDisplayName: string
-  before: string
-  after: string
-}
-
-type TagMatchAssistantState = {
-  open: boolean
-  loading: boolean
-  applying: boolean
-  cursor: number
-  items: TagMatchCandidate[]
-  skippedIds: string[]
-}
 
 function resolveGraphNodePath(path: string, vaultPath: string): string {
   const cleanPath = normalizeLabel(path)
@@ -195,17 +167,6 @@ const EMPTY_FOCUS_DASHBOARD_STATS: FocusDashboardAggregateStats = {
   waitingWithoutFollowUpCount: 0,
   unknownBlockerTaskCount: 0,
   unknownBlockerReferenceCount: 0,
-}
-
-type AppOperatorNotification = Pick<OperatorNotification, 'id' | 'message' | 'severity'> & {
-  autoClearMs: number | null
-}
-
-const OPERATOR_NOTIFICATION_AUTO_CLEAR_MS: Record<OperatorNotification['severity'], number | null> = {
-  info: 7000,
-  warn: 9000,
-  error: null,
-  critical: null,
 }
 
 function App() {
@@ -304,14 +265,19 @@ function App() {
   const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null)
   const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null)
   const tagActionDialogRef = useRef<TagActionDialogState | null>(null)
-  const [tagMatchAssistant, setTagMatchAssistant] = useState<TagMatchAssistantState>({
-    open: false,
-    loading: false,
-    applying: false,
-    cursor: 0,
-    items: [],
-    skippedIds: [],
-  })
+  const {
+    tagMatchAssistant,
+    visibleTagMatchItems,
+    activeTagMatch,
+    openTagMatchAssistantLoading,
+    resolveTagMatchAssistantCandidates,
+    stopTagMatchAssistantLoading,
+    closeTagMatchAssistant,
+    moveTagMatchCursor,
+    skipTagMatch,
+    setTagMatchApplying,
+    removeAppliedTagMatches,
+  } = useTagMatchAssistantState()
   const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({})
   const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({})
   const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({})
@@ -322,117 +288,14 @@ function App() {
   const leftEditorRef = useRef<MarkdownEditorApi | null>(null)
   const rightEditorRef = useRef<MarkdownEditorApi | null>(null)
   const captureEditorRef = useRef<MarkdownEditorApi | null>(null)
-  const [operatorNotifications, setOperatorNotifications] = useState<AppOperatorNotification[]>([
-    { id: 1, severity: 'info', message: 'Backend wird vorbereitet ...', autoClearMs: null },
-  ])
-  const operatorNotificationIdRef = useRef(2)
-  const operatorNotificationTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
-
-  useEffect(() => {
-    return () => {
-      operatorNotificationTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout))
-      operatorNotificationTimeoutsRef.current.clear()
-    }
-  }, [])
-
-  const clearOperatorNotification = useCallback((id: number) => {
-    const timeout = operatorNotificationTimeoutsRef.current.get(id)
-    if (timeout) {
-      window.clearTimeout(timeout)
-      operatorNotificationTimeoutsRef.current.delete(id)
-    }
-    setOperatorNotifications((current) => current.filter((entry) => entry.id !== id))
-  }, [])
-
-  const clearOperatorNotificationsBySeverity = useCallback(
-    (severities?: Array<OperatorNotification['severity']>) => {
-      if (!severities || severities.length === 0) {
-        setOperatorNotifications([])
-        operatorNotificationTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout))
-        operatorNotificationTimeoutsRef.current.clear()
-        return
-      }
-
-      const severitySet = new Set(severities)
-      setOperatorNotifications((current) =>
-        current.filter((entry) => {
-          if (!severitySet.has(entry.severity)) {
-            return true
-          }
-
-          const timeout = operatorNotificationTimeoutsRef.current.get(entry.id)
-          if (timeout) {
-            window.clearTimeout(timeout)
-            operatorNotificationTimeoutsRef.current.delete(entry.id)
-          }
-          return false
-        })
-      )
-    },
-    []
-  )
-
-  const pushOperatorNotification = useCallback((message: string, severity: OperatorNotification['severity']) => {
-    const normalized = message.trim()
-    if (!normalized) {
-      return
-    }
-
-    const autoClearMs = OPERATOR_NOTIFICATION_AUTO_CLEAR_MS[severity]
-    const id = operatorNotificationIdRef.current
-    operatorNotificationIdRef.current += 1
-
-    setOperatorNotifications((current) => [
-      ...current,
-      { id, message: normalized, severity, autoClearMs },
-    ])
-
-    if (typeof autoClearMs === 'number') {
-      const timeout = window.setTimeout(() => {
-        clearOperatorNotification(id)
-      }, autoClearMs)
-      operatorNotificationTimeoutsRef.current.set(id, timeout)
-    }
-  }, [clearOperatorNotification])
-
-  const setMessage = useCallback((message: string) => {
-    const normalized = String(message ?? '').trim()
-    if (!normalized) {
-      clearOperatorNotificationsBySeverity(['info', 'warn'])
-      return
-    }
-    pushOperatorNotification(normalized, 'info')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
-
-  const setWarnMessage = useCallback((message: string) => {
-    const normalized = String(message ?? '').trim()
-    if (!normalized) {
-      clearOperatorNotificationsBySeverity(['warn'])
-      return
-    }
-    pushOperatorNotification(normalized, 'warn')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
-
-  const setError = useCallback((message: string) => {
-    const normalized = String(message ?? '').trim()
-    if (!normalized) {
-      clearOperatorNotificationsBySeverity(['error', 'critical'])
-      return
-    }
-    pushOperatorNotification(normalized, 'error')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
-
-  const setCriticalMessage = useCallback((message: string) => {
-    const normalized = String(message ?? '').trim()
-    if (!normalized) {
-      clearOperatorNotificationsBySeverity(['critical'])
-      return
-    }
-    pushOperatorNotification(normalized, 'critical')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
-
-  const latestOperatorNotification = operatorNotifications[operatorNotifications.length - 1] ?? null
-  const launchOperatorNotifications = operatorNotifications.slice(-3)
+  const {
+    latestOperatorNotification,
+    launchOperatorNotifications,
+    setMessage,
+    setWarnMessage,
+    setError,
+    setCriticalMessage,
+  } = useOperatorNotifications()
 
   useEffect(() => {
     explorerViewStateRef.current = explorerViewState
@@ -680,17 +543,29 @@ function App() {
           setError,
         }
       ),
-    [backendUrl, vaultLoaded, reviewDashboardFilters.window]
+    [backendUrl, vaultLoaded, reviewDashboardFilters.window, setError]
   )
 
-  const refreshTasks = (force = false) => backendDataService.refreshTasks(force)
-  const refreshTodos = (force = false) => backendDataService.refreshTodos(force)
-  const runSearch = (query: string, force = false) => backendDataService.runSearch(query, force)
-  const refreshReview = (force = false) => backendDataService.refreshReview(force)
-  const refreshFocusAggregate = (force = false) => backendDataService.refreshFocusAggregate(force)
-  const refreshNoteGroups = (force = false) => backendDataService.refreshNoteGroups(force)
-  const refreshExplorerSidebarData = (force = false) => backendDataService.refreshExplorerSidebarData(force)
-  const refreshWorkspaceData = (force = false) => backendDataService.refreshWorkspaceData(searchQuery, force)
+  const refreshTasks = useCallback((force = false) => backendDataService.refreshTasks(force), [backendDataService])
+  const refreshTodos = useCallback((force = false) => backendDataService.refreshTodos(force), [backendDataService])
+  const runSearch = useCallback(
+    (query: string, force = false) => backendDataService.runSearch(query, force),
+    [backendDataService]
+  )
+  const refreshReview = useCallback((force = false) => backendDataService.refreshReview(force), [backendDataService])
+  const refreshFocusAggregate = useCallback(
+    (force = false) => backendDataService.refreshFocusAggregate(force),
+    [backendDataService]
+  )
+  const refreshNoteGroups = useCallback((force = false) => backendDataService.refreshNoteGroups(force), [backendDataService])
+  const refreshExplorerSidebarData = useCallback(
+    (force = false) => backendDataService.refreshExplorerSidebarData(force),
+    [backendDataService]
+  )
+  const refreshWorkspaceData = useCallback(
+    (force = false) => backendDataService.refreshWorkspaceData(searchQuery, force),
+    [backendDataService, searchQuery]
+  )
   const emitMutationEvent = useCallback(
     async (event: AppMutationEvent): Promise<void> => {
       if (!vaultLoaded) {
@@ -932,7 +807,6 @@ function App() {
       return
     }
     void refreshReview()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vaultLoaded, reviewDashboardFilters.window, refreshReview])
 
       const appLifecycleService = useMemo(
@@ -1524,6 +1398,9 @@ function App() {
   }, [explorerRows, toWikiTargetForRow, vaultPath])
 
   const openTodoDashboardTab = () => {
+    if (vaultLoaded) {
+      void refreshTodos()
+    }
     const existing = findTabByPath(TODO_DASHBOARD_TAB_PATH, openTabs)
     const targetPane = workspaceStateRef.current.lastFocusedPane
     if (existing) {
@@ -3084,75 +2961,23 @@ function App() {
     if (!vaultLoaded) {
       return
     }
-    setTagMatchAssistant({
-      open: true,
-      loading: true,
-      applying: false,
-      cursor: 0,
-      items: [],
-      skippedIds: [],
-    })
+    openTagMatchAssistantLoading()
     try {
       setError('')
       const response = await apiRequest<{ items: TagMatchCandidate[]; total: number }>(
         backendUrl,
         '/tag-groups/match-candidates'
       )
-      setTagMatchAssistant((current) => ({
-        ...current,
-        loading: false,
-        cursor: 0,
-        items: response.items,
-        skippedIds: [],
-      }))
+      resolveTagMatchAssistantCandidates(response.items)
       setMessage(response.total > 0 ? `${response.total} moegliche Tag-Fundstellen gefunden.` : 'Keine offenen Tag-Fundstellen gefunden.')
     } catch (caught) {
-      setTagMatchAssistant((current) => ({ ...current, loading: false }))
+      stopTagMatchAssistantLoading()
       setError(String(caught))
     }
   }
 
-  const closeTagMatchAssistant = () => {
-    if (tagMatchAssistant.applying) {
-      return
-    }
-    setTagMatchAssistant((current) => ({ ...current, open: false }))
-  }
-
-  const visibleTagMatchItems = tagMatchAssistant.items.filter((item) => !tagMatchAssistant.skippedIds.includes(item.id))
-  const activeTagMatch =
-    visibleTagMatchItems.length > 0
-      ? visibleTagMatchItems[Math.min(tagMatchAssistant.cursor, visibleTagMatchItems.length - 1)]
-      : null
-
-  const moveTagMatchCursor = (direction: 1 | -1) => {
-    setTagMatchAssistant((current) => {
-      const visibleCount = current.items.filter((item) => !current.skippedIds.includes(item.id)).length
-      if (visibleCount <= 0) {
-        return current
-      }
-      return {
-        ...current,
-        cursor: (current.cursor + direction + visibleCount) % visibleCount,
-      }
-    })
-  }
-
   const skipActiveTagMatch = () => {
-    if (!activeTagMatch) {
-      return
-    }
-    setTagMatchAssistant((current) => {
-      const skippedIds = current.skippedIds.includes(activeTagMatch.id)
-        ? current.skippedIds
-        : [...current.skippedIds, activeTagMatch.id]
-      const visibleCount = current.items.filter((item) => !skippedIds.includes(item.id)).length
-      return {
-        ...current,
-        skippedIds,
-        cursor: Math.max(0, Math.min(current.cursor, visibleCount - 1)),
-      }
-    })
+    skipTagMatch(activeTagMatch)
   }
 
   const applyTagMatches = async (matches: TagMatchCandidate[]) => {
@@ -3168,7 +2993,7 @@ function App() {
       setError('Bitte speichere offene geaenderte Notizen, bevor Tag-Fundstellen darin uebernommen werden.')
       return
     }
-    setTagMatchAssistant((current) => ({ ...current, applying: true }))
+    setTagMatchApplying(true)
     try {
       setError('')
       const response = await apiRequest<{
@@ -3206,19 +3031,10 @@ function App() {
         },
         paths: response.paths,
       })
-      setTagMatchAssistant((current) => {
-        const appliedIds = new Set(uniqueMatches.map((item) => item.id))
-        const items = current.items.filter((item) => !appliedIds.has(item.id))
-        return {
-          ...current,
-          applying: false,
-          items,
-          cursor: Math.max(0, Math.min(current.cursor, items.length - 1)),
-        }
-      })
+      removeAppliedTagMatches(uniqueMatches)
       setMessage(`${response.applied} Fundstellen in ${response.notesUpdated} Notizen uebernommen.`)
     } catch (caught) {
-      setTagMatchAssistant((current) => ({ ...current, applying: false }))
+      setTagMatchApplying(false)
       setError(String(caught))
     }
   }
@@ -3835,6 +3651,51 @@ function App() {
     </div>
   ) : null
 
+  const explorerMutationService = useMemo(
+    () =>
+      new ExplorerMutationService(
+        {
+          getBackendUrl: () => backendUrl,
+          getVaultLoaded: () => vaultLoaded,
+          getNoteGroupsByKey: () => noteGroupsByKey,
+          openNoteInTab: (path, title, options) => openNoteInTab(path, title, options),
+          emitMutation: emitMutationEvent,
+          remapOpenNotePaths,
+        },
+        {
+          setMessage,
+          setError,
+          setCounts,
+          setNoteGroups,
+          setOpenTabs,
+          setCustomTagGroups,
+        }
+      ),
+    [
+      backendUrl,
+      emitMutationEvent,
+      noteGroupsByKey,
+      openNoteInTab,
+      remapOpenNotePaths,
+      setError,
+      setMessage,
+      vaultLoaded,
+    ]
+  )
+
+  const createExplorerFolder = explorerMutationService.createExplorerFolder
+  const createExplorerFile = explorerMutationService.createExplorerFile
+  const migrateExistingNotesToTemplate = explorerMutationService.migrateExistingNotesToTemplate
+  const createExplorerTask = explorerMutationService.createExplorerTask
+  const renameExplorerFolder = explorerMutationService.renameExplorerFolder
+  const moveExplorerFolder = explorerMutationService.moveExplorerFolder
+  const deleteExplorerFolder = explorerMutationService.deleteExplorerFolder
+  const toggleFavoriteFolder = explorerMutationService.toggleFavoriteFolder
+  const renameExplorerFile = explorerMutationService.renameExplorerFile
+  const moveExplorerFiles = explorerMutationService.moveExplorerFiles
+  const moveExplorerFile = explorerMutationService.moveExplorerFile
+  const deleteExplorerFile = explorerMutationService.deleteExplorerFile
+
   const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0
   const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0
   const noteBaseProgressPercent =
@@ -3916,49 +3777,6 @@ function App() {
       </div>
     )
   }
-
-  const explorerMutationService = useMemo(
-    () =>
-    new ExplorerMutationService(
-      {
-        getBackendUrl: () => backendUrl,
-        getVaultLoaded: () => vaultLoaded,
-        getNoteGroupsByKey: () => noteGroupsByKey,
-        openNoteInTab: (path, title, options) => openNoteInTab(path, title, options),
-        emitMutation: emitMutationEvent,
-        remapOpenNotePaths,
-      },
-        {
-          setMessage,
-          setError,
-          setCounts,
-          setNoteGroups,
-          setOpenTabs,
-          setCustomTagGroups,
-        }
-      ),
-      [
-        backendUrl,
-        emitMutationEvent,
-        noteGroupsByKey,
-        openNoteInTab,
-        remapOpenNotePaths,
-        vaultLoaded,
-      ]
-    )
-
-  const createExplorerFolder = explorerMutationService.createExplorerFolder
-  const createExplorerFile = explorerMutationService.createExplorerFile
-  const migrateExistingNotesToTemplate = explorerMutationService.migrateExistingNotesToTemplate
-  const createExplorerTask = explorerMutationService.createExplorerTask
-  const renameExplorerFolder = explorerMutationService.renameExplorerFolder
-  const moveExplorerFolder = explorerMutationService.moveExplorerFolder
-  const deleteExplorerFolder = explorerMutationService.deleteExplorerFolder
-  const toggleFavoriteFolder = explorerMutationService.toggleFavoriteFolder
-  const renameExplorerFile = explorerMutationService.renameExplorerFile
-  const moveExplorerFiles = explorerMutationService.moveExplorerFiles
-  const moveExplorerFile = explorerMutationService.moveExplorerFile
-  const deleteExplorerFile = explorerMutationService.deleteExplorerFile
 
   return (
     <div className="window-frame">

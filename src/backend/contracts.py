@@ -7,6 +7,71 @@ from pydantic import BaseModel, ConfigDict, Field
 
 API_CONTRACT_VERSION = "1.0.0"
 
+# Contract policy:
+# Backend response models intentionally allow additional fields for forward-compatible
+# local desktop updates. The stable top-level fields for critical responses are locked
+# by src/backend/tests/test_contract_sync.py against the TypeScript contract file.
+CONTRACT_EXTRA_POLICY = "allow_forward_compatible_extra_fields"
+
+CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
+    "VaultCounts": "VaultCounts",
+    "HealthResponse": "HealthResponse",
+    "BackendStateResponse": "BackendStateResponse",
+    "VaultOpenResponse": "VaultOpenResponse",
+    "ReindexResponse": "ReindexResponse",
+    "NoteBaseOpenStartResponse": "NoteBaseOpenStartResponse",
+    "OperationStatusResponse": "OperationStatusResponse",
+    "VaultDeleteResponse": "VaultDeleteResponse",
+    "SearchRowResponse": "SearchRow",
+    "SearchResponse": "SearchResponse",
+    "FocusMitResponse": "FocusMitResponse",
+    "SuggestionResponse": "SuggestionResponse",
+    "CapturePreviewResponse": "CapturePreviewResponse",
+    "ParsedTaskResponse": "ParsedTaskResponse",
+    "SaveCaptureResponse": "SaveCaptureResponse",
+    "SaveFocusMitResponse": "FocusMitSaveResponse",
+    "QuickCaptureFocusTodoResponse": "QuickCaptureFocusTodoResponse",
+    "DailyOpenResponse": "DailyOpenResponse",
+    "TaskRowResponse": "TaskRow",
+    "TaskListResponse": "TaskListResponse",
+    "TodoRowResponse": "TodoRow",
+    "TodoListResponse": "TodoListResponse",
+    "TodoToggleResponse": "TodoToggleResponse",
+    "TodoPromoteResponse": "TodoPromoteResponse",
+    "TaskDoneResponse": "TaskDoneResponse",
+    "FocusDashboardStatsResponse": "FocusDashboardAggregateStats",
+    "FocusDashboardAggregateResponse": "FocusDashboardAggregateResponse",
+    "GraphIndexResponse": "GraphIndexResponse",
+    "GraphIndexStatusResponse": "GraphIndexStatusResponse",
+    "GraphIndexRebuildResponse": "GraphIndexRebuildResponse",
+    "GraphStateResponse": "GraphStateResponse",
+    "NoteContentResponse": "NoteContentResponse",
+    "NoteMediaResponse": "NoteMediaResponse",
+    "OpenNoteResponse": "OpenNoteResponse",
+    "ReviewResponse": "ReviewResponse",
+    "ReviewDashboardResponse": "ReviewDashboardResponse",
+    "UiSettingsResponse": "UiSettingsResponse",
+    "TagGroupsResponse": "TagGroupsResponse",
+    "NoteGroupsResponse": "NoteGroupsResponse",
+    "TagOverviewResponse": "TagOverviewResponse",
+    "TagMatchCandidateResponse": "TagMatchCandidate",
+    "TagMatchCandidatesResponse": "TagMatchCandidatesResponse",
+    "GroupMutationResponse": "GroupMutationResponse",
+    "NoteGroupAddResponse": "NoteGroupAddResponse",
+    "NoteGroupRenameResponse": "NoteGroupRenameResponse",
+    "NoteGroupDeleteResponse": "NoteGroupDeleteResponse",
+    "NoteGroupMoveResponse": "NoteGroupMoveResponse",
+    "NoteFavoritesResponse": "NoteFavoritesResponse",
+    "NoteMutationResponse": "NoteMutationResponse",
+    "OneNoteImportPreviewResponse": "OneNoteImportPreviewResponse",
+    "OneNoteImportResponse": "OneNoteImportResponse",
+    "OneNoteImportStatusResponse": "OneNoteImportStatusResponse",
+    "NoteAddResponse": "NoteAddResponse",
+    "TemplateMigrationResponse": "TemplateMigrationResponse",
+    "ErrorPayload": "ErrorPayload",
+    "ErrorResponse": "ErrorResponse",
+}
+
 
 class _ContractModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")

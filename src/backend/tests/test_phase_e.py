@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import importlib.util
 import shutil
 import uuid
 from datetime import datetime
@@ -12,16 +13,21 @@ from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
 from src.backend.nicknotes_backend.vault import VaultManager
 
 try:
-    from fastapi.testclient import TestClient
     from src.backend import api as backend_api
 except Exception:  # pragma: no cover - optional dependency in local env
-    TestClient = None
     backend_api = None
+
+TestClient = None
+if importlib.util.find_spec("httpx") is not None:
+    try:
+        from fastapi.testclient import TestClient
+    except Exception:  # pragma: no cover - optional dependency in local env
+        TestClient = None
 
 
 class PhaseEBackendTests(unittest.TestCase):
     def setUp(self) -> None:
-        base_tmp = Path.cwd() / "src" / "backend" / "tests" / "_runtime"
+        base_tmp = Path(__file__).resolve().parents[3] / ".tmp" / "phase_e_runtime"
         base_tmp.mkdir(parents=True, exist_ok=True)
         self.test_root = base_tmp / f"case_{uuid.uuid4().hex}"
         self.vault_path = self.test_root / "vault"

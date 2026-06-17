@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import binascii
@@ -528,7 +528,7 @@ class RuntimeState:
 
 
 state = RuntimeState()
-backend_api_service = BackendApiService()
+backend_api_service = BackendApiService(runtime=state, capabilities=BACKEND_CAPABILITIES)
 
 app = FastAPI(title="NickNotes Backend", version="2.0.0")
 allowed_origins = _build_allowed_cors_origins()
@@ -882,14 +882,7 @@ def get_state()-> dict[str, Any]:
     return backend_api_service.get_state()
 
 def get_state_impl()-> dict[str, Any]:
-    if not state.vault or not state.indexer:
-        return {"vaultLoaded": False}
-    return {
-        "vaultLoaded": True,
-        "vaultPath": str(state.vault.vault_path),
-        "noteBasePath": str(state.vault.vault_path),
-        "counts": _counts(state.indexer),
-    }
+    return backend_api_service.get_state()
 
 
 
@@ -926,17 +919,7 @@ def create_vault(req: VaultCreateRequest)-> dict[str, Any]:
     return backend_api_service.create_vault(req)
 
 def create_vault_impl(req: VaultCreateRequest)-> dict[str, Any]:
-    parent = Path(req.parent_path).expanduser().resolve()
-    if not parent.exists() or not parent.is_dir():
-        raise HTTPException(status_code=400, detail=f"Parent path not found: {parent}")
-
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="NoteBase name cannot be empty")
-
-    vault_path = parent / name
-    vault_path.mkdir(parents=True, exist_ok=True)
-    return open_vault(VaultOpenRequest(path=str(vault_path)))
+    return backend_api_service.create_vault(req)
 
 
 
@@ -945,17 +928,7 @@ def reindex_vault()-> dict[str, Any]:
     return backend_api_service.reindex_vault()
 
 def reindex_vault_impl()-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        with state.projection_lock:
-            indexed = indexer.reindex_vault(vault.vault_path)
-            vault.rebuild_task_status_links(indexer)
-            tag_groups = vault.sync_tag_groups_with_index(indexer)
-            graph_status = _rebuild_graph_projection(vault)
-        return {"indexed": indexed, "counts": _counts(indexer), "tagGroups": tag_groups, "graphStatus": graph_status}
-    except Exception as exc:
-        logger.exception("NoteBase reindex failed")
-        raise HTTPException(status_code=500, detail=f"Unerwarteter Fehler beim Reindex: {exc}") from exc
+    return backend_api_service.reindex_vault()
 
 
 
@@ -964,7 +937,7 @@ def open_notebase(req: VaultOpenRequest)-> dict[str, Any]:
     return backend_api_service.open_notebase(req)
 
 def open_notebase_impl(req: VaultOpenRequest)-> dict[str, Any]:
-    return open_vault(req)
+    return backend_api_service.open_notebase(req)
 
 
 
@@ -973,7 +946,7 @@ def create_notebase(req: VaultCreateRequest)-> dict[str, Any]:
     return backend_api_service.create_notebase(req)
 
 def create_notebase_impl(req: VaultCreateRequest)-> dict[str, Any]:
-    return create_vault(req)
+    return backend_api_service.create_notebase(req)
 
 
 
@@ -982,7 +955,7 @@ def reindex_notebase()-> dict[str, Any]:
     return backend_api_service.reindex_notebase()
 
 def reindex_notebase_impl()-> dict[str, Any]:
-    return reindex_vault()
+    return backend_api_service.reindex_notebase()
 
 
 
@@ -1009,7 +982,7 @@ def get_onenote_import_status()-> dict[str, Any]:
     return backend_api_service.get_onenote_import_status()
 
 def get_onenote_import_status_impl()-> dict[str, Any]:
-    return state.get_import_status()
+    return backend_api_service.get_onenote_import_status()
 
 
 
@@ -1018,33 +991,7 @@ def rename_notebase(req: NoteBaseRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_notebase(req)
 
 def rename_notebase_impl(req: NoteBaseRenameRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    old_path = vault.vault_path.resolve()
-    new_name = req.new_name.strip()
-    if not new_name:
-        raise HTTPException(status_code=400, detail="New NoteBase name cannot be empty")
-    if any(token in new_name for token in ("/", "\\")):
-        raise HTTPException(status_code=400, detail="New NoteBase name must not contain path separators")
-    if new_name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="Invalid NoteBase name")
-
-    new_path = old_path.parent / new_name
-    if new_path == old_path:
-        return {
-            "vaultPath": str(old_path),
-            "noteBasePath": str(old_path),
-            "counts": _counts(state.indexer) if state.indexer else {"notes": 0, "openTasks": 0, "doneTasks": 0},
-        }
-    if new_path.exists():
-        raise HTTPException(status_code=400, detail=f"Target path already exists: {new_path}")
-
-    try:
-        state.dispose_session()
-        old_path.rename(new_path)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Could not rename NoteBase: {exc}") from exc
-
-    return open_vault(VaultOpenRequest(path=str(new_path)))
+    return backend_api_service.rename_notebase(req)
 
 
 
@@ -1053,18 +1000,7 @@ def delete_notebase(req: NoteBaseDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_notebase(req)
 
 def delete_notebase_impl(req: NoteBaseDeleteRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    if not req.confirm_delete:
-        raise HTTPException(status_code=400, detail="confirmDelete must be true to delete a NoteBase")
-
-    target = vault.vault_path.resolve()
-    try:
-        state.dispose_session()
-        shutil.rmtree(target)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Could not delete NoteBase: {exc}") from exc
-
-    return {"deleted": True, "deletedPath": str(target), "vaultLoaded": False}
+    return backend_api_service.delete_notebase(req)
 
 
 
@@ -1073,16 +1009,7 @@ def preview_capture(req: CapturePreviewRequest)-> dict[str, Any]:
     return backend_api_service.preview_capture(req)
 
 def preview_capture_impl(req: CapturePreviewRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    merged = _compute_capture(req.text, vault, indexer)
-    auto_count = sum(1 for item in merged if item.auto_apply or item.source == "explicit")
-    return {
-        "suggestions": [_tag_payload(item) for item in merged],
-        "stats": {
-            "tags": len(merged),
-            "auto": auto_count,
-        },
-    }
+    return backend_api_service.preview_capture(req)
 
 
 
@@ -1091,29 +1018,7 @@ def save_capture(req: CaptureSaveRequest)-> dict[str, Any]:
     return backend_api_service.save_capture(req)
 
 def save_capture_impl(req: CaptureSaveRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-
-    text = req.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Capture text is empty")
-
-    merged = _compute_capture(text, vault, indexer)
-    selected_keys = set(req.selected_tag_keys)
-    selected_tags = [tag for tag in merged if tag.key in selected_keys]
-
-    result = vault.save_capture(
-        text=text,
-        selected_tags=selected_tags,
-        indexer=indexer,
-    )
-
-    return {
-        "saved": True,
-        "noteId": result["note_id"],
-        "date": result["date"],
-        "notePath": str(result["note_path"]),
-        "counts": _counts(indexer),
-    }
+    return backend_api_service.save_capture(req)
 
 
 
@@ -1122,13 +1027,7 @@ def get_focus_mit(date: str | None = None)-> dict[str, Any]:
     return backend_api_service.get_focus_mit(date)
 
 def get_focus_mit_impl(date: str | None = None)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    state = vault.get_daily_mit(day_iso=date)
-    return {
-        "date": state["date"],
-        "notePath": str(state["note_path"]),
-        "mitIds": state["mit_ids"],
-    }
+    return backend_api_service.get_focus_mit(date)
 
 
 
@@ -1137,15 +1036,7 @@ def save_focus_mit(req: FocusMitUpdateRequest)-> dict[str, Any]:
     return backend_api_service.save_focus_mit(req)
 
 def save_focus_mit_impl(req: FocusMitUpdateRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    state = vault.set_daily_mit(day_iso=req.date, mit_ids=req.mit_ids, indexer=indexer)
-    return {
-        "saved": True,
-        "date": state["date"],
-        "notePath": str(state["note_path"]),
-        "mitIds": state["mit_ids"],
-        "counts": _counts(indexer),
-    }
+    return backend_api_service.save_focus_mit(req)
 
 
 
@@ -1154,18 +1045,7 @@ def quick_capture_focus_todo(req: FocusQuickCaptureRequest)-> dict[str, Any]:
     return backend_api_service.quick_capture_focus_todo(req)
 
 def quick_capture_focus_todo_impl(req: FocusQuickCaptureRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        result = vault.add_quick_todo_to_daily(text=req.text, indexer=indexer, day_iso=req.date)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {
-        "saved": True,
-        "date": result["date"],
-        "notePath": str(result["note_path"]),
-        "todoText": result["todo_text"],
-        "counts": _counts(indexer),
-    }
+    return backend_api_service.quick_capture_focus_todo(req)
 
 
 
@@ -1174,15 +1054,7 @@ def open_or_create_daily(date: str | None = None)-> dict[str, Any]:
     return backend_api_service.open_or_create_daily(date)
 
 def open_or_create_daily_impl(date: str | None = None)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    state = vault.ensure_daily_note(day_iso=date, indexer=indexer)
-    return {
-        "date": state["date"],
-        "notePath": str(state["note_path"]),
-        "title": state["title"],
-        "created": bool(state["created"]),
-        "counts": _counts(indexer),
-    }
+    return backend_api_service.open_or_create_daily(date)
 
 
 
@@ -1200,8 +1072,7 @@ def list_tasks(include_done: bool = False)-> dict[str, Any]:
     return backend_api_service.list_tasks(include_done)
 
 def list_tasks_impl(include_done: bool = False)-> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    return {"items": indexer.list_tasks(include_done=include_done)}
+    return backend_api_service.list_tasks(include_done)
 
 
 
@@ -1210,8 +1081,7 @@ def list_todos()-> dict[str, Any]:
     return backend_api_service.list_todos()
 
 def list_todos_impl()-> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    return {"items": indexer.list_todos()}
+    return backend_api_service.list_todos()
 
 
 
@@ -1220,12 +1090,7 @@ def toggle_todo(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
     return backend_api_service.toggle_todo(todo_id, req)
 
 def toggle_todo_impl(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        result = vault.toggle_todo(todo_id=todo_id, indexer=indexer, checked=req.checked)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return result
+    return backend_api_service.toggle_todo(todo_id, req)
 
 
 
@@ -1234,12 +1099,7 @@ def promote_todo(todo_id: str)-> dict[str, Any]:
     return backend_api_service.promote_todo(todo_id)
 
 def promote_todo_impl(todo_id: str)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        result = vault.promote_todo_to_task(todo_id=todo_id, indexer=indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return result
+    return backend_api_service.promote_todo(todo_id)
 
 
 
@@ -1248,91 +1108,7 @@ def mark_task_done(task_id: str)-> dict[str, Any]:
     return backend_api_service.mark_task_done(task_id)
 
 def mark_task_done_impl(task_id: str)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-
-    rows = [r for r in indexer.list_tasks(include_done=True) if r["id"] == task_id]
-    if not rows:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    row = rows[0]
-    path = row.get("path")
-    if not path:
-        raise HTTPException(status_code=400, detail="Task file path missing")
-
-    src = Path(path)
-    if not src.exists():
-        raise HTTPException(status_code=404, detail=f"Task file not found: {src}")
-
-    meta, body = parse_markdown(src)
-    meta["status"] = "done"
-    now_iso = datetime.now().isoformat(timespec="seconds")
-    meta["updated_at"] = now_iso
-    # `completed_at` is the canonical completion timestamp for task done metrics.
-    meta["completed_at"] = now_iso
-    done_path = src
-    if src.parent.name.lower() == "open":
-        done_dir = src.parent.parent / "done"
-        done_dir.mkdir(parents=True, exist_ok=True)
-        done_path = done_dir / src.name
-        suffix = 2
-        while done_path.exists() and done_path != src:
-            done_path = done_dir / f"{src.stem}_{suffix}{src.suffix}"
-            suffix += 1
-    done_path.write_text(dump_markdown(meta, body), encoding="utf-8")
-    if src != done_path and src.exists():
-        src.unlink()
-
-    blocked_by_raw = meta.get("blocked_by_ids")
-    blocked_by_ids: list[str] = []
-    if isinstance(blocked_by_raw, list):
-        iterable = [str(item) for item in blocked_by_raw]
-    elif isinstance(blocked_by_raw, str):
-        iterable = blocked_by_raw.split(",")
-    else:
-        iterable = []
-    seen_blockers: set[str] = set()
-    for item in iterable:
-        clean = item.strip()
-        if not clean:
-            continue
-        lowered = clean.lower()
-        if lowered in seen_blockers:
-            continue
-        seen_blockers.add(lowered)
-        blocked_by_ids.append(clean)
-
-    parsed = ParsedTask(
-        title=str(meta.get("title", row["title"])),
-        due_date=str(meta.get("due_date", "")).strip() or row.get("due_date"),
-        priority=str(meta.get("priority", row.get("priority", "M"))).upper()[:1] or "M",
-        status="done",
-        project_tag=str(meta.get("project_tag", "")).strip() or row.get("project_tag"),
-        tags=[],
-        estimate_minutes=row.get("estimate_minutes"),
-        completed_at=str(meta.get("completed_at", "")).strip() or None,
-        blocked_by_ids=blocked_by_ids,
-        waiting_for=str(meta.get("waiting_for", "")).strip() or None,
-        follow_up_date=str(meta.get("follow_up_date", "")).strip() or None,
-        blocked_reason=str(meta.get("blocked_reason", "")).strip() or None,
-        next_action_hint=str(meta.get("next_action_hint", "")).strip() or None,
-    )
-    indexer.add_or_update_task(
-        task_id=str(task_id),
-        note_id=str(meta.get("note_id", "")).strip() or None,
-        path=str(done_path),
-        parsed=parsed,
-        created_at=str(meta.get("created_at", meta["updated_at"])),
-        updated_at=str(meta["updated_at"]),
-    )
-    vault.sync_task_status_link(
-        task_id=str(task_id),
-        title=parsed.title,
-        status="done",
-        task_path=str(done_path),
-        indexer=indexer,
-    )
-
-    return {"done": True, "taskId": task_id}
+    return backend_api_service.mark_task_done(task_id)
 
 
 
@@ -1341,8 +1117,7 @@ def search_notes(query: str = "")-> dict[str, Any]:
     return backend_api_service.search_notes(query)
 
 def search_notes_impl(query: str = "")-> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    return {"items": indexer.search_notes(query)}
+    return backend_api_service.search_notes(query)
 
 
 
@@ -1351,83 +1126,7 @@ def explorer_files()-> dict[str, Any]:
     return backend_api_service.explorer_files()
 
 def explorer_files_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    items: list[dict[str, Any]] = []
-
-    root = vault.vault_path.resolve()
-    hide_legacy_daily = (root / "daily").is_dir()
-    hide_legacy_tags = (root / "tags").is_dir()
-    hide_legacy_tasks = (root / "tasks").is_dir()
-    hide_dot_system = (root / ".system").is_dir()
-    hide_legacy_system = (root / "system").is_dir()
-
-    text_extensions = {
-        ".md",
-        ".txt",
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".ini",
-        ".cfg",
-        ".csv",
-        ".log",
-        ".xml",
-        ".html",
-        ".css",
-        ".js",
-        ".ts",
-        ".tsx",
-        ".jsx",
-        ".py",
-        ".sh",
-        ".ps1",
-        ".bat",
-    }
-
-    for file_path in root.rglob("*"):
-        try:
-            if not file_path.is_file():
-                continue
-            relative = file_path.resolve().relative_to(root).as_posix()
-        except (OSError, ValueError):
-            continue
-        top = relative.split("/", 1)[0]
-
-        if top in {".system", "system", "99_system", "02_entities", ".media"}:
-            continue
-        if hide_legacy_daily and top == "01_daily":
-            continue
-        if hide_legacy_tags and top == "02_tags":
-            continue
-        if hide_legacy_tasks and top == "03_tasks":
-            continue
-        if hide_dot_system and top == "system":
-            continue
-        if hide_legacy_system and top == "99_system":
-            continue
-
-        extension = file_path.suffix.lower()
-        if extension and extension not in text_extensions:
-            continue
-
-        try:
-            stat = file_path.stat()
-        except OSError:
-            continue
-        note_type = "markdown" if extension == ".md" else "text"
-        items.append(
-            {
-                "id": f"explorer:{relative}",
-                "title": file_path.stem,
-                "note_type": note_type,
-                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
-                "path": str(file_path),
-            }
-        )
-
-    items.sort(key=lambda row: (row["updated_at"], row["path"]), reverse=True)
-    return {"items": items}
+    return backend_api_service.explorer_files()
 
 
 
@@ -1436,9 +1135,8 @@ def read_note_content(path: str)-> dict[str, Any]:
     return backend_api_service.read_note_content(path)
 
 def read_note_content_impl(path: str)-> dict[str, Any]:
-    file_path = Path(path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    vault, _indexer = _require_loaded()
+    file_path = backend_api_service._resolve_note_request_path(vault=vault, raw_path=path)
     return {"path": str(file_path), "content": file_path.read_text(encoding="utf-8")}
 
 
@@ -1457,41 +1155,17 @@ def add_note_media_asset(req: NoteMediaAddRequest)-> dict[str, Any]:
     return backend_api_service.add_note_media_asset(req)
 
 def add_note_media_asset_impl(req: NoteMediaAddRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    try:
-        payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise HTTPException(status_code=400, detail=f"Ungueltige Bilddaten: {exc}") from exc
-
-    try:
-        result = vault.add_note_media_asset(
-            note_path=req.path,
-            filename=req.file_name or "image",
-            content_type=req.content_type or "",
-            data=payload,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "mediaPath": result["media_path"],
-        "markdownPath": result["markdown_path"],
-        "fileName": result["file_name"],
-    }
+    return backend_api_service.add_note_media_asset(req)
 
 
 
 @app.get("/notes/media/content")
 def get_note_media_content(path: str, source: str)-> FileResponse:
-    return backend_api_service.get_note_media_content(path, source)
+    asset = backend_api_service.get_note_media_content(path, source)
+    return FileResponse(path=asset["path"], media_type=asset["mediaType"], filename=asset["fileName"])
 
 def get_note_media_content_impl(path: str, source: str)-> FileResponse:
-    vault, _indexer = _require_loaded()
-    try:
-        asset_path, mime_type = vault.resolve_note_media_asset(note_path=path, source=source)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FileResponse(path=asset_path, media_type=mime_type, filename=asset_path.name)
+    return get_note_media_content(path, source)
 
 
 
@@ -1500,9 +1174,8 @@ def open_note_file(req: NoteOpenRequest)-> dict[str, Any]:
     return backend_api_service.open_note_file(req)
 
 def open_note_file_impl(req: NoteOpenRequest)-> dict[str, Any]:
-    file_path = Path(req.path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    vault, _indexer = _require_loaded()
+    file_path = backend_api_service._resolve_note_request_path(vault=vault, raw_path=req.path)
 
     try:
         if sys.platform.startswith("win"):
@@ -1523,12 +1196,7 @@ def get_review()-> dict[str, Any]:
     return backend_api_service.get_review()
 
 def get_review_impl()-> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    today = date.today()
-    return {
-        "daily": indexer.daily_summary(today),
-        "weekly": indexer.weekly_summary(today),
-    }
+    return backend_api_service.get_review()
 
 
 
@@ -1541,16 +1209,7 @@ def get_review_dashboard_impl(
     day: str | None = None,
     top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
 ) -> dict[str, Any]:
-    _vault, indexer = _require_loaded()
-    day_iso = _normalize_iso_day_param(day)
-    try:
-        end_day = datetime.fromisoformat(day_iso).date()
-    except ValueError:
-        end_day = date.today()
-
-    safe_days = max(REVIEW_DASHBOARD_DAYS_MIN, min(int(days), REVIEW_DASHBOARD_DAYS_MAX))
-    safe_top = max(REVIEW_DASHBOARD_TOP_NOTES_MIN, min(int(top), REVIEW_DASHBOARD_TOP_NOTES_MAX))
-    return indexer.review_dashboard(end_day=end_day, window_days=safe_days, top_notes_limit=safe_top)
+    return backend_api_service.get_review_dashboard(days, day, top)
 
 
 
@@ -1559,8 +1218,7 @@ def get_ui_settings()-> dict[str, Any]:
     return backend_api_service.get_ui_settings()
 
 def get_ui_settings_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"settings": vault.read_ui_settings()}
+    return backend_api_service.get_ui_settings()
 
 
 
@@ -1569,9 +1227,7 @@ def update_ui_settings(req: UiSettingsUpdateRequest)-> dict[str, Any]:
     return backend_api_service.update_ui_settings(req)
 
 def update_ui_settings_impl(req: UiSettingsUpdateRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    settings = vault.update_ui_settings(app_settings=req.app, explorer_settings=req.explorer)
-    return {"settings": settings}
+    return backend_api_service.update_ui_settings(req)
 
 
 
@@ -1580,8 +1236,7 @@ def get_tag_groups()-> dict[str, Any]:
     return backend_api_service.get_tag_groups()
 
 def get_tag_groups_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"groups": vault.read_tag_groups()}
+    return backend_api_service.get_tag_groups()
 
 
 
@@ -1590,8 +1245,7 @@ def get_graph_index()-> dict[str, Any]:
     return backend_api_service.get_graph_index()
 
 def get_graph_index_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"index": read_graph_index(vault.graph_index_path).to_dict()}
+    return backend_api_service.get_graph_index()
 
 
 
@@ -1600,8 +1254,7 @@ def get_graph_index_status()-> dict[str, Any]:
     return backend_api_service.get_graph_index_status()
 
 def get_graph_index_status_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return _graph_index_status(vault)
+    return backend_api_service.get_graph_index_status()
 
 
 
@@ -1610,37 +1263,12 @@ def rebuild_graph_index()-> dict[str, Any]:
     return backend_api_service.rebuild_graph_index()
 
 def rebuild_graph_index_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    with state.projection_lock:
-        state.graph_status.is_updating = True
-        state.graph_status.last_error = None
-        try:
-            index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
-            write_graph_index(vault.graph_index_path, index)
-            return {"index": index.to_dict(), "status": _graph_index_status(vault, index)}
-        except Exception as exc:
-            state.graph_status.last_error = str(exc)
-            logger.exception("Graph index rebuild failed.")
-            raise
-        finally:
-            state.graph_status.is_updating = False
+    return backend_api_service.rebuild_graph_index()
 
 
 
 def _rebuild_graph_projection(vault: VaultManager) -> dict[str, Any]:
-    with state.projection_lock:
-        state.graph_status.is_updating = True
-        state.graph_status.last_error = None
-        try:
-            index = build_graph_index(vault_path=vault.vault_path, tag_groups=vault.read_tag_groups())
-            write_graph_index(vault.graph_index_path, index)
-            return _graph_index_status(vault, index)
-        except Exception as exc:
-            state.graph_status.last_error = str(exc)
-            logger.exception("Graph projection rebuild failed.")
-            return _graph_index_status(vault)
-        finally:
-            state.graph_status.is_updating = False
+    return backend_api_service.rebuild_graph_projection(vault)
 
 
 def _update_graph_after_note_save(
@@ -1650,53 +1278,20 @@ def _update_graph_after_note_save(
     previous_path: Path,
     tag_groups: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    with state.projection_lock:
-        state.graph_status.is_updating = True
-        state.graph_status.last_error = None
-        try:
-            groups = tag_groups if tag_groups is not None else vault.read_tag_groups()
-            if not vault.graph_index_path.exists():
-                index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
-            else:
-                index = read_graph_index(vault.graph_index_path)
-                if _graph_index_needs_rebuild(index):
-                    index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
-                else:
-                    index = update_graph_index_for_file(
-                        vault_path=vault.vault_path,
-                        tag_groups=groups,
-                        index=index,
-                        file_path=saved_path,
-                        previous_path=previous_path if previous_path.resolve() != saved_path.resolve() else None,
-                    )
-            write_graph_index(vault.graph_index_path, index)
-            return _graph_index_status(vault, index)
-        except Exception as exc:
-            state.graph_status.last_error = str(exc)
-            logger.exception("Incremental graph update failed.")
-            return _graph_index_status(vault)
-        finally:
-            state.graph_status.is_updating = False
+    return backend_api_service.update_graph_after_note_save(
+        vault=vault,
+        saved_path=saved_path,
+        previous_path=previous_path,
+        tag_groups=tag_groups,
+    )
 
 
 def _graph_index_needs_rebuild(index: GraphIndex) -> bool:
-    return any(item.type == "graphIndexReadFailed" for item in index.diagnostics)
+    return backend_api_service.graph_index_needs_rebuild(index)
 
 
 def _graph_index_status(vault: VaultManager, index: GraphIndex | None = None) -> dict[str, Any]:
-    loaded = index if index is not None else read_graph_index(vault.graph_index_path)
-    read_failed = _graph_index_needs_rebuild(loaded)
-    return {
-        "available": vault.graph_index_path.exists() and not read_failed,
-        "updated_at": loaded.updated_at or None,
-        "node_count": len(loaded.nodes),
-        "edge_count": len(loaded.edges),
-        "diagnostic_count": len(loaded.diagnostics),
-        "is_updating": state.graph_status.is_updating,
-        "last_error": state.graph_status.last_error,
-        "watcher_enabled": state.graph_status.watcher_enabled,
-        "last_external_update": state.graph_status.last_external_update,
-    }
+    return backend_api_service.graph_index_status(vault, index)
 
 
 def _graph_watcher_loop(runtime: RuntimeState, vault: VaultManager, indexer: VaultIndexer, stop_event: threading.Event) -> None:
@@ -1735,8 +1330,7 @@ def get_graph_state()-> dict[str, Any]:
     return backend_api_service.get_graph_state()
 
 def get_graph_state_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"state": read_graph_state(vault.graph_state_path)}
+    return backend_api_service.get_graph_state()
 
 
 
@@ -1745,8 +1339,7 @@ def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict
     return backend_api_service.update_graph_state(state_payload)
 
 def update_graph_state_impl(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"state": write_graph_state(vault.graph_state_path, state_payload)}
+    return backend_api_service.update_graph_state(state_payload)
 
 
 
@@ -1755,15 +1348,7 @@ def get_tag_overview(groupId: str, tagId: str)-> dict[str, Any]:
     return backend_api_service.get_tag_overview(groupId, tagId)
 
 def get_tag_overview_impl(groupId: str, tagId: str)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        result = vault.resolve_tag_overview_note(group_id=groupId, tag_id=tagId, indexer=indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {
-        "path": str(result["path"]),
-        "title": str(result["title"]),
-    }
+    return backend_api_service.get_tag_overview(groupId, tagId)
 
 
 
@@ -1772,9 +1357,7 @@ def add_tag_group(req: TagGroupRequest)-> dict[str, Any]:
     return backend_api_service.add_tag_group(req)
 
 def add_tag_group_impl(req: TagGroupRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    groups = vault.add_tag_group(req.group_id, req.display_name, req.color, indexer)
-    return {"groups": groups}
+    return backend_api_service.add_tag_group(req)
 
 
 
@@ -1783,9 +1366,7 @@ def add_tag(req: TagCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_tag(req)
 
 def add_tag_impl(req: TagCreateRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    groups = vault.add_tag_to_group(req.group_id, req.tag_id, req.display_name, indexer)
-    return {"groups": groups, "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.add_tag(req)
 
 
 
@@ -1794,20 +1375,7 @@ def rename_tag_group(req: TagGroupRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_tag_group(req)
 
 def rename_tag_group_impl(req: TagGroupRenameRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        groups, touched = vault.rename_tag_group(
-            group_id=req.group_id,
-            new_group_id=req.new_group_id,
-            new_display_name=req.new_display_name,
-            new_color=req.new_color,
-            apply_to_notes=req.apply_to_notes,
-            indexer=indexer,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.rename_tag_group(req)
 
 
 
@@ -1816,17 +1384,7 @@ def delete_tag_group(req: TagGroupDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_tag_group(req)
 
 def delete_tag_group_impl(req: TagGroupDeleteRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        groups, touched = vault.delete_tag_group(
-            group_id=req.group_id,
-            remove_from_notes=req.remove_from_notes,
-            indexer=indexer,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.delete_tag_group(req)
 
 
 
@@ -1835,20 +1393,7 @@ def rename_tag(req: TagRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_tag(req)
 
 def rename_tag_impl(req: TagRenameRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        groups, touched = vault.rename_tag(
-            group_id=req.group_id,
-            tag_id=req.tag_id,
-            new_tag_id=req.new_tag_id,
-            new_display_name=req.new_display_name,
-            apply_to_notes=req.apply_to_notes,
-            indexer=indexer,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.rename_tag(req)
 
 
 
@@ -1857,19 +1402,7 @@ def move_tag(req: TagMoveRequest)-> dict[str, Any]:
     return backend_api_service.move_tag(req)
 
 def move_tag_impl(req: TagMoveRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        groups, touched = vault.move_tag(
-            from_group=req.from_group,
-            tag_name=req.tag_id,
-            to_group=req.to_group,
-            apply_to_notes=req.apply_to_notes,
-            indexer=indexer,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.move_tag(req)
 
 
 
@@ -1878,18 +1411,7 @@ def delete_tag(req: TagDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_tag(req)
 
 def delete_tag_impl(req: TagDeleteRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        groups, touched = vault.delete_tag(
-            group_id=req.group_id,
-            tag_id=req.tag_id,
-            remove_from_notes=req.remove_from_notes,
-            indexer=indexer,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"groups": groups, "notesUpdated": touched, "counts": _counts(indexer), "graphStatus": _rebuild_graph_projection(vault)}
+    return backend_api_service.delete_tag(req)
 
 
 
@@ -1898,12 +1420,7 @@ def scan_tag_match_candidates()-> dict[str, Any]:
     return backend_api_service.scan_tag_match_candidates()
 
 def scan_tag_match_candidates_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    matches = _scan_tag_match_candidates(vault)
-    return {
-        "items": matches,
-        "total": len(matches),
-    }
+    return backend_api_service.scan_tag_match_candidates()
 
 
 
@@ -1912,22 +1429,7 @@ def apply_tag_match_candidates(req: TagMatchApplyRequest)-> dict[str, Any]:
     return backend_api_service.apply_tag_match_candidates(req)
 
 def apply_tag_match_candidates_impl(req: TagMatchApplyRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    applied, touched_paths = _apply_tag_match_candidates(vault, req.matches)
-    if touched_paths:
-        for path in touched_paths:
-            indexer.reindex_markdown_file(vault.vault_path, path)
-        tag_groups = vault.sync_tag_groups_with_index(indexer)
-    else:
-        tag_groups = vault.read_tag_groups()
-    return {
-        "applied": applied,
-        "notesUpdated": len(touched_paths),
-        "paths": [str(path) for path in touched_paths],
-        "counts": _counts(indexer),
-        "tagGroups": tag_groups,
-        "graphStatus": _rebuild_graph_projection(vault),
-    }
+    return backend_api_service.apply_tag_match_candidates(req)
 
 
 
@@ -1936,8 +1438,7 @@ def get_note_groups()-> dict[str, Any]:
     return backend_api_service.get_note_groups()
 
 def get_note_groups_impl()-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    return {"groups": vault.list_note_groups()}
+    return backend_api_service.get_note_groups()
 
 
 
@@ -1946,13 +1447,7 @@ def add_note_group(req: NoteGroupCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_note_group(req)
 
 def add_note_group_impl(req: NoteGroupCreateRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    try:
-        created = vault.create_note_group(req.group_name, req.parent_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {"group": created, "groups": vault.list_note_groups()}
+    return backend_api_service.add_note_group(req)
 
 
 
@@ -1961,19 +1456,7 @@ def rename_note_group(req: NoteGroupRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_note_group(req)
 
 def rename_note_group_impl(req: NoteGroupRenameRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        renamed = vault.rename_note_group(req.group_key, req.new_name, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "group": renamed,
-        "groups": vault.list_note_groups(),
-        "counts": _counts(indexer),
-        "graphStatus": _rebuild_graph_projection(vault),
-        "linkRewrite": vault.consume_last_link_rewrite_result(),
-    }
+    return backend_api_service.rename_note_group(req)
 
 
 
@@ -1982,19 +1465,7 @@ def delete_note_group(req: NoteGroupDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_note_group(req)
 
 def delete_note_group_impl(req: NoteGroupDeleteRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        vault.delete_note_group(req.group_key, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "deleted": True,
-        "groups": vault.list_note_groups(),
-        "counts": _counts(indexer),
-        "graphStatus": _rebuild_graph_projection(vault),
-        "linkRewrite": vault.consume_last_link_rewrite_result(),
-    }
+    return backend_api_service.delete_note_group(req)
 
 
 
@@ -2003,19 +1474,7 @@ def move_note_group(req: NoteGroupMoveRequest)-> dict[str, Any]:
     return backend_api_service.move_note_group(req)
 
 def move_note_group_impl(req: NoteGroupMoveRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        moved = vault.move_note_group(req.group_key, req.target_parent_key, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "group": moved,
-        "groups": vault.list_note_groups(),
-        "counts": _counts(indexer),
-        "graphStatus": _rebuild_graph_projection(vault),
-        "linkRewrite": vault.consume_last_link_rewrite_result(),
-    }
+    return backend_api_service.move_note_group(req)
 
 
 
@@ -2024,12 +1483,7 @@ def favorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
     return backend_api_service.favorite_note_group(req)
 
 def favorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    try:
-        favorites = vault.add_favorite_folder(req.group_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"favorites": favorites, "groups": vault.list_note_groups()}
+    return backend_api_service.favorite_note_group(req)
 
 
 
@@ -2038,12 +1492,7 @@ def unfavorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
     return backend_api_service.unfavorite_note_group(req)
 
 def unfavorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    try:
-        favorites = vault.remove_favorite_folder(req.group_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"favorites": favorites, "groups": vault.list_note_groups()}
+    return backend_api_service.unfavorite_note_group(req)
 
 
 
@@ -2052,27 +1501,7 @@ def add_note(req: NoteCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_note(req)
 
 def add_note_impl(req: NoteCreateRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        created = vault.create_note_in_group(
-            group_key=req.group_key,
-            title=req.title,
-            indexer=indexer,
-            note_type=req.note_type,
-            status=req.status,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "noteId": created["note_id"],
-        "notePath": str(created["note_path"]),
-        "title": str(created.get("title", "")),
-        "noteType": req.note_type,
-        "groups": vault.list_note_groups(),
-        "counts": _counts(indexer),
-        "graphStatus": _rebuild_graph_projection(vault),
-    }
+    return backend_api_service.add_note(req)
 
 
 
@@ -2108,18 +1537,7 @@ def move_notes_batch(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
     return backend_api_service.move_notes_batch(req)
 
 def move_notes_batch_impl(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
-    vault, indexer = _require_loaded()
-    try:
-        moved_paths = vault.move_note_files(req.paths, req.target_group_key, indexer)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "movedPaths": moved_paths,
-        "counts": _counts(indexer),
-        "graphStatus": _rebuild_graph_projection(vault),
-        "linkRewrite": vault.consume_last_link_rewrite_result(),
-    }
+    return backend_api_service.move_notes_batch(req)
 
 
 

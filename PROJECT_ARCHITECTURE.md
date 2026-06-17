@@ -28,6 +28,12 @@ NickNotes/
   src/
     backend/
       api.py                    # FastAPI-Endpunkte und Runtime-State
+      application_services.py   # Service-Fassade fuer API-Use-Cases und Vault-gebundene IO-Regeln
+      use_cases.py              # Wiederverwendbare Use-Case-Orchestrierung
+      contracts.py              # Geteilte API-Vertragsmodelle und validierte Request-/Response-Typen
+      errors.py                 # Einheitliche Domain-Fehler und Fehlerkategorien
+      operation_context.py      # Request-/Operation-Kontext fuer Trace, Diagnose und Rollback-Kontext
+      config.py                 # Zentrale Runtime-, Sicherheits- und Infrastrukturkonfiguration
       server.py                 # Uvicorn-Start und Parent-Watchdog
       nicknotes_backend/
         vault.py                # NoteBase-Dateien, Migrationen, Tags, Tasks, Medien
@@ -53,7 +59,7 @@ NickNotes/
         focus/, review/         # Fokus- und Review-Dashboards
         graph/                  # Graph-Dashboard
         settings/, layout/      # Einstellungen und Shell
-  docs/
+  doc/
     graph-feature.md
   package.json
   requirements.txt
@@ -124,6 +130,9 @@ Wichtige Regeln:
 - Aus Body-Referenzen abgeleitete Metadaten liegen in `tags_auto` und `related_auto`.
 - WikiLinks `[[...]]` und relative Markdown-Links werden bei Verschieben oder Umbenennen nachgezogen.
 - Medien liegen unter `.media` und werden aus Markdown referenziert.
+- Editor-Spaltenbreiten fuer Markdown-Tabellen duerfen direkt vor der Tabelle als HTML-Kommentar
+  `<!-- nicknotes-table-widths: 30.0%, 45.0%, 25.0% -->` gespeichert werden; der Kommentar ist
+  UI-Metadatum im Markdown, nicht fachliche Projektion.
 - Tagesnotizen unter `daily/YYYY.MM/YYYY-MM-DD.md` sammeln Quick Captures, schnelle To-dos und bis zu drei MITs.
 
 ## Tagsystem
@@ -149,7 +158,19 @@ Quick Capture schreibt Inhalte in die heutige Tagesnotiz. Das Frontend bietet zu
 
 ## Backend
 
-`src/backend/api.py` stellt die lokale REST-API bereit. Die Endpunkte decken insbesondere folgende Bereiche ab:
+`src/backend/api.py` stellt die lokale REST-API bereit. Neue und refaktorierte Endpunkte sollen ihre
+fachliche Arbeit ueber `BackendApiService`, `use_cases.py`, geteilte Contracts und Domain-Fehler
+orchestrieren, statt Pfad-, IO- oder Fehlerlogik direkt im Routing zu duplizieren. Lesende und
+OS-oeffnende Notiz-Dateizugriffe muessen immer an die geladene NoteBase gebunden bleiben.
+Der aktuelle Entkopplungsstand nach `ARCH-022`: Die produktiven API-Use-Cases liegen im
+`BackendApiService`; `api.py` bleibt fuer diese Pfade Route, Request-/Response-Mapping und
+Kompatibilitaetswrapper.
+Python-/TypeScript-Vertraege werden ueber `CONTRACT_SYNC_MODEL_MAP` in `src/backend/contracts.py`,
+`CONTRACT_SYNC_TYPES` in `src/frontend/src/contracts/apiContracts.ts` und den Contract-Sync-Test
+`src/backend/tests/test_contract_sync.py` abgeglichen. Zusaetzliche Response-Felder bleiben bewusst
+forward-kompatibel erlaubt; stabile Top-Level-Felder kritischer Responses duerfen nicht still auseinanderlaufen.
+
+Die Endpunkte decken insbesondere folgende Bereiche ab:
 
 - NoteBase oeffnen, anlegen, umbenennen, loeschen und reindexieren
 - Notizen laden, speichern, verschieben, umbenennen, loeschen und mit Medien versehen
@@ -161,9 +182,14 @@ Quick Capture schreibt Inhalte in die heutige Tagesnotiz. Das Frontend bietet zu
 - Lokaler OneNote-`.onepkg`-Import
 - Persistente UI-Einstellungen
 
-`VaultManager` besitzt die Dateisystemlogik. `VaultIndexer` baut daraus `.system/index.db` mit `notes`, `notes_fts`, `tags`, `note_tags`, `tasks` und `todos`. Ein Reindex muss die wesentlichen Projektionen aus Markdown wiederherstellen koennen.
+`VaultManager` besitzt die Dateisystemlogik. Mutierende Windows-Dateioperationen laufen ueber
+kontrollierte Rename-/Delete-Helfer mit bounded Retry, damit kurzlebige Datei- und Scanner-Locks nicht
+zu inkonsistenten Mutationen fuehren. `VaultIndexer` baut daraus `.system/index.db` mit `notes`,
+`notes_fts`, `tags`, `note_tags`, `tasks` und `todos`. Ein Reindex muss die wesentlichen Projektionen
+aus Markdown wiederherstellen koennen; stabile Todo-Zeitfelder werden bei Einzeldatei-Reindexen aus der
+bisherigen Projektion uebernommen.
 
-Der Graph wird ebenfalls aus Markdown abgeleitet. Er umfasst Datei- und Tag-Knoten sowie Link-, Tag-Nutzungs- und Shared-Tag-Kanten. Die Projektion `.system/graph-index.json` wird beim Oeffnen, Reindex, Speichern sowie bei Datei-, Ordner- und Tag-Aenderungen aus Markdown aktualisiert; die sichtbare Graph-Canvas kann davon unabhaengig eine aeltere geladene Kopie halten. Details stehen in `docs/graph-feature.md`.
+Der Graph wird ebenfalls aus Markdown abgeleitet. Er umfasst Datei- und Tag-Knoten sowie Link-, Tag-Nutzungs- und Shared-Tag-Kanten. Die Projektion `.system/graph-index.json` wird beim Oeffnen, Reindex, Speichern sowie bei Datei-, Ordner- und Tag-Aenderungen aus Markdown aktualisiert; die sichtbare Graph-Canvas kann davon unabhaengig eine aeltere geladene Kopie halten. Details stehen in `doc/graph-feature.md`.
 
 ## Frontend Und Desktop
 
@@ -184,19 +210,26 @@ Standard-Look ab. Benutzerdefinierte Themes liegen in `.system/ui_settings.json`
 `app.activeThemeId` speichert das zuletzt gewaehlte Theme. Das Backend normalisiert diese UI-Einstellungen
 beim Schreiben, fachliche Daten bleiben davon unberuehrt.
 
-`App.tsx` orchestriert aktuell einen grossen Teil des UI-State und der API-Aufrufe. Neue Frontend-Funktionen sollten vorhandene Bereichsmodule nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
+`App.tsx` bleibt die oberste Shell-Komposition, soll aber keine neuen Zustandsmaschinen aufnehmen.
+Cross-Cutting UI-Zustaende wie Operator-Meldungen liegen in `src/frontend/src/app/operatorNotifications.ts`;
+Assistant-Zustaende wie der Tag-Match-Flow liegen in dedizierten Hooks wie
+`src/frontend/src/app/tagMatchAssistantState.ts`. Neue Frontend-Funktionen sollten vorhandene
+Bereichsmodule, Hooks und Services nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
 
 ## Konfiguration Und Betrieb
 
 - Projektabhaengigkeiten: `package.json`, `package-lock.json`, `requirements.txt`
 - TypeScript/Vite: `tsconfig*.json`, `vite.config.ts`
 - Linting: `eslint.config.js`
+- Dokumentation: `PROJECT_ARCHITECTURE.md` als Leitplanke, weitere Dokumentation in `doc/`
 - NoteBase-Konfiguration: `<NoteBase>/.system/config.json`
 - Optionale OpenAI-Nutzung: Smart-Modus plus API-Key aus der in `config.json` benannten Environment-Variable, standardmaessig `OPENAI_API_KEY`
 - Entwicklungsstart: `npm run dev`
 - Build: `npm run build`
 - Backend separat: `npm run dev:backend`
 - Windows-Komfortstart: `Start-NickNotes.ps1`
+
+Lokale NoteBases, importierte Testdaten, `.tmp/`, `.venv/`, `node_modules/`, `dist/` und erzeugte Projektionen gehoeren nicht in das Repository. Ein frischer Checkout muss mit den getrackten Quellen, `package-lock.json`, `requirements.txt` und der Dokumentation weiterentwickelbar sein.
 
 ## Aenderungsleitlinien
 
@@ -206,3 +239,4 @@ beim Schreiben, fachliche Daten bleiben davon unberuehrt.
 4. Bei Tag-Aenderungen Definitionen, Markdown-Referenzen, Tag-Uebersichten, Index und Graph gemeinsam betrachten.
 5. Bei Task-Aenderungen Task-Markdown, Statusverknuepfungen, To-do-Promotion, Index und Dashboards gemeinsam betrachten.
 6. UI-Aenderungen auf Verstaendlichkeit, direktes Feedback und moeglichst wenige Bedien-Schritte pruefen.
+7. Dateizugriffe auf Notizen nicht mit freien Host-Pfaden implementieren; immer die gemeinsame Vault-Pfadauflösung verwenden.

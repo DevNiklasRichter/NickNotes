@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import mimetypes
 import queue
@@ -35,8 +36,40 @@ from ..config import (
 )
 
 
+WINDOWS_FILE_OPERATION_RETRIES = 8
+WINDOWS_FILE_OPERATION_RETRY_DELAY_SECONDS = 0.035
+
+
 def _normalize_label(value: str) -> str:
     return " ".join(value.strip().split())
+
+
+def _with_windows_file_operation_retry(operation: Any) -> Any:
+    last_error: PermissionError | None = None
+    for attempt in range(WINDOWS_FILE_OPERATION_RETRIES):
+        try:
+            return operation()
+        except PermissionError as exc:
+            last_error = exc
+            if attempt >= WINDOWS_FILE_OPERATION_RETRIES - 1:
+                break
+            gc.collect()
+            time.sleep(WINDOWS_FILE_OPERATION_RETRY_DELAY_SECONDS * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    return None
+
+
+def _rename_path_with_retry(source: Path, destination: Path) -> None:
+    _with_windows_file_operation_retry(lambda: source.rename(destination))
+
+
+def _unlink_path_with_retry(path: Path, *, missing_ok: bool = False) -> None:
+    _with_windows_file_operation_retry(lambda: path.unlink(missing_ok=missing_ok))
+
+
+def _rmtree_with_retry(path: Path) -> None:
+    _with_windows_file_operation_retry(lambda: shutil.rmtree(path))
 
 
 def _dedupe_sorted(values: list[str]) -> list[str]:
@@ -568,7 +601,7 @@ class VaultManager:
 
         if legacy_path.exists():
             try:
-                legacy_path.rename(preferred_path)
+                _rename_path_with_retry(legacy_path, preferred_path)
                 return preferred_path
             except OSError:
                 legacy_path.mkdir(parents=True, exist_ok=True)
@@ -733,7 +766,7 @@ class VaultManager:
             return self._group_payload(target, set(self._read_favorite_folders()))
 
         link_mappings = self._collect_note_path_mappings_for_tree_move(target, destination)
-        target.rename(destination)
+        _rename_path_with_retry(target, destination)
         self._remap_favorites(relative, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
         self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
@@ -767,7 +800,7 @@ class VaultManager:
             suffix += 1
 
         link_mappings = self._collect_note_path_mappings_for_tree_move(source, destination)
-        source.rename(destination)
+        _rename_path_with_retry(source, destination)
         self._remap_favorites(source_key, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
         self.rebuild_task_status_links(indexer)
@@ -785,7 +818,7 @@ class VaultManager:
             raise ValueError("Systemordner kann nicht geloescht werden.")
 
         deleted_targets = self._collect_note_link_keys_for_tree(target)
-        shutil.rmtree(target)
+        _rmtree_with_retry(target)
         self._remove_favorite_path(relative)
         indexer.reindex_vault(self.vault_path)
         self.rebuild_task_status_links(indexer)
@@ -810,7 +843,7 @@ class VaultManager:
             suffix += 1
 
         if destination != file_path:
-            file_path.rename(destination)
+            _rename_path_with_retry(file_path, destination)
 
         resolved_title = clean_name
         if destination.stem.lower() != safe_stem.lower():
@@ -876,7 +909,7 @@ class VaultManager:
             destination = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
             suffix += 1
 
-        file_path.rename(destination)
+        _rename_path_with_retry(file_path, destination)
         indexer.remove_projection_for_path(str(file_path))
         indexer.reindex_markdown_file(self.vault_path, destination)
         if task_payload:
@@ -930,7 +963,7 @@ class VaultManager:
                 while destination.exists() and destination != file_path:
                     destination = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
                     suffix += 1
-                file_path.rename(destination)
+                _rename_path_with_retry(file_path, destination)
                 changed = True
 
             moved_entries.append(
@@ -977,7 +1010,7 @@ class VaultManager:
         file_path = self._resolve_note_file(note_path)
         task_payload = self._task_link_payload_from_file(file_path)
         deleted_targets = [self._note_link_key(file_path)]
-        file_path.unlink(missing_ok=False)
+        _unlink_path_with_retry(file_path, missing_ok=False)
         self._cleanup_orphan_media_assets()
         indexer.remove_projection_for_path(str(file_path))
         if task_payload:
@@ -1133,7 +1166,7 @@ class VaultManager:
                 if destination.resolve() != current_path:
                     destination = self._next_available_media_path(destination, current_path)
                     try:
-                        current_path.rename(destination)
+                        _rename_path_with_retry(current_path, destination)
                     except OSError:
                         shutil.move(str(current_path), str(destination))
                     moved_count += 1
@@ -1596,7 +1629,7 @@ class VaultManager:
             if resolved in referenced_assets:
                 continue
             try:
-                media_file.unlink(missing_ok=True)
+                _unlink_path_with_retry(media_file, missing_ok=True)
             except OSError:
                 continue
 
@@ -1805,7 +1838,7 @@ class VaultManager:
             preferred = note_path.with_name(f"{safe_stem}{note_path.suffix or '.md'}")
             destination = self._next_available_note_path(note_path.parent, safe_stem, preferred_current=note_path)
             if destination != note_path:
-                note_path.rename(destination)
+                _rename_path_with_retry(note_path, destination)
                 changed = True
             if destination.stem.lower() != safe_stem.lower():
                 resolved_title = self._label_from_group_dir(destination.stem)
@@ -1937,7 +1970,7 @@ class VaultManager:
     def _remove_task_status_link_file(self, file_path: Path, indexer: VaultIndexer) -> None:
         try:
             if file_path.exists() and file_path.is_file():
-                file_path.unlink(missing_ok=True)
+                _unlink_path_with_retry(file_path, missing_ok=True)
         except OSError:
             pass
         indexer.remove_projection_for_path(str(file_path))
@@ -2219,7 +2252,7 @@ class VaultManager:
             note_file.write_text(dump_markdown(meta, next_body), encoding="utf-8")
         except OSError as exc:
             try:
-                task_path.unlink(missing_ok=True)
+                _unlink_path_with_retry(task_path, missing_ok=True)
             except OSError:
                 pass
             indexer.remove_projection_for_path(str(task_path))
@@ -2998,9 +3031,9 @@ class VaultManager:
         for child in self.tag_root_path.iterdir():
             try:
                 if child.is_dir():
-                    shutil.rmtree(child)
+                    _rmtree_with_retry(child)
                 else:
-                    child.unlink(missing_ok=True)
+                    _unlink_path_with_retry(child, missing_ok=True)
             except PermissionError:
                 # In some restricted environments, delete operations are blocked.
                 # We keep existing files and overwrite known targets below.
@@ -3009,7 +3042,7 @@ class VaultManager:
         # Clean up legacy index files from older tag explorer versions.
         for legacy_index in self.tag_root_path.rglob("index.md"):
             try:
-                legacy_index.unlink(missing_ok=True)
+                _unlink_path_with_retry(legacy_index, missing_ok=True)
             except OSError:
                 continue
 
@@ -3258,7 +3291,7 @@ class VaultManager:
                     daily_file.write_text(updated, encoding="utf-8")
 
         try:
-            shutil.rmtree(inbox_path)
+            _rmtree_with_retry(inbox_path)
         except OSError:
             pass
 
@@ -3281,7 +3314,7 @@ class VaultManager:
 
             moved = False
             try:
-                source_path.rename(target_path)
+                _rename_path_with_retry(source_path, target_path)
                 moved = True
             except OSError:
                 try:
@@ -3296,7 +3329,7 @@ class VaultManager:
                         except OSError:
                             pass
                         try:
-                            source_path.unlink(missing_ok=True)
+                            _unlink_path_with_retry(source_path, missing_ok=True)
                             break
                         except OSError:
                             time.sleep(0.05)
@@ -3358,7 +3391,7 @@ class VaultManager:
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
-                source_path.rename(target_path)
+                _rename_path_with_retry(source_path, target_path)
             except OSError:
                 try:
                     shutil.move(str(source_path), str(target_path))
@@ -3370,7 +3403,7 @@ class VaultManager:
                 except OSError:
                     pass
                 try:
-                    source_path.unlink(missing_ok=True)
+                    _unlink_path_with_retry(source_path, missing_ok=True)
                 except OSError:
                     pass
 

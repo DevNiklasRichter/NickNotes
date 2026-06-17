@@ -7,7 +7,7 @@ from datetime import datetime
 from difflib import SequenceMatcher, get_close_matches
 
 from .models import ParsedTask, TAG_CATEGORIES, TagSuggestion
-from .task_domain import normalize_tag_id, normalize_task_priority, normalize_task_status
+from .task_domain import slugify, normalize_tag_id, normalize_task_priority, normalize_task_status
 
 
 TAG_PATTERN = re.compile(

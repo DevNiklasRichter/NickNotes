@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 
 from .markdown_io import dump_markdown
 from .parser import make_note_id, slugify
-from .config import (
+from ..config import (
     ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS,
     ONENOTE_IMPORT_MAX_RESULT_BYTES,
     ONENOTE_IMPORT_MAX_SOURCE_FILE_BYTES,

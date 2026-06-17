@@ -45,12 +45,11 @@ class OpenVaultUseCase:
             raise
 
     def execute(self, service: "BackendApiService", req: Any, *, progress_callback: Any | None = None) -> dict[str, Any]:
-        api = service._api()
         vault_path = Path(req.path).expanduser().resolve()
         if not vault_path.exists():
             raise ValidationDomainError(f"NoteBase path not found: {vault_path}", operation="open_vault", vault_id=str(vault_path))
 
-        api.state.dispose_session()
+        service.state.dispose_session()
         indexer = None
         try:
             vault = VaultManager(vault_path)
@@ -91,17 +90,17 @@ class OpenVaultUseCase:
                     None,
                 )
             tag_groups = vault.sync_tag_groups_with_index(indexer)
-            graph_status = api._rebuild_graph_projection(vault)
+            graph_status = service.rebuild_graph_projection(vault)
             try:
-                api.state.start_session(vault=vault, indexer=indexer, openai=openai)
-                api.state.start_graph_watcher()
+                service.state.start_session(vault=vault, indexer=indexer, openai=openai)
+                service.state.start_graph_watcher()
             except Exception as exc:
-                api.state.graph_status.last_error = f"Graph watcher could not be started: {exc}"
+                service.state.graph_status.last_error = f"Graph watcher could not be started: {exc}"
                 logger.exception("Graph watcher could not be started.")
         except sqlite3.DatabaseError as exc:
             if indexer:
                 indexer.close()
-            api.state.dispose_session()
+            service.state.dispose_session()
             detail = f"Could not open NoteBase index database: {exc}"
             if self._is_lock_error(exc):
                 detail = f"Could not open NoteBase because its index database is locked: {vault_path}"
@@ -120,7 +119,7 @@ class OpenVaultUseCase:
         except Exception as exc:
             if indexer:
                 indexer.close()
-            api.state.dispose_session()
+            service.state.dispose_session()
             logger.exception("Could not open NoteBase.")
             raise InfrastructureDomainError(
                 "Could not open NoteBase.",
@@ -135,7 +134,7 @@ class OpenVaultUseCase:
             "indexed": indexed,
             "mode": "smart" if smart_enabled else "core",
             "tagGroups": tag_groups,
-            "counts": api._counts(indexer),
+            "counts": service.counts(indexer),
             "graphStatus": graph_status,
         }
 
@@ -144,11 +143,10 @@ class GetFocusDashboardUseCase:
     """Build focus dashboard payload and aggregate metrics from canonical index data."""
 
     def execute(self, service: "BackendApiService", date_param: str | None = None) -> dict[str, Any]:
-        api = service._api()
-        vault, indexer = api._require_loaded()
+        vault, indexer = service.require_loaded()
         day_iso = self._normalize_iso_day_param(date_param)
         payload = self._build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
-        payload["counts"] = api._counts(indexer)
+        payload["counts"] = service.counts(indexer)
         return payload
 
     @staticmethod
@@ -329,8 +327,7 @@ class SaveNoteContentUseCase:
     """Save a note with consistent index and graph updates."""
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
-        api = service._api()
-        vault, indexer = api._require_loaded()
+        vault, indexer = service.require_loaded()
         vault_root = vault.vault_path.resolve()
         normalized_path = service._resolve_note_request_path(vault=vault, raw_path=req.path, allow_missing=True)
         pre_state = {
@@ -367,7 +364,7 @@ class SaveNoteContentUseCase:
         def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
             result = context["save_note_document"]
             tag_groups = context.get("sync_tag_groups")
-            return api._update_graph_after_note_save(
+            return service.update_graph_after_note_save(
                 vault=vault,
                 saved_path=Path(result["path"]),
                 previous_path=Path(pre_state["path"]),
@@ -386,7 +383,7 @@ class SaveNoteContentUseCase:
                 "saved": True,
                 "path": str(context["save_note_document"]["path"]),
                 "title": str(context["save_note_document"]["title"]),
-                "counts": api._counts(indexer),
+                "counts": service.counts(indexer),
                 "tagGroups": context.get("sync_tag_groups"),
                 "tagGroupsRebuilt": bool(context.get("sync_tag_groups") is not None),
                 "graphStatus": context["update_graph"],
@@ -400,8 +397,7 @@ class RenameNoteUseCase:
     """Rename one note file and update derived projections."""
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
-        api = service._api()
-        vault, indexer = api._require_loaded()
+        vault, indexer = service.require_loaded()
         original_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
         pre_state = {
             "path": str(original_path),
@@ -425,7 +421,7 @@ class RenameNoteUseCase:
                 indexer.reindex_markdown_file(vault.vault_path, original)
 
         def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return api._rebuild_graph_projection(vault)
+            return service.rebuild_graph_projection(vault)
 
         return service._run_mutation_pipeline(
             "rename-note",
@@ -436,7 +432,7 @@ class RenameNoteUseCase:
             ],
             build_response=lambda context: {
                 "renamedPath": context["rename-note-file"],
-                "counts": api._counts(indexer),
+                "counts": service.counts(indexer),
                 "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
             },
@@ -448,8 +444,7 @@ class MoveNoteUseCase:
     """Move one note file and refresh graph projection."""
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
-        api = service._api()
-        vault, indexer = api._require_loaded()
+        vault, indexer = service.require_loaded()
         original_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
         pre_state = {
             "path": str(original_path),
@@ -477,7 +472,7 @@ class MoveNoteUseCase:
                 # Could not fully restore moved file content; keep index best-effort.
 
         def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return api._rebuild_graph_projection(vault)
+            return service.rebuild_graph_projection(vault)
 
         return service._run_mutation_pipeline(
             "move-note",
@@ -488,7 +483,7 @@ class MoveNoteUseCase:
             ],
             build_response=lambda context: {
                 "movedPath": context["move-note-file"]["movedPath"],
-                "counts": api._counts(indexer),
+                "counts": service.counts(indexer),
                 "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
             },
@@ -500,8 +495,7 @@ class PreviewOneNoteImportUseCase:
     """Preview OneNote import result for selected source files."""
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
-        api = service._api()
-        vault, _indexer = api._require_loaded()
+        vault, _indexer = service.require_loaded()
         try:
             return OneNoteLocalImporter(vault).preview(req.source_paths)
         except OneNoteImportError as exc:
@@ -519,12 +513,11 @@ class StartOneNoteImportUseCase:
     """Run OneNote import pipeline and refresh derived projections."""
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
-        api = service._api()
-        vault, indexer = api._require_loaded()
-        api.state.reset_import_status("Import wird vorbereitet ...")
+        vault, indexer = service.require_loaded()
+        service.state.reset_import_status("Import wird vorbereitet ...")
 
         def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-            api.state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
+            service.state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
 
         try:
             logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
@@ -534,7 +527,7 @@ class StartOneNoteImportUseCase:
             )
         except OneNoteImportError as exc:
             payload = exc.payload()
-            api.state.update_import_status(
+            service.state.update_import_status(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=exc.message,
@@ -568,7 +561,7 @@ class StartOneNoteImportUseCase:
             except OSError:
                 pass
             detail = f"Unerwarteter Fehler beim OneNote-Import: {exc}"
-            api.state.update_import_status(
+            service.state.update_import_status(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=detail,
@@ -584,7 +577,7 @@ class StartOneNoteImportUseCase:
                 details={"exception": str(exc)},
             ) from exc
 
-        api.state.update_import_status(
+        service.state.update_import_status(
             phase="NoteBase wird aktualisiert ...",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),
@@ -596,16 +589,16 @@ class StartOneNoteImportUseCase:
         except OSError:
             pass
         tag_groups = vault.sync_tag_groups_with_index(indexer)
-        graph_status = api._rebuild_graph_projection(vault)
+        graph_status = service.rebuild_graph_projection(vault)
         response = {
             "import": result,
             "indexed": indexed,
-            "counts": api._counts(indexer),
+            "counts": service.counts(indexer),
             "tagGroups": tag_groups,
             "groups": vault.list_note_groups(),
             "graphStatus": graph_status,
         }
-        api.state.update_import_status(
+        service.state.update_import_status(
             phase="Import abgeschlossen.",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),

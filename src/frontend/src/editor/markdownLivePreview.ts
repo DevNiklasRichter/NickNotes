@@ -64,11 +64,24 @@ const INLINE_TAG_PATTERN = /\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)\/([A-Za-z0-9][A-Za
 const INLINE_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)((?:\s*\{[^}\n]*\})*)/g
 const INLINE_MARKDOWN_LINK_PATTERN = /(^|[^!])\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const WIKILINK_PATTERN = /\[\[([^[\]\n]+)\]\]/g
+const MARKDOWN_TABLE_WIDTHS_COMMENT_PATTERN = /^\s*<!--\s*nicknotes-table-widths:\s*([^>]+?)\s*-->\s*$/i
 const EMPTY_TAG_LOOKUP = buildTagLookup([])
+const EMPTY_LINK_TARGETS: readonly MarkdownPreviewLinkTarget[] = []
+const FALLBACK_MARKDOWN_TABLE_MIN_COLUMN_WIDTH_PX = 52
 
 export const markdownTagLookupFacet = Facet.define<TagLookup, TagLookup>({
   combine(values) {
     return values.length > 0 ? values[values.length - 1] : EMPTY_TAG_LOOKUP
+  },
+})
+
+const DEFAULT_MARKDOWN_TABLE_OPTIONS: MarkdownTableOptions = {
+  linkTargets: EMPTY_LINK_TARGETS,
+}
+
+const markdownTableOptionsFacet = Facet.define<MarkdownTableOptions, MarkdownTableOptions>({
+  combine(values) {
+    return values.length > 0 ? values[values.length - 1] : DEFAULT_MARKDOWN_TABLE_OPTIONS
   },
 })
 
@@ -342,6 +355,8 @@ type ParsedMarkdownTable = {
   to: number
   headers: string[]
   rows: string[][]
+  columnWidths: number[]
+  hasColumnWidths: boolean
 }
 
 function splitMarkdownTableRow(lineText: string): string[] {
@@ -406,37 +421,266 @@ function normalizeMarkdownTableRows(headers: readonly string[], rows: readonly (
   return rows.map((row) => Array.from({ length: columnCount }, (_, index) => decodeMarkdownTableCell(row[index] ?? '')))
 }
 
-function serializeMarkdownTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
+function createEqualMarkdownTableColumnWidths(columnCount: number): number[] {
+  const safeColumnCount = Math.max(1, columnCount)
+  return Array.from({ length: safeColumnCount }, () => 100 / safeColumnCount)
+}
+
+function normalizeMarkdownTableColumnWidths(widths: readonly number[], columnCount: number): number[] {
+  const safeColumnCount = Math.max(1, columnCount)
+  if (widths.length !== safeColumnCount || widths.some((width) => !Number.isFinite(width) || width <= 0)) {
+    return createEqualMarkdownTableColumnWidths(safeColumnCount)
+  }
+
+  const total = widths.reduce((sum, width) => sum + width, 0)
+  if (!Number.isFinite(total) || total <= 0) {
+    return createEqualMarkdownTableColumnWidths(safeColumnCount)
+  }
+
+  return widths.map((width) => (width / total) * 100)
+}
+
+function formatMarkdownTableColumnWidths(widths: readonly number[], columnCount: number): string {
+  const normalized = normalizeMarkdownTableColumnWidths(widths, columnCount)
+  const rounded = normalized.map((width) => Number(width.toFixed(1)))
+  const roundedTotal = rounded.reduce((sum, width) => sum + width, 0)
+  rounded[rounded.length - 1] = Number((rounded[rounded.length - 1] + (100 - roundedTotal)).toFixed(1))
+  return rounded.map((width) => `${width.toFixed(1)}%`).join(', ')
+}
+
+function parseMarkdownTableWidthComment(lineText: string): number[] | null {
+  const match = MARKDOWN_TABLE_WIDTHS_COMMENT_PATTERN.exec(lineText)
+  if (!match) {
+    return null
+  }
+  const rawWidths = match[1] ?? ''
+  const widths = rawWidths
+    .split(',')
+    .map((part) => Number.parseFloat(part.trim().replace(/%$/g, '')))
+    .filter((width) => Number.isFinite(width) && width > 0)
+  return widths.length > 0 ? widths : null
+}
+
+function serializeMarkdownTable(
+  headers: readonly string[],
+  rows: readonly (readonly string[])[],
+  columnWidths: readonly number[] = [],
+  includeColumnWidths = false
+): string {
   const cleanHeaders = headers.map(decodeMarkdownTableCell)
   const normalizedRows = normalizeMarkdownTableRows(cleanHeaders, rows)
   const renderRow = (cells: readonly string[]) => `| ${cells.map(escapeMarkdownTableCell).join(' | ')} |`
-  return [
+  const tableLines = [
     renderRow(cleanHeaders.map((header, index) => header || `Spalte ${index + 1}`)),
     renderRow(cleanHeaders.map(() => '---')),
     ...normalizedRows.map(renderRow),
-  ].join('\n')
+  ]
+  if (!includeColumnWidths) {
+    return tableLines.join('\n')
+  }
+  return [`<!-- nicknotes-table-widths: ${formatMarkdownTableColumnWidths(columnWidths, cleanHeaders.length)} -->`, ...tableLines].join('\n')
+}
+
+type MarkdownTableRenderContext = {
+  tagLookup: TagLookup
+  linkTargets: readonly MarkdownPreviewLinkTarget[]
+  onOpenWikiLink?: (target: string) => void
+  onOpenTagReference?: (groupId: string, tagId: string) => void
+}
+
+type MarkdownTableOptions = Omit<MarkdownTableRenderContext, 'tagLookup'>
+
+type MarkdownTableInlineToken = {
+  from: number
+  to: number
+  priority: number
+  createElement: () => HTMLElement
+}
+
+function createRenderedMarkdownLinkElement(text: string, url: string): HTMLElement {
+  const element = document.createElement('span')
+  element.className = 'cm-md-markdown-link-widget'
+  element.dataset.url = url
+  element.textContent = text
+  element.title = url
+  element.setAttribute('role', 'link')
+
+  if (normalizeExternalUrl(url)) {
+    element.dataset.tableInlineAction = 'true'
+    element.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      void openExternalUrl(url)
+    })
+  }
+
+  return element
+}
+
+function createRenderedWikiLinkElement(text: string, target: string, context: MarkdownTableRenderContext): HTMLElement {
+  const element = document.createElement('span')
+  element.className = 'cm-md-wikilink cm-md-wikilink-widget'
+  element.dataset.wikiTarget = target
+  element.textContent = text
+  element.title = resolveWikiLinkTooltip(target, context.linkTargets)
+  element.setAttribute('role', 'link')
+
+  if (context.onOpenWikiLink) {
+    element.dataset.tableInlineAction = 'true'
+    element.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      context.onOpenWikiLink?.(target)
+    })
+  }
+
+  return element
+}
+
+function createRenderedInlineTagElement(tag: ParsedInlineTag, context: MarkdownTableRenderContext): HTMLElement {
+  const resolved = findTagDefinition(context.tagLookup, tag.groupId, tag.tagId)
+  const groupDisplayName = resolved?.group.displayName ?? tag.groupId
+  const tagDisplayName = resolved?.tag.displayName ?? tag.tagId
+  const groupColor = resolved?.group.color ?? '#4f8cff'
+  const element = document.createElement('span')
+  element.className = 'cm-md-inline-tag-chip'
+  element.style.setProperty('--cm-md-tag-color', groupColor)
+  element.dataset.tagGroupId = tag.groupId
+  element.dataset.tagId = tag.tagId
+  element.textContent = tagDisplayName
+  element.title = `${groupDisplayName} / ${tagDisplayName}`
+  element.setAttribute('aria-label', `Tag ${tagDisplayName}`)
+
+  if (context.onOpenTagReference) {
+    element.dataset.tableInlineAction = 'true'
+    element.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      context.onOpenTagReference?.(tag.groupId, tag.tagId)
+    })
+  }
+
+  return element
+}
+
+function collectMarkdownTableInlineTokens(lineText: string, context: MarkdownTableRenderContext): MarkdownTableInlineToken[] {
+  const tokens: MarkdownTableInlineToken[] = []
+  for (const link of parseMarkdownLinksInLine(lineText, 0)) {
+    tokens.push({
+      from: link.from,
+      to: link.to,
+      priority: 0,
+      createElement: () => createRenderedMarkdownLinkElement(link.text, link.url),
+    })
+  }
+  for (const wikiLink of parseWikiLinksInLine(lineText, 0)) {
+    tokens.push({
+      from: wikiLink.from,
+      to: wikiLink.to,
+      priority: 1,
+      createElement: () => createRenderedWikiLinkElement(wikiLink.displayText, wikiLink.target, context),
+    })
+  }
+  for (const tag of parseInlineTagsInLine(lineText, 0)) {
+    tokens.push({
+      from: tag.from,
+      to: tag.to,
+      priority: 1,
+      createElement: () => createRenderedInlineTagElement(tag, context),
+    })
+  }
+
+  return tokens.sort((left, right) => left.from - right.from || left.priority - right.priority || right.to - left.to)
+}
+
+function appendRenderedMarkdownTableLine(parent: HTMLElement, lineText: string, context: MarkdownTableRenderContext): void {
+  const tokens = collectMarkdownTableInlineTokens(lineText, context)
+  let cursor = 0
+  for (const token of tokens) {
+    if (token.from < cursor || token.from < 0 || token.to > lineText.length) {
+      continue
+    }
+    if (token.from > cursor) {
+      parent.appendChild(document.createTextNode(lineText.slice(cursor, token.from)))
+    }
+    parent.appendChild(token.createElement())
+    cursor = token.to
+  }
+  if (cursor < lineText.length) {
+    parent.appendChild(document.createTextNode(lineText.slice(cursor)))
+  }
+}
+
+function renderMarkdownTableCellContent(element: HTMLElement, value: string, context: MarkdownTableRenderContext): void {
+  element.replaceChildren()
+
+  if (!value) {
+    const empty = document.createElement('span')
+    empty.className = 'cm-md-table-cell-empty'
+    empty.setAttribute('aria-hidden', 'true')
+    empty.textContent = '\u00a0'
+    element.appendChild(empty)
+    return
+  }
+
+  const lines = value.split('\n')
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      element.appendChild(document.createElement('br'))
+    }
+    appendRenderedMarkdownTableLine(element, line, context)
+  })
 }
 
 class MarkdownTableWidget extends WidgetType {
   readonly headers: string[]
   readonly rows: string[][]
+  readonly columnWidths: number[]
+  readonly hasColumnWidths: boolean
   readonly from: number
   readonly to: number
+  readonly context: MarkdownTableRenderContext
 
-  constructor(headers: string[], rows: string[][], from: number, to: number) {
+  constructor(
+    headers: string[],
+    rows: string[][],
+    columnWidths: number[],
+    hasColumnWidths: boolean,
+    from: number,
+    to: number,
+    context: MarkdownTableRenderContext
+  ) {
     super()
     this.headers = headers
     this.rows = rows
+    this.columnWidths = columnWidths
+    this.hasColumnWidths = hasColumnWidths
     this.from = from
     this.to = to
+    this.context = context
   }
 
   eq(other: MarkdownTableWidget): boolean {
     return (
       other.from === this.from &&
       other.to === this.to &&
+      other.context.tagLookup === this.context.tagLookup &&
+      other.context.linkTargets === this.context.linkTargets &&
+      other.context.onOpenWikiLink === this.context.onOpenWikiLink &&
+      other.context.onOpenTagReference === this.context.onOpenTagReference &&
       JSON.stringify(other.headers) === JSON.stringify(this.headers) &&
-      JSON.stringify(other.rows) === JSON.stringify(this.rows)
+      JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
+      JSON.stringify(other.columnWidths) === JSON.stringify(this.columnWidths) &&
+      other.hasColumnWidths === this.hasColumnWidths
     )
   }
 
@@ -453,10 +697,35 @@ class MarkdownTableWidget extends WidgetType {
     const columnCount = Math.max(1, this.headers.length)
     const draftHeaders = Array.from({ length: columnCount }, (_, index) => decodeMarkdownTableCell(this.headers[index] ?? ''))
     const draftRows = normalizeMarkdownTableRows(draftHeaders, this.rows)
+    const draftColumnWidths = normalizeMarkdownTableColumnWidths(this.columnWidths, columnCount)
+    let persistColumnWidths = this.hasColumnWidths
     let suppressBlurCommit = false
 
+    const colgroup = document.createElement('colgroup')
+    const colElements: HTMLTableColElement[] = []
+    for (let index = 0; index < columnCount; index += 1) {
+      const col = document.createElement('col')
+      colElements.push(col)
+      colgroup.appendChild(col)
+    }
+    table.appendChild(colgroup)
+
+    const normalizeDraftColumnWidths = () => {
+      const normalized = normalizeMarkdownTableColumnWidths(draftColumnWidths, draftHeaders.length)
+      draftColumnWidths.splice(0, draftColumnWidths.length, ...normalized)
+    }
+
+    const applyColumnWidths = () => {
+      normalizeDraftColumnWidths()
+      colElements.forEach((col, index) => {
+        col.style.width = `${draftColumnWidths[index] ?? 0}%`
+      })
+    }
+
+    applyColumnWidths()
+
     const commit = (selectionAnchor?: number) => {
-      const nextMarkdown = serializeMarkdownTable(draftHeaders, draftRows)
+      const nextMarkdown = serializeMarkdownTable(draftHeaders, draftRows, draftColumnWidths, persistColumnWidths)
       const currentMarkdown = view.state.doc.sliceString(this.from, this.to)
       const requestedAnchor = typeof selectionAnchor === 'number' ? Math.max(0, Math.min(selectionAnchor, view.state.doc.length)) : null
       if (nextMarkdown === currentMarkdown) {
@@ -537,7 +806,12 @@ class MarkdownTableWidget extends WidgetType {
 
     const insertColumnAt = (index: number) => {
       const targetIndex = Math.max(0, Math.min(index, draftHeaders.length))
+      const splitIndex = Math.max(0, Math.min(targetIndex, draftColumnWidths.length - 1))
+      const splitWidth = (draftColumnWidths[splitIndex] ?? 100 / draftHeaders.length) / 2
+      draftColumnWidths[splitIndex] = splitWidth
+      draftColumnWidths.splice(targetIndex, 0, splitWidth)
       draftHeaders.splice(targetIndex, 0, `Spalte ${targetIndex + 1}`)
+      normalizeDraftColumnWidths()
       for (const row of draftRows) {
         row.splice(targetIndex, 0, '')
       }
@@ -549,6 +823,12 @@ class MarkdownTableWidget extends WidgetType {
         return
       }
       draftHeaders.splice(index, 1)
+      const removedWidth = draftColumnWidths.splice(index, 1)[0] ?? 0
+      if (draftColumnWidths.length > 0) {
+        const recipientIndex = Math.max(0, Math.min(index, draftColumnWidths.length - 1))
+        draftColumnWidths[recipientIndex] = (draftColumnWidths[recipientIndex] ?? 0) + removedWidth
+        normalizeDraftColumnWidths()
+      }
       for (const row of draftRows) {
         row.splice(index, 1)
       }
@@ -601,24 +881,76 @@ class MarkdownTableWidget extends WidgetType {
     }
 
     const tableControls: HTMLTextAreaElement[] = []
+    const tableDisplays: HTMLElement[] = []
+    const displayByInput = new Map<HTMLTextAreaElement, HTMLElement>()
     let navigatingInsideTable = false
+    let skipNextBlurCommit = false
 
-    const focusTableControl = (index: number) => {
+    const resizeTableInput = (input: HTMLTextAreaElement) => {
+      input.rows = Math.max(1, input.value.split('\n').length)
+      input.style.height = 'auto'
+      input.style.height = `${Math.max(input.scrollHeight, 34)}px`
+    }
+
+    const deactivateTableControl = (input: HTMLTextAreaElement) => {
+      const display = displayByInput.get(input)
+      if (!display) {
+        return
+      }
+      renderMarkdownTableCellContent(display, input.value, this.context)
+      input.hidden = true
+      display.hidden = false
+    }
+
+    const activateTableControl = (index: number, selectContents = false) => {
       const target = tableControls[index]
       if (!target) {
         return
       }
+      const display = tableDisplays[index]
+      if (!display) {
+        return
+      }
+      closeContextMenu()
+      for (const control of tableControls) {
+        if (control !== target && !control.hidden) {
+          deactivateTableControl(control)
+        }
+      }
       navigatingInsideTable = true
+      display.hidden = true
+      target.hidden = false
+      resizeTableInput(target)
       target.focus()
-      target.select()
+      if (selectContents) {
+        target.select()
+      } else {
+        const end = target.value.length
+        target.selectionStart = end
+        target.selectionEnd = end
+      }
       window.setTimeout(() => {
         navigatingInsideTable = false
       }, 0)
     }
 
+    const focusTableControl = (index: number) => {
+      activateTableControl(index, true)
+    }
+
     const resolvePositionAfterTable = (): number => {
       const nextChar = view.state.doc.sliceString(this.to, this.to + 1)
       return nextChar === '\n' ? this.to + 1 : this.to
+    }
+
+    const finishEditingTableControl = (input: HTMLTextAreaElement, selectionAnchor?: number) => {
+      skipNextBlurCommit = true
+      deactivateTableControl(input)
+      input.blur()
+      commit(selectionAnchor)
+      window.setTimeout(() => {
+        skipNextBlurCommit = false
+      }, 0)
     }
 
     const handleCellKeyDown = (event: KeyboardEvent) => {
@@ -628,60 +960,254 @@ class MarkdownTableWidget extends WidgetType {
         event.preventDefault()
         if (event.shiftKey) {
           if (controlIndex > 0) {
+            deactivateTableControl(input)
             focusTableControl(controlIndex - 1)
             return
           }
-          commit(this.from)
+          finishEditingTableControl(input, this.from)
           return
         }
         if (controlIndex >= 0 && controlIndex < tableControls.length - 1) {
+          deactivateTableControl(input)
           focusTableControl(controlIndex + 1)
           return
         }
-        commit(resolvePositionAfterTable())
+        finishEditingTableControl(input, resolvePositionAfterTable())
         return
       }
 
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()
-        commit()
-        input.blur()
+        finishEditingTableControl(input)
         return
       }
 
-      if (event.key === 'Enter' && event.shiftKey) {
+      if (event.key === 'Escape') {
         event.preventDefault()
-        const start = input.selectionStart
-        const end = input.selectionEnd
-        input.value = `${input.value.slice(0, start)}\n${input.value.slice(end)}`
-        input.selectionStart = start + 1
-        input.selectionEnd = start + 1
-        input.dispatchEvent(new Event('input', { bubbles: true }))
+        finishEditingTableControl(input)
+        view.focus()
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.stopPropagation()
       }
     }
 
-    const commitOnBlur = () => {
-      if (navigatingInsideTable || suppressBlurCommit) {
+    const commitOnBlur = (event: FocusEvent) => {
+      if (navigatingInsideTable || suppressBlurCommit || skipNextBlurCommit) {
         return
       }
+      const input = event.currentTarget as HTMLTextAreaElement
+      deactivateTableControl(input)
       commit()
+    }
+
+    const measureMinimumColumnWidth = (): number => {
+      const probe = document.createElement('span')
+      probe.textContent = 'MMMM'
+      probe.style.position = 'absolute'
+      probe.style.visibility = 'hidden'
+      probe.style.pointerEvents = 'none'
+      probe.style.fontSize = '0.92rem'
+      probe.style.fontFamily = 'inherit'
+      wrapper.appendChild(probe)
+      const width = Math.ceil(probe.getBoundingClientRect().width + 18)
+      probe.remove()
+      return Math.max(FALLBACK_MARKDOWN_TABLE_MIN_COLUMN_WIDTH_PX, width)
+    }
+
+    const getColumnPixelWidths = (): number[] => {
+      const tableWidth = Math.max(1, table.getBoundingClientRect().width)
+      const normalized = normalizeMarkdownTableColumnWidths(draftColumnWidths, draftHeaders.length)
+      return normalized.map((width) => (tableWidth * width) / 100)
+    }
+
+    const setColumnPixelWidths = (pixelWidths: readonly number[]) => {
+      const total = pixelWidths.reduce((sum, width) => sum + width, 0)
+      if (!Number.isFinite(total) || total <= 0) {
+        return
+      }
+      draftColumnWidths.splice(0, draftColumnWidths.length, ...pixelWidths.map((width) => (width / total) * 100))
+      applyColumnWidths()
+    }
+
+    const resizeColumnBoundary = (columnIndex: number, deltaX: number): boolean => {
+      if (columnIndex < 0 || columnIndex >= draftHeaders.length - 1) {
+        return false
+      }
+      const pixelWidths = getColumnPixelWidths()
+      const leftWidth = pixelWidths[columnIndex] ?? 0
+      const rightWidth = pixelWidths[columnIndex + 1] ?? 0
+      const pairWidth = leftWidth + rightWidth
+      if (!Number.isFinite(pairWidth) || pairWidth <= 0) {
+        return false
+      }
+      const minimumWidth = Math.min(measureMinimumColumnWidth(), pairWidth / 2)
+      const nextLeftWidth = Math.max(minimumWidth, Math.min(pairWidth - minimumWidth, leftWidth + deltaX))
+      const nextRightWidth = pairWidth - nextLeftWidth
+      pixelWidths[columnIndex] = nextLeftWidth
+      pixelWidths[columnIndex + 1] = nextRightWidth
+      setColumnPixelWidths(pixelWidths)
+      return true
+    }
+
+    const startColumnResize = (event: PointerEvent, columnIndex: number) => {
+      if (event.button !== 0) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      closeContextMenu()
+
+      const startX = event.clientX
+      const startPixelWidths = getColumnPixelWidths()
+      const pointerId = event.pointerId
+      const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+      try {
+        target?.setPointerCapture(pointerId)
+      } catch {
+        // Pointer capture can fail when the handle is already detached during a rerender.
+      }
+
+      const applyResize = (clientX: number) => {
+        setColumnPixelWidths(startPixelWidths)
+        resizeColumnBoundary(columnIndex, clientX - startX)
+      }
+
+      const finishResize = (clientX: number) => {
+        window.removeEventListener('pointermove', onPointerMove)
+        window.removeEventListener('pointerup', onPointerUp)
+        window.removeEventListener('pointercancel', onPointerCancel)
+        try {
+          target?.releasePointerCapture(pointerId)
+        } catch {
+          // Safe no-op if capture was never acquired.
+        }
+        applyResize(clientX)
+        persistColumnWidths = true
+        commit(view.state.selection.main.head)
+      }
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) {
+          return
+        }
+        moveEvent.preventDefault()
+        applyResize(moveEvent.clientX)
+      }
+
+      const onPointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return
+        }
+        finishResize(upEvent.clientX)
+      }
+
+      const onPointerCancel = (cancelEvent: PointerEvent) => {
+        if (cancelEvent.pointerId !== pointerId) {
+          return
+        }
+        finishResize(cancelEvent.clientX)
+      }
+
+      window.addEventListener('pointermove', onPointerMove, { passive: false })
+      window.addEventListener('pointerup', onPointerUp)
+      window.addEventListener('pointercancel', onPointerCancel)
+    }
+
+    const createCellControl = (
+      cell: HTMLTableCellElement,
+      value: string,
+      ariaLabel: string,
+      onValueChange: (nextValue: string) => void,
+      rowIndex: number | null,
+      columnIndex: number
+    ) => {
+      cell.className = 'cm-md-table-cell'
+      const display = document.createElement('div')
+      display.className = 'cm-md-table-cell-value'
+      display.tabIndex = 0
+      display.setAttribute('role', 'textbox')
+      display.setAttribute('aria-label', ariaLabel)
+      renderMarkdownTableCellContent(display, value, this.context)
+
+      const input = document.createElement('textarea')
+      input.hidden = true
+      input.value = value
+      input.ariaLabel = ariaLabel
+      resizeTableInput(input)
+
+      display.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+          return
+        }
+        const target = event.target
+        if (target instanceof HTMLElement && target.closest('[data-table-inline-action="true"]')) {
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        activateTableControl(tableControls.indexOf(input))
+      })
+      display.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== 'F2') {
+          return
+        }
+        event.preventDefault()
+        activateTableControl(tableControls.indexOf(input), event.key === 'Enter')
+      })
+      display.addEventListener('contextmenu', (event) => showCellContextMenu(event, rowIndex, columnIndex))
+      input.addEventListener('input', () => {
+        onValueChange(input.value)
+        resizeTableInput(input)
+      })
+      input.addEventListener('keydown', handleCellKeyDown)
+      input.addEventListener('contextmenu', (event) => showCellContextMenu(event, rowIndex, columnIndex))
+      input.addEventListener('blur', commitOnBlur)
+      tableControls.push(input)
+      tableDisplays.push(display)
+      displayByInput.set(input, display)
+      cell.appendChild(display)
+      cell.appendChild(input)
     }
 
     draftHeaders.forEach((header, columnIndex) => {
       const cell = document.createElement('th')
-      const input = document.createElement('textarea')
-      input.rows = Math.max(1, header.split('\n').length)
-      input.value = header
-      input.ariaLabel = `Tabellenkopf ${columnIndex + 1}`
-      input.addEventListener('input', () => {
-        draftHeaders[columnIndex] = input.value
-        input.rows = Math.max(1, input.value.split('\n').length)
-      })
-      input.addEventListener('keydown', handleCellKeyDown)
-      input.addEventListener('contextmenu', (event) => showCellContextMenu(event, null, columnIndex))
-      input.addEventListener('blur', commitOnBlur)
-      tableControls.push(input)
-      cell.appendChild(input)
+      createCellControl(
+        cell,
+        header,
+        `Tabellenkopf ${columnIndex + 1}`,
+        (nextValue) => {
+          draftHeaders[columnIndex] = nextValue
+        },
+        null,
+        columnIndex
+      )
+      if (columnIndex < columnCount - 1) {
+        const resizeHandle = document.createElement('span')
+        resizeHandle.className = 'cm-md-table-column-resize-handle'
+        resizeHandle.tabIndex = 0
+        resizeHandle.title = 'Spaltenbreite anpassen'
+        resizeHandle.setAttribute('role', 'separator')
+        resizeHandle.setAttribute('aria-label', `Breite zwischen Spalte ${columnIndex + 1} und ${columnIndex + 2} anpassen`)
+        resizeHandle.setAttribute('aria-orientation', 'vertical')
+        resizeHandle.addEventListener('pointerdown', (event) => startColumnResize(event, columnIndex))
+        resizeHandle.addEventListener('keydown', (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+            return
+          }
+          event.preventDefault()
+          event.stopPropagation()
+          const direction = event.key === 'ArrowLeft' ? -1 : 1
+          const step = event.shiftKey ? 24 : 12
+          if (resizeColumnBoundary(columnIndex, direction * step)) {
+            persistColumnWidths = true
+            commit(view.state.selection.main.head)
+          }
+        })
+        cell.appendChild(resizeHandle)
+      }
       headerRow.appendChild(cell)
     })
     thead.appendChild(headerRow)
@@ -692,19 +1218,16 @@ class MarkdownTableWidget extends WidgetType {
       const tr = document.createElement('tr')
       row.forEach((value, columnIndex) => {
         const cell = document.createElement('td')
-        const input = document.createElement('textarea')
-        input.rows = Math.max(1, value.split('\n').length)
-        input.value = value
-        input.ariaLabel = `Tabellenzelle ${rowIndex + 1}, ${columnIndex + 1}`
-        input.addEventListener('input', () => {
-          draftRows[rowIndex][columnIndex] = input.value
-          input.rows = Math.max(1, input.value.split('\n').length)
-        })
-        input.addEventListener('keydown', handleCellKeyDown)
-        input.addEventListener('contextmenu', (event) => showCellContextMenu(event, rowIndex, columnIndex))
-        input.addEventListener('blur', commitOnBlur)
-        tableControls.push(input)
-        cell.appendChild(input)
+        createCellControl(
+          cell,
+          value,
+          `Tabellenzelle ${rowIndex + 1}, ${columnIndex + 1}`,
+          (nextValue) => {
+            draftRows[rowIndex][columnIndex] = nextValue
+          },
+          rowIndex,
+          columnIndex
+        )
         tr.appendChild(cell)
       })
       tbody.appendChild(tr)
@@ -1334,13 +1857,23 @@ function parseMarkdownTablesInState(state: EditorState, fromLine = 1, toLine = s
   while (true) {
     if (!processedLines.has(line.number)) {
       processedLines.add(line.number)
-      const nextLine = line.number < state.doc.lines ? state.doc.line(line.number + 1) : null
-      if (nextLine && isPotentialMarkdownTableRow(line.text)) {
-        const headers = splitMarkdownTableRow(line.text)
-        if (headers.length >= 2 && isMarkdownTableSeparator(nextLine.text, headers.length)) {
+      const parsedColumnWidths = parseMarkdownTableWidthComment(line.text)
+      const hasColumnWidths = parsedColumnWidths !== null
+      const headerLine =
+        hasColumnWidths && line.number < state.doc.lines
+          ? state.doc.line(line.number + 1)
+          : line
+      const separatorLineNumber = headerLine.number + 1
+      const separatorLine = separatorLineNumber <= state.doc.lines ? state.doc.line(separatorLineNumber) : null
+
+      if (separatorLine && isPotentialMarkdownTableRow(headerLine.text)) {
+        const headers = splitMarkdownTableRow(headerLine.text)
+        if (headers.length >= 2 && isMarkdownTableSeparator(separatorLine.text, headers.length)) {
           const rows: string[][] = []
-          let lastLine = nextLine
-          let cursorLineNumber = nextLine.number + 1
+          let lastLine = separatorLine
+          let cursorLineNumber = separatorLine.number + 1
+          processedLines.add(headerLine.number)
+          processedLines.add(separatorLine.number)
           while (cursorLineNumber <= state.doc.lines) {
             const cursorLine = state.doc.line(cursorLineNumber)
             if (!isPotentialMarkdownTableRow(cursorLine.text)) {
@@ -1360,6 +1893,8 @@ function parseMarkdownTablesInState(state: EditorState, fromLine = 1, toLine = s
             to: lastLine.to,
             headers,
             rows,
+            columnWidths: normalizeMarkdownTableColumnWidths(parsedColumnWidths ?? [], headers.length),
+            hasColumnWidths,
           })
         }
       }
@@ -1374,31 +1909,32 @@ function parseMarkdownTablesInState(state: EditorState, fromLine = 1, toLine = s
   return tables
 }
 
-function parseMarkdownTables(view: EditorView): ParsedMarkdownTable[] {
-  const tables: ParsedMarkdownTable[] = []
-  const seen = new Set<string>()
-  for (const range of view.visibleRanges) {
-    const end = Math.max(range.from, range.to - 1)
-    const fromLine = view.state.doc.lineAt(range.from).number
-    const toLine = view.state.doc.lineAt(end).number
-    for (const table of parseMarkdownTablesInState(view.state, fromLine, toLine)) {
-      const key = `${table.from}:${table.to}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        tables.push(table)
-      }
-    }
+function getMarkdownTableRenderContext(state: EditorState): MarkdownTableRenderContext {
+  const options = state.facet(markdownTableOptionsFacet)
+  return {
+    tagLookup: state.facet(markdownTagLookupFacet),
+    linkTargets: options.linkTargets,
+    onOpenWikiLink: options.onOpenWikiLink,
+    onOpenTagReference: options.onOpenTagReference,
   }
-  return tables
 }
 
 function buildMarkdownTableDecorations(state: EditorState): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = []
   const tables = parseMarkdownTablesInState(state)
+  const tableContext = getMarkdownTableRenderContext(state)
   for (const table of tables) {
     ranges.push(
       Decoration.replace({
-        widget: new MarkdownTableWidget(table.headers, table.rows, table.from, table.to),
+        widget: new MarkdownTableWidget(
+          table.headers,
+          table.rows,
+          table.columnWidths,
+          table.hasColumnWidths,
+          table.from,
+          table.to,
+          tableContext
+        ),
       }).range(table.from, table.to)
     )
   }
@@ -1410,7 +1946,10 @@ const markdownTableDecorationsField = StateField.define<DecorationSet>({
     return buildMarkdownTableDecorations(state)
   },
   update(value, transaction) {
-    return transaction.docChanged ? buildMarkdownTableDecorations(transaction.state) : value.map(transaction.changes)
+    const tagLookupChanged = transaction.startState.facet(markdownTagLookupFacet) !== transaction.state.facet(markdownTagLookupFacet)
+    const tableOptionsChanged =
+      transaction.startState.facet(markdownTableOptionsFacet) !== transaction.state.facet(markdownTableOptionsFacet)
+    return transaction.docChanged || tagLookupChanged || tableOptionsChanged ? buildMarkdownTableDecorations(transaction.state) : value.map(transaction.changes)
   },
   provide: (field) => EditorView.decorations.from(field),
 })
@@ -1421,7 +1960,7 @@ function buildDecorations(view: EditorView, options: LivePreviewOptions): Decora
   const selections = view.state.selection.ranges.map((range) => ({ from: range.from, to: range.to }))
   const lineClassSeen = new Set<string>()
   const tagLookup = view.state.facet(markdownTagLookupFacet)
-  const tables = parseMarkdownTables(view)
+  const tables = parseMarkdownTablesInState(view.state)
   const tableRanges = tables.map((table) => ({ from: table.from, to: table.to }))
 
   for (const range of view.visibleRanges) {
@@ -1896,6 +2435,11 @@ export function markdownTagLookupExtension(tagGroups: TagGroupDefinition[]): Ext
 
 export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension {
   return [
+    markdownTableOptionsFacet.of({
+      linkTargets: options.linkTargets ?? EMPTY_LINK_TARGETS,
+      onOpenWikiLink: options.onOpenWikiLink,
+      onOpenTagReference: options.onOpenTagReference,
+    }),
     markdownTableDecorationsField,
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({

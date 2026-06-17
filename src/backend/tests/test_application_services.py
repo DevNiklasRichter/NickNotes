@@ -19,7 +19,8 @@ except Exception:  # pragma: no cover - environment-specific import guard
 )
 class BackendApiServiceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.service = BackendApiService()
+        backend_api.state.dispose_session()
+        self.service = BackendApiService(runtime=backend_api.state, capabilities=backend_api.BACKEND_CAPABILITIES)
         # Keep a deterministic module target and avoid re-import side effects in tests.
         self.service._api_module = backend_api
 
@@ -47,19 +48,15 @@ class BackendApiServiceTests(unittest.TestCase):
         backend_api.state._session.projection_lock = lock
         return previous_lock
 
-    def test_health_is_delegated_to_api_impl(self) -> None:
-        expected = {"ok": True, "vaultLoaded": False}
-        with mock.patch.object(backend_api, "health_impl", return_value=expected) as spy:
-            result = self.service.health()
-            self.assertIs(result, expected)
-            spy.assert_called_once_with()
+    def test_health_is_served_by_application_service(self) -> None:
+        result = self.service.health()
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["vaultLoaded"])
+        self.assertEqual(result["capabilities"], backend_api.BACKEND_CAPABILITIES)
 
-    def test_state_is_delegated_to_api_impl(self) -> None:
-        expected = {"vaultLoaded": True}
-        with mock.patch.object(backend_api, "get_state_impl", return_value=expected) as spy:
-            result = self.service.get_state()
-            self.assertIs(result, expected)
-            spy.assert_called_once_with()
+    def test_state_is_served_by_application_service(self) -> None:
+        result = self.service.get_state()
+        self.assertEqual(result, {"vaultLoaded": False})
 
     def test_create_vault_route_delegates_to_service(self) -> None:
         request = backend_api.VaultCreateRequest(parentPath="C:/temp", name="TestVault")
@@ -146,13 +143,13 @@ class BackendApiServiceTests(unittest.TestCase):
 
         try:
             with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-                backend_api,
-                "_require_loaded",
+                self.service,
+                "require_loaded",
                 return_value=(vault, indexer),
-            ), mock.patch.object(backend_api, "_counts", return_value={"notes": 1}):
+            ), mock.patch.object(self.service, "counts", return_value={"notes": 1}):
                 with mock.patch.object(
-                    backend_api,
-                    "_update_graph_after_note_save",
+                    self.service,
+                    "update_graph_after_note_save",
                     return_value={"available": True},
                 ) as update_graph:
                     result = self.service.save_note_content(request)
@@ -183,13 +180,13 @@ class BackendApiServiceTests(unittest.TestCase):
         indexer = mock.MagicMock()
 
         with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-            backend_api,
-            "_require_loaded",
+            self.service,
+            "require_loaded",
             return_value=(vault, indexer),
-        ), mock.patch.object(backend_api, "_counts", return_value={"notes": 1}):
+        ), mock.patch.object(self.service, "counts", return_value={"notes": 1}):
                 with mock.patch.object(
-                    backend_api,
-                    "_update_graph_after_note_save",
+                    self.service,
+                    "update_graph_after_note_save",
                     side_effect=RuntimeError("graph broken"),
                 ):
                     with self.assertRaises(Exception):
@@ -211,12 +208,12 @@ class BackendApiServiceTests(unittest.TestCase):
 
         try:
             with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-                backend_api,
-                "_require_loaded",
+                self.service,
+                "require_loaded",
                 return_value=(vault, indexer),
-            ), mock.patch.object(backend_api, "_counts", return_value={"notes": 0}), mock.patch.object(
-                backend_api,
-                "_rebuild_graph_projection",
+            ), mock.patch.object(self.service, "counts", return_value={"notes": 0}), mock.patch.object(
+                self.service,
+                "rebuild_graph_projection",
                 return_value={"available": True},
             ) as rebuild:
                 result = self.service.delete_note(request)
@@ -241,12 +238,12 @@ class BackendApiServiceTests(unittest.TestCase):
         previous_lock = self._replace_projection_lock(projection_lock)
 
         with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-            backend_api,
-            "_require_loaded",
+            self.service,
+            "require_loaded",
             return_value=(vault, indexer),
         ), mock.patch.object(
-            backend_api,
-            "_rebuild_graph_projection",
+            self.service,
+            "rebuild_graph_projection",
             return_value={"available": True},
         ) as rebuild:
             try:
@@ -272,12 +269,12 @@ class BackendApiServiceTests(unittest.TestCase):
         previous_lock = self._replace_projection_lock(projection_lock)
 
         with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-            backend_api,
-            "_require_loaded",
+            self.service,
+            "require_loaded",
             return_value=(vault, indexer),
         ), mock.patch.object(
-            backend_api,
-            "_rebuild_graph_projection",
+            self.service,
+            "rebuild_graph_projection",
             return_value={"available": True},
         ) as rebuild:
             try:

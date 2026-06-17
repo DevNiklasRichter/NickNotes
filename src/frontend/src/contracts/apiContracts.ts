@@ -1,5 +1,67 @@
 export const API_CONTRACT_VERSION = '1.0.0' as const
 
+// Keep this list aligned with CONTRACT_SYNC_MODEL_MAP in src/backend/contracts.py.
+// A Python contract-sync test compares the stable top-level fields for these
+// response shapes. Record<string, any> fields remain intentional extension points.
+export const CONTRACT_SYNC_TYPES = [
+  'VaultCounts',
+  'HealthResponse',
+  'BackendStateResponse',
+  'VaultOpenResponse',
+  'ReindexResponse',
+  'NoteBaseOpenStartResponse',
+  'OperationStatusResponse',
+  'VaultDeleteResponse',
+  'SearchRow',
+  'SearchResponse',
+  'FocusMitResponse',
+  'SuggestionResponse',
+  'CapturePreviewResponse',
+  'ParsedTaskResponse',
+  'SaveCaptureResponse',
+  'FocusMitSaveResponse',
+  'QuickCaptureFocusTodoResponse',
+  'DailyOpenResponse',
+  'TaskRow',
+  'TaskListResponse',
+  'TodoRow',
+  'TodoListResponse',
+  'TodoToggleResponse',
+  'TodoPromoteResponse',
+  'TaskDoneResponse',
+  'FocusDashboardAggregateStats',
+  'FocusDashboardAggregateResponse',
+  'GraphIndexResponse',
+  'GraphIndexStatusResponse',
+  'GraphIndexRebuildResponse',
+  'GraphStateResponse',
+  'NoteContentResponse',
+  'NoteMediaResponse',
+  'OpenNoteResponse',
+  'ReviewResponse',
+  'ReviewDashboardResponse',
+  'UiSettingsResponse',
+  'TagGroupsResponse',
+  'NoteGroupsResponse',
+  'TagOverviewResponse',
+  'TagMatchCandidate',
+  'TagMatchCandidatesResponse',
+  'GroupMutationResponse',
+  'NoteGroupAddResponse',
+  'NoteGroupRenameResponse',
+  'NoteGroupDeleteResponse',
+  'NoteGroupMoveResponse',
+  'NoteFavoritesResponse',
+  'NoteMutationResponse',
+  'OneNoteImportPreviewResponse',
+  'OneNoteImportResponse',
+  'OneNoteImportStatusResponse',
+  'NoteAddResponse',
+  'TemplateMigrationResponse',
+  'ErrorPayload',
+  'ErrorResponse',
+] as const
+
 export type VaultCounts = {
   notes: number
   openTasks: number
@@ -329,6 +391,14 @@ export type TagMatchCandidatesResponse = {
   total: number
 }
 
+export type GroupMutationResponse = {
+  groups: Record<string, any>[]
+  notesUpdated: number
+  counts: VaultCounts
+  graphStatus: Record<string, any>
+  linkRewrite: Record<string, any>
+}
+
 export type NoteGroupsResponse = {
   groups: Record<string, any>[]
 }
@@ -421,3 +491,19 @@ export type OneNoteImportResponse = {
 }
 
 export type OneNoteImportStatusResponse = OperationStatusResponse
+
+export type ErrorPayload = {
+  code: string
+  message: string
+  details: Record<string, any> | null
+  operationId: string | null
+  vaultId: string | null
+  traceId: string | null
+}
+
+export type ErrorResponse = {
+  ok: boolean
+  status: number
+  error: ErrorPayload
+  timestamp: string
+}

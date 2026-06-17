@@ -1,118 +1,62 @@
-﻿# NickNotes v2
+# NickNotes
 
-NickNotes ist jetzt auf einen modernen Desktop-Stack migriert:
+NickNotes ist eine lokale Windows-first Desktop-App fuer portable Markdown-NoteBases. Notizen und eigenstaendige Tasks bleiben als Markdown-Dateien lesbar; Indizes, Graphen und Uebersichten sind nur wiederherstellbare Projektionen.
 
-- Frontend: React + TypeScript + Vite
-- Backend: Python (FastAPI)
-- Desktop Wrapper: Electron
+## Stack
 
-## Projektstruktur
+- Frontend: React, TypeScript, Vite
+- Desktop: Electron
+- Backend: Python, FastAPI, Uvicorn
+- Suche/Projektionen: SQLite mit FTS5
+
+## Repository
 
 ```text
 NickNotes/
   src/
-    backend/
-      api.py
-      server.py
-      nicknotes_backend/
-        ai_client.py
-        indexer.py
-        markdown_io.py
-        models.py
-        parser.py
-        vault.py
-    desktop/
-      main.mjs
-      preload.cjs
-    frontend/
-      index.html
-      public/
-      src/
-        App.tsx
-        App.css
-        index.css
-        main.tsx
+    backend/       # FastAPI, Use-Cases, Vault-/Index-/Import-Logik, Tests
+    desktop/       # Electron Main Process und Preload Bridge
+    frontend/      # React-App, Editor, Dashboards, Explorer, Graph
+  doc/             # Architektur-, API- und Backlog-Dokumentation
+  PROJECT_ARCHITECTURE.md
   package.json
-  vite.config.ts
+  package-lock.json
   requirements.txt
   Start-NickNotes.ps1
 ```
 
+`PROJECT_ARCHITECTURE.md` ist die verbindliche Kurzleitplanke fuer Architektur- und Strukturentscheidungen. Weitere Details liegen in `doc/`.
+
 ## Voraussetzungen
 
-- Node.js + npm
-- Python 3.11+ (empfohlen)
+- Node.js mit npm
+- Python 3.11 oder neuer
 
 ## Installation
-
-### 1) Python Backend
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-```
-
-### 2) Frontend + Electron
-
-```powershell
 npm install
 ```
 
-## Entwicklung starten
+## Entwicklung
 
 ```powershell
 npm run dev
 ```
 
-Das startet:
+Das startet den Vite-Dev-Server, Electron und das lokale Python-Backend. Alternativ kann `.\Start-NickNotes.ps1` genutzt werden.
 
-- Vite Dev Server (Frontend)
-- Electron App
-- Python Backend automatisch aus Electron (`python -m src.backend.server`)
-
-Alternativ per Skript:
-
-```powershell
-.\Start-NickNotes.ps1
-```
-
-## Build
+## Pruefung
 
 ```powershell
 npm run build
+python -m unittest discover src/backend/tests
 ```
 
-Das Frontend-Bundle wird nach `dist/frontend` erzeugt.
+## Repo-Hygiene
 
-## Backend API (lokal)
-
-Standardmäßig unter:
-
-- `http://127.0.0.1:8765`
-
-Wichtige Endpunkte:
-
-- `POST /notebase/open`
-- `POST /notebase/create`
-- `POST /notebase/reindex`
-- `POST /capture/preview`
-- `POST /capture/save`
-- `GET /tasks`
-- `POST /tasks/{task_id}/done`
-- `GET /search`
-- `GET /notes/content`
-- `POST /notes/open`
-- `GET /review`
-- `GET /tag-groups`
-- `POST /tag-groups/add-group`
-- `POST /tag-groups/add-tag`
-- `POST /tag-groups/rename-tag`
-- `POST /tag-groups/move-tag`
-- `POST /tag-groups/delete-tag`
-
-## Hinweise
-
-- Das alte Tkinter-UI wurde durch React/Electron ersetzt.
-- Die bestehende Python-Kernlogik wurde in `src/backend/nicknotes_backend` uebernommen.
+Nicht eingecheckt werden lokale Abhaengigkeiten, Build-Ausgaben, Test-Runtimes, Logdateien, lokale NoteBases und generierte Projektionen wie `.venv/`, `node_modules/`, `dist/`, `.tmp/`, `*NoteBase/` oder `.system/index.db`.

@@ -378,12 +378,26 @@ class VaultIndexer:
             self.conn.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
             self.conn.commit()
 
+    def _todo_rows_for_path(self, note_path: str) -> list[dict[str, Any]]:
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT id, checked, created_at, completed_at
+                FROM todos
+                WHERE note_path = ?;
+                """,
+                (note_path,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
     def set_note_todos(
         self,
         note_id: str,
         note_path: str,
         todos: list[ExtractedTodo],
         updated_at: str,
+        existing_rows: list[dict[str, Any]] | None = None,
     ) -> None:
         with self._lock:
             cur = self.conn.cursor()
@@ -395,8 +409,9 @@ class VaultIndexer:
                 """,
                 (note_id,),
             )
-            existing_rows = [dict(row) for row in cur.fetchall()]
-            existing_by_id: dict[str, dict[str, Any]] = {str(row.get("id")): row for row in existing_rows if row.get("id")}
+            current_rows = [dict(row) for row in cur.fetchall()]
+            preserved_rows = [*list(existing_rows or []), *current_rows]
+            existing_by_id: dict[str, dict[str, Any]] = {str(row.get("id")): row for row in preserved_rows if row.get("id")}
             cur.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
             for todo in todos:
                 previous_row = existing_by_id.get(todo.id) or {}
@@ -510,6 +525,7 @@ class VaultIndexer:
 
     def reindex_markdown_file(self, vault_path: Path, file_path: Path) -> dict[str, int]:
         resolved = file_path.resolve()
+        preserved_todo_rows = self._todo_rows_for_path(str(resolved))
         self.remove_projection_for_path(str(resolved))
 
         if not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
@@ -527,7 +543,7 @@ class VaultIndexer:
         if top in {"tasks", "03_tasks"}:
             return {"notes": 0, "tasks": self._index_task_markdown(resolved)}
 
-        return {"notes": self._index_note_markdown(resolved), "tasks": 0}
+        return {"notes": self._index_note_markdown(resolved, preserved_todo_rows=preserved_todo_rows), "tasks": 0}
 
     def _prune_orphan_tags(self, cur: sqlite3.Cursor) -> None:
         cur.execute(
@@ -1377,7 +1393,7 @@ class VaultIndexer:
 
         return {"notes": notes_indexed, "tasks": tasks_indexed}
 
-    def _index_note_markdown(self, file_path: Path) -> int:
+    def _index_note_markdown(self, file_path: Path, preserved_todo_rows: list[dict[str, Any]] | None = None) -> int:
         meta, body = parse_markdown(file_path)
         note_id = str(meta.get("id", "")).strip()
         if not note_id:
@@ -1440,6 +1456,7 @@ class VaultIndexer:
                 note_path=str(file_path),
                 todos=todos,
                 updated_at=updated_at,
+                existing_rows=preserved_todo_rows,
             )
         else:
             self.clear_note_todos(note_id)

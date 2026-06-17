@@ -1,15 +1,36 @@
+# Python
 __pycache__/
-*.pyc
-.mvp_smoke/
+*.py[cod]
+*$py.class
 .venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+src/backend/tests/_runtime/
+
+# Node, Vite and Electron
 node_modules/
 dist/
 /desktop/
-.tmp/phase_e_tests/
-.tmp/phasef-model-tests/
-.tmp/phasef-model-tests-cjs/
-src/backend/tests/_runtime/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Local runtime, smoke-test and scratch artifacts
+.tmp/
+.mvp_smoke/
+.zzz_sys_test/
+.unit_test_write_check.tmp
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Local NoteBases and generated vaults
+/*NoteBase/
+/testVault/
+/testValue/
+/nn-test-*/
+/pytest-cache-files-*/
