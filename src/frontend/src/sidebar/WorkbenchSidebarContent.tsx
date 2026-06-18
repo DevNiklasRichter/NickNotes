@@ -41,7 +41,10 @@ type WorkbenchSidebarContentProps = {
   onPickAndOpenVault: () => void
   onCreateVault: () => void
   onOpenRecentNoteBase: (path: string) => void
-  onMigrateExistingNotesToTemplate: () => void
+  onRenameRecentNoteBase: (path: string) => void
+  onDeleteRecentNoteBase: (path: string) => void
+  onRemoveRecentNoteBase: (path: string) => void
+  onOpenNoteBaseInExplorer: (path: string) => void
   tasks: TaskRow[]
   taskFilters: TaskDashboardFilters
   todoFilters: TodoDashboardFilters
@@ -153,7 +156,10 @@ export function WorkbenchSidebarContent({
   onPickAndOpenVault,
   onCreateVault,
   onOpenRecentNoteBase,
-  onMigrateExistingNotesToTemplate,
+  onRenameRecentNoteBase,
+  onDeleteRecentNoteBase,
+  onRemoveRecentNoteBase,
+  onOpenNoteBaseInExplorer,
   tasks,
   taskFilters,
   todoFilters,
@@ -1070,64 +1076,98 @@ export function WorkbenchSidebarContent({
     onReviewFiltersChange({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
   }
   const currentNoteBasePathKey = noteBasePathKey(vaultPath)
+  const recentNoteBasesForList = recentNoteBases.filter((recent) => noteBasePathKey(recent.path) !== currentNoteBasePathKey)
+
+  const renderNoteBaseMenu = (path: string, variant: 'active' | 'recent') => {
+    const hasPath = Boolean(path.trim())
+    return (
+      <div className="hover-menu-anchor notebase-menu-anchor">
+        <button className="icon-button compact muted notebase-menu-button" disabled={!hasPath} title="NoteBase-Menue">
+          <LucideNamedIcon name="MoreHorizontal" size={14} />
+        </button>
+        {hasPath ? (
+          <div className="hover-menu notebase-row-menu">
+            {variant === 'recent' ? (
+              <button className="context-menu-item" onClick={() => onOpenRecentNoteBase(path)}>
+                <LucideNamedIcon name="FolderOpen" className="context-menu-icon" size={14} />
+                <span>NoteBase oeffnen</span>
+              </button>
+            ) : null}
+            <button className="context-menu-item" onClick={() => (variant === 'active' ? onRenameNoteBase() : onRenameRecentNoteBase(path))}>
+              <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
+              <span>NoteBase umbenennen</span>
+            </button>
+            <button className="context-menu-item" onClick={() => onOpenNoteBaseInExplorer(path)}>
+              <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
+              <span>Im Windows Explorer oeffnen</span>
+            </button>
+            {variant === 'recent' ? (
+              <button className="context-menu-item" onClick={() => onRemoveRecentNoteBase(path)}>
+                <LucideNamedIcon name="ListX" className="context-menu-icon" size={14} />
+                <span>Aus Liste entfernen</span>
+              </button>
+            ) : null}
+            <div className="context-menu-divider" />
+            <button className="context-menu-item danger" onClick={() => (variant === 'active' ? onDeleteNoteBase() : onDeleteRecentNoteBase(path))}>
+              <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
+              <span>NoteBase loeschen</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   if (sidebarView === 'vault') {
     return (
-      <div className="sidebar-content">
-        <h3>NoteBase</h3>
-        <p className="muted-label">Aktive NoteBase</p>
-        <div className="active-notebase-row">
-          <strong>{noteBaseName || 'Keine NoteBase'}</strong>
-          <div className="hover-menu-anchor">
-            <button className="icon-button compact muted" title="NoteBase-Menue">
-              <LucideNamedIcon name="MoreHorizontal" size={14} />
-            </button>
-            <div className="hover-menu">
-              <button onClick={onRenameNoteBase}>NoteBase umbenennen</button>
-              <button className="danger" onClick={onDeleteNoteBase}>
-                NoteBase loeschen
+      <div className="explorer-shell notebase-sidebar-shell">
+        <header className="explorer-toolbar notebase-sidebar-toolbar">
+          <div className="explorer-toolbar-top">
+            <div className="explorer-toolbar-left" />
+            <h3>NoteBase</h3>
+            <div className="explorer-toolbar-right">
+              <button className="icon-button compact" onClick={onPickAndOpenVault} title="NoteBase laden">
+                <LucideNamedIcon name="FolderOpen" size={14} />
+              </button>
+              <button className="icon-button compact" onClick={onCreateVault} title="NoteBase erstellen">
+                <LucideNamedIcon name="FolderPlus" size={14} />
               </button>
             </div>
           </div>
-        </div>
+        </header>
 
-        <div className="stacked-actions">
-          <button onClick={onPickAndOpenVault}>NoteBase laden</button>
-          <button onClick={onCreateVault}>NoteBase anlegen</button>
-          <button onClick={onMigrateExistingNotesToTemplate} disabled={!vaultLoaded}>
-            Templates migrieren
-          </button>
-        </div>
+        <div className="notebase-sidebar-body">
+          <section className="notebase-section">
+            <p className="muted-label">Aktive NoteBase</p>
+            <div className="notebase-list">
+              <div className="notebase-row active" title={vaultPath || 'Keine NoteBase geladen'}>
+                <div className="notebase-row-main">
+                  <strong>{noteBaseName || 'Keine NoteBase'}</strong>
+                  <span>{vaultPath || 'Keine NoteBase geladen'}</span>
+                </div>
+                {renderNoteBaseMenu(vaultLoaded ? vaultPath : '', 'active')}
+              </div>
+            </div>
+          </section>
 
-        <div className="recent-notebases">
-          <p className="muted-label">Zuletzt geoeffnet</p>
-          {recentNoteBases.length > 0 ? (
-            <div className="recent-notebase-list">
-              {recentNoteBases.map((recent) => {
-                const isCurrent = currentNoteBasePathKey !== '' && noteBasePathKey(recent.path) === currentNoteBasePathKey
-                return (
-                  <div className="recent-notebase-row" key={recent.path} title={recent.path}>
-                    <div className="recent-notebase-main">
+          <section className="notebase-section recent-notebases">
+            <p className="muted-label">Zuletzt geoeffnet</p>
+            {recentNoteBasesForList.length > 0 ? (
+              <div className="notebase-list recent-notebase-list">
+                {recentNoteBasesForList.map((recent) => (
+                  <div className="notebase-row" key={recent.path} title={recent.path}>
+                    <div className="notebase-row-main">
                       <strong>{recent.name}</strong>
                       <span>{recent.path}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="recent-notebase-open-button"
-                      onClick={() => onOpenRecentNoteBase(recent.path)}
-                      disabled={isCurrent}
-                      title={isCurrent ? 'Diese NoteBase ist bereits geoeffnet' : `NoteBase oeffnen: ${recent.name}`}
-                    >
-                      <LucideNamedIcon name="FolderOpen" size={13} />
-                      <span>{isCurrent ? 'Aktiv' : 'Oeffnen'}</span>
-                    </button>
+                    {renderNoteBaseMenu(recent.path, 'recent')}
                   </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="recent-notebases-empty">Noch keine NoteBase-Historie.</p>
-          )}
+                ))}
+              </div>
+            ) : (
+              <p className="recent-notebases-empty">Noch keine NoteBase-Historie.</p>
+            )}
+          </section>
         </div>
       </div>
     )

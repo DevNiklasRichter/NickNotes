@@ -2267,18 +2267,6 @@ class VaultManager:
             "created": True,
         }
 
-    def migrate_note_templates(self, indexer: VaultIndexer) -> dict[str, Any]:
-        touched_paths: list[str] = []
-        for file_path in self._iter_markdown_files_for_tag_updates():
-            if self._is_system_path(file_path.parent) or self._is_tag_path(file_path.parent):
-                continue
-            _final_path, _meta, changed = self.normalize_note_file(file_path, touch_updated=False, rename_by_title=False)
-            if changed:
-                touched_paths.append(file_path.as_posix())
-
-        indexer.reindex_vault(self.vault_path)
-        return {"updated": len(touched_paths), "paths": touched_paths}
-
     def add_favorite_folder(self, group_key: str) -> list[str]:
         folder = self._resolve_group_path(group_key)
         relative = self._to_group_key(folder)

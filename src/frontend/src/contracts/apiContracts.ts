@@ -57,7 +57,6 @@ export const CONTRACT_SYNC_TYPES = [
   'OneNoteImportResponse',
   'OneNoteImportStatusResponse',
   'NoteAddResponse',
-  'TemplateMigrationResponse',
   'ErrorPayload',
   'ErrorResponse',
 ] as const
@@ -461,14 +460,6 @@ export type NoteMutationResponse = {
   movedPaths: string[]
   deleted: boolean
   deletedPath: string
-}
-
-export type TemplateMigrationResponse = {
-  updated: number
-  paths: string[]
-  counts: VaultCounts
-  tagGroups: Record<string, any>[]
-  graphStatus: Record<string, any>
 }
 
 export type OneNoteImportPreviewResponse = {

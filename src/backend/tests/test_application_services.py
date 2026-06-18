@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -96,16 +97,36 @@ class BackendApiServiceTests(unittest.TestCase):
             self.assertIs(result, expected)
             spy.assert_called_once_with()
 
-    def test_migrate_note_templates_route_delegates_to_service(self) -> None:
-        expected = {"updated": 1, "paths": []}
-        with mock.patch.object(
-            backend_api.backend_api_service,
-            "migrate_note_templates",
-            return_value=expected,
-        ) as spy:
-            result = backend_api.migrate_note_templates()
-            self.assertIs(result, expected)
-            spy.assert_called_once_with()
+    def test_rename_notebase_can_rename_explicit_recent_path_without_opening(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            vault_path = parent / "RecentBase"
+            (vault_path / ".system").mkdir(parents=True)
+            (vault_path / ".system" / "config.json").write_text("{}", encoding="utf-8")
+
+            request = backend_api.NoteBaseRenameRequest(path=str(vault_path), newName="RenamedBase")
+            result = self.service.rename_notebase(request)
+
+            renamed_path = parent / "RenamedBase"
+            self.assertEqual(result["vaultPath"], str(renamed_path))
+            self.assertFalse(vault_path.exists())
+            self.assertTrue(renamed_path.exists())
+            self.assertFalse(backend_api.state.vault)
+
+    def test_delete_notebase_can_delete_explicit_recent_path_without_opening(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_path = Path(tmpdir) / "RecentBase"
+            (vault_path / ".system").mkdir(parents=True)
+            (vault_path / ".system" / "config.json").write_text("{}", encoding="utf-8")
+
+            request = backend_api.NoteBaseDeleteRequest(path=str(vault_path), confirmDelete=True)
+            result = self.service.delete_notebase(request)
+
+            self.assertTrue(result["deleted"])
+            self.assertEqual(result["deletedPath"], str(vault_path.resolve()))
+            self.assertFalse(vault_path.exists())
+            self.assertFalse(result["vaultLoaded"])
+            self.assertFalse(backend_api.state.vault)
 
     def test_dynamic_route_methods_are_supported_via_fallback(self) -> None:
         expected = {"ok": True}
@@ -166,34 +187,36 @@ class BackendApiServiceTests(unittest.TestCase):
             backend_api.state._session.projection_lock = previous_lock
 
     def test_save_note_content_rolls_back_on_graph_failure(self) -> None:
-        fake_path = self._mock_note_path("rollback.md", exists=True, content="title: Rollback\\n\\nbody")
-        request = backend_api.NoteSaveRequest(path="rollback.md", content="title: Updated\\n\\nbody")
-        vault = mock.MagicMock()
-        vault.vault_path = Path("C:/dummy")
-        vault.save_note_document.return_value = {
-            "path": "rollback.md",
-            "title": "Updated",
-            "tag_rebuild_required": False,
-        }
-        vault.sync_tag_groups_with_index.return_value = None
-        vault.consume_last_link_rewrite_result.return_value = {"updated": 0, "paths": []}
-        indexer = mock.MagicMock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rollback_path = Path(tmpdir) / "rollback.md"
+            fake_path = self._mock_note_path(str(rollback_path), exists=True, content="title: Rollback\\n\\nbody")
+            request = backend_api.NoteSaveRequest(path=str(rollback_path), content="title: Updated\\n\\nbody")
+            vault = mock.MagicMock()
+            vault.vault_path = Path("C:/dummy")
+            vault.save_note_document.return_value = {
+                "path": str(rollback_path),
+                "title": "Updated",
+                "tag_rebuild_required": False,
+            }
+            vault.sync_tag_groups_with_index.return_value = None
+            vault.consume_last_link_rewrite_result.return_value = {"updated": 0, "paths": []}
+            indexer = mock.MagicMock()
 
-        with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-            self.service,
-            "require_loaded",
-            return_value=(vault, indexer),
-        ), mock.patch.object(self.service, "counts", return_value={"notes": 1}):
-                with mock.patch.object(
-                    self.service,
-                    "update_graph_after_note_save",
-                    side_effect=RuntimeError("graph broken"),
-                ):
-                    with self.assertRaises(Exception):
-                        self.service.save_note_content(request)
-                self.assertTrue(
-                    any("rollback.md" in str(args[0]) for args in indexer.remove_projection_for_path.call_args_list for args in [args[0]])
-                )
+            with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
+                self.service,
+                "require_loaded",
+                return_value=(vault, indexer),
+            ), mock.patch.object(self.service, "counts", return_value={"notes": 1}):
+                    with mock.patch.object(
+                        self.service,
+                        "update_graph_after_note_save",
+                        side_effect=RuntimeError("graph broken"),
+                    ):
+                        with self.assertRaises(Exception):
+                            self.service.save_note_content(request)
+                    self.assertTrue(
+                        any("rollback.md" in str(args[0]) for args in indexer.remove_projection_for_path.call_args_list for args in [args[0]])
+                    )
 
     def test_delete_note_content_runs_transaction(self) -> None:
         fake_path = self._mock_note_path("delete-me.md", exists=True, content="title: Delete\\n\\nbody")

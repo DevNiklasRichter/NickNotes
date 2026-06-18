@@ -4,7 +4,6 @@ import {
   normalizeLabel,
   isPermanentPinnedRootGroupKey,
   toNoteDisplayName,
-  toStorageTagGroups,
   type NoteGroup,
   type VaultCounts,
   type NoteTab,
@@ -124,41 +123,6 @@ export class ExplorerMutationService {
         paths: [response.notePath],
       })
       await this.context.openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'note' })
-    } catch (caught) {
-      this.writer.setError(String(caught))
-    }
-  }
-
-  migrateExistingNotesToTemplate = async (): Promise<void> => {
-    if (!this.context.getVaultLoaded()) {
-      return
-    }
-
-    try {
-      this.writer.setError('')
-      const response = await apiRequest<{ updated: number; counts: VaultCounts; tagGroups?: unknown }>(
-        this.backendUrl,
-        '/notes/migrate-templates',
-        {
-          method: 'POST',
-        }
-      )
-      this.writer.setCounts(response.counts)
-      if (response.tagGroups) {
-        this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups))
-      }
-      this.writer.setMessage(`Templates angewendet: ${response.updated} Dateien aktualisiert.`)
-      await this.context.emitMutation?.({
-        kind: 'notes-batch-updated',
-        refresh: {
-          search: true,
-          tasks: true,
-          todos: true,
-          review: true,
-          explorerSidebar: true,
-          noteGroups: true,
-        },
-      })
     } catch (caught) {
       this.writer.setError(String(caught))
     }

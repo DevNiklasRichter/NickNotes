@@ -310,99 +310,93 @@
   overflow: auto;
 }
 
-.stacked-actions {
-  display: grid;
-  gap: 0.45rem;
+.notebase-sidebar-shell {
+  gap: 0.44rem;
 }
 
-.recent-notebases {
-  display: grid;
-  gap: 0.42rem;
+.notebase-sidebar-body {
   min-height: 0;
+  display: grid;
+  gap: 0.64rem;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.notebase-section {
+  min-height: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.notebase-list {
+  min-height: 0;
+  display: grid;
+  gap: 0.18rem;
 }
 
 .recent-notebase-list {
-  display: grid;
-  gap: 0.35rem;
-  min-height: 0;
   overflow: auto;
-  padding-right: 0.1rem;
+  padding-right: 0.08rem;
 }
 
-.recent-notebase-row {
+.notebase-row {
+  min-height: 32px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
-  gap: 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-strong) 82%, var(--surface) 18%);
-  padding: 0.42rem 0.48rem;
+  gap: 0.22rem;
+  border-radius: 4px;
+  padding: 0.22rem 0.12rem 0.22rem 0.28rem;
 }
 
-.recent-notebase-main {
+.notebase-row:hover,
+.notebase-row:focus-within {
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+}
+
+.notebase-row.active {
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
+}
+
+.notebase-row-main {
   min-width: 0;
   display: grid;
-  gap: 0.12rem;
+  gap: 0.05rem;
 }
 
-.recent-notebase-main strong {
+.notebase-row-main strong,
+.notebase-row-main span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.86rem;
+}
+
+.notebase-row-main strong {
+  font-size: 0.82rem;
   font-weight: 600;
   color: var(--text);
 }
 
-.recent-notebase-main span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.72rem;
+.notebase-row-main span {
+  font-size: 0.68rem;
   color: var(--muted);
 }
 
-.recent-notebase-open-button {
-  min-height: 2rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  white-space: nowrap;
-  padding: 0.28rem 0.5rem;
-  font-size: 0.78rem;
+.notebase-menu-anchor {
+  justify-self: end;
+}
+
+.notebase-row-menu {
+  min-width: 220px;
 }
 
 .recent-notebases-empty {
   margin: 0;
   border: 1px dashed var(--line);
-  border-radius: 8px;
+  border-radius: 4px;
   color: var(--muted);
   padding: 0.5rem 0.55rem;
   font-size: 0.78rem;
-}
-
-.active-notebase-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--layout-tree-gap);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
-  background: var(--surface-strong);
-  padding: 0.4rem 0.5rem;
-}
-
-.active-notebase-row strong {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .hover-menu-anchor {
@@ -4425,14 +4419,9 @@
 }
 
 .dock-tab {
-  border-radius: 999px;
+  border-radius: 4px;
   padding: 0.18rem 0.62rem;
   font-size: 0.74rem;
-}
-
-.dock-placeholder {
-  font-size: 0.72rem;
-  color: var(--muted);
 }
 
 .status-note-base {
@@ -7076,6 +7065,56 @@ textarea:focus-visible {
   gap: 0.55rem;
   min-height: 220px;
   text-align: center;
+}
+
+.hover-menu,
+.tag-context-menu,
+.editor-tab-context-menu,
+.cm-md-table-context-menu,
+.editor-selection-context-menu,
+.graph-node-context-menu {
+  width: max-content;
+  max-width: calc(100vw - 18px);
+  overflow-x: auto;
+}
+
+.hover-menu,
+.tag-context-menu,
+.editor-tab-context-menu,
+.editor-selection-context-menu,
+.graph-node-context-menu {
+  z-index: 420;
+}
+
+.hover-menu button,
+.tag-context-menu button,
+.editor-tab-context-menu button,
+.cm-md-table-context-menu button,
+.editor-selection-context-menu button,
+.graph-node-context-menu button,
+.context-menu-item {
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.hover-menu button,
+.tag-context-menu button,
+.editor-tab-context-menu button,
+.cm-md-table-context-menu button,
+.editor-selection-context-menu button,
+.graph-node-context-menu button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.context-menu-item span,
+.editor-tab-context-menu button span,
+.cm-md-table-context-menu button span,
+.editor-selection-context-menu button span,
+.graph-node-context-menu button span {
+  white-space: nowrap;
 }
 
 @media (max-width: 860px) {

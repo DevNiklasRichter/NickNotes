@@ -172,7 +172,7 @@ forward-kompatibel erlaubt; stabile Top-Level-Felder kritischer Responses duerfe
 
 Die Endpunkte decken insbesondere folgende Bereiche ab:
 
-- NoteBase oeffnen, anlegen, umbenennen, loeschen und reindexieren
+- NoteBase oeffnen, erstellen, umbenennen, loeschen und reindexieren
 - Notizen laden, speichern, verschieben, umbenennen, loeschen und mit Medien versehen
 - Ordner verwalten und favorisieren
 - Quick Capture, Tagesnotizen und Fokusdaten

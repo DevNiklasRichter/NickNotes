@@ -59,6 +59,26 @@ function isHostAllowed(rawUrl) {
   return false
 }
 
+function validateLocalDirectoryPath(rawPath) {
+  const cleanPath = String(rawPath || '').trim()
+  if (!cleanPath) {
+    return { allowed: false, code: 'empty_path', message: 'Pfad fehlt.' }
+  }
+  if (!path.isAbsolute(cleanPath)) {
+    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade koennen geoeffnet werden.' }
+  }
+  try {
+    const resolvedPath = path.resolve(cleanPath)
+    const stats = fs.statSync(resolvedPath)
+    if (!stats.isDirectory()) {
+      return { allowed: false, code: 'not_directory', message: 'Der Pfad ist kein Ordner.' }
+    }
+    return { allowed: true, path: resolvedPath }
+  } catch {
+    return { allowed: false, code: 'path_not_found', message: 'Ordner wurde nicht gefunden.' }
+  }
+}
+
 function validateExternalUrl(rawUrl) {
   const cleanUrl = typeof rawUrl === 'string' ? rawUrl.trim() : ''
   if (!cleanUrl) {
@@ -338,6 +358,23 @@ app.whenReady().then(() => {
     } catch (error) {
       console.warn('[nicknotes-security] failed to open external URL', { url, error: String(error) })
       return { ok: false, code: 'launch_failed', message: 'Externe URL konnte nicht geöffnet werden.' }
+    }
+  })
+
+  ipcMain.handle('shell:openPathInFileExplorer', async (_event, rawPath) => {
+    const decision = validateLocalDirectoryPath(rawPath)
+    if (!decision.allowed) {
+      return { ok: false, code: decision.code, message: decision.message }
+    }
+
+    try {
+      const errorMessage = await shell.openPath(decision.path)
+      if (errorMessage) {
+        return { ok: false, code: 'launch_failed', message: errorMessage }
+      }
+      return { ok: true, code: 'ok', message: '' }
+    } catch {
+      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geoeffnet werden.' }
     }
   })
 

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('nicknotes', {
   selectImportSources: () => ipcRenderer.invoke('dialog:selectImportSources'),
   getBackendUrl: () => ipcRenderer.invoke('backend:url'),
   openExternalUrl: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  openPathInFileExplorer: (path) => ipcRenderer.invoke('shell:openPathInFileExplorer', path),
   setWindowTheme: (theme) => ipcRenderer.invoke('window:set-theme', theme),
   setUnsavedChanges: (hasUnsavedChanges) => ipcRenderer.send('app:set-unsaved', Boolean(hasUnsavedChanges)),
   onRequestSaveBeforeClose: (handler) => {

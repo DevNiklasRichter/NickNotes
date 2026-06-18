@@ -67,7 +67,6 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "OneNoteImportResponse": "OneNoteImportResponse",
     "OneNoteImportStatusResponse": "OneNoteImportStatusResponse",
     "NoteAddResponse": "NoteAddResponse",
-    "TemplateMigrationResponse": "TemplateMigrationResponse",
     "ErrorPayload": "ErrorPayload",
     "ErrorResponse": "ErrorResponse",
 }
@@ -498,14 +497,6 @@ class NoteAddResponse(_ContractModel):
     noteType: str = ""
     groups: list[dict[str, Any]] = Field(default_factory=list)
     counts: VaultCounts = Field(default_factory=VaultCounts)
-    graphStatus: dict[str, Any] = Field(default_factory=dict)
-
-
-class TemplateMigrationResponse(_ContractModel):
-    updated: int = 0
-    paths: list[str] = Field(default_factory=list)
-    counts: VaultCounts = Field(default_factory=VaultCounts)
-    tagGroups: list[dict[str, Any]] = Field(default_factory=list)
     graphStatus: dict[str, Any] = Field(default_factory=dict)
 
 

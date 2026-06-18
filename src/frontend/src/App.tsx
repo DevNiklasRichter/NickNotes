@@ -3194,17 +3194,6 @@ function App() {
     setCapturePanelOpen(false)
   }
 
-  const toggleCapturePinned = () => {
-    setCapturePinned((previous) => {
-      if (previous) {
-        setCapturePanelOpen(false)
-        return false
-      }
-      setCapturePanelOpen(true)
-      return true
-    })
-  }
-
   const openCaptureFromDock = () => {
     setCapturePinned(true)
     setCapturePanelOpen(true)
@@ -3477,7 +3466,7 @@ function App() {
         }}
       >
         <header className="sidebar-header-row">
-          <h3>Neue NoteBase anlegen</h3>
+          <h3>Neue NoteBase erstellen</h3>
         </header>
         <p className="muted-copy">Lege Name, Speicherort und Anrede fuer die neue NoteBase fest.</p>
         <form
@@ -3540,7 +3529,7 @@ function App() {
               Abbrechen
             </button>
             <button type="submit" className="primary" disabled={createNoteBasePending}>
-              {createNoteBasePending ? 'Wird angelegt ...' : 'NoteBase anlegen'}
+              {createNoteBasePending ? 'Wird erstellt ...' : 'NoteBase erstellen'}
             </button>
           </div>
         </form>
@@ -3733,7 +3722,6 @@ function App() {
 
   const createExplorerFolder = explorerMutationService.createExplorerFolder
   const createExplorerFile = explorerMutationService.createExplorerFile
-  const migrateExistingNotesToTemplate = explorerMutationService.migrateExistingNotesToTemplate
   const createExplorerTask = explorerMutationService.createExplorerTask
   const renameExplorerFolder = explorerMutationService.renameExplorerFolder
   const moveExplorerFolder = explorerMutationService.moveExplorerFolder
@@ -3781,7 +3769,7 @@ function App() {
                   NoteBase laden
                 </button>
                 <button onClick={() => void createVault()} disabled={noteBaseOpenStatus?.active}>
-                  NoteBase anlegen
+                  NoteBase erstellen
                 </button>
                 <button onClick={toggleThemeMode}>
                   {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
@@ -3869,8 +3857,17 @@ function App() {
             onOpenRecentNoteBase={(path) => {
               void appLifecycleService.openVaultAtPath(path, 'NoteBase gewechselt.')
             }}
-            onMigrateExistingNotesToTemplate={() => {
-              void migrateExistingNotesToTemplate()
+            onRenameRecentNoteBase={(path) => {
+              void appLifecycleService.renameRecentNoteBase(path)
+            }}
+            onDeleteRecentNoteBase={(path) => {
+              void appLifecycleService.deleteNoteBase(path)
+            }}
+            onRemoveRecentNoteBase={(path) => {
+              appLifecycleService.removeRecentNoteBase(path)
+            }}
+            onOpenNoteBaseInExplorer={(path) => {
+              void appLifecycleService.openNoteBaseInFileExplorer(path)
             }}
             tasks={tasks}
             taskFilters={taskDashboardFilters}
@@ -4040,9 +4037,6 @@ function App() {
               <div className="panel-header-row">
                 <h3>Quick Capture</h3>
                 <div className="panel-inline-actions">
-                  <button className="icon-button compact muted" onClick={toggleCapturePinned} title="In Dock verschieben">
-                    <LucideNamedIcon name="Pin" size={14} />
-                  </button>
                   <button className="icon-button compact muted" onClick={closeCapturePanel} title="Quick Capture schliessen">
                     <LucideNamedIcon name="X" size={14} />
                   </button>
@@ -4084,15 +4078,13 @@ function App() {
             </section>
           ) : null}
         </div>
-        <div className="bottom-dock">
-          {!showCaptureInline ? (
+        {!showCaptureInline ? (
+          <div className="bottom-dock">
             <button className="dock-tab" onClick={openCaptureFromDock}>
               Quick Capture
             </button>
-          ) : (
-            <span className="dock-placeholder">Dock bereit</span>
-          )}
-        </div>
+          </div>
+        ) : null}
       </section>
 
       {tabContextMenu && tabContextTarget ? (

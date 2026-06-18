@@ -88,6 +88,52 @@ class BackendApiService:
             )
         return runtime.vault, runtime.indexer
 
+    def _same_path(self, left: Path | None, right: Path | None) -> bool:
+        if left is None or right is None:
+            return False
+        try:
+            return left.resolve() == right.resolve()
+        except OSError:
+            return str(left).lower() == str(right).lower()
+
+    def _current_vault_path(self) -> Path | None:
+        vault = getattr(self.state, "vault", None)
+        if not vault:
+            return None
+        try:
+            return Path(vault.vault_path).resolve()
+        except OSError:
+            return Path(vault.vault_path)
+
+    def _require_note_base_directory(self, target: Path, *, operation: str) -> Path:
+        try:
+            resolved = target.expanduser().resolve()
+        except OSError as exc:
+            raise ValidationDomainError(
+                f"Invalid NoteBase path: {target}",
+                operation=operation,
+                vault_id=str(target),
+                internal_message=str(exc),
+            ) from exc
+        if not resolved.exists() or not resolved.is_dir():
+            raise ValidationDomainError(
+                f"NoteBase path not found: {resolved}",
+                operation=operation,
+                vault_id=str(resolved),
+            )
+        config_markers = (
+            resolved / ".system" / "config.json",
+            resolved / "system" / "config.json",
+            resolved / "99_system" / "config.json",
+        )
+        if not any(marker.exists() for marker in config_markers):
+            raise ValidationDomainError(
+                "Target folder is not a NickNotes NoteBase.",
+                operation=operation,
+                vault_id=str(resolved),
+            )
+        return resolved
+
     def counts(self, indexer: Any) -> dict[str, int]:
         cur = indexer.conn.cursor()
         cur.execute("SELECT COUNT(*) AS cnt FROM notes;")
@@ -675,9 +721,14 @@ class BackendApiService:
         return self.state.get_import_status()
 
     def rename_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        vault, indexer = self.require_loaded()
         req = args[0] if args else kwargs.get("req")
-        old_path = vault.vault_path.resolve()
+        raw_path = str(getattr(req, "path", "") or "").strip()
+        if raw_path:
+            old_path = self._require_note_base_directory(Path(raw_path), operation="rename_notebase")
+            indexer = getattr(self.state, "indexer", None)
+        else:
+            vault, indexer = self.require_loaded()
+            old_path = vault.vault_path.resolve()
         new_name = str(req.new_name).strip()
         if not new_name:
             raise ValidationDomainError(
@@ -712,8 +763,10 @@ class BackendApiService:
                 vault_id=str(old_path),
             )
 
+        is_current = self._same_path(old_path, self._current_vault_path())
         try:
-            self.state.dispose_session()
+            if is_current:
+                self.state.dispose_session()
             old_path.rename(new_path)
         except OSError as exc:
             raise InfrastructureDomainError(
@@ -723,21 +776,33 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-        return self.open_vault(SimpleNamespace(path=str(new_path)))
+        if is_current:
+            return self.open_vault(SimpleNamespace(path=str(new_path)))
+        return {
+            "vaultPath": str(new_path),
+            "noteBasePath": str(new_path),
+            "counts": self.counts(indexer) if indexer else {},
+        }
 
     def delete_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        vault, _indexer = self.require_loaded()
         req = args[0] if args else kwargs.get("req")
+        raw_path = str(getattr(req, "path", "") or "").strip()
+        if raw_path:
+            target = self._require_note_base_directory(Path(raw_path), operation="delete_notebase")
+        else:
+            vault, _indexer = self.require_loaded()
+            target = vault.vault_path.resolve()
         if not req.confirm_delete:
             raise ValidationDomainError(
                 "confirmDelete must be true to delete a NoteBase",
                 operation="delete_notebase",
-                vault_id=str(vault.vault_path),
+                vault_id=str(target),
             )
 
-        target = vault.vault_path.resolve()
+        is_current = self._same_path(target, self._current_vault_path())
         try:
-            self.state.dispose_session()
+            if is_current:
+                self.state.dispose_session()
             shutil.rmtree(target)
         except OSError as exc:
             raise InfrastructureDomainError(
@@ -746,7 +811,11 @@ class BackendApiService:
                 vault_id=str(target),
                 internal_message=str(exc),
             ) from exc
-        return {"deleted": True, "deletedPath": str(target), "vaultLoaded": False}
+        return {
+            "deleted": True,
+            "deletedPath": str(target),
+            "vaultLoaded": bool(getattr(self.state, "vault", None) and getattr(self.state, "indexer", None)),
+        }
 
     def preview_capture(self, *args: Any, **kwargs: Any) -> Any:
         vault, indexer = self.require_loaded()
@@ -1554,21 +1623,6 @@ class BackendApiService:
             "counts": self.counts(indexer),
             "graphStatus": self.rebuild_graph_projection(vault),
             "linkRewrite": vault.consume_last_link_rewrite_result(),
-        }
-
-    def migrate_note_templates(self, *args: Any, **kwargs: Any) -> Any:
-        return self._migrate_note_templates_impl(*args, **kwargs)
-
-    def _migrate_note_templates_impl(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        vault, indexer = self.require_loaded()
-        result = vault.migrate_note_templates(indexer)
-        tag_groups = vault.sync_tag_groups_with_index(indexer)
-        return {
-            "updated": int(result.get("updated", 0)),
-            "paths": result.get("paths", []),
-            "counts": self.counts(indexer),
-            "tagGroups": tag_groups,
-            "graphStatus": self.rebuild_graph_projection(vault),
         }
 
     # Generic fallback keeps compatibility if route names are added without regenerating this file.

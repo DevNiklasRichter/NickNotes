@@ -22,6 +22,7 @@ import {
   getStoredRecentNoteBases,
   normalizeLabel,
   removeStoredRecentNoteBasePath,
+  storeRecentNoteBasePath,
   storeLastNoteBasePath,
   toActiveColorProfileId,
   toBoolean,
@@ -86,6 +87,26 @@ type UiSettingsSnapshot = {
   getCreateNoteBaseParentPath: () => string
   getCreateNoteBaseDisplayName: () => string
   getCreateNoteBaseName: () => string
+}
+
+function encodeFileUrlPath(pathValue: string): string {
+  return pathValue
+    .split('/')
+    .map((segment, index) => {
+      if (index === 0 && /^[A-Za-z]:$/.test(segment)) {
+        return segment
+      }
+      return encodeURIComponent(segment)
+    })
+    .join('/')
+}
+
+function toLocalDirectoryFileUrl(pathValue: string): string {
+  const normalizedPath = pathValue.trim().replace(/\\/g, '/')
+  if (normalizedPath.startsWith('//')) {
+    return `file://${encodeFileUrlPath(normalizedPath.replace(/^\/+/, ''))}`
+  }
+  return `file:///${encodeFileUrlPath(normalizedPath.replace(/^\/+/, ''))}`
 }
 
 type AppLifecycleWriter = {
@@ -176,6 +197,19 @@ export class AppLifecycleService {
 
   private refreshRecentNoteBases = () => {
     this.writer.setRecentNoteBases(getStoredRecentNoteBases())
+  }
+
+  private noteBasePathKey = (path: string): string => normalizeLabel(path).replace(/\//g, '\\').toLowerCase()
+
+  private isCurrentNoteBasePath = (path: string): boolean => {
+    const currentPath = this.snapshot.getVaultPath()
+    return this.noteBasePathKey(currentPath) !== '' && this.noteBasePathKey(currentPath) === this.noteBasePathKey(path)
+  }
+
+  private clearStoredPathIfMatches = (path: string) => {
+    if (this.noteBasePathKey(getStoredLastNoteBasePath()) === this.noteBasePathKey(path)) {
+      clearStoredLastNoteBasePath()
+    }
   }
 
   private setUiReady(ready: boolean) {
@@ -538,8 +572,59 @@ export class AppLifecycleService {
     }
   }
 
-  deleteNoteBase = async () => {
-    const currentName = this.getNoteBaseName()
+  renameRecentNoteBase = async (rawPath: string) => {
+    const path = normalizeLabel(rawPath)
+    if (!path) {
+      return
+    }
+    if (this.isCurrentNoteBasePath(path)) {
+      await this.renameNoteBase()
+      return
+    }
+
+    const currentName = getPathTail(path) || path
+    const renameDialog = await this.context.openTagActionDialog({
+      kind: 'input',
+      title: 'NoteBase umbenennen',
+      message: 'Neuen Namen festlegen',
+      initialValue: currentName,
+      actions: [
+        { id: 'confirm', label: 'Speichern', tone: 'primary' },
+        { id: 'cancel', label: 'Abbrechen' },
+      ],
+    })
+    if (renameDialog.actionId !== 'confirm') {
+      return
+    }
+
+    const newName = normalizeLabel(renameDialog.value)
+    if (!newName || newName === currentName) {
+      return
+    }
+
+    try {
+      this.writer.setError('')
+      const response = await apiRequest<{ vaultPath: string; noteBasePath?: string }>(this.backendUrl, '/notebase/rename', {
+        method: 'POST',
+        body: JSON.stringify({ path, newName }),
+      })
+      const renamedPath = response.noteBasePath ?? response.vaultPath
+      removeStoredRecentNoteBasePath(path)
+      if (this.noteBasePathKey(getStoredLastNoteBasePath()) === this.noteBasePathKey(path)) {
+        storeLastNoteBasePath(renamedPath)
+      } else {
+        storeRecentNoteBasePath(renamedPath)
+      }
+      this.refreshRecentNoteBases()
+      this.writer.setMessage(`NoteBase umbenannt: ${currentName} -> ${getPathTail(renamedPath)}`)
+    } catch (caught) {
+      this.writer.setError(String(caught))
+    }
+  }
+
+  deleteNoteBase = async (rawPath?: string) => {
+    const targetPath = normalizeLabel(rawPath || '')
+    const currentName = targetPath ? getPathTail(targetPath) || targetPath : this.getNoteBaseName()
     const confirmed = await this.context.openTagActionDialog({
       kind: 'choice',
       title: 'NoteBase loeschen',
@@ -577,15 +662,57 @@ export class AppLifecycleService {
       this.writer.setError('')
       const response = await apiRequest<{ deleted: boolean; deletedPath: string }>(this.backendUrl, '/notebase/delete', {
         method: 'POST',
-        body: JSON.stringify({ confirmDelete: true }),
+        body: JSON.stringify(targetPath ? { confirmDelete: true, path: targetPath } : { confirmDelete: true }),
       })
-      this.writer.setVaultLoaded(false)
-      this.writer.setUiSettingsReady(false)
-      this.context.resetWorkspaceForClosedVault()
-      clearStoredLastNoteBasePath()
+      if (!response.deleted) {
+        return
+      }
+      const deletedCurrent = this.isCurrentNoteBasePath(response.deletedPath)
+      if (deletedCurrent) {
+        this.writer.setVaultLoaded(false)
+        this.writer.setUiSettingsReady(false)
+        this.context.resetWorkspaceForClosedVault()
+        clearStoredLastNoteBasePath()
+      } else {
+        this.clearStoredPathIfMatches(response.deletedPath)
+      }
       removeStoredRecentNoteBasePath(response.deletedPath)
       this.refreshRecentNoteBases()
       this.writer.setMessage(`NoteBase geloescht: ${response.deletedPath}`)
+    } catch (caught) {
+      this.writer.setError(String(caught))
+    }
+  }
+
+  removeRecentNoteBase = (rawPath: string) => {
+    const path = normalizeLabel(rawPath)
+    if (!path) {
+      return
+    }
+    removeStoredRecentNoteBasePath(path)
+    this.clearStoredPathIfMatches(path)
+    this.refreshRecentNoteBases()
+    this.writer.setMessage(`NoteBase aus Liste entfernt: ${getPathTail(path) || path}`)
+  }
+
+  openNoteBaseInFileExplorer = async (rawPath: string) => {
+    const path = normalizeLabel(rawPath)
+    if (!path) {
+      return
+    }
+    if (!window.nicknotes?.openPathInFileExplorer && !window.nicknotes?.openExternalUrl) {
+      this.writer.setMessage('Windows Explorer ist nur in der Desktop-App verfuegbar.')
+      return
+    }
+    try {
+      const result = window.nicknotes.openPathInFileExplorer
+        ? await window.nicknotes.openPathInFileExplorer(path)
+        : await window.nicknotes.openExternalUrl?.(toLocalDirectoryFileUrl(path))
+      if (!result?.ok) {
+        this.writer.setError(result?.message || 'NoteBase konnte nicht im Windows Explorer geoeffnet werden.')
+        return
+      }
+      this.writer.setMessage(`NoteBase im Windows Explorer geoeffnet: ${getPathTail(path) || path}`)
     } catch (caught) {
       this.writer.setError(String(caught))
     }

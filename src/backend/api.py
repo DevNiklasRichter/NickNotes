@@ -61,7 +61,6 @@ from .contracts import (
     TagOverviewResponse,
     TaskDoneResponse,
     TaskListResponse,
-    TemplateMigrationResponse,
     TodoListResponse,
     TodoPromoteResponse,
     TodoToggleResponse,
@@ -710,10 +709,12 @@ class VaultCreateRequest(BaseModel):
 
 class NoteBaseRenameRequest(BaseModel):
     new_name: str = Field(alias="newName")
+    path: str | None = None
 
 
 class NoteBaseDeleteRequest(BaseModel):
     confirm_delete: bool = Field(default=False, alias="confirmDelete")
+    path: str | None = None
 
 
 class CapturePreviewRequest(BaseModel):
@@ -1538,15 +1539,6 @@ def move_notes_batch(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
 
 def move_notes_batch_impl(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
     return backend_api_service.move_notes_batch(req)
-
-
-
-@app.post("/notes/migrate-templates", response_model=TemplateMigrationResponse)
-def migrate_note_templates()-> dict[str, Any]:
-    return backend_api_service.migrate_note_templates()
-
-def migrate_note_templates_impl()-> dict[str, Any]:
-    return backend_api_service.migrate_note_templates()
 
 
 

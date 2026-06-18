@@ -1034,3 +1034,34 @@
   color: var(--error-text);
   border-color: var(--error-border);
 }
+
+.explorer-sort-menu,
+.explorer-context-panel {
+  width: max-content;
+  max-width: calc(100vw - 18px);
+  overflow-x: auto;
+}
+
+.explorer-sort-menu,
+.explorer-context-menu {
+  z-index: 420;
+}
+
+.explorer-sort-menu-section button,
+.explorer-context-panel button,
+.context-menu-item {
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.explorer-sort-menu-section button,
+.explorer-context-panel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.context-menu-item span {
+  white-space: nowrap;
+}
