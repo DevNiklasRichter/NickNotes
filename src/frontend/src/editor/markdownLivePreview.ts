@@ -1,6 +1,7 @@
 ﻿import { syntaxTree } from '@codemirror/language'
 import { Facet, type EditorState, type Extension, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
+import { DEFAULT_TAG_GROUP_COLOR } from '../tags/tagColorPalette'
 import { buildTagLookup, findTagDefinition, type TagGroupDefinition, type TagLookup } from '../tags/tagTypes'
 
 type SelectionRange = {
@@ -547,7 +548,7 @@ function createRenderedInlineTagElement(tag: ParsedInlineTag, context: MarkdownT
   const resolved = findTagDefinition(context.tagLookup, tag.groupId, tag.tagId)
   const groupDisplayName = resolved?.group.displayName ?? tag.groupId
   const tagDisplayName = resolved?.tag.displayName ?? tag.tagId
-  const groupColor = resolved?.group.color ?? '#4f8cff'
+  const groupColor = resolved?.group.color ?? DEFAULT_TAG_GROUP_COLOR
   const element = document.createElement('span')
   element.className = 'cm-md-inline-tag-chip'
   element.style.setProperty('--cm-md-tag-color', groupColor)
@@ -1626,7 +1627,7 @@ function decorateInlineTags(
           const resolved = findTagDefinition(lookup, tag.groupId, tag.tagId)
           const groupDisplayName = resolved?.group.displayName ?? tag.groupId
           const tagDisplayName = resolved?.tag.displayName ?? tag.tagId
-          const groupColor = resolved?.group.color ?? '#4f8cff'
+          const groupColor = resolved?.group.color ?? DEFAULT_TAG_GROUP_COLOR
           addRange(
             entries,
             tag.from,

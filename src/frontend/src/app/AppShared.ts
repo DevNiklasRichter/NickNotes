@@ -7,6 +7,7 @@ import {
 } from '../contracts/apiContracts'
 
 export { normalizeTagCandidate } from '../tags/tagTypes'
+export { DEFAULT_TAG_GROUP_COLOR, TAG_COLOR_PRESETS } from '../tags/tagColorPalette'
 
 export {
   TASK_STATUS_OPTIONS,
@@ -481,19 +482,6 @@ export const DEFAULT_EXPLORER_VIEW_STATE: ExplorerViewState = {
   folderOrder: {},
   iconOverrides: { folders: {}, files: {} },
 }
-
-export const TAG_COLOR_PRESETS = [
-  '#4f8cff',
-  '#2fba7a',
-  '#ff8a4f',
-  '#d26cf5',
-  '#ff5a6f',
-  '#6c7dff',
-  '#f0a202',
-  '#2ec4b6',
-  '#94a3b8',
-  '#f43f5e',
-]
 
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   new_topic: '#4f8cff',

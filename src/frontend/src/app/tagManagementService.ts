@@ -1,5 +1,6 @@
 import {
   apiRequest,
+  DEFAULT_TAG_GROUP_COLOR,
   normalizeLabel,
   toStorageTagGroups,
   type VaultCounts,
@@ -66,7 +67,7 @@ export class TagManagementService {
       initialValues: {
         id: 'projekt',
         displayName: 'Projekte',
-        color: '#2f8cff',
+        color: DEFAULT_TAG_GROUP_COLOR,
       },
     })
     if (!form) {
@@ -254,7 +255,7 @@ export class TagManagementService {
           body: JSON.stringify({
             groupId,
             displayName: groupDisplayName,
-            color: '#2f8cff',
+            color: DEFAULT_TAG_GROUP_COLOR,
           }),
         })
         latestGroups = groupResponse.groups
@@ -302,7 +303,7 @@ export class TagManagementService {
       initialValues: {
         id: group.id,
         displayName: group.displayName,
-        color: group.color || '#2f8cff',
+        color: group.color || DEFAULT_TAG_GROUP_COLOR,
       },
     })
     if (!form) {
@@ -398,7 +399,7 @@ export class TagManagementService {
       initialValues: {
         id: group.id,
         displayName: group.displayName,
-        color: group.color || '#2f8cff',
+        color: group.color || DEFAULT_TAG_GROUP_COLOR,
       },
       colorOnly: true,
     })

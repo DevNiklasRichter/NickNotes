@@ -755,7 +755,7 @@ class NoteMediaAddRequest(BaseModel):
 class TagGroupRequest(BaseModel):
     group_id: str = Field(alias="groupId")
     display_name: str = Field(default="", alias="displayName")
-    color: str = Field(default="#4f8cff")
+    color: str = Field(default=TAG_GROUP_DEFAULT_COLOR)
 
 
 class TagCreateRequest(BaseModel):
@@ -776,7 +776,7 @@ class TagGroupRenameRequest(BaseModel):
     group_id: str = Field(alias="groupId")
     new_group_id: str = Field(alias="newGroupId")
     new_display_name: str = Field(default="", alias="newDisplayName")
-    new_color: str = Field(default="#4f8cff", alias="newColor")
+    new_color: str = Field(default=TAG_GROUP_DEFAULT_COLOR, alias="newColor")
     apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 

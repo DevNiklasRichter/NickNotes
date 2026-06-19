@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { normalizeTagColor } from './tagTypes'
 
 export type TagActionDialogTone = 'default' | 'primary' | 'danger'
@@ -55,6 +55,15 @@ type TagActionDialogModalProps = {
 const TAG_ID_INPUT_HINT =
   'Erlaubt sind nur a-z, 0-9 und "-". Umlaute, Sonderzeichen und Leerzeichen sind fuer Tag-IDs nicht erlaubt.'
 
+type ColorSelectionSource = 'preset' | 'custom'
+
+type TagColorPickerProps = {
+  colorPresets: string[]
+  selectedColor: string
+  autoFocus?: boolean
+  onSelectColor: (color: string) => void
+}
+
 function sanitizeTagIdInput(value: string): { cleanValue: string; rejectedInvalidChar: boolean } {
   const rejectedInvalidChar = /[^A-Za-z0-9-]/.test(value)
   return {
@@ -63,14 +72,108 @@ function sanitizeTagIdInput(value: string): { cleanValue: string; rejectedInvali
   }
 }
 
-export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog }: TagActionDialogModalProps) {
-  const [groupIdHintVisible, setGroupIdHintVisible] = useState(false)
-  const [tagIdHintVisible, setTagIdHintVisible] = useState(false)
+function TagColorPicker({ colorPresets, selectedColor, autoFocus = false, onSelectColor }: TagColorPickerProps) {
+  const normalizedPresets = useMemo(() => colorPresets.map((preset) => normalizeTagColor(preset)), [colorPresets])
+  const normalizedSelectedColor = normalizeTagColor(selectedColor || normalizedPresets[0] || '')
+  const selectedPresetIndex = normalizedPresets.findIndex((preset) => preset === normalizedSelectedColor)
+  const [customColor, setCustomColor] = useState(() =>
+    selectedPresetIndex >= 0 ? normalizedPresets[0] || normalizedSelectedColor : normalizedSelectedColor
+  )
+  const [selectionSource, setSelectionSource] = useState<ColorSelectionSource>(() =>
+    selectedPresetIndex >= 0 ? 'preset' : 'custom'
+  )
 
-  useEffect(() => {
-    setGroupIdHintVisible(false)
-    setTagIdHintVisible(false)
-  }, [dialog?.kind])
+  const commitCustomColor = (rawColor: string) => {
+    const nextColor = normalizeTagColor(rawColor)
+    setCustomColor(nextColor)
+    setSelectionSource('custom')
+    onSelectColor(nextColor)
+  }
+
+  const updateCustomDraft = (rawColor: string) => {
+    setCustomColor(normalizeTagColor(rawColor))
+    setSelectionSource('custom')
+  }
+
+  return (
+    <div className="tag-color-options">
+      <div className="tag-color-preset-grid" aria-label="Voreingestellte Farben">
+        {colorPresets.map((preset, index) => {
+          const normalizedPreset = normalizedPresets[index] || normalizeTagColor(preset)
+          const isActive = selectionSource === 'preset' && normalizedSelectedColor === normalizedPreset
+          return (
+            <button
+              key={`tag-color-${preset}`}
+              type="button"
+              className={`tag-color-swatch ${isActive ? 'active' : ''}`}
+              style={{ backgroundColor: preset }}
+              onClick={() => {
+                setSelectionSource('preset')
+                onSelectColor(normalizedPreset)
+              }}
+              title={preset}
+              aria-label={`Farbe ${preset}`}
+            />
+          )
+        })}
+      </div>
+      <div className="tag-color-custom-panel">
+        <span className="tag-color-custom-heading">Eigene Farbe</span>
+        <label className={`tag-color-custom-option ${selectionSource === 'custom' ? 'active' : ''}`} title={customColor}>
+          <input
+            type="color"
+            className="tag-color-custom-input"
+            autoFocus={autoFocus}
+            defaultValue={customColor}
+            onClick={(event) => {
+              commitCustomColor(event.currentTarget.value)
+            }}
+            onInput={(event) => {
+              updateCustomDraft(event.currentTarget.value)
+            }}
+            onChange={(event) => {
+              updateCustomDraft(event.currentTarget.value)
+            }}
+            onBlur={(event) => {
+              if (selectionSource === 'custom') {
+                commitCustomColor(event.currentTarget.value)
+              }
+            }}
+            aria-label="Eigene Farbe auswaehlen"
+          />
+        </label>
+      </div>
+    </div>
+  )
+}
+
+export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog }: TagActionDialogModalProps) {
+  const [hintState, setHintState] = useState<{
+    dialogKind: TagActionDialogState['kind'] | null
+    groupIdHintVisible: boolean
+    tagIdHintVisible: boolean
+  }>({
+    dialogKind: null,
+    groupIdHintVisible: false,
+    tagIdHintVisible: false,
+  })
+  const activeDialogKind = dialog?.kind ?? null
+  const groupIdHintVisible = hintState.dialogKind === activeDialogKind && hintState.groupIdHintVisible
+  const tagIdHintVisible = hintState.dialogKind === activeDialogKind && hintState.tagIdHintVisible
+  const setGroupIdHintVisible = (visible: boolean) => {
+    setHintState((current) => ({
+      dialogKind: activeDialogKind,
+      groupIdHintVisible: visible,
+      tagIdHintVisible: current.dialogKind === activeDialogKind ? current.tagIdHintVisible : false,
+    }))
+  }
+  const setTagIdHintVisible = (visible: boolean) => {
+    setHintState((current) => ({
+      dialogKind: activeDialogKind,
+      groupIdHintVisible: current.dialogKind === activeDialogKind ? current.groupIdHintVisible : false,
+      tagIdHintVisible: visible,
+    }))
+  }
 
   if (!dialog) {
     return null
@@ -187,58 +290,24 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
 
             <label className="tag-form-label">Farbe</label>
             <div className="tag-color-picker-stack">
-              <div className="tag-color-presets">
-                {colorPresets.map((preset) => {
-                  const isActive = normalizeTagColor(dialog.groupValues?.color ?? '') === normalizeTagColor(preset)
-                  return (
-                    <button
-                      key={`tag-color-${preset}`}
-                      type="button"
-                      className={`tag-color-swatch ${isActive ? 'active' : ''}`}
-                      style={{ backgroundColor: preset }}
-                      onClick={() => {
-                        setDialog((current) =>
-                          current && current.kind === 'group-form'
-                            ? {
-                                ...current,
-                                groupValues: {
-                                  id: current.groupValues?.id ?? '',
-                                  displayName: current.groupValues?.displayName ?? '',
-                                  color: preset,
-                                },
-                              }
-                            : current
-                        )
-                      }}
-                      title={preset}
-                      aria-label={`Farbe ${preset}`}
-                    />
+              <TagColorPicker
+                colorPresets={colorPresets}
+                selectedColor={dialog.groupValues?.color ?? colorPresets[0]}
+                onSelectColor={(nextColor) => {
+                  setDialog((current) =>
+                    current && current.kind === 'group-form'
+                      ? {
+                          ...current,
+                          groupValues: {
+                            id: current.groupValues?.id ?? '',
+                            displayName: current.groupValues?.displayName ?? '',
+                            color: nextColor,
+                          },
+                        }
+                      : current
                   )
-                })}
-              </div>
-              <div className="tag-color-custom-row">
-                <input
-                  type="color"
-                  value={normalizeTagColor(dialog.groupValues?.color ?? colorPresets[0])}
-                  onChange={(event) => {
-                    const nextColor = normalizeTagColor(event.target.value)
-                    setDialog((current) =>
-                      current && current.kind === 'group-form'
-                        ? {
-                            ...current,
-                            groupValues: {
-                              id: current.groupValues?.id ?? '',
-                              displayName: current.groupValues?.displayName ?? '',
-                              color: nextColor,
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                  aria-label="Benutzerdefinierte Farbe"
-                />
-                <span className="muted-copy">Eigene Farbe waehlen</span>
-              </div>
+                }}
+              />
             </div>
           </div>
         ) : null}
@@ -400,59 +469,25 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
           <div className="tag-form-grid">
             <label className="tag-form-label">Farbe</label>
             <div className="tag-color-picker-stack">
-              <div className="tag-color-presets">
-                {colorPresets.map((preset) => {
-                  const isActive = normalizeTagColor(dialog.groupValues?.color ?? '') === normalizeTagColor(preset)
-                  return (
-                    <button
-                      key={`group-color-only-${preset}`}
-                      type="button"
-                      className={`tag-color-swatch ${isActive ? 'active' : ''}`}
-                      style={{ backgroundColor: preset }}
-                      onClick={() => {
-                        setDialog((current) =>
-                          current && current.kind === 'color-form'
-                            ? {
-                                ...current,
-                                groupValues: {
-                                  id: current.groupValues?.id ?? '',
-                                  displayName: current.groupValues?.displayName ?? '',
-                                  color: preset,
-                                },
-                              }
-                            : current
-                        )
-                      }}
-                      title={preset}
-                      aria-label={`Farbe ${preset}`}
-                    />
+              <TagColorPicker
+                colorPresets={colorPresets}
+                selectedColor={dialog.groupValues?.color ?? colorPresets[0]}
+                autoFocus
+                onSelectColor={(nextColor) => {
+                  setDialog((current) =>
+                    current && current.kind === 'color-form'
+                      ? {
+                          ...current,
+                          groupValues: {
+                            id: current.groupValues?.id ?? '',
+                            displayName: current.groupValues?.displayName ?? '',
+                            color: nextColor,
+                          },
+                        }
+                      : current
                   )
-                })}
-              </div>
-              <div className="tag-color-custom-row">
-                <input
-                  type="color"
-                  autoFocus
-                  value={normalizeTagColor(dialog.groupValues?.color ?? colorPresets[0])}
-                  onChange={(event) => {
-                    const nextColor = normalizeTagColor(event.target.value)
-                    setDialog((current) =>
-                      current && current.kind === 'color-form'
-                        ? {
-                            ...current,
-                            groupValues: {
-                              id: current.groupValues?.id ?? '',
-                              displayName: current.groupValues?.displayName ?? '',
-                              color: nextColor,
-                            },
-                          }
-                        : current
-                    )
-                  }}
-                  aria-label="Benutzerdefinierte Farbe"
-                />
-                <span className="muted-copy">Eigene Farbe waehlen</span>
-              </div>
+                }}
+              />
             </div>
           </div>
         ) : null}

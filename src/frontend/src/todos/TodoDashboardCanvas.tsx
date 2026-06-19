@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TaskRow, TodoDashboardFilters, TodoGroupingMode, TodoRow } from '../app/AppShared'
+import { DEFAULT_TAG_GROUP_COLOR } from '../tags/tagColorPalette'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 
 type TodoDashboardCanvasProps = {
@@ -118,7 +119,7 @@ function buildTagLookup(tagGroups: TagGroupDefinition[]): TagLookup {
       tagVisualByKey.set(`${group.id}:${tag.id}`.toLowerCase(), {
         label: tag.displayName || tag.id,
         groupLabel,
-        color: group.color || '#4f8cff',
+        color: group.color || DEFAULT_TAG_GROUP_COLOR,
       })
     }
   }

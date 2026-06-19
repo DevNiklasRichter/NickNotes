@@ -1,3 +1,5 @@
+import { DEFAULT_TAG_GROUP_COLOR } from './tagColorPalette'
+
 export type TagDefinition = {
   id: string
   displayName: string
@@ -24,7 +26,7 @@ export type TagLookup = {
   groupsByIdLower: Map<string, TagLookupGroup>
 }
 
-const FALLBACK_COLOR = '#4f8cff'
+const FALLBACK_COLOR = DEFAULT_TAG_GROUP_COLOR
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
