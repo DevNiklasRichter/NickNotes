@@ -24,6 +24,14 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "VaultDeleteResponse": "VaultDeleteResponse",
     "SearchRowResponse": "SearchRow",
     "SearchResponse": "SearchResponse",
+    "AssistantSourceResponse": "AssistantSource",
+    "AssistantChatResponse": "AssistantChatResponse",
+    "AssistantVoiceStatusResponse": "AssistantVoiceStatusResponse",
+    "AssistantEmbeddingStatusResponse": "AssistantEmbeddingStatusResponse",
+    "AssistantChangeOperationResponse": "AssistantChangeOperation",
+    "AssistantChangeSetResponse": "AssistantChangeSet",
+    "AssistantChangeSetPreviewResponse": "AssistantChangeSetPreviewResponse",
+    "AssistantChangeSetApplyResponse": "AssistantChangeSetApplyResponse",
     "FocusMitResponse": "FocusMitResponse",
     "SuggestionResponse": "SuggestionResponse",
     "CapturePreviewResponse": "CapturePreviewResponse",
@@ -148,6 +156,100 @@ class SearchRowResponse(_ContractModel):
 
 class SearchResponse(_ContractModel):
     items: list[SearchRowResponse] = Field(default_factory=list)
+
+
+class AssistantSourceResponse(_ContractModel):
+    path: str = ""
+    title: str = ""
+    excerpt: str = ""
+    score: float = 0.0
+
+
+class AssistantChatResponse(_ContractModel):
+    answer: str = ""
+    sources: list[AssistantSourceResponse] = Field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    usedProvider: bool = False
+    readOnly: bool = True
+
+
+class AssistantVoiceStatusResponse(_ContractModel):
+    assistantEnabled: bool = False
+    externalContentAllowed: bool = False
+    provider: str = ""
+    model: str = ""
+    providerConfigured: bool = False
+    providerTranscriptionAvailable: bool = False
+    providerTranscriptionReason: str = ""
+    privacyMode: str = "browser"
+
+
+class AssistantEmbeddingStatusResponse(_ContractModel):
+    assistantEnabled: bool = False
+    enabled: bool = False
+    decision: str = ""
+    recommended: bool = False
+    reason: str = ""
+    sourceOfTruth: str = "markdown"
+    artifactPath: str = ""
+    metadataPath: str = ""
+    quarantinePath: str = ""
+    rebuildable: bool = True
+    externalEmbeddingAllowed: bool = False
+    externalEmbeddingReason: str = ""
+    provider: str = ""
+    model: str = ""
+    comparison: list[dict[str, Any]] = Field(default_factory=list)
+    guardrails: list[str] = Field(default_factory=list)
+    stats: dict[str, int] = Field(default_factory=dict)
+
+
+class AssistantChangeOperationResponse(_ContractModel):
+    id: str = ""
+    actionType: str = ""
+    path: str = ""
+    title: str = ""
+    beforeHash: str = ""
+    afterHash: str = ""
+    beforeContent: str = ""
+    afterContent: str = ""
+    diff: str = ""
+    summary: str = ""
+    targetPath: str = ""
+    targetGroupKey: str = ""
+    noteType: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantChangeSetResponse(_ContractModel):
+    id: str = ""
+    title: str = ""
+    summary: str = ""
+    createdAt: str = ""
+    actionType: str = ""
+    operations: list[AssistantChangeOperationResponse] = Field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    usedProvider: bool = False
+    allowedActions: list[str] = Field(default_factory=list)
+
+
+class AssistantChangeSetPreviewResponse(_ContractModel):
+    changeSet: AssistantChangeSetResponse = Field(default_factory=AssistantChangeSetResponse)
+
+
+class AssistantChangeSetApplyResponse(_ContractModel):
+    applied: bool = False
+    partial: bool = False
+    changeSetId: str = ""
+    paths: list[str] = Field(default_factory=list)
+    pathMappings: list[dict[str, str]] = Field(default_factory=list)
+    operationResults: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    counts: VaultCounts = Field(default_factory=VaultCounts)
+    graphStatus: dict[str, Any] = Field(default_factory=dict)
+    linkRewrite: dict[str, Any] = Field(default_factory=dict)
 
 
 class FocusMitResponse(_ContractModel):

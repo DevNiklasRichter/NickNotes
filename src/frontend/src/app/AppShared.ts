@@ -369,6 +369,7 @@ export type NoteTabKind =
   | 'focus_dashboard'
   | 'review_dashboard'
   | 'graph_dashboard'
+  | 'assistant_chat'
 
 export type NoteTab = {
   id: string
@@ -402,6 +403,7 @@ export const TASK_DASHBOARD_TAB_PATH = '__nicknotes_task_dashboard__'
 export const FOCUS_DASHBOARD_TAB_PATH = '__nicknotes_focus_dashboard__'
 export const REVIEW_DASHBOARD_TAB_PATH = '__nicknotes_review_dashboard__'
 export const GRAPH_DASHBOARD_TAB_PATH = '__nicknotes_graph_dashboard__'
+export const ASSISTANT_CHAT_TAB_PATH = '__nicknotes_assistant_chat__'
 
 export const DEFAULT_TODO_DASHBOARD_FILTERS: TodoDashboardFilters = {
   query: '',

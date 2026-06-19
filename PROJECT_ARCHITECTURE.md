@@ -44,6 +44,9 @@ NickNotes/
         graph_watcher.py        # Best-effort Polling fuer externe Aenderungen
         parser.py               # Quick-Capture-Parsing und Tag-Vorschlaege
         onenote_importer.py     # Lokaler OneNote-.onepkg-Import
+        assistant_chat.py       # Read-only Assistant-Retrieval, Kontextaufbau, Chatantworten und Voice-Status-Anbindung
+        assistant_changesets.py # Assistant-ChangeSet-Vorschlaege, Organisationsaktionen, Diffs, Hashes und Provider-/Fallback-Erzeugung
+        assistant_embeddings.py # Embedding-Entscheidungsstatus, Retrieval-Vergleich und rebuildbare Projektionsregeln
         assistant_security.py   # Assistant-Config, Vault-Pfadregeln und externe Inhaltsfreigaben
         llm_providers.py        # Provider-neutrale LLM-Basisschicht, Secret-Referenzen und Redaction
         ai_client.py            # Kompatibler Smart-Tagging-Client auf der LLM-Basisschicht
@@ -54,6 +57,7 @@ NickNotes/
     frontend/
       src/
         App.tsx                 # App-Orchestrierung
+        assistant/              # Chat-Assistant UI, Chat-Hook und Assistant-API-Client
         editor/                 # Markdown-Editor und Eigenschaften
         explorer/               # Ordner-, Datei- und Tag-Navigation
         workspace/              # Tabs und Split-Editor
@@ -147,7 +151,7 @@ Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags 
 
 ## Assistant-Zielerweiterung
 
-NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Quellen, Spracheingabe und spaeteren Aenderungsvorschlaegen fuer Notizen, Tasks, Tags, Links und Ordnung.
+NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Quellen, Spracheingabe und pruefbaren ChangeSet-Vorschlaegen fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung.
 
 Verbindliche Regeln fuer diese Erweiterung:
 
@@ -156,7 +160,9 @@ Verbindliche Regeln fuer diese Erweiterung:
 - API Keys, Tokens und Passwoerter duerfen nicht im Frontend liegen, nicht in `.system/config.json` als Klartext gespeichert werden und nicht in Logs oder Fehlerantworten erscheinen.
 - Externe Inhaltsuebertragung an Provider muss pro NoteBase explizit aktivierbar sein; der Standard bleibt sicher und datenminimal.
 - Assistant-Tools duerfen nur Vault-gebundene Operationen verwenden. Freie Host-Pfade, Shell-Kommandos oder direkte LLM-Dateischreibzugriffe sind nicht erlaubt.
+- Spracheingabe startet als lokales Browser-Diktat mit kontrollierter Uebernahme in Chat-Eingabe oder Quick Capture. Providerbasierte Transkription darf erst nach denselben Assistant-Freigabe-, Provider- und Secret-Regeln sichtbar bzw. nutzbar werden.
 - Schreibende Aktionen laufen ueber ChangeSets mit Diff, Content-Hash, Konfliktpruefung und Nutzerfreigabe. Erst danach werden bestehende Vault-, Tag-, Task-, Reindex-, Link-Rewrite- und Graph-Pfade verwendet.
+- Optionale Embeddings sind nach `ASST-009` bewusst zurueckgestellt. `/assistant/embeddings/status` dokumentiert FTS-/Tag-/Graph-Vergleich, vorgeschlagene `.system`-Artefakte, Rebuild-/Quarantaeneregeln und externe Provider-Freigaben, ohne Inhalte zu uebertragen oder Embedding-Dateien zu erzeugen.
 
 ## Tasks Und To-dos
 
@@ -196,7 +202,10 @@ Die Endpunkte decken insbesondere folgende Bereiche ab:
 - Suche, Explorer, Review und Graph
 - Lokaler OneNote-`.onepkg`-Import
 - Persistente UI-Einstellungen
-- Zukuenftig: provider-neutraler Assistant-Chat, read-only Retrieval und freigegebene ChangeSet-Aktionen
+- Provider-neutraler Assistant-Chat mit read-only Retrieval, Vault-relativen Quellen und gesichertem Voice-Provider-Status
+- Assistant-ChangeSet-Vorschau und Apply fuer freigegebene Notizverbesserungen mit Diff, Hash-Konfliktpruefung und bestehendem Save-/Reindex-/Graph-Pfad
+- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks und Verschieben ueber bestehende Move-/Link-Rewrite-Pfade
+- Assistant-Embedding-Status fuer die evaluierte, aktuell deaktivierte Embedding-Projektion mit Contract-Sync und ohne Provider-Probe
 
 `VaultManager` besitzt die Dateisystemlogik. Mutierende Windows-Dateioperationen laufen ueber
 kontrollierte Rename-/Delete-Helfer mit bounded Retry, damit kurzlebige Datei- und Scanner-Locks nicht
@@ -214,6 +223,7 @@ Electron kapselt die App, startet und stoppt das Backend und bietet eine kleine 
 Das React-Frontend bietet:
 
 - Explorer fuer Ordner, Notizen, Tasks und Tags
+- Assistant-Chat fuer read-only Fragen zur NoteBase mit Quellen, Diktat-Review, Quick-Capture-Uebergabe, ChangeSet-Diff-Review fuer aktuelle Notizen und kompakter Organisationsplanung
 - CodeMirror-Markdown-Editor mit Tabs und Split-Ansicht
 - Eigenschaften fuer Metadaten, Tags und Beziehungen
 - Quick Capture
@@ -229,9 +239,10 @@ beim Schreiben, fachliche Daten bleiben davon unberuehrt.
 `App.tsx` bleibt die oberste Shell-Komposition, soll aber keine neuen Zustandsmaschinen aufnehmen.
 Cross-Cutting UI-Zustaende wie Operator-Meldungen liegen in `src/frontend/src/app/operatorNotifications.ts`;
 Assistant-Zustaende wie der Tag-Match-Flow liegen in dedizierten Hooks wie
-`src/frontend/src/app/tagMatchAssistantState.ts`. Neue Frontend-Funktionen sollten vorhandene
+`src/frontend/src/app/tagMatchAssistantState.ts`; der Chat-Assistant inklusive ChangeSet-Review liegt als Feature-Modul in
+`src/frontend/src/assistant`. Neue Frontend-Funktionen sollten vorhandene
 Bereichsmodule, Hooks und Services nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
-Der neue Chat-Assistant muss deshalb als eigenes Feature-Modul mit eigenem Hook/Service entstehen und darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
+Der Chat-Assistant darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
 
 ## Konfiguration Und Betrieb
 

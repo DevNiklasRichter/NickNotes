@@ -4,11 +4,15 @@ type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'r
 
 type ActivityRailProps = {
   sidebarView: SidebarView
+  assistantActive: boolean
   onOpenSidebarView: (view: SidebarView) => void
+  onOpenAssistant: () => void
   onOpenSettings: () => void
 }
 
-export function ActivityRail({ sidebarView, onOpenSidebarView, onOpenSettings }: ActivityRailProps) {
+export function ActivityRail({ sidebarView, assistantActive, onOpenSidebarView, onOpenAssistant, onOpenSettings }: ActivityRailProps) {
+  const activeSidebarView = assistantActive ? null : sidebarView
+
   return (
     <aside className="activity-rail">
       <div className="rail-header">
@@ -16,53 +20,59 @@ export function ActivityRail({ sidebarView, onOpenSidebarView, onOpenSettings }:
       </div>
 
       <div className="rail-menu">
-        <button className={sidebarView === 'vault' ? 'active' : ''} onClick={() => onOpenSidebarView('vault')} title="NoteBase">
+        <button className={activeSidebarView === 'vault' ? 'active' : ''} onClick={() => onOpenSidebarView('vault')} title="NoteBase">
           <span className="rail-glyph">
             <LucideNamedIcon name="LayoutGrid" size={14} />
           </span>
           <span className="rail-label">NoteBase</span>
         </button>
-        <button className={sidebarView === 'notes' ? 'active' : ''} onClick={() => onOpenSidebarView('notes')} title="Notizen">
+        <button className={activeSidebarView === 'notes' ? 'active' : ''} onClick={() => onOpenSidebarView('notes')} title="Notizen">
           <span className="rail-glyph">
             <LucideNamedIcon name="FileText" size={14} />
           </span>
           <span className="rail-label">Notizen</span>
         </button>
-        <button className={sidebarView === 'todos' ? 'active' : ''} onClick={() => onOpenSidebarView('todos')} title="Todos">
+        <button className={activeSidebarView === 'todos' ? 'active' : ''} onClick={() => onOpenSidebarView('todos')} title="Todos">
           <span className="rail-glyph">
             <LucideNamedIcon name="ListTodo" size={14} />
           </span>
           <span className="rail-label">Todos</span>
         </button>
-        <button className={sidebarView === 'tasks' ? 'active' : ''} onClick={() => onOpenSidebarView('tasks')} title="Tasks">
+        <button className={activeSidebarView === 'tasks' ? 'active' : ''} onClick={() => onOpenSidebarView('tasks')} title="Tasks">
           <span className="rail-glyph">
             <LucideNamedIcon name="CheckSquare" size={14} />
           </span>
           <span className="rail-label">Tasks</span>
         </button>
-        <button className={sidebarView === 'focus' ? 'active' : ''} onClick={() => onOpenSidebarView('focus')} title="Focus">
+        <button className={activeSidebarView === 'focus' ? 'active' : ''} onClick={() => onOpenSidebarView('focus')} title="Focus">
           <span className="rail-glyph">
             <LucideNamedIcon name="Crosshair" size={14} />
           </span>
           <span className="rail-label">Focus</span>
         </button>
-        <button className={sidebarView === 'tags' ? 'active' : ''} onClick={() => onOpenSidebarView('tags')} title="Tagging">
+        <button className={activeSidebarView === 'tags' ? 'active' : ''} onClick={() => onOpenSidebarView('tags')} title="Tagging">
           <span className="rail-glyph">
             <LucideNamedIcon name="Tag" size={14} />
           </span>
           <span className="rail-label">Tags</span>
         </button>
-        <button className={sidebarView === 'review' ? 'active' : ''} onClick={() => onOpenSidebarView('review')} title="Review">
+        <button className={activeSidebarView === 'review' ? 'active' : ''} onClick={() => onOpenSidebarView('review')} title="Review">
           <span className="rail-glyph">
             <LucideNamedIcon name="BarChart3" size={14} />
           </span>
           <span className="rail-label">Review</span>
         </button>
-        <button className={sidebarView === 'graph' ? 'active' : ''} onClick={() => onOpenSidebarView('graph')} title="Graph">
+        <button className={activeSidebarView === 'graph' ? 'active' : ''} onClick={() => onOpenSidebarView('graph')} title="Graph">
           <span className="rail-glyph">
             <LucideNamedIcon name="Network" size={14} />
           </span>
           <span className="rail-label">Graph</span>
+        </button>
+        <button className={assistantActive ? 'active' : ''} onClick={onOpenAssistant} title="Assistant">
+          <span className="rail-glyph">
+            <LucideNamedIcon name="MessageCircle" size={14} />
+          </span>
+          <span className="rail-label">Assistant</span>
         </button>
       </div>
 

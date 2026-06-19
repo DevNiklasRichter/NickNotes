@@ -24,6 +24,11 @@ from pydantic import BaseModel, Field
 
 from .contracts import (
     API_CONTRACT_VERSION,
+    AssistantChangeSetApplyResponse,
+    AssistantChangeSetPreviewResponse,
+    AssistantChatResponse,
+    AssistantEmbeddingStatusResponse,
+    AssistantVoiceStatusResponse,
     BackendStateResponse,
     CapturePreviewResponse,
     DailyOpenResponse,
@@ -726,6 +731,31 @@ class CaptureSaveRequest(BaseModel):
     selected_tag_keys: list[str] = Field(default_factory=list, alias="selectedTagKeys")
 
 
+class AssistantChatRequest(BaseModel):
+    message: str
+    max_sources: int | None = Field(default=None, alias="maxSources")
+
+
+class AssistantChangeSetPreviewRequest(BaseModel):
+    path: str
+    instruction: str
+
+
+class AssistantChangeSetApplyRequest(BaseModel):
+    change_set: dict[str, Any] = Field(alias="changeSet")
+    confirmed: bool = False
+
+
+class AssistantOrganizePreviewRequest(BaseModel):
+    instruction: str = ""
+    action_type: str = Field(default="", alias="actionType")
+    title: str = ""
+    body: str = ""
+    source_path: str = Field(default="", alias="sourcePath")
+    target_group_key: str = Field(default="", alias="targetGroupKey")
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class FocusMitUpdateRequest(BaseModel):
     date: str | None = None
     mit_ids: list[str] = Field(default_factory=list, alias="mitIds")
@@ -1119,6 +1149,58 @@ def search_notes(query: str = "")-> dict[str, Any]:
 
 def search_notes_impl(query: str = "")-> dict[str, Any]:
     return backend_api_service.search_notes(query)
+
+
+
+@app.post("/assistant/chat", response_model=AssistantChatResponse)
+def assistant_chat(req: AssistantChatRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_chat(req)
+
+def assistant_chat_impl(req: AssistantChatRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_chat(req)
+
+
+
+@app.get("/assistant/voice/status", response_model=AssistantVoiceStatusResponse)
+def assistant_voice_status()-> dict[str, Any]:
+    return backend_api_service.assistant_voice_status()
+
+def assistant_voice_status_impl()-> dict[str, Any]:
+    return backend_api_service.assistant_voice_status()
+
+
+@app.get("/assistant/embeddings/status", response_model=AssistantEmbeddingStatusResponse)
+def assistant_embedding_status()-> dict[str, Any]:
+    return backend_api_service.assistant_embedding_status()
+
+def assistant_embedding_status_impl()-> dict[str, Any]:
+    return backend_api_service.assistant_embedding_status()
+
+
+
+@app.post("/assistant/changeset/preview", response_model=AssistantChangeSetPreviewResponse)
+def assistant_changeset_preview(req: AssistantChangeSetPreviewRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_changeset_preview(req)
+
+def assistant_changeset_preview_impl(req: AssistantChangeSetPreviewRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_changeset_preview(req)
+
+
+
+@app.post("/assistant/changeset/apply", response_model=AssistantChangeSetApplyResponse)
+def assistant_changeset_apply(req: AssistantChangeSetApplyRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_changeset_apply(req)
+
+def assistant_changeset_apply_impl(req: AssistantChangeSetApplyRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_changeset_apply(req)
+
+
+@app.post("/assistant/organize/preview", response_model=AssistantChangeSetPreviewResponse)
+def assistant_organize_preview(req: AssistantOrganizePreviewRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_organize_preview(req)
+
+def assistant_organize_preview_impl(req: AssistantOrganizePreviewRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_organize_preview(req)
 
 
 

@@ -23,6 +23,8 @@ import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas'
 import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas'
 import { GraphDashboardCanvas } from './graph/GraphDashboardCanvas'
 import { GraphWorkspaceProvider } from './graph/GraphWorkspaceContext'
+import { AssistantChatWorkspace, type AssistantChangeTarget } from './assistant/AssistantChatWorkspace'
+import { useAssistantChat } from './assistant/useAssistantChat'
 import { EditorWorkspaceLayout, type ExternalNoteDropPayload } from './workspace/EditorWorkspaceLayout'
 import {
   createInitialWorkspaceState,
@@ -55,6 +57,7 @@ import { TagManagementService } from './app/tagManagementService'
 import { useOperatorNotifications } from './app/operatorNotifications'
 import { useTagMatchAssistantState, type TagMatchCandidate } from './app/tagMatchAssistantState'
 import type { AppMutationEvent, MutationRefreshPlan } from './app/mutationEvents'
+import type { AssistantChangeSetApplyResponse } from './contracts/apiContracts'
 import {
   DEFAULT_BACKEND_URL,
   DEFAULT_DISPLAY_NAME,
@@ -72,6 +75,7 @@ import {
   FOCUS_DASHBOARD_TAB_PATH,
   REVIEW_DASHBOARD_TAB_PATH,
   GRAPH_DASHBOARD_TAB_PATH,
+  ASSISTANT_CHAT_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_TASK_FEATURE_SETTINGS,
   DEFAULT_EXPLORER_OPTIONS,
@@ -524,6 +528,7 @@ function App() {
 
   const activePaneId = workspaceState.lastFocusedPane
   const activeTab = paneActiveTabs[activePaneId] ?? paneActiveTabs.left ?? paneActiveTabs.right ?? null
+  const assistantChat = useAssistantChat({ backendUrl, vaultLoaded, vaultPath })
 
   const backendDataService = useMemo(
     () =>
@@ -1344,6 +1349,9 @@ function App() {
       if (tab.kind === 'graph_dashboard') {
         return 'Network'
       }
+      if (tab.kind === 'assistant_chat') {
+        return 'MessageCircle'
+      }
       return 'Circle'
     }
     const pathKey = normalizeFilePathKey(tab.path)
@@ -1583,6 +1591,42 @@ function App() {
         kind: 'graph_dashboard',
         path: GRAPH_DASHBOARD_TAB_PATH,
         title: 'Graph Preview',
+        content: '',
+        loading: false,
+        dirty: false,
+      },
+    ])
+    setEditorPanelOpen(true)
+    dispatchWorkspace({
+      type: 'OPEN_TAB',
+      paneId: targetPane,
+      tabId: nextTabId,
+      activate: true,
+    })
+  }
+
+  const openAssistantChatTab = () => {
+    const existing = findTabByPath(ASSISTANT_CHAT_TAB_PATH, openTabs)
+    const targetPane = workspaceStateRef.current.lastFocusedPane
+    if (existing) {
+      setEditorPanelOpen(true)
+      dispatchWorkspace({
+        type: 'OPEN_TAB',
+        paneId: targetPane,
+        tabId: existing.id,
+        activate: true,
+      })
+      return
+    }
+
+    const nextTabId = createTabId()
+    setOpenTabs((prev) => [
+      ...prev,
+      {
+        id: nextTabId,
+        kind: 'assistant_chat',
+        path: ASSISTANT_CHAT_TAB_PATH,
+        title: 'Assistant',
         content: '',
         loading: false,
         dirty: false,
@@ -3199,6 +3243,74 @@ function App() {
     setCapturePanelOpen(true)
   }
 
+  const appendAssistantTranscriptToCapture = (text: string) => {
+    const cleanTranscript = text.trim()
+    if (!cleanTranscript) {
+      return
+    }
+    setCaptureText((current) => (current.trim() ? `${current.trim()}\n${cleanTranscript}` : cleanTranscript))
+    setCapturePinned(true)
+    setCapturePanelOpen(true)
+    setMessage('Diktat in Quick Capture uebernommen.')
+  }
+
+  const toAssistantChangeTarget = (tab: NoteTab | null): AssistantChangeTarget | null => {
+    if (!tab || tab.kind !== 'note' || tab.readOnly) {
+      return null
+    }
+    const relativePath = getRelativeVaultPath(tab.path, vaultPath).replace(/\\/g, '/')
+    if (!relativePath || !/\.md$/i.test(relativePath)) {
+      return null
+    }
+    return {
+      path: relativePath,
+      title: tab.title || toNoteDisplayName(tab.path),
+      dirty: tab.dirty,
+    }
+  }
+
+  const resolveAssistantChangeTarget = (assistantPaneId: PaneId): AssistantChangeTarget | null => {
+    const otherPaneId: PaneId = assistantPaneId === 'left' ? 'right' : 'left'
+    return (
+      toAssistantChangeTarget(paneActiveTabs[otherPaneId]) ??
+      toAssistantChangeTarget(activeTab) ??
+      [...openTabs].reverse().map(toAssistantChangeTarget).find((target): target is AssistantChangeTarget => Boolean(target)) ??
+      null
+    )
+  }
+
+  const handleAssistantChangeSetApplied = async (response: AssistantChangeSetApplyResponse) => {
+    setError('')
+    setCounts(response.counts)
+    const graphStatus = response.graphStatus as GraphIndexStatus
+    if (response.graphStatus && Object.keys(response.graphStatus).length > 0) {
+      setLatestGraphStatus(graphStatus)
+    }
+    if (Array.isArray(response.pathMappings)) {
+      for (const mapping of response.pathMappings) {
+        if (mapping?.fromPath && mapping?.toPath) {
+          remapOpenNotePaths(mapping.fromPath, mapping.toPath)
+        }
+      }
+    }
+    const linkRewritePaths = Array.isArray(response.linkRewrite?.paths) ? response.linkRewrite.paths.map(String) : []
+    const paths = Array.from(new Set([...response.paths, ...linkRewritePaths].map(String).filter(Boolean)))
+    await emitMutationEvent({
+      kind: 'note-saved',
+      paths,
+      graphStatus,
+      refresh: {
+        search: true,
+        tasks: true,
+        todos: true,
+        review: true,
+        noteGroups: true,
+        explorerSidebar: true,
+      },
+    })
+    setMessage('Assistant-Aenderungen angewendet.')
+  }
+
   const handleOneNoteImportComplete = (response: {
     counts?: VaultCounts
     tagGroups?: unknown
@@ -3248,7 +3360,7 @@ function App() {
           void saveSettings()
           return
         }
-        if (!activeTab) {
+        if (!activeTab || activeTab.kind !== 'note') {
           return
         }
         void saveTab(activeTab.path)
@@ -3376,6 +3488,31 @@ function App() {
 
     if (paneTab.kind === 'graph_dashboard') {
       return <GraphDashboardCanvas />
+    }
+
+    if (paneTab.kind === 'assistant_chat') {
+      return (
+        <AssistantChatWorkspace
+          controller={assistantChat}
+          vaultLoaded={vaultLoaded}
+          changeTarget={resolveAssistantChangeTarget(paneId)}
+          noteGroups={noteGroups.map((group) => ({
+            key: group.key,
+            label: group.label,
+            canCreateNotes: group.canCreateNotes,
+          }))}
+          onOpenSource={(path, title) => {
+            void openNoteInTab(path, title || toNoteDisplayName(path), {
+              initialNoteType: 'note',
+              targetPane: paneId,
+            })
+          }}
+          onUseTranscriptAsCapture={appendAssistantTranscriptToCapture}
+          onChangeSetApplied={(response) => {
+            void handleAssistantChangeSetApplied(response)
+          }}
+        />
+      )
     }
 
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
@@ -3829,7 +3966,9 @@ function App() {
         <div className="workbench-shell">
       <ActivityRail
         sidebarView={sidebarView}
+        assistantActive={activeTab?.kind === 'assistant_chat'}
         onOpenSidebarView={openSidebarView}
+        onOpenAssistant={openAssistantChatTab}
         onOpenSettings={openSettingsDialog}
       />
 

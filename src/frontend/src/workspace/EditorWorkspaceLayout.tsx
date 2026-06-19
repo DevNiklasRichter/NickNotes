@@ -101,6 +101,18 @@ function EmptyPanePlaceholder() {
   )
 }
 
+function isDraggableWorkspaceTab(tab: NoteTab): boolean {
+  return (
+    tab.kind === 'note' ||
+    tab.kind === 'todo_dashboard' ||
+    tab.kind === 'task_dashboard' ||
+    tab.kind === 'focus_dashboard' ||
+    tab.kind === 'review_dashboard' ||
+    tab.kind === 'graph_dashboard' ||
+    tab.kind === 'assistant_chat'
+  )
+}
+
 export function EditorWorkspaceLayout({
   workspace,
   paneTabs,
@@ -446,23 +458,9 @@ export function EditorWorkspaceLayout({
                 {showMarkerBefore ? <div className="pane-tab-insert-marker" aria-hidden="true" /> : null}
                 <div
                   className={`pane-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
-                  draggable={
-                    tab.kind === 'note' ||
-                    tab.kind === 'todo_dashboard' ||
-                    tab.kind === 'task_dashboard' ||
-                    tab.kind === 'focus_dashboard' ||
-                    tab.kind === 'review_dashboard' ||
-                    tab.kind === 'graph_dashboard'
-                  }
+                  draggable={isDraggableWorkspaceTab(tab)}
                   onDragStart={(event) => {
-                    if (
-                      tab.kind !== 'note' &&
-                      tab.kind !== 'todo_dashboard' &&
-                      tab.kind !== 'task_dashboard' &&
-                      tab.kind !== 'focus_dashboard' &&
-                      tab.kind !== 'review_dashboard' &&
-                      tab.kind !== 'graph_dashboard'
-                    ) {
+                    if (!isDraggableWorkspaceTab(tab)) {
                       event.preventDefault()
                       return
                     }

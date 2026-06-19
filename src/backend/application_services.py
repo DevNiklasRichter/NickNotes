@@ -29,6 +29,11 @@ from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
+from .nicknotes_backend.assistant_chat import AssistantChatService
+from .nicknotes_backend.assistant_changesets import AssistantChangeSetService, AssistantOrganizationService, content_hash
+from .nicknotes_backend.assistant_embeddings import build_assistant_embedding_status
+from .nicknotes_backend.assistant_security import normalize_assistant_config, normalize_assistant_note_path
+from .nicknotes_backend.llm_providers import LlmProviderConfig, LlmProviderError, create_llm_provider
 from .use_cases import (
     GetFocusDashboardUseCase,
     MoveNoteUseCase,
@@ -1046,6 +1051,417 @@ class BackendApiService:
         _vault, indexer = self.require_loaded()
         query = str(args[0]) if args else str(kwargs.get("query", ""))
         return {"items": indexer.search_notes(query)}
+
+    def assistant_chat(self, req: Any) -> Any:
+        vault, indexer = self.require_loaded()
+        message = str(getattr(req, "message", "") or "").strip()
+        if not message:
+            raise ValidationDomainError(
+                "Assistant message must not be empty.",
+                operation="assistant_chat",
+                vault_id=str(vault.vault_path),
+            )
+
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_chat",
+                vault_id=str(vault.vault_path),
+            )
+
+        configured_max_sources = int(assistant_config.get("max_context_notes") or 8)
+        requested_max_sources = getattr(req, "max_sources", None)
+        if requested_max_sources is None:
+            max_sources = configured_max_sources
+        else:
+            try:
+                max_sources = int(requested_max_sources)
+            except (TypeError, ValueError):
+                max_sources = configured_max_sources
+            max_sources = max(1, min(configured_max_sources, max_sources))
+
+        return AssistantChatService(vault=vault, indexer=indexer).answer(
+            question=message,
+            assistant_config=assistant_config,
+            max_sources=max_sources,
+            max_context_chars=int(assistant_config.get("max_context_chars") or 24_000),
+        )
+
+    def assistant_voice_status(self) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+
+        assistant_enabled = bool(assistant_config.get("enabled"))
+        external_allowed = bool(assistant_config.get("allow_external_note_content"))
+        provider_id = str(assistant_config.get("provider") or "").strip().lower()
+        model = str(assistant_config.get("model") or "").strip()
+        provider_configured = False
+        provider_transcription_available = False
+
+        if not assistant_enabled:
+            reason = "assistant_disabled"
+        elif not external_allowed:
+            reason = "external_content_not_allowed"
+        else:
+            reason = "provider_not_configured"
+            provider_config = LlmProviderConfig(
+                enabled=True,
+                provider=provider_id,
+                model=model,
+                api_key_ref=str(assistant_config.get("api_key_ref") or ""),
+                base_url=str(assistant_config.get("base_url") or "").strip() or None,
+            )
+            try:
+                provider = create_llm_provider(provider_config)
+                provider_configured = provider.is_configured()
+                if provider_configured and provider.capabilities.transcription:
+                    provider_transcription_available = True
+                    reason = "available"
+                elif provider_configured:
+                    reason = "capability_unavailable"
+            except LlmProviderError:
+                reason = "provider_unavailable"
+
+        return {
+            "assistantEnabled": assistant_enabled,
+            "externalContentAllowed": external_allowed,
+            "provider": provider_id,
+            "model": model,
+            "providerConfigured": provider_configured,
+            "providerTranscriptionAvailable": provider_transcription_available,
+            "providerTranscriptionReason": reason,
+            "privacyMode": "browser",
+        }
+
+    def assistant_embedding_status(self) -> Any:
+        vault, indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        return build_assistant_embedding_status(
+            indexer=indexer,
+            counts=self.counts(indexer),
+            graph_status=self.graph_index_status(vault),
+            assistant_config=assistant_config,
+        )
+
+    def assistant_changeset_preview(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        instruction = str(getattr(req, "instruction", "") or "").strip()
+        if not instruction:
+            raise ValidationDomainError(
+                "Assistant change instruction must not be empty.",
+                operation="assistant_changeset_preview",
+                vault_id=str(vault.vault_path),
+            )
+
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_changeset_preview",
+                vault_id=str(vault.vault_path),
+            )
+
+        raw_path = str(getattr(req, "path", "") or "").strip()
+        try:
+            return AssistantChangeSetService(vault=vault).preview(
+                raw_path=raw_path,
+                instruction=instruction,
+                assistant_config=assistant_config,
+            )
+        except ValueError as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="assistant_changeset_preview",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+
+    def assistant_organize_preview(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        instruction = str(getattr(req, "instruction", "") or "").strip()
+        actions = getattr(req, "actions", None)
+        raw_actions = actions if isinstance(actions, list) else []
+        if not raw_actions:
+            action: dict[str, Any] = {
+                "actionType": str(getattr(req, "action_type", "") or "").strip(),
+                "title": str(getattr(req, "title", "") or "").strip(),
+                "body": str(getattr(req, "body", "") or "").strip(),
+                "sourcePath": str(getattr(req, "source_path", "") or "").strip(),
+                "targetGroupKey": str(getattr(req, "target_group_key", "") or "").strip(),
+            }
+            raw_actions = [action]
+        if not instruction and not any(str(action.get("title") or action.get("body") or "").strip() for action in raw_actions if isinstance(action, dict)):
+            raise ValidationDomainError(
+                "Assistant organization instruction must not be empty.",
+                operation="assistant_organize_preview",
+                vault_id=str(vault.vault_path),
+            )
+
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_organize_preview",
+                vault_id=str(vault.vault_path),
+            )
+        try:
+            return AssistantOrganizationService(vault=vault).preview(
+                instruction=instruction,
+                raw_actions=[action for action in raw_actions if isinstance(action, dict)],
+                assistant_config=assistant_config,
+            )
+        except ValueError as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="assistant_organize_preview",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+
+    def assistant_changeset_apply(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_changeset_apply",
+                vault_id=str(vault.vault_path),
+            )
+
+        confirmed = bool(getattr(req, "confirmed", False))
+        if not confirmed:
+            raise ValidationDomainError(
+                "Assistant ChangeSet must be confirmed before apply.",
+                operation="assistant_changeset_apply",
+                vault_id=str(vault.vault_path),
+            )
+
+        change_set = getattr(req, "change_set", None)
+        if not isinstance(change_set, dict):
+            raise ValidationDomainError(
+                "Assistant ChangeSet payload is invalid.",
+                operation="assistant_changeset_apply",
+                vault_id=str(vault.vault_path),
+            )
+        operations = change_set.get("operations")
+        if not isinstance(operations, list) or not operations:
+            raise ValidationDomainError(
+                "Assistant ChangeSet contains no operations.",
+                operation="assistant_changeset_apply",
+                vault_id=str(vault.vault_path),
+            )
+
+        prepared: list[dict[str, Any]] = []
+        for item in operations:
+            if not isinstance(item, dict):
+                raise ValidationDomainError(
+                    "Assistant ChangeSet operation is invalid.",
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                )
+            action_type = str(item.get("actionType") or "").strip()
+            if action_type not in {"replace_note_content", "create_note", "create_task", "move_note"}:
+                raise ValidationDomainError(
+                    f"Unsupported Assistant ChangeSet action: {action_type}",
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                )
+            if action_type in {"create_note", "create_task"}:
+                after_content = str(item.get("afterContent") or "")
+                after_hash = str(item.get("afterHash") or "").strip()
+                if not after_hash or content_hash(after_content) != after_hash:
+                    raise ValidationDomainError(
+                        "Assistant ChangeSet content hash does not match its payload.",
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        details={"path": str(item.get("path") or "")},
+                    )
+                target_group_key = str(item.get("targetGroupKey") or "").strip()
+                try:
+                    target_group = vault._resolve_group_path(target_group_key)  # noqa: SLF001
+                    if vault._is_creation_locked_path(target_group):  # noqa: SLF001
+                        raise ValueError("Assistant cannot create notes in this folder.")
+                except ValueError as exc:
+                    raise ValidationDomainError(
+                        str(exc),
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        internal_message=str(exc),
+                    ) from exc
+                title = str(item.get("title") or "").strip() or ("Neue Aufgabe" if action_type == "create_task" else "Neue Notiz")
+                prepared.append(
+                    {
+                        "operationId": str(item.get("id") or ""),
+                        "actionType": action_type,
+                        "targetGroupKey": target_group_key,
+                        "title": title,
+                        "content": after_content,
+                    }
+                )
+                continue
+            try:
+                relative_path = normalize_assistant_note_path(str(item.get("path") or ""))
+            except ValueError as exc:
+                raise ValidationDomainError(
+                    str(exc),
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                    internal_message=str(exc),
+                ) from exc
+            file_path = self._resolve_note_request_path(vault=vault, raw_path=relative_path)
+            current_content = file_path.read_text(encoding="utf-8")
+            current_hash = content_hash(current_content)
+            before_hash = str(item.get("beforeHash") or "").strip()
+            if current_hash != before_hash:
+                raise ConflictDomainError(
+                    "Die Notiz wurde seit Erstellung des Assistant-Vorschlags geaendert.",
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                    details={
+                        "path": relative_path,
+                        "expectedHash": before_hash,
+                        "currentHash": current_hash,
+                    },
+                )
+            if action_type == "move_note":
+                target_group_key = str(item.get("targetGroupKey") or "").strip()
+                if not target_group_key and "targetGroupKey" not in item:
+                    raise ValidationDomainError(
+                        "Assistant move operation needs a target group.",
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        details={"path": relative_path},
+                    )
+                try:
+                    target_group = vault._resolve_group_path(target_group_key)  # noqa: SLF001
+                    if vault._is_tag_path(target_group) or vault._is_system_path(target_group):  # noqa: SLF001
+                        raise ValueError("Assistant cannot move notes into this folder.")
+                except ValueError as exc:
+                    raise ValidationDomainError(
+                        str(exc),
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        internal_message=str(exc),
+                    ) from exc
+                prepared.append(
+                    {
+                        "operationId": str(item.get("id") or ""),
+                        "actionType": action_type,
+                        "path": relative_path,
+                        "absolutePath": str(file_path),
+                        "targetGroupKey": target_group_key,
+                    }
+                )
+                continue
+            after_content = str(item.get("afterContent") or "")
+            after_hash = str(item.get("afterHash") or "").strip()
+            if not after_hash or content_hash(after_content) != after_hash:
+                raise ValidationDomainError(
+                    "Assistant ChangeSet content hash does not match its payload.",
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                    details={"path": relative_path},
+                )
+            prepared.append(
+                {
+                    "operationId": str(item.get("id") or ""),
+                    "actionType": action_type,
+                    "path": relative_path,
+                    "absolutePath": str(file_path),
+                    "content": after_content,
+                }
+            )
+
+        applied_paths: list[str] = []
+        path_mappings: list[dict[str, str]] = []
+        operation_results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        latest_result: dict[str, Any] = {}
+        for item in prepared:
+            try:
+                if item["actionType"] in {"replace_note_content"}:
+                    latest_result = self.save_note_content(SimpleNamespace(path=item["path"], content=item["content"]))
+                    previous_path = str(item["absolutePath"])
+                    next_path = str(latest_result.get("path") or item["path"])
+                    applied_paths.extend([previous_path, next_path])
+                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
+                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
+                    operation_results.append(
+                        {
+                            "id": item["operationId"],
+                            "actionType": item["actionType"],
+                            "status": "applied",
+                            "path": next_path,
+                        }
+                    )
+                elif item["actionType"] in {"create_note", "create_task"}:
+                    created = vault.create_note_in_group(
+                        group_key=item["targetGroupKey"],
+                        title=item["title"],
+                        indexer=self.require_loaded()[1],
+                        note_type="task" if item["actionType"] == "create_task" else "note",
+                        status="open",
+                    )
+                    created_path = str(created["note_path"])
+                    latest_result = self.save_note_content(SimpleNamespace(path=created_path, content=item["content"]))
+                    next_path = str(latest_result.get("path") or created_path)
+                    applied_paths.extend([created_path, next_path])
+                    if created_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
+                        path_mappings.append({"fromPath": created_path, "toPath": next_path})
+                    operation_results.append(
+                        {
+                            "id": item["operationId"],
+                            "actionType": item["actionType"],
+                            "status": "applied",
+                            "path": next_path,
+                        }
+                    )
+                elif item["actionType"] == "move_note":
+                    latest_result = self.move_note(SimpleNamespace(path=item["path"], target_group_key=item["targetGroupKey"]))
+                    next_path = str(latest_result.get("movedPath") or item["path"])
+                    previous_path = str(item["absolutePath"])
+                    applied_paths.extend([previous_path, next_path])
+                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
+                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
+                    operation_results.append(
+                        {
+                            "id": item["operationId"],
+                            "actionType": item["actionType"],
+                            "status": "applied",
+                            "fromPath": previous_path,
+                            "path": next_path,
+                        }
+                    )
+            except DomainError as exc:
+                error = {
+                    "id": item["operationId"],
+                    "actionType": item["actionType"],
+                    "status": "failed",
+                    "error": exc.public_message,
+                    "errorCode": exc.error_code,
+                }
+                errors.append(error)
+                operation_results.append(error)
+
+        return {
+            "applied": any(result.get("status") == "applied" for result in operation_results),
+            "partial": bool(errors) and any(result.get("status") == "applied" for result in operation_results),
+            "changeSetId": str(change_set.get("id") or ""),
+            "paths": list(dict.fromkeys(applied_paths)),
+            "pathMappings": path_mappings,
+            "operationResults": operation_results,
+            "errors": errors,
+            "counts": latest_result.get("counts", self.counts(self.require_loaded()[1])),
+            "graphStatus": latest_result.get("graphStatus", {}),
+            "linkRewrite": latest_result.get("linkRewrite", {}),
+        }
 
     def explorer_files(self, *args: Any, **kwargs: Any) -> Any:
         vault, _indexer = self.require_loaded()

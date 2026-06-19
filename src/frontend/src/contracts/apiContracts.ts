@@ -14,6 +14,14 @@ export const CONTRACT_SYNC_TYPES = [
   'VaultDeleteResponse',
   'SearchRow',
   'SearchResponse',
+  'AssistantSource',
+  'AssistantChatResponse',
+  'AssistantVoiceStatusResponse',
+  'AssistantEmbeddingStatusResponse',
+  'AssistantChangeOperation',
+  'AssistantChangeSet',
+  'AssistantChangeSetPreviewResponse',
+  'AssistantChangeSetApplyResponse',
   'FocusMitResponse',
   'SuggestionResponse',
   'CapturePreviewResponse',
@@ -265,6 +273,111 @@ export type SearchRow = {
 
 export type SearchResponse = {
   items: SearchRow[]
+}
+
+export type AssistantSource = {
+  path: string
+  title: string
+  excerpt: string
+  score: number
+}
+
+export type AssistantChatResponse = {
+  answer: string
+  sources: AssistantSource[]
+  provider: string
+  model: string
+  usedProvider: boolean
+  readOnly: boolean
+}
+
+export type AssistantVoiceStatusResponse = {
+  assistantEnabled: boolean
+  externalContentAllowed: boolean
+  provider: string
+  model: string
+  providerConfigured: boolean
+  providerTranscriptionAvailable: boolean
+  providerTranscriptionReason: string
+  privacyMode: string
+}
+
+export type AssistantEmbeddingStatusResponse = {
+  assistantEnabled: boolean
+  enabled: boolean
+  decision: string
+  recommended: boolean
+  reason: string
+  sourceOfTruth: string
+  artifactPath: string
+  metadataPath: string
+  quarantinePath: string
+  rebuildable: boolean
+  externalEmbeddingAllowed: boolean
+  externalEmbeddingReason: string
+  provider: string
+  model: string
+  comparison: Array<Record<string, any>>
+  guardrails: string[]
+  stats: Record<string, number>
+}
+
+export type AssistantChangeOperation = {
+  id: string
+  actionType: string
+  path: string
+  title: string
+  beforeHash: string
+  afterHash: string
+  beforeContent: string
+  afterContent: string
+  diff: string
+  summary: string
+  targetPath: string
+  targetGroupKey: string
+  noteType: string
+  details: Record<string, any>
+}
+
+export type AssistantChangeSet = {
+  id: string
+  title: string
+  summary: string
+  createdAt: string
+  actionType: string
+  operations: AssistantChangeOperation[]
+  provider: string
+  model: string
+  usedProvider: boolean
+  allowedActions: string[]
+}
+
+export type AssistantChangeSetPreviewResponse = {
+  changeSet: AssistantChangeSet
+}
+
+export type AssistantOrganizeActionType = 'create_note' | 'create_task' | 'move_note'
+
+export type AssistantOrganizePreviewPayload = {
+  instruction?: string
+  actionType: AssistantOrganizeActionType
+  title?: string
+  body?: string
+  sourcePath?: string
+  targetGroupKey?: string
+}
+
+export type AssistantChangeSetApplyResponse = {
+  applied: boolean
+  partial: boolean
+  changeSetId: string
+  paths: string[]
+  pathMappings: { fromPath: string; toPath: string }[]
+  operationResults: Record<string, any>[]
+  errors: Record<string, any>[]
+  counts: VaultCounts
+  graphStatus: Record<string, any>
+  linkRewrite: Record<string, any>
 }
 
 export type TaskRow = {
