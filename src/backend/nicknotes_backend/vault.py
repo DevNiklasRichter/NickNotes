@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .assistant_security import normalize_assistant_config
 from .indexer import VaultIndexer
 from .markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .models import ParsedTask, TagSuggestion
@@ -485,6 +486,7 @@ class VaultManager:
                             "model": "gpt-4.1-mini",
                             "api_key_env": "OPENAI_API_KEY",
                         },
+                        "assistant": normalize_assistant_config({}),
                     },
                     indent=2,
                 ),
@@ -3984,6 +3986,7 @@ class VaultManager:
                 "model": "gpt-4.1-mini",
                 "api_key_env": "OPENAI_API_KEY",
             }
+        config["assistant"] = normalize_assistant_config(config.get("assistant"))
 
         self.config_path.write_text(
             json.dumps(config, indent=2, ensure_ascii=False),

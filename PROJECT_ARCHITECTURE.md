@@ -44,7 +44,9 @@ NickNotes/
         graph_watcher.py        # Best-effort Polling fuer externe Aenderungen
         parser.py               # Quick-Capture-Parsing und Tag-Vorschlaege
         onenote_importer.py     # Lokaler OneNote-.onepkg-Import
-        ai_client.py            # Optionale OpenAI-Tag-Vorschlaege
+        assistant_security.py   # Assistant-Config, Vault-Pfadregeln und externe Inhaltsfreigaben
+        llm_providers.py        # Provider-neutrale LLM-Basisschicht, Secret-Referenzen und Redaction
+        ai_client.py            # Kompatibler Smart-Tagging-Client auf der LLM-Basisschicht
       tests/
     desktop/
       main.mjs                  # Electron-Fenster, Backend-Prozess, Dialoge
@@ -83,7 +85,7 @@ MeineNoteBase/
   <eigene Ordner>/              # frei organisierbare Markdown-Notizen und Tasks
   .media/                       # Medienassets
   .system/
-    config.json                 # Core/Smart-Modus und optionale OpenAI-Konfiguration
+    config.json                 # Core/Smart-/Assistant-Konfiguration und optionale Provider-Referenzen
     index.db                    # wiederherstellbare SQLite-Projektion
     tag_groups.json             # eindeutige Tag-Definitionen
     favorite_folders.json       # favorisierte Ordner
@@ -141,7 +143,20 @@ Das Tag-Vokabular liegt eindeutig in `.system/tag_groups.json`. Ein Tag besteht 
 
 Das Backend kann Gruppen und Tags anlegen, umbenennen, verschieben und loeschen. Referenzen in Markdown werden bei entsprechenden Aktionen aktualisiert. Unter `tags/` erzeugt das Backend lesbare Uebersichtsseiten. Diese Uebersichten und die SQLite-Tabellen `tags` sowie `note_tags` sind Ableitungen, nicht die Definitionsquelle.
 
-Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags deterministisch vor. Im optionalen Smart-Modus koennen zusaetzlich OpenAI-Vorschlaege geliefert werden; ohne API-Key oder bei Fehlern bleibt die Kernfunktion erhalten.
+Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags deterministisch vor. Im optionalen Smart-Modus koennen zusaetzlich LLM-Vorschlaege geliefert werden; ohne Provider-Konfiguration, API-Key oder bei Fehlern bleibt die Kernfunktion erhalten. Bestehende OpenAI-Konfiguration bleibt kompatibel, neue Assistant-Arbeiten sollen jedoch provider-neutral geplant werden.
+
+## Assistant-Zielerweiterung
+
+NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Quellen, Spracheingabe und spaeteren Aenderungsvorschlaegen fuer Notizen, Tasks, Tags, Links und Ordnung.
+
+Verbindliche Regeln fuer diese Erweiterung:
+
+- Markdown bleibt die fachliche Quelle; Chatverlauf, Embeddings und LLM-Kontext sind keine fachliche Wahrheit.
+- LLM-Provider werden ueber eine provider-neutrale Backend-Schicht angebunden, damit GPT, Claude, Gemini und OpenAI-kompatible lokale Endpunkte moeglich bleiben.
+- API Keys, Tokens und Passwoerter duerfen nicht im Frontend liegen, nicht in `.system/config.json` als Klartext gespeichert werden und nicht in Logs oder Fehlerantworten erscheinen.
+- Externe Inhaltsuebertragung an Provider muss pro NoteBase explizit aktivierbar sein; der Standard bleibt sicher und datenminimal.
+- Assistant-Tools duerfen nur Vault-gebundene Operationen verwenden. Freie Host-Pfade, Shell-Kommandos oder direkte LLM-Dateischreibzugriffe sind nicht erlaubt.
+- Schreibende Aktionen laufen ueber ChangeSets mit Diff, Content-Hash, Konfliktpruefung und Nutzerfreigabe. Erst danach werden bestehende Vault-, Tag-, Task-, Reindex-, Link-Rewrite- und Graph-Pfade verwendet.
 
 ## Tasks Und To-dos
 
@@ -181,6 +196,7 @@ Die Endpunkte decken insbesondere folgende Bereiche ab:
 - Suche, Explorer, Review und Graph
 - Lokaler OneNote-`.onepkg`-Import
 - Persistente UI-Einstellungen
+- Zukuenftig: provider-neutraler Assistant-Chat, read-only Retrieval und freigegebene ChangeSet-Aktionen
 
 `VaultManager` besitzt die Dateisystemlogik. Mutierende Windows-Dateioperationen laufen ueber
 kontrollierte Rename-/Delete-Helfer mit bounded Retry, damit kurzlebige Datei- und Scanner-Locks nicht
@@ -215,6 +231,7 @@ Cross-Cutting UI-Zustaende wie Operator-Meldungen liegen in `src/frontend/src/ap
 Assistant-Zustaende wie der Tag-Match-Flow liegen in dedizierten Hooks wie
 `src/frontend/src/app/tagMatchAssistantState.ts`. Neue Frontend-Funktionen sollten vorhandene
 Bereichsmodule, Hooks und Services nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
+Der neue Chat-Assistant muss deshalb als eigenes Feature-Modul mit eigenem Hook/Service entstehen und darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
 
 ## Konfiguration Und Betrieb
 
@@ -223,7 +240,7 @@ Bereichsmodule, Hooks und Services nutzen und `App.tsx` nicht unnoetig weiter au
 - Linting: `eslint.config.js`
 - Dokumentation: `PROJECT_ARCHITECTURE.md` als Leitplanke, weitere Dokumentation in `doc/`
 - NoteBase-Konfiguration: `<NoteBase>/.system/config.json`
-- Optionale OpenAI-Nutzung: Smart-Modus plus API-Key aus der in `config.json` benannten Environment-Variable, standardmaessig `OPENAI_API_KEY`
+- Optionale LLM-Nutzung: Smart-Modus/Assistant plus API-Key-Referenz aus Environment-Variable oder spaeter sicherem Secret-Store; Klartext-Keys gehoeren nicht in `.system/config.json`
 - Entwicklungsstart: `npm run dev`
 - Build: `npm run build`
 - Backend separat: `npm run dev:backend`
