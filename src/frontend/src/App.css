@@ -4039,6 +4039,57 @@
   font-size: 0.78rem;
 }
 
+.assistant-settings-status {
+  min-height: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.7rem 0;
+}
+
+.assistant-settings-status > span {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.24rem 0.52rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-settings-status > span.ok {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--line));
+  color: color-mix(in srgb, var(--success) 76%, var(--text));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.assistant-settings-status > span.warn {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+  color: color-mix(in srgb, var(--warning) 78%, var(--text));
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.assistant-settings-status button {
+  min-height: 1.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.assistant-settings-status button:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
 @media (max-width: 760px) {
   .settings-overlay {
     padding: 0.7rem;

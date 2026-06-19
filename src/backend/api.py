@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .contracts import (
@@ -28,6 +28,11 @@ from .contracts import (
     AssistantChangeSetPreviewResponse,
     AssistantChatResponse,
     AssistantEmbeddingStatusResponse,
+    AssistantMediaStageResponse,
+    AssistantProviderProbeResponse,
+    AssistantRetrievalEvaluationResponse,
+    AssistantSettingsResponse,
+    AssistantTranscriptionResponse,
     AssistantVoiceStatusResponse,
     BackendStateResponse,
     CapturePreviewResponse,
@@ -753,7 +758,33 @@ class AssistantOrganizePreviewRequest(BaseModel):
     body: str = ""
     source_path: str = Field(default="", alias="sourcePath")
     target_group_key: str = Field(default="", alias="targetGroupKey")
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AssistantMediaStageRequest(BaseModel):
+    file_name: str = Field(alias="fileName")
+    content_type: str = Field(default="", alias="contentType")
+    data_base64: str = Field(alias="dataBase64")
+
+
+class AssistantTranscriptionRequest(BaseModel):
+    file_name: str = Field(default="assistant-audio.webm", alias="fileName")
+    content_type: str = Field(default="audio/webm", alias="contentType")
+    data_base64: str = Field(alias="dataBase64")
+    language: str = ""
+
+
+class AssistantSettingsUpdateRequest(BaseModel):
+    enabled: bool = False
+    provider: str = "openai"
+    model: str = ""
+    api_key_ref: str = Field(default="env:OPENAI_API_KEY", alias="apiKeyRef")
+    base_url: str = Field(default="", alias="baseUrl")
+    allow_external_note_content: bool = Field(default=False, alias="allowExternalNoteContent")
+    allow_write_actions: bool = Field(default=False, alias="allowWriteActions")
+    max_context_notes: int = Field(default=8, alias="maxContextNotes")
+    max_context_chars: int = Field(default=24_000, alias="maxContextChars")
 
 
 class FocusMitUpdateRequest(BaseModel):
@@ -1160,6 +1191,17 @@ def assistant_chat_impl(req: AssistantChatRequest)-> dict[str, Any]:
     return backend_api_service.assistant_chat(req)
 
 
+@app.post("/assistant/chat/stream")
+def assistant_chat_stream(req: AssistantChatRequest)-> StreamingResponse:
+    return StreamingResponse(
+        backend_api_service.assistant_chat_stream(req),
+        media_type="application/x-ndjson",
+    )
+
+def assistant_chat_stream_impl(req: AssistantChatRequest)-> StreamingResponse:
+    return assistant_chat_stream(req)
+
+
 
 @app.get("/assistant/voice/status", response_model=AssistantVoiceStatusResponse)
 def assistant_voice_status()-> dict[str, Any]:
@@ -1169,12 +1211,60 @@ def assistant_voice_status_impl()-> dict[str, Any]:
     return backend_api_service.assistant_voice_status()
 
 
+@app.post("/assistant/voice/transcribe", response_model=AssistantTranscriptionResponse)
+def assistant_transcribe_audio(req: AssistantTranscriptionRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_transcribe_audio(req)
+
+def assistant_transcribe_audio_impl(req: AssistantTranscriptionRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_transcribe_audio(req)
+
+
 @app.get("/assistant/embeddings/status", response_model=AssistantEmbeddingStatusResponse)
 def assistant_embedding_status()-> dict[str, Any]:
     return backend_api_service.assistant_embedding_status()
 
 def assistant_embedding_status_impl()-> dict[str, Any]:
     return backend_api_service.assistant_embedding_status()
+
+
+@app.get("/assistant/retrieval/evaluation", response_model=AssistantRetrievalEvaluationResponse)
+def assistant_retrieval_evaluation()-> dict[str, Any]:
+    return backend_api_service.assistant_retrieval_evaluation()
+
+def assistant_retrieval_evaluation_impl()-> dict[str, Any]:
+    return backend_api_service.assistant_retrieval_evaluation()
+
+
+@app.get("/assistant/settings", response_model=AssistantSettingsResponse)
+def assistant_settings()-> dict[str, Any]:
+    return backend_api_service.assistant_settings()
+
+def assistant_settings_impl()-> dict[str, Any]:
+    return backend_api_service.assistant_settings()
+
+
+@app.put("/assistant/settings", response_model=AssistantSettingsResponse)
+def update_assistant_settings(req: AssistantSettingsUpdateRequest)-> dict[str, Any]:
+    return backend_api_service.update_assistant_settings(req)
+
+def update_assistant_settings_impl(req: AssistantSettingsUpdateRequest)-> dict[str, Any]:
+    return backend_api_service.update_assistant_settings(req)
+
+
+@app.post("/assistant/provider/probe", response_model=AssistantProviderProbeResponse)
+def assistant_provider_probe()-> dict[str, Any]:
+    return backend_api_service.assistant_provider_probe()
+
+def assistant_provider_probe_impl()-> dict[str, Any]:
+    return backend_api_service.assistant_provider_probe()
+
+
+@app.post("/assistant/media/stage", response_model=AssistantMediaStageResponse)
+def assistant_media_stage(req: AssistantMediaStageRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_media_stage(req)
+
+def assistant_media_stage_impl(req: AssistantMediaStageRequest)-> dict[str, Any]:
+    return backend_api_service.assistant_media_stage(req)
 
 
 

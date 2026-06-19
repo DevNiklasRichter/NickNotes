@@ -128,6 +128,7 @@ MEDIA_IMAGE_CONTENT_TYPES = {
     "image/avif": ".avif",
 }
 MEDIA_IMAGE_EXTENSIONS = set(MEDIA_IMAGE_CONTENT_TYPES.values())
+ASSISTANT_MEDIA_STAGE_TTL_SECONDS = 24 * 60 * 60
 ISO_DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def _normalize_tag_color(value: str) -> str:
@@ -1033,6 +1034,102 @@ class VaultManager:
         data: bytes,
     ) -> dict[str, str]:
         note_file = self._resolve_note_file(note_path)
+        payload, clean_content_type, suffix = self._validated_media_payload(
+            filename=filename,
+            content_type=content_type,
+            data=data,
+        )
+
+        safe_note_token = self._safe_entry_name(note_file.stem) or "note"
+        target_dir = self.note_media_directory(note_file)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+        while target_path.exists():
+            target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+
+        target_path.write_bytes(payload)
+        vault_relative = target_path.relative_to(self.vault_path).as_posix()
+        markdown_path = f"/{vault_relative}"
+        return {
+            "media_path": vault_relative,
+            "markdown_path": markdown_path,
+            "file_name": target_path.name,
+        }
+
+    def stage_assistant_media_asset(self, *, filename: str, content_type: str, data: bytes) -> dict[str, Any]:
+        payload, clean_content_type, suffix = self._validated_media_payload(
+            filename=filename,
+            content_type=content_type,
+            data=data,
+        )
+        self._cleanup_assistant_media_stage()
+        stage_id = f"asm_{uuid.uuid4().hex}"
+        stage_dir = self.assistant_media_stage_directory()
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        data_path = stage_dir / f"{stage_id}{suffix}"
+        meta_path = stage_dir / f"{stage_id}.json"
+        safe_name = Path(filename or f"assistant-media{suffix}").name or f"assistant-media{suffix}"
+        data_path.write_bytes(payload)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "id": stage_id,
+                    "fileName": safe_name,
+                    "contentType": clean_content_type or "image/png",
+                    "sizeBytes": len(payload),
+                    "dataFile": data_path.name,
+                    "createdAt": datetime.now().isoformat(timespec="seconds"),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "id": stage_id,
+            "fileName": safe_name,
+            "contentType": clean_content_type or "image/png",
+            "sizeBytes": len(payload),
+        }
+
+    def read_staged_assistant_media_asset(self, stage_id: str) -> dict[str, Any]:
+        clean_id = self._normalize_assistant_media_stage_id(stage_id)
+        stage_dir = self.assistant_media_stage_directory()
+        meta_path = stage_dir / f"{clean_id}.json"
+        if not meta_path.exists():
+            raise ValueError("Assistant media attachment is no longer available.")
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Assistant media attachment metadata is invalid.") from exc
+        data_file = str(meta.get("dataFile") or "")
+        if not data_file or Path(data_file).name != data_file:
+            raise ValueError("Assistant media attachment path is invalid.")
+        data_path = stage_dir / data_file
+        if not data_path.exists() or not data_path.is_file():
+            raise ValueError("Assistant media attachment is missing.")
+        payload = data_path.read_bytes()
+        return {
+            "id": clean_id,
+            "fileName": str(meta.get("fileName") or data_path.name),
+            "contentType": str(meta.get("contentType") or ""),
+            "sizeBytes": int(meta.get("sizeBytes") or len(payload)),
+            "data": payload,
+            "dataPath": data_path,
+            "metaPath": meta_path,
+        }
+
+    def remove_staged_assistant_media_asset(self, stage_id: str) -> None:
+        clean_id = self._normalize_assistant_media_stage_id(stage_id)
+        stage_dir = self.assistant_media_stage_directory()
+        for path in stage_dir.glob(f"{clean_id}.*"):
+            if path.is_file():
+                _unlink_path_with_retry(path, missing_ok=True)
+
+    def assistant_media_stage_directory(self) -> Path:
+        return self.system_path / "assistant_media_stage"
+
+    def _validated_media_payload(self, *, filename: str, content_type: str, data: bytes) -> tuple[bytes, str, str]:
         payload = bytes(data)
         if not payload:
             raise ValueError("Die Bilddatei ist leer.")
@@ -1054,22 +1151,25 @@ class VaultManager:
                 guessed = mimetypes.guess_extension(clean_content_type or "") or ""
                 guessed = ".jpg" if guessed == ".jpe" else guessed.lower()
                 suffix = guessed if guessed in MEDIA_IMAGE_EXTENSIONS else ".png"
+        return payload, clean_content_type, suffix
 
-        safe_note_token = self._safe_entry_name(note_file.stem) or "note"
-        target_dir = self.note_media_directory(note_file)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
-        while target_path.exists():
-            target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
+    def _normalize_assistant_media_stage_id(self, stage_id: str) -> str:
+        clean = str(stage_id or "").strip()
+        if not re.fullmatch(r"asm_[a-f0-9]{32}", clean):
+            raise ValueError("Assistant media attachment id is invalid.")
+        return clean
 
-        target_path.write_bytes(payload)
-        vault_relative = target_path.relative_to(self.vault_path).as_posix()
-        markdown_path = f"/{vault_relative}"
-        return {
-            "media_path": vault_relative,
-            "markdown_path": markdown_path,
-            "file_name": target_path.name,
-        }
+    def _cleanup_assistant_media_stage(self) -> None:
+        stage_dir = self.assistant_media_stage_directory()
+        if not stage_dir.exists() or not stage_dir.is_dir():
+            return
+        cutoff = time.time() - ASSISTANT_MEDIA_STAGE_TTL_SECONDS
+        for path in stage_dir.glob("*"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    _unlink_path_with_retry(path, missing_ok=True)
+            except OSError:
+                continue
 
     def note_media_directory(self, note_file: Path) -> Path:
         try:
@@ -2297,6 +2397,24 @@ class VaultManager:
             return json.loads(self.config_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+
+    def write_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(config) if isinstance(config, dict) else {}
+        if "mode" not in payload:
+            payload["mode"] = "core"
+        if not isinstance(payload.get("openai"), dict):
+            payload["openai"] = {
+                "enabled": False,
+                "model": "gpt-4.1-mini",
+                "api_key_env": "OPENAI_API_KEY",
+            }
+        payload["assistant"] = normalize_assistant_config(payload.get("assistant"))
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return payload
 
     def read_ui_settings(self) -> dict[str, Any]:
         default_payload: dict[str, Any] = {

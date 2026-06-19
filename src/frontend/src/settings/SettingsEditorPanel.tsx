@@ -12,6 +12,7 @@ import {
   type ThemeColorToken,
   type VaultCounts,
 } from '../app/AppShared'
+import type { AssistantProviderProbeResponse, AssistantSettingsConfig, AssistantSettingsResponse } from '../contracts/apiContracts'
 import type { ExplorerOptions } from '../explorer/types'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 
@@ -71,6 +72,35 @@ type OneNoteImportStatus = {
   result?: OneNoteImportResponse | null
 }
 
+const DEFAULT_ASSISTANT_SETTINGS_CONFIG: AssistantSettingsConfig = {
+  enabled: false,
+  provider: 'openai',
+  model: 'gpt-4.1-mini',
+  apiKeyRef: 'env:OPENAI_API_KEY',
+  baseUrl: '',
+  allowExternalNoteContent: false,
+  allowWriteActions: false,
+  maxContextNotes: 8,
+  maxContextChars: 24000,
+}
+
+function normalizeAssistantSettingsConfig(config: Partial<AssistantSettingsConfig> | null | undefined): AssistantSettingsConfig {
+  return {
+    ...DEFAULT_ASSISTANT_SETTINGS_CONFIG,
+    ...(config ?? {}),
+    provider: String(config?.provider || DEFAULT_ASSISTANT_SETTINGS_CONFIG.provider).trim().toLowerCase(),
+    model: String(config?.model || DEFAULT_ASSISTANT_SETTINGS_CONFIG.model).trim(),
+    apiKeyRef: String(config?.apiKeyRef || DEFAULT_ASSISTANT_SETTINGS_CONFIG.apiKeyRef).trim(),
+    baseUrl: String(config?.baseUrl || '').trim(),
+    maxContextNotes: Number(config?.maxContextNotes ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextNotes),
+    maxContextChars: Number(config?.maxContextChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextChars),
+  }
+}
+
+function assistantSettingsEqual(left: AssistantSettingsConfig, right: AssistantSettingsConfig): boolean {
+  return JSON.stringify(normalizeAssistantSettingsConfig(left)) === JSON.stringify(normalizeAssistantSettingsConfig(right))
+}
+
 type SettingsEditorPanelProps = {
   displayName: string
   theme: ThemeMode
@@ -96,7 +126,7 @@ type SettingsEditorPanelProps = {
   onOneNoteImportComplete: (response: OneNoteImportResponse) => void
 }
 
-type SettingsSectionId = 'general' | 'appearance' | 'imports' | 'layout' | 'explorer' | 'statusbar' | 'tasks'
+type SettingsSectionId = 'general' | 'appearance' | 'assistant' | 'imports' | 'layout' | 'explorer' | 'statusbar' | 'tasks'
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId
@@ -118,6 +148,13 @@ const SETTINGS_SECTIONS: Array<{
     eyebrow: 'Oberflaeche',
     description: 'Theme und visuelle Arbeitsweise.',
     icon: 'Palette',
+  },
+  {
+    id: 'assistant',
+    title: 'Assistant',
+    eyebrow: 'LLM',
+    description: 'Provider, Modell und Freigaben.',
+    icon: 'Bot',
   },
   {
     id: 'imports',
@@ -190,6 +227,14 @@ export function SettingsEditorPanel({
   const [oneNoteImportStatus, setOneNoteImportStatus] = useState<OneNoteImportStatus | null>(null)
   const [themeColorDrafts, setThemeColorDrafts] = useState<Record<string, Record<string, string>>>({})
   const [themeNameDrafts, setThemeNameDrafts] = useState<Record<string, string>>({})
+  const [assistantSettings, setAssistantSettings] = useState<AssistantSettingsResponse | null>(null)
+  const [assistantDraft, setAssistantDraft] = useState<AssistantSettingsConfig>(DEFAULT_ASSISTANT_SETTINGS_CONFIG)
+  const [assistantPending, setAssistantPending] = useState(false)
+  const [assistantProbePending, setAssistantProbePending] = useState(false)
+  const [assistantProbeMessage, setAssistantProbeMessage] = useState('')
+  const [assistantProbeError, setAssistantProbeError] = useState('')
+  const [assistantMessage, setAssistantMessage] = useState('')
+  const [assistantError, setAssistantError] = useState('')
 
   const formatOneNoteImportError = (caught: unknown): string => {
     if (caught instanceof Error) {
@@ -239,6 +284,51 @@ export function SettingsEditorPanel({
       window.clearInterval(timer)
     }
   }, [backendUrl, oneNotePending])
+
+  useEffect(() => {
+    if (activeSectionId !== 'assistant') {
+      return
+    }
+    if (!vaultLoaded) {
+      setAssistantSettings(null)
+      setAssistantDraft(DEFAULT_ASSISTANT_SETTINGS_CONFIG)
+      setAssistantMessage('')
+      setAssistantError('')
+      setAssistantProbeMessage('')
+      setAssistantProbeError('')
+      return
+    }
+
+    let cancelled = false
+    setAssistantPending(true)
+    setAssistantError('')
+    void apiRequest<AssistantSettingsResponse>(backendUrl, '/assistant/settings')
+      .then((response) => {
+        if (cancelled) {
+          return
+        }
+        const config = normalizeAssistantSettingsConfig(response.config)
+        setAssistantSettings({ ...response, config })
+        setAssistantDraft(config)
+        setAssistantMessage('')
+        setAssistantProbeMessage('')
+        setAssistantProbeError('')
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setAssistantError(formatOneNoteImportError(caught))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAssistantPending(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeSectionId, backendUrl, vaultLoaded])
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -379,6 +469,97 @@ export function SettingsEditorPanel({
   )
   const selectedColorProfile = colorProfiles.find((profile) => profile.id === activeColorProfileId) ?? colorProfiles.find((profile) => profile.id === theme)
   const selectedThemeEditable = Boolean(selectedColorProfile && !selectedColorProfile.builtin)
+  const assistantSettingsDirty = assistantSettings
+    ? !assistantSettingsEqual(assistantDraft, assistantSettings.config)
+    : false
+  const activeSectionIsAssistant = activeSectionId === 'assistant'
+  const footerDirty = activeSectionIsAssistant ? assistantSettingsDirty : settingsDirty
+
+  const updateAssistantDraft = (patch: Partial<AssistantSettingsConfig>) => {
+    setAssistantDraft((prev) => normalizeAssistantSettingsConfig({ ...prev, ...patch }))
+    setAssistantMessage('')
+    setAssistantError('')
+    setAssistantProbeMessage('')
+    setAssistantProbeError('')
+  }
+
+  const selectAssistantProvider = (provider: string) => {
+    const providerId = String(provider || '').trim().toLowerCase()
+    const option = (assistantSettings?.providerOptions ?? []).find((item) => String(item.id || '').toLowerCase() === providerId)
+    updateAssistantDraft({
+      provider: providerId,
+      model: String(option?.defaultModel || '').trim() || assistantDraft.model,
+      apiKeyRef: String(option?.defaultKeyRef || '').trim() || assistantDraft.apiKeyRef,
+      baseUrl: '',
+    })
+  }
+
+  const saveAssistantSettings = async () => {
+    if (!vaultLoaded) {
+      return
+    }
+    setAssistantPending(true)
+    setAssistantError('')
+    setAssistantMessage('')
+    try {
+      const response = await apiRequest<AssistantSettingsResponse>(backendUrl, '/assistant/settings', {
+        method: 'PUT',
+        body: JSON.stringify(normalizeAssistantSettingsConfig(assistantDraft)),
+      })
+      const config = normalizeAssistantSettingsConfig(response.config)
+      setAssistantSettings({ ...response, config })
+      setAssistantDraft(config)
+      setAssistantMessage('Assistant-Einstellungen gespeichert.')
+      setAssistantProbeMessage('')
+      setAssistantProbeError('')
+    } catch (caught) {
+      setAssistantError(formatOneNoteImportError(caught))
+    } finally {
+      setAssistantPending(false)
+    }
+  }
+
+  const discardAssistantSettings = () => {
+    if (!assistantSettings) {
+      return
+    }
+    setAssistantDraft(normalizeAssistantSettingsConfig(assistantSettings.config))
+    setAssistantMessage('')
+    setAssistantError('')
+    setAssistantProbeMessage('')
+    setAssistantProbeError('')
+  }
+
+  const testAssistantProvider = async () => {
+    if (!vaultLoaded || assistantSettingsDirty || assistantProbePending) {
+      return
+    }
+    setAssistantProbePending(true)
+    setAssistantProbeMessage('')
+    setAssistantProbeError('')
+    try {
+      const response = await apiRequest<AssistantProviderProbeResponse>(backendUrl, '/assistant/provider/probe', {
+        method: 'POST',
+      })
+      const providerLabel = [response.provider, response.model].filter(Boolean).join(' / ')
+      const privacyHint = response.noteContentSent
+        ? 'Pruefe die Provider-Freigabe, der Test meldet gesendete Inhalte.'
+        : 'Es wurden keine Notizinhalte gesendet.'
+      if (response.ok) {
+        setAssistantProbeMessage(
+          `${response.message || 'Provider-Test erfolgreich.'}${providerLabel ? ` (${providerLabel})` : ''} ${privacyHint}`,
+        )
+      } else {
+        setAssistantProbeError(
+          `${response.message || 'Provider-Test fehlgeschlagen.'}${providerLabel ? ` (${providerLabel})` : ''} ${privacyHint}`,
+        )
+      }
+    } catch (caught) {
+      setAssistantProbeError(formatOneNoteImportError(caught))
+    } finally {
+      setAssistantProbePending(false)
+    }
+  }
 
   useEffect(() => {
     setThemeColorDrafts(() => {
@@ -652,6 +833,177 @@ export function SettingsEditorPanel({
                     ))}
                   </div>
                 ) : null}
+              </section>
+            ) : null}
+
+            {activeSectionId === 'assistant' ? (
+              <section className="settings-block">
+                {!vaultLoaded ? (
+                  <div className="settings-row">
+                    <div>
+                      <h4>Keine NoteBase geoeffnet</h4>
+                      <p className="muted-copy">Assistant-Einstellungen werden pro NoteBase gespeichert.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <label className="settings-toggle-row" htmlFor="settings-assistant-enabled">
+                      <span>
+                        <strong>Assistant aktivieren</strong>
+                        <small>Chat und lokale Assistant-Funktionen fuer diese NoteBase freischalten.</small>
+                      </span>
+                      <input
+                        id="settings-assistant-enabled"
+                        type="checkbox"
+                        checked={assistantDraft.enabled}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ enabled: event.target.checked })}
+                      />
+                    </label>
+                    <label className="settings-toggle-row" htmlFor="settings-assistant-external">
+                      <span>
+                        <strong>Externe Notizinhalte erlauben</strong>
+                        <small>Erst danach duerfen relevante Ausschnitte an den Provider gesendet werden.</small>
+                      </span>
+                      <input
+                        id="settings-assistant-external"
+                        type="checkbox"
+                        checked={assistantDraft.allowExternalNoteContent}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ allowExternalNoteContent: event.target.checked })}
+                      />
+                    </label>
+                    <label className="settings-toggle-row" htmlFor="settings-assistant-write">
+                      <span>
+                        <strong>Schreibvorschlaege erlauben</strong>
+                        <small>ChangeSets fuer Notizen, Tasks und Verschieben zusaetzlich freischalten.</small>
+                      </span>
+                      <input
+                        id="settings-assistant-write"
+                        type="checkbox"
+                        checked={assistantDraft.allowWriteActions}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ allowWriteActions: event.target.checked })}
+                      />
+                    </label>
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-provider">Provider</label>
+                        <p className="muted-copy">Aktiver Adapter fuer Chat-Antworten.</p>
+                      </div>
+                      <select
+                        id="settings-assistant-provider"
+                        value={assistantDraft.provider}
+                        disabled={assistantPending}
+                        onChange={(event) => selectAssistantProvider(event.target.value)}
+                      >
+                        {(assistantSettings?.providerOptions ?? [{ id: 'openai', label: 'OpenAI / GPT', status: 'available' }]).map((option) => (
+                          <option key={String(option.id)} value={String(option.id)} disabled={String(option.status) !== 'available'}>
+                            {String(option.label)}
+                            {String(option.status) === 'planned' ? ' (geplant)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-model">Modell</label>
+                        <p className="muted-copy">Modellname, den der aktive Provider erwartet.</p>
+                      </div>
+                      <input
+                        id="settings-assistant-model"
+                        value={assistantDraft.model}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ model: event.target.value })}
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-base-url">Endpoint</label>
+                        <p className="muted-copy">Optionaler Provider-Endpunkt oder lokaler Proxy.</p>
+                      </div>
+                      <input
+                        id="settings-assistant-base-url"
+                        value={assistantDraft.baseUrl}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ baseUrl: event.target.value })}
+                        placeholder="https://api.openai.com/v1/responses"
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-secret-ref">Secret-Referenz</label>
+                        <p className="muted-copy">Environment-Variable im Backend-Prozess.</p>
+                      </div>
+                      <input
+                        id="settings-assistant-secret-ref"
+                        value={assistantDraft.apiKeyRef}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ apiKeyRef: event.target.value })}
+                        placeholder="env:OPENAI_API_KEY"
+                      />
+                    </div>
+                    <div className="assistant-settings-status">
+                      <span className={assistantSettings?.secretConfigured ? 'ok' : 'warn'}>
+                        {assistantSettings?.secretConfigured ? 'Key gefunden' : 'Key fehlt'}
+                      </span>
+                      <span className={assistantSettings?.providerStatus === 'ready' ? 'ok' : 'warn'}>
+                        {assistantSettings?.providerStatus === 'ready' ? 'Provider bereit' : 'Provider nicht bereit'}
+                      </span>
+                      <span>{assistantSettings?.secretRef ?? assistantDraft.apiKeyRef}</span>
+                      <button
+                        type="button"
+                        onClick={() => void testAssistantProvider()}
+                        disabled={
+                          assistantPending ||
+                          assistantProbePending ||
+                          assistantSettingsDirty ||
+                          !assistantSettings?.providerConfigured
+                        }
+                        title={assistantSettingsDirty ? 'Einstellungen zuerst speichern' : 'Provider-Verbindung testen'}
+                      >
+                        <LucideNamedIcon name="PlugZap" size={13} />
+                        <span>{assistantProbePending ? 'Test laeuft ...' : 'Verbindung testen'}</span>
+                      </button>
+                    </div>
+                    {assistantProbeMessage ? <p className="launch-message">{assistantProbeMessage}</p> : null}
+                    {assistantProbeError ? <p className="launch-error">{assistantProbeError}</p> : null}
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-max-notes">Quellenlimit</label>
+                        <p className="muted-copy">Maximale Anzahl Kontextnotizen pro Chatfrage.</p>
+                      </div>
+                      <input
+                        id="settings-assistant-max-notes"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={assistantDraft.maxContextNotes}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ maxContextNotes: Number(event.target.value) })}
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <label htmlFor="settings-assistant-max-chars">Kontextlimit</label>
+                        <p className="muted-copy">Maximale Zeichenmenge fuer lokalen Quellenkontext.</p>
+                      </div>
+                      <input
+                        id="settings-assistant-max-chars"
+                        type="number"
+                        min={1000}
+                        max={200000}
+                        step={1000}
+                        value={assistantDraft.maxContextChars}
+                        disabled={assistantPending}
+                        onChange={(event) => updateAssistantDraft({ maxContextChars: Number(event.target.value) })}
+                      />
+                    </div>
+                    {assistantMessage ? <p className="launch-message">{assistantMessage}</p> : null}
+                    {assistantError ? <p className="launch-error">{assistantError}</p> : null}
+                  </>
+                )}
               </section>
             ) : null}
 
@@ -937,12 +1289,29 @@ export function SettingsEditorPanel({
           </div>
 
           <footer className="settings-modal-actions">
-            <span>{settingsDirty ? 'Nicht gespeicherte Aenderungen' : 'Alle Einstellungen gespeichert'}</span>
+            <span>
+              {activeSectionIsAssistant
+                ? assistantPending
+                  ? 'Assistant-Einstellungen werden synchronisiert'
+                  : assistantSettingsDirty
+                    ? 'Assistant-Einstellungen nicht gespeichert'
+                    : 'Assistant-Einstellungen gespeichert'
+                : settingsDirty
+                  ? 'Nicht gespeicherte Aenderungen'
+                  : 'Alle Einstellungen gespeichert'}
+            </span>
             <div>
-              <button onClick={onDiscard} disabled={!settingsDirty}>
+              <button
+                onClick={activeSectionIsAssistant ? discardAssistantSettings : onDiscard}
+                disabled={!footerDirty || (activeSectionIsAssistant && assistantPending)}
+              >
                 Verwerfen
               </button>
-              <button className="primary" onClick={onSave} disabled={!settingsDirty}>
+              <button
+                className="primary"
+                onClick={activeSectionIsAssistant ? () => void saveAssistantSettings() : onSave}
+                disabled={!footerDirty || (activeSectionIsAssistant && assistantPending)}
+              >
                 Speichern
               </button>
             </div>

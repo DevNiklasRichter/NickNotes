@@ -17,7 +17,12 @@ export const CONTRACT_SYNC_TYPES = [
   'AssistantSource',
   'AssistantChatResponse',
   'AssistantVoiceStatusResponse',
+  'AssistantTranscriptionResponse',
+  'AssistantMediaStageResponse',
   'AssistantEmbeddingStatusResponse',
+  'AssistantRetrievalEvaluationResponse',
+  'AssistantSettingsResponse',
+  'AssistantProviderProbeResponse',
   'AssistantChangeOperation',
   'AssistantChangeSet',
   'AssistantChangeSetPreviewResponse',
@@ -280,6 +285,18 @@ export type AssistantSource = {
   title: string
   excerpt: string
   score: number
+  strategy: string
+}
+
+export type AssistantSuggestedAction = {
+  actionType: AssistantOrganizeActionType
+  label: string
+  instruction: string
+  title: string
+  body: string
+  sourcePath: string
+  targetGroupKey: string
+  requiresActiveNote: boolean
 }
 
 export type AssistantChatResponse = {
@@ -289,6 +306,7 @@ export type AssistantChatResponse = {
   model: string
   usedProvider: boolean
   readOnly: boolean
+  suggestedActions: AssistantSuggestedAction[]
 }
 
 export type AssistantVoiceStatusResponse = {
@@ -300,6 +318,21 @@ export type AssistantVoiceStatusResponse = {
   providerTranscriptionAvailable: boolean
   providerTranscriptionReason: string
   privacyMode: string
+}
+
+export type AssistantTranscriptionResponse = {
+  text: string
+  provider: string
+  model: string
+  usedProvider: boolean
+  privacyMode: string
+}
+
+export type AssistantMediaStageResponse = {
+  id: string
+  fileName: string
+  contentType: string
+  sizeBytes: number
 }
 
 export type AssistantEmbeddingStatusResponse = {
@@ -320,6 +353,60 @@ export type AssistantEmbeddingStatusResponse = {
   comparison: Array<Record<string, any>>
   guardrails: string[]
   stats: Record<string, number>
+}
+
+export type AssistantRetrievalEvaluationResponse = {
+  enabled: boolean
+  evaluationPath: string
+  caseCount: number
+  hitRateAtK: number
+  graphHitCount: number
+  cases: Array<Record<string, any>>
+  sampleCases: Array<Record<string, any>>
+  strategies: Array<Record<string, any>>
+  decision: string
+  embeddingActivation: string
+  sourceOfTruth: string
+  notes: string[]
+}
+
+export type AssistantSettingsConfig = {
+  enabled: boolean
+  provider: string
+  model: string
+  apiKeyRef: string
+  baseUrl: string
+  allowExternalNoteContent: boolean
+  allowWriteActions: boolean
+  maxContextNotes: number
+  maxContextChars: number
+}
+
+export type AssistantSettingsResponse = {
+  config: AssistantSettingsConfig
+  providerSupported: boolean
+  providerConfigured: boolean
+  providerStatus: string
+  providerOptions: Array<Record<string, any>>
+  secretRef: string
+  secretKind: string
+  secretName: string
+  secretConfigured: boolean
+  secretStatus: string
+  capabilities: Record<string, boolean>
+}
+
+export type AssistantProviderProbeResponse = {
+  ok: boolean
+  status: string
+  message: string
+  provider: string
+  model: string
+  usedProvider: boolean
+  noteContentSent: boolean
+  diagnosticOnly: boolean
+  capabilities: Record<string, boolean>
+  error: string
 }
 
 export type AssistantChangeOperation = {
@@ -356,7 +443,13 @@ export type AssistantChangeSetPreviewResponse = {
   changeSet: AssistantChangeSet
 }
 
-export type AssistantOrganizeActionType = 'create_note' | 'create_task' | 'move_note'
+export type AssistantOrganizeActionType =
+  | 'create_note'
+  | 'create_task'
+  | 'move_note'
+  | 'add_note_tags'
+  | 'add_related_links'
+  | 'add_wikilinks'
 
 export type AssistantOrganizePreviewPayload = {
   instruction?: string
@@ -365,6 +458,7 @@ export type AssistantOrganizePreviewPayload = {
   body?: string
   sourcePath?: string
   targetGroupKey?: string
+  attachments?: AssistantMediaStageResponse[]
 }
 
 export type AssistantChangeSetApplyResponse = {

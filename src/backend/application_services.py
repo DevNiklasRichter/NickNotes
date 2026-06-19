@@ -4,6 +4,7 @@ import logging
 import os
 import base64
 import binascii
+import json
 import re
 import shutil
 import subprocess
@@ -32,8 +33,24 @@ from .nicknotes_backend.models import ParsedTask, TagSuggestion
 from .nicknotes_backend.assistant_chat import AssistantChatService
 from .nicknotes_backend.assistant_changesets import AssistantChangeSetService, AssistantOrganizationService, content_hash
 from .nicknotes_backend.assistant_embeddings import build_assistant_embedding_status
-from .nicknotes_backend.assistant_security import normalize_assistant_config, normalize_assistant_note_path
-from .nicknotes_backend.llm_providers import LlmProviderConfig, LlmProviderError, create_llm_provider
+from .nicknotes_backend.assistant_retrieval_eval import build_assistant_retrieval_evaluation_status
+from .nicknotes_backend.assistant_security import (
+    AssistantSecurityError,
+    normalize_assistant_config,
+    normalize_assistant_note_path,
+    normalize_assistant_secret_ref,
+)
+from .nicknotes_backend.assistant_settings import SUPPORTED_ASSISTANT_PROVIDERS, build_assistant_settings_response
+from .nicknotes_backend.llm_providers import (
+    LlmChatRequest,
+    LlmMessage,
+    LlmProviderConfig,
+    LlmProviderError,
+    LlmTranscriptionRequest,
+    canonical_provider_id,
+    create_llm_provider,
+    redact_secrets,
+)
 from .use_cases import (
     GetFocusDashboardUseCase,
     MoveNoteUseCase,
@@ -55,6 +72,61 @@ from .operation_context import get_operation_context
 """Application layer entry points for NickNotes backend API controllers."""
 
 logger = logging.getLogger(__name__)
+
+ASSISTANT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
+ASSISTANT_AUDIO_EXTENSIONS = {".flac", ".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".ogg", ".wav", ".webm"}
+
+
+def _assistant_stream_event(event_type: str, payload: dict[str, Any]) -> str:
+    return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
+
+
+def _provider_capabilities_to_dict(value: Any) -> dict[str, bool]:
+    return {
+        "chat": bool(getattr(value, "chat", False)),
+        "streaming": bool(getattr(value, "streaming", False)),
+        "toolCalls": bool(getattr(value, "tool_calls", False)),
+        "transcription": bool(getattr(value, "transcription", False)),
+        "embeddings": bool(getattr(value, "embeddings", False)),
+    }
+
+
+def _sanitize_provider_probe_error(exc: Exception) -> str:
+    redacted = redact_secrets(str(exc)).strip()
+    lower = redacted.lower()
+    sensitive_markers = (
+        "authorization:",
+        "bearer ",
+        "api-key",
+        "x-api-key",
+        "du bist ein nicknotes provider-diagnosetest",
+        "antworte exakt mit: nicknotes ok",
+    )
+    if any(marker in lower for marker in sensitive_markers):
+        return "Provider-Test fehlgeschlagen; sensible Details wurden entfernt."
+    return redacted[:500] or "Provider-Test fehlgeschlagen."
+
+
+def _assistant_media_placeholder(stage_id: str) -> str:
+    return f"nicknotes-assistant-media://{stage_id}"
+
+
+def _validate_assistant_audio_payload(*, filename: str, content_type: str, data: bytes) -> tuple[str, str]:
+    payload = bytes(data)
+    if not payload:
+        raise ValueError("Die Audiodatei ist leer.")
+    if len(payload) > ASSISTANT_MAX_AUDIO_BYTES:
+        raise ValueError("Audiodatei ist zu gross (maximal 25 MB).")
+    clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    suffix = Path(filename or "").suffix.lower()
+    if clean_content_type and not clean_content_type.startswith("audio/") and clean_content_type not in {"video/mp4", "video/webm"}:
+        raise ValueError("Nur Audiodateien koennen transkribiert werden.")
+    if suffix and suffix not in ASSISTANT_AUDIO_EXTENSIONS:
+        raise ValueError("Dieses Audioformat wird nicht unterstuetzt.")
+    safe_name = Path(filename or "").name or "assistant-audio.webm"
+    if Path(safe_name).suffix.lower() not in ASSISTANT_AUDIO_EXTENSIONS:
+        safe_name = f"{Path(safe_name).stem or 'assistant-audio'}.webm"
+    return safe_name, clean_content_type or "audio/webm"
 
 
 class BackendApiService:
@@ -1052,7 +1124,7 @@ class BackendApiService:
         query = str(args[0]) if args else str(kwargs.get("query", ""))
         return {"items": indexer.search_notes(query)}
 
-    def assistant_chat(self, req: Any) -> Any:
+    def _assistant_chat_context(self, req: Any) -> tuple[Any, Any, str, dict[str, Any], int]:
         vault, indexer = self.require_loaded()
         message = str(getattr(req, "message", "") or "").strip()
         if not message:
@@ -1082,12 +1154,38 @@ class BackendApiService:
                 max_sources = configured_max_sources
             max_sources = max(1, min(configured_max_sources, max_sources))
 
+        return vault, indexer, message, assistant_config, max_sources
+
+    def assistant_chat(self, req: Any) -> Any:
+        vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
         return AssistantChatService(vault=vault, indexer=indexer).answer(
             question=message,
             assistant_config=assistant_config,
             max_sources=max_sources,
             max_context_chars=int(assistant_config.get("max_context_chars") or 24_000),
         )
+
+    def assistant_chat_stream(self, req: Any) -> Any:
+        yield _assistant_stream_event("status", {"message": "Suche in der NoteBase ..."})
+        try:
+            vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
+            service = AssistantChatService(vault=vault, indexer=indexer)
+            for event in service.stream_answer(
+                question=message,
+                assistant_config=assistant_config,
+                max_sources=max_sources,
+                max_context_chars=int(assistant_config.get("max_context_chars") or 24_000),
+            ):
+                event_type = str(event.get("type") or "delta")
+                payload = {key: value for key, value in event.items() if key != "type"}
+                yield _assistant_stream_event(event_type, payload)
+        except DomainError as exc:
+            yield _assistant_stream_event("error", {"message": exc.public_message, "code": exc.error_code})
+            return
+        except Exception:
+            logger.exception("Assistant stream failed")
+            yield _assistant_stream_event("error", {"message": "Assistant-Anfrage fehlgeschlagen."})
+            return
 
     def assistant_voice_status(self) -> Any:
         vault, _indexer = self.require_loaded()
@@ -1096,7 +1194,7 @@ class BackendApiService:
 
         assistant_enabled = bool(assistant_config.get("enabled"))
         external_allowed = bool(assistant_config.get("allow_external_note_content"))
-        provider_id = str(assistant_config.get("provider") or "").strip().lower()
+        provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
         model = str(assistant_config.get("model") or "").strip()
         provider_configured = False
         provider_transcription_available = False
@@ -1136,6 +1234,132 @@ class BackendApiService:
             "privacyMode": "browser",
         }
 
+    def assistant_transcribe_audio(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+            )
+        if not assistant_config.get("allow_external_note_content"):
+            raise ValidationDomainError(
+                "Assistant external content transfer is disabled for this NoteBase.",
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+            )
+
+        provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
+        provider_config = LlmProviderConfig(
+            enabled=True,
+            provider=provider_id,
+            model=str(assistant_config.get("model") or "gpt-4o-mini"),
+            api_key_ref=str(assistant_config.get("api_key_ref") or ""),
+            base_url=str(assistant_config.get("base_url") or "").strip() or None,
+            extra=dict(assistant_config),
+            timeout_seconds=30.0,
+        )
+        try:
+            provider = create_llm_provider(provider_config)
+        except LlmProviderError as exc:
+            raise ValidationDomainError(
+                "Assistant transcription provider is not available.",
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+                internal_message=_sanitize_provider_probe_error(exc),
+            ) from exc
+        if not provider.is_configured():
+            raise ValidationDomainError(
+                "Assistant transcription provider is not configured.",
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+            )
+        if not provider.capabilities.transcription:
+            raise ValidationDomainError(
+                "Assistant provider does not support transcription.",
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+                details={"provider": provider_id},
+            )
+
+        try:
+            payload = base64.b64decode(str(getattr(req, "data_base64", "") or "").encode("utf-8"), validate=True)
+            file_name, content_type = _validate_assistant_audio_payload(
+                filename=str(getattr(req, "file_name", "") or "assistant-audio.webm"),
+                content_type=str(getattr(req, "content_type", "") or ""),
+                data=payload,
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+
+        try:
+            transcription = provider.transcribe(
+                LlmTranscriptionRequest(
+                    audio=payload,
+                    filename=file_name,
+                    content_type=content_type,
+                    language=str(getattr(req, "language", "") or "").strip(),
+                )
+            )
+        except (LlmProviderError, OSError, TimeoutError, ValueError) as exc:
+            raise InfrastructureDomainError(
+                "Assistant transcription failed.",
+                status_code=502,
+                operation="assistant_transcribe_audio",
+                vault_id=str(vault.vault_path),
+                internal_message=_sanitize_provider_probe_error(exc),
+            ) from exc
+
+        return {
+            "text": transcription.text,
+            "provider": provider_id,
+            "model": str(
+                assistant_config.get("transcription_model")
+                or assistant_config.get("transcriptionModel")
+                or "gpt-4o-mini-transcribe"
+            ),
+            "usedProvider": True,
+            "privacyMode": "provider",
+        }
+
+    def assistant_media_stage(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        if not assistant_config.get("enabled"):
+            raise ValidationDomainError(
+                "Assistant is disabled for this NoteBase.",
+                operation="assistant_media_stage",
+                vault_id=str(vault.vault_path),
+            )
+        if not assistant_config.get("allow_write_actions"):
+            raise ValidationDomainError(
+                "Assistant write actions are disabled for this NoteBase.",
+                operation="assistant_media_stage",
+                vault_id=str(vault.vault_path),
+            )
+        try:
+            payload = base64.b64decode(str(getattr(req, "data_base64", "") or "").encode("utf-8"), validate=True)
+            return vault.stage_assistant_media_asset(
+                filename=str(getattr(req, "file_name", "") or "image"),
+                content_type=str(getattr(req, "content_type", "") or ""),
+                data=payload,
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="assistant_media_stage",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+
     def assistant_embedding_status(self) -> Any:
         vault, indexer = self.require_loaded()
         vault_config = vault.read_config()
@@ -1146,6 +1370,155 @@ class BackendApiService:
             graph_status=self.graph_index_status(vault),
             assistant_config=assistant_config,
         )
+
+    def assistant_retrieval_evaluation(self) -> Any:
+        vault, indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        return build_assistant_retrieval_evaluation_status(
+            vault=vault,
+            indexer=indexer,
+            graph_status=self.graph_index_status(vault),
+            assistant_config=assistant_config,
+        )
+
+    def assistant_settings(self) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        return build_assistant_settings_response(normalize_assistant_config(vault_config.get("assistant")))
+
+    def update_assistant_settings(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        provider = canonical_provider_id(str(getattr(req, "provider", assistant_config.get("provider")) or ""))
+        if provider not in SUPPORTED_ASSISTANT_PROVIDERS:
+            raise ValidationDomainError(
+                "Assistant provider adapter is not available.",
+                operation="assistant_settings_update",
+                vault_id=str(vault.vault_path),
+                details={"provider": provider},
+            )
+
+        try:
+            api_key_ref = normalize_assistant_secret_ref(
+                getattr(req, "api_key_ref", assistant_config.get("api_key_ref")),
+                strict=True,
+            )
+        except AssistantSecurityError as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="assistant_settings_update",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+
+        base_url = str(getattr(req, "base_url", assistant_config.get("base_url", "")) or "").strip()
+        if base_url and not re.match(r"^https?://[^\s]+$", base_url, flags=re.IGNORECASE):
+            raise ValidationDomainError(
+                "Assistant provider endpoint must be an HTTP or HTTPS URL.",
+                operation="assistant_settings_update",
+                vault_id=str(vault.vault_path),
+            )
+
+        next_config = {
+            **assistant_config,
+            "enabled": bool(getattr(req, "enabled", assistant_config.get("enabled"))),
+            "provider": provider,
+            "model": str(getattr(req, "model", assistant_config.get("model")) or "").strip(),
+            "api_key_ref": api_key_ref,
+            "base_url": base_url,
+            "allow_external_note_content": bool(
+                getattr(req, "allow_external_note_content", assistant_config.get("allow_external_note_content"))
+            ),
+            "allow_write_actions": bool(getattr(req, "allow_write_actions", assistant_config.get("allow_write_actions"))),
+            "max_context_notes": getattr(req, "max_context_notes", assistant_config.get("max_context_notes")),
+            "max_context_chars": getattr(req, "max_context_chars", assistant_config.get("max_context_chars")),
+        }
+        vault_config["assistant"] = normalize_assistant_config(next_config)
+        vault.write_config(vault_config)
+        return build_assistant_settings_response(vault_config["assistant"])
+
+    def assistant_provider_probe(self) -> Any:
+        vault, _indexer = self.require_loaded()
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        provider_id = canonical_provider_id(str(assistant_config.get("provider") or "openai"))
+        model = str(assistant_config.get("model") or "").strip()
+        provider_config = LlmProviderConfig(
+            enabled=True,
+            provider=provider_id,
+            model=model,
+            api_key_ref=str(assistant_config.get("api_key_ref") or ""),
+            base_url=str(assistant_config.get("base_url") or "").strip() or None,
+            timeout_seconds=10.0,
+            extra=dict(assistant_config),
+        )
+        base_response = {
+            "provider": provider_id,
+            "model": model,
+            "usedProvider": False,
+            "noteContentSent": False,
+            "diagnosticOnly": True,
+            "capabilities": _provider_capabilities_to_dict(None),
+            "error": "",
+        }
+
+        try:
+            provider = create_llm_provider(provider_config)
+        except LlmProviderError as exc:
+            return {
+                **base_response,
+                "ok": False,
+                "status": "unsupported_provider",
+                "message": "Provider-Adapter ist nicht verfuegbar.",
+                "error": redact_secrets(str(exc)),
+            }
+
+        capabilities = _provider_capabilities_to_dict(provider.capabilities)
+        if not provider.is_configured():
+            return {
+                **base_response,
+                "capabilities": capabilities,
+                "ok": False,
+                "status": "secret_missing",
+                "message": "Provider-Key fehlt oder ist im Backend-Prozess nicht verfuegbar.",
+            }
+
+        try:
+            provider.chat(
+                LlmChatRequest(
+                    messages=[
+                        LlmMessage(
+                            role="system",
+                            content=(
+                                "Du bist ein NickNotes Provider-Diagnosetest. "
+                                "Es werden keine NoteBase-Inhalte bereitgestellt. Antworte kurz."
+                            ),
+                        ),
+                        LlmMessage(role="user", content="Antworte exakt mit: NickNotes OK"),
+                    ],
+                    response_format="text",
+                )
+            )
+        except Exception as exc:
+            return {
+                **base_response,
+                "capabilities": capabilities,
+                "ok": False,
+                "status": "provider_error",
+                "message": "Provider-Test fehlgeschlagen.",
+                "error": _sanitize_provider_probe_error(exc),
+            }
+
+        return {
+            **base_response,
+            "capabilities": capabilities,
+            "ok": True,
+            "status": "ready",
+            "message": "Provider-Test erfolgreich.",
+            "usedProvider": True,
+        }
 
     def assistant_changeset_preview(self, req: Any) -> Any:
         vault, _indexer = self.require_loaded()
@@ -1162,6 +1535,12 @@ class BackendApiService:
         if not assistant_config.get("enabled"):
             raise ValidationDomainError(
                 "Assistant is disabled for this NoteBase.",
+                operation="assistant_changeset_preview",
+                vault_id=str(vault.vault_path),
+            )
+        if not assistant_config.get("allow_write_actions"):
+            raise ValidationDomainError(
+                "Assistant write actions are disabled for this NoteBase.",
                 operation="assistant_changeset_preview",
                 vault_id=str(vault.vault_path),
             )
@@ -1193,6 +1572,7 @@ class BackendApiService:
                 "body": str(getattr(req, "body", "") or "").strip(),
                 "sourcePath": str(getattr(req, "source_path", "") or "").strip(),
                 "targetGroupKey": str(getattr(req, "target_group_key", "") or "").strip(),
+                "attachments": getattr(req, "attachments", []) if isinstance(getattr(req, "attachments", []), list) else [],
             }
             raw_actions = [action]
         if not instruction and not any(str(action.get("title") or action.get("body") or "").strip() for action in raw_actions if isinstance(action, dict)):
@@ -1207,6 +1587,12 @@ class BackendApiService:
         if not assistant_config.get("enabled"):
             raise ValidationDomainError(
                 "Assistant is disabled for this NoteBase.",
+                operation="assistant_organize_preview",
+                vault_id=str(vault.vault_path),
+            )
+        if not assistant_config.get("allow_write_actions"):
+            raise ValidationDomainError(
+                "Assistant write actions are disabled for this NoteBase.",
                 operation="assistant_organize_preview",
                 vault_id=str(vault.vault_path),
             )
@@ -1234,6 +1620,12 @@ class BackendApiService:
                 operation="assistant_changeset_apply",
                 vault_id=str(vault.vault_path),
             )
+        if not assistant_config.get("allow_write_actions"):
+            raise ValidationDomainError(
+                "Assistant write actions are disabled for this NoteBase.",
+                operation="assistant_changeset_apply",
+                vault_id=str(vault.vault_path),
+            )
 
         confirmed = bool(getattr(req, "confirmed", False))
         if not confirmed:
@@ -1258,6 +1650,7 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
             )
 
+        content_action_types = {"replace_note_content", "add_note_tags", "add_related_links", "add_wikilinks"}
         prepared: list[dict[str, Any]] = []
         for item in operations:
             if not isinstance(item, dict):
@@ -1267,7 +1660,7 @@ class BackendApiService:
                     vault_id=str(vault.vault_path),
                 )
             action_type = str(item.get("actionType") or "").strip()
-            if action_type not in {"replace_note_content", "create_note", "create_task", "move_note"}:
+            if action_type not in {*content_action_types, "create_note", "create_task", "move_note"}:
                 raise ValidationDomainError(
                     f"Unsupported Assistant ChangeSet action: {action_type}",
                     operation="assistant_changeset_apply",
@@ -1303,6 +1696,7 @@ class BackendApiService:
                         "targetGroupKey": target_group_key,
                         "title": title,
                         "content": after_content,
+                        "mediaAttachments": self._assistant_media_attachments_from_operation(item),
                     }
                 )
                 continue
@@ -1386,7 +1780,7 @@ class BackendApiService:
         latest_result: dict[str, Any] = {}
         for item in prepared:
             try:
-                if item["actionType"] in {"replace_note_content"}:
+                if item["actionType"] in content_action_types:
                     latest_result = self.save_note_content(SimpleNamespace(path=item["path"], content=item["content"]))
                     previous_path = str(item["absolutePath"])
                     next_path = str(latest_result.get("path") or item["path"])
@@ -1410,7 +1804,13 @@ class BackendApiService:
                         status="open",
                     )
                     created_path = str(created["note_path"])
-                    latest_result = self.save_note_content(SimpleNamespace(path=created_path, content=item["content"]))
+                    content = self._materialize_assistant_media_attachments(
+                        vault=vault,
+                        note_path=created_path,
+                        content=item["content"],
+                        attachments=item.get("mediaAttachments") or [],
+                    )
+                    latest_result = self.save_note_content(SimpleNamespace(path=created_path, content=content))
                     next_path = str(latest_result.get("path") or created_path)
                     applied_paths.extend([created_path, next_path])
                     if created_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
@@ -1462,6 +1862,65 @@ class BackendApiService:
             "graphStatus": latest_result.get("graphStatus", {}),
             "linkRewrite": latest_result.get("linkRewrite", {}),
         }
+
+    def _assistant_media_attachments_from_operation(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        details = item.get("details")
+        if not isinstance(details, dict):
+            return []
+        attachments = details.get("mediaAttachments")
+        if not isinstance(attachments, list):
+            return []
+        clean: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            stage_id = str(attachment.get("id") or "").strip()
+            if not stage_id or stage_id in seen:
+                continue
+            seen.add(stage_id)
+            clean.append(
+                {
+                    "id": stage_id,
+                    "fileName": str(attachment.get("fileName") or "image"),
+                    "contentType": str(attachment.get("contentType") or ""),
+                    "placeholder": str(attachment.get("placeholder") or _assistant_media_placeholder(stage_id)),
+                }
+            )
+        return clean
+
+    def _materialize_assistant_media_attachments(
+        self,
+        *,
+        vault: Any,
+        note_path: str,
+        content: str,
+        attachments: list[dict[str, Any]],
+    ) -> str:
+        next_content = str(content or "")
+        for attachment in attachments:
+            stage_id = str(attachment.get("id") or "").strip()
+            placeholder = str(attachment.get("placeholder") or _assistant_media_placeholder(stage_id))
+            if not stage_id or placeholder not in next_content:
+                continue
+            try:
+                staged = vault.read_staged_assistant_media_asset(stage_id)
+                media_result = vault.add_note_media_asset(
+                    note_path=note_path,
+                    filename=str(staged.get("fileName") or attachment.get("fileName") or "image"),
+                    content_type=str(staged.get("contentType") or attachment.get("contentType") or ""),
+                    data=staged["data"],
+                )
+            except ValueError as exc:
+                raise ValidationDomainError(
+                    str(exc),
+                    operation="assistant_changeset_apply",
+                    vault_id=str(vault.vault_path),
+                    internal_message=str(exc),
+                ) from exc
+            next_content = next_content.replace(placeholder, str(media_result["markdown_path"]))
+            vault.remove_staged_assistant_media_asset(stage_id)
+        return next_content
 
     def explorer_files(self, *args: Any, **kwargs: Any) -> Any:
         vault, _indexer = self.require_loaded()

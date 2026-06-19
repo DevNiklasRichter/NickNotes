@@ -44,11 +44,13 @@ NickNotes/
         graph_watcher.py        # Best-effort Polling fuer externe Aenderungen
         parser.py               # Quick-Capture-Parsing und Tag-Vorschlaege
         onenote_importer.py     # Lokaler OneNote-.onepkg-Import
-        assistant_chat.py       # Read-only Assistant-Retrieval, Kontextaufbau, Chatantworten und Voice-Status-Anbindung
-        assistant_changesets.py # Assistant-ChangeSet-Vorschlaege, Organisationsaktionen, Diffs, Hashes und Provider-/Fallback-Erzeugung
+        assistant_chat.py       # Read-only Assistant-Retrieval mit FTS-/Graph-Kandidaten, Chatantworten, Tool-Vorschlaegen, natives Provider-Streaming und Voice-Status-Anbindung
+        assistant_changesets.py # Assistant-ChangeSet-Vorschlaege, Organisations-/Tag-/Link-/Medien-Aktionen, Diffs, Hashes und Provider-/Fallback-Erzeugung
         assistant_embeddings.py # Embedding-Entscheidungsstatus, Retrieval-Vergleich und rebuildbare Projektionsregeln
+        assistant_retrieval_eval.py # Lokale Retrieval-Evaluationsfaelle und Messstatus ohne Provider-/Embedding-Aufruf
+        assistant_settings.py   # Assistant-Settings-Status, Provider-Optionen und Secret-Referenzanzeige
         assistant_security.py   # Assistant-Config, Vault-Pfadregeln und externe Inhaltsfreigaben
-        llm_providers.py        # Provider-neutrale LLM-Basisschicht, Secret-Referenzen und Redaction
+        llm_providers.py        # Provider-neutrale LLM-Basisschicht mit OpenAI-/Claude-/Gemini-Adaptern, Secret-Referenzen und Redaction
         ai_client.py            # Kompatibler Smart-Tagging-Client auf der LLM-Basisschicht
       tests/
     desktop/
@@ -97,6 +99,7 @@ MeineNoteBase/
     task_status_links.json      # Hilfsindex fuer Task-Statusverknuepfungen
     graph-index.json            # wiederherstellbare Graph-Projektion
     graph-state.json            # gespeicherter Graph-UI-State
+    assistant-retrieval-evaluation.json # optionales lokales Evaluationsset fuer Assistant-Retrieval
 ```
 
 Alte Namen wie `01_daily`, `02_tags`, `03_tasks`, `system` oder `99_system` werden beim Oeffnen gezielt migriert oder tolerant gelesen. Neue Funktionen sollen die moderne Struktur verwenden.
@@ -160,8 +163,8 @@ Verbindliche Regeln fuer diese Erweiterung:
 - API Keys, Tokens und Passwoerter duerfen nicht im Frontend liegen, nicht in `.system/config.json` als Klartext gespeichert werden und nicht in Logs oder Fehlerantworten erscheinen.
 - Externe Inhaltsuebertragung an Provider muss pro NoteBase explizit aktivierbar sein; der Standard bleibt sicher und datenminimal.
 - Assistant-Tools duerfen nur Vault-gebundene Operationen verwenden. Freie Host-Pfade, Shell-Kommandos oder direkte LLM-Dateischreibzugriffe sind nicht erlaubt.
-- Spracheingabe startet als lokales Browser-Diktat mit kontrollierter Uebernahme in Chat-Eingabe oder Quick Capture. Providerbasierte Transkription darf erst nach denselben Assistant-Freigabe-, Provider- und Secret-Regeln sichtbar bzw. nutzbar werden.
-- Schreibende Aktionen laufen ueber ChangeSets mit Diff, Content-Hash, Konfliktpruefung und Nutzerfreigabe. Erst danach werden bestehende Vault-, Tag-, Task-, Reindex-, Link-Rewrite- und Graph-Pfade verwendet.
+- Spracheingabe startet bevorzugt als lokales Browser-Diktat mit kontrollierter Uebernahme in Chat-Eingabe oder Quick Capture. Providerbasierte Transkription ist nur nach denselben Assistant-Freigabe-, Provider- und Secret-Regeln sichtbar und nutzbar; Audiodaten werden erst nach Nutzeraktion gesendet.
+- Schreibende Aktionen laufen ueber ChangeSets mit Diff, Content-Hash, Konfliktpruefung und Nutzerfreigabe. Sie brauchen zusaetzlich die NoteBase-Freigabe `allow_write_actions`; erst danach werden bestehende Vault-, Tag-, Task-, Reindex-, Link-Rewrite- und Graph-Pfade verwendet.
 - Optionale Embeddings sind nach `ASST-009` bewusst zurueckgestellt. `/assistant/embeddings/status` dokumentiert FTS-/Tag-/Graph-Vergleich, vorgeschlagene `.system`-Artefakte, Rebuild-/Quarantaeneregeln und externe Provider-Freigaben, ohne Inhalte zu uebertragen oder Embedding-Dateien zu erzeugen.
 
 ## Tasks Und To-dos
@@ -202,10 +205,13 @@ Die Endpunkte decken insbesondere folgende Bereiche ab:
 - Suche, Explorer, Review und Graph
 - Lokaler OneNote-`.onepkg`-Import
 - Persistente UI-Einstellungen
-- Provider-neutraler Assistant-Chat mit read-only Retrieval, Vault-relativen Quellen und gesichertem Voice-Provider-Status
+- Provider-neutraler Assistant-Chat mit read-only Retrieval ueber FTS plus Graph-Nachbarn, Vault-relativen Quellen, kompakten Tool-Vorschlaegen, NDJSON-Streaming, OpenAI-SSE-Deltas plus Sync-Fallback fuer andere Provider, OpenAI-/Claude-/Gemini-Chat-Adaptern, sicherem Provider-Verbindungstest, gesichertem Voice-Provider-Status und optionaler providerbasierter Audio-Transkription ueber dieselben Freigaben
+- Assistant-Settings fuer Provider, Modell, Endpoint, Kontextlimits, externe Inhaltsfreigabe und Schreibfreigabe; die API liefert nur Secret-Referenzen und Key-Status, nie API-Key-Werte
 - Assistant-ChangeSet-Vorschau und Apply fuer freigegebene Notizverbesserungen mit Diff, Hash-Konfliktpruefung und bestehendem Save-/Reindex-/Graph-Pfad
-- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks und Verschieben ueber bestehende Move-/Link-Rewrite-Pfade
-- Assistant-Embedding-Status fuer die evaluierte, aktuell deaktivierte Embedding-Projektion mit Contract-Sync und ohne Provider-Probe
+- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks, Verschieben, Tags, Related-Links, WikiLinks und gestagte Bildanhaenge ueber bestehende Save-/Move-/Medien-/Reindex-/Graph-Pfade
+- Assistant-Embedding-Status fuer die evaluierte, aktuell deaktivierte Embedding-Projektion mit Contract-Sync und ohne Embedding-Provider-Probe
+- Graph-gestuetzte Assistant-Quellenerweiterung aus `.system/graph-index.json`, ohne Vollscan der Markdown-Dateien und ohne neue fachliche Quelle
+- Assistant-Retrieval-Evaluation ueber `.system/assistant-retrieval-evaluation.json`, die lokale FTS-/Tag-/Graph-Treffer gegen erwartete Quellen misst, ohne Provider oder Embeddings aufzurufen
 
 `VaultManager` besitzt die Dateisystemlogik. Mutierende Windows-Dateioperationen laufen ueber
 kontrollierte Rename-/Delete-Helfer mit bounded Retry, damit kurzlebige Datei- und Scanner-Locks nicht
@@ -223,7 +229,7 @@ Electron kapselt die App, startet und stoppt das Backend und bietet eine kleine 
 Das React-Frontend bietet:
 
 - Explorer fuer Ordner, Notizen, Tasks und Tags
-- Assistant-Chat fuer read-only Fragen zur NoteBase mit Quellen, Diktat-Review, Quick-Capture-Uebergabe, ChangeSet-Diff-Review fuer aktuelle Notizen und kompakter Organisationsplanung
+- Assistant-Chat fuer read-only Fragen zur NoteBase mit Quellen, Graph-Quellenmarkierung, Diktat-Review, Quick-Capture-Uebergabe, kompakten Chat-Aktionsvorschlaegen, strukturierter ChangeSet-Review mit optionalem Diff und kompakter Organisationsplanung
 - CodeMirror-Markdown-Editor mit Tabs und Split-Ansicht
 - Eigenschaften fuer Metadaten, Tags und Beziehungen
 - Quick Capture
@@ -251,7 +257,7 @@ Der Chat-Assistant darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
 - Linting: `eslint.config.js`
 - Dokumentation: `PROJECT_ARCHITECTURE.md` als Leitplanke, weitere Dokumentation in `doc/`
 - NoteBase-Konfiguration: `<NoteBase>/.system/config.json`
-- Optionale LLM-Nutzung: Smart-Modus/Assistant plus API-Key-Referenz aus Environment-Variable oder spaeter sicherem Secret-Store; Klartext-Keys gehoeren nicht in `.system/config.json`
+- Optionale LLM-Nutzung: Smart-Modus/Assistant plus API-Key-Referenz aus Environment-Variable oder spaeter sicherem Secret-Store; Klartext-Keys gehoeren nicht in `.system/config.json`. Der Settings-Dialog zeigt fuer Assistant-Keys nur Referenz und Status.
 - Entwicklungsstart: `npm run dev`
 - Build: `npm run build`
 - Backend separat: `npm run dev:backend`

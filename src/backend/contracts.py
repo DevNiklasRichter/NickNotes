@@ -27,7 +27,12 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "AssistantSourceResponse": "AssistantSource",
     "AssistantChatResponse": "AssistantChatResponse",
     "AssistantVoiceStatusResponse": "AssistantVoiceStatusResponse",
+    "AssistantTranscriptionResponse": "AssistantTranscriptionResponse",
+    "AssistantMediaStageResponse": "AssistantMediaStageResponse",
     "AssistantEmbeddingStatusResponse": "AssistantEmbeddingStatusResponse",
+    "AssistantRetrievalEvaluationResponse": "AssistantRetrievalEvaluationResponse",
+    "AssistantSettingsResponse": "AssistantSettingsResponse",
+    "AssistantProviderProbeResponse": "AssistantProviderProbeResponse",
     "AssistantChangeOperationResponse": "AssistantChangeOperation",
     "AssistantChangeSetResponse": "AssistantChangeSet",
     "AssistantChangeSetPreviewResponse": "AssistantChangeSetPreviewResponse",
@@ -163,6 +168,18 @@ class AssistantSourceResponse(_ContractModel):
     title: str = ""
     excerpt: str = ""
     score: float = 0.0
+    strategy: str = "search"
+
+
+class AssistantSuggestedActionResponse(_ContractModel):
+    actionType: str = ""
+    label: str = ""
+    instruction: str = ""
+    title: str = ""
+    body: str = ""
+    sourcePath: str = ""
+    targetGroupKey: str = ""
+    requiresActiveNote: bool = False
 
 
 class AssistantChatResponse(_ContractModel):
@@ -172,6 +189,7 @@ class AssistantChatResponse(_ContractModel):
     model: str = ""
     usedProvider: bool = False
     readOnly: bool = True
+    suggestedActions: list[AssistantSuggestedActionResponse] = Field(default_factory=list)
 
 
 class AssistantVoiceStatusResponse(_ContractModel):
@@ -183,6 +201,21 @@ class AssistantVoiceStatusResponse(_ContractModel):
     providerTranscriptionAvailable: bool = False
     providerTranscriptionReason: str = ""
     privacyMode: str = "browser"
+
+
+class AssistantTranscriptionResponse(_ContractModel):
+    text: str = ""
+    provider: str = ""
+    model: str = ""
+    usedProvider: bool = False
+    privacyMode: str = "provider"
+
+
+class AssistantMediaStageResponse(_ContractModel):
+    id: str = ""
+    fileName: str = ""
+    contentType: str = ""
+    sizeBytes: int = 0
 
 
 class AssistantEmbeddingStatusResponse(_ContractModel):
@@ -203,6 +236,48 @@ class AssistantEmbeddingStatusResponse(_ContractModel):
     comparison: list[dict[str, Any]] = Field(default_factory=list)
     guardrails: list[str] = Field(default_factory=list)
     stats: dict[str, int] = Field(default_factory=dict)
+
+
+class AssistantRetrievalEvaluationResponse(_ContractModel):
+    enabled: bool = False
+    evaluationPath: str = ""
+    caseCount: int = 0
+    hitRateAtK: float = 0.0
+    graphHitCount: int = 0
+    cases: list[dict[str, Any]] = Field(default_factory=list)
+    sampleCases: list[dict[str, Any]] = Field(default_factory=list)
+    strategies: list[dict[str, Any]] = Field(default_factory=list)
+    decision: str = "measure_first"
+    embeddingActivation: str = ""
+    sourceOfTruth: str = "markdown"
+    notes: list[str] = Field(default_factory=list)
+
+
+class AssistantSettingsResponse(_ContractModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    providerSupported: bool = False
+    providerConfigured: bool = False
+    providerStatus: str = ""
+    providerOptions: list[dict[str, Any]] = Field(default_factory=list)
+    secretRef: str = ""
+    secretKind: str = ""
+    secretName: str = ""
+    secretConfigured: bool = False
+    secretStatus: str = ""
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+
+
+class AssistantProviderProbeResponse(_ContractModel):
+    ok: bool = False
+    status: str = ""
+    message: str = ""
+    provider: str = ""
+    model: str = ""
+    usedProvider: bool = False
+    noteContentSent: bool = False
+    diagnosticOnly: bool = True
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    error: str = ""
 
 
 class AssistantChangeOperationResponse(_ContractModel):
