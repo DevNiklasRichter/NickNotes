@@ -180,6 +180,8 @@ class AssistantSuggestedActionResponse(_ContractModel):
     sourcePath: str = ""
     targetGroupKey: str = ""
     requiresActiveNote: bool = False
+    taskId: str = ""
+    todoId: str = ""
 
 
 class AssistantChatResponse(_ContractModel):
@@ -262,6 +264,7 @@ class AssistantSettingsResponse(_ContractModel):
     secretRef: str = ""
     secretKind: str = ""
     secretName: str = ""
+    secretLabel: str = ""
     secretConfigured: bool = False
     secretStatus: str = ""
     capabilities: dict[str, bool] = Field(default_factory=dict)
@@ -462,6 +465,7 @@ class TodoPromoteResponse(_ContractModel):
 class TaskDoneResponse(_ContractModel):
     done: bool = True
     taskId: str = ""
+    taskPath: str = ""
 
 
 class FocusDashboardStatsResponse(_ContractModel):

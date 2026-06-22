@@ -39,8 +39,20 @@ from .nicknotes_backend.assistant_security import (
     normalize_assistant_config,
     normalize_assistant_note_path,
     normalize_assistant_secret_ref,
+    normalize_reasoning_effort,
 )
-from .nicknotes_backend.assistant_settings import SUPPORTED_ASSISTANT_PROVIDERS, build_assistant_settings_response
+from .nicknotes_backend.assistant_secret_store import (
+    AssistantSecretStoreError,
+    delete_assistant_provider_secret,
+    provider_secret_ref,
+    write_assistant_provider_secret,
+)
+from .nicknotes_backend.assistant_settings import (
+    SUPPORTED_ASSISTANT_PROVIDERS,
+    build_assistant_settings_response,
+    default_model_for_provider,
+    reasoning_efforts_for_model,
+)
 from .nicknotes_backend.llm_providers import (
     LlmChatRequest,
     LlmMessage,
@@ -930,7 +942,7 @@ class BackendApiService:
         }
 
     def get_focus_mit(self, *args: Any, **kwargs: Any) -> Any:
-        vault, _indexer = self.require_loaded()
+        vault, indexer = self.require_loaded()
         day_iso = args[0] if args else kwargs.get("date")
         state = vault.get_daily_mit(day_iso=day_iso)
         return {
@@ -1117,7 +1129,7 @@ class BackendApiService:
             task_path=str(done_path),
             indexer=indexer,
         )
-        return {"done": True, "taskId": task_id}
+        return {"done": True, "taskId": task_id, "taskPath": str(done_path)}
 
     def search_notes(self, *args: Any, **kwargs: Any) -> Any:
         _vault, indexer = self.require_loaded()
@@ -1188,7 +1200,7 @@ class BackendApiService:
             return
 
     def assistant_voice_status(self) -> Any:
-        vault, _indexer = self.require_loaded()
+        vault, indexer = self.require_loaded()
         vault_config = vault.read_config()
         assistant_config = normalize_assistant_config(vault_config.get("assistant"))
 
@@ -1235,7 +1247,7 @@ class BackendApiService:
         }
 
     def assistant_transcribe_audio(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
+        vault, indexer = self.require_loaded()
         vault_config = vault.read_config()
         assistant_config = normalize_assistant_config(vault_config.get("assistant"))
         if not assistant_config.get("enabled"):
@@ -1400,19 +1412,6 @@ class BackendApiService:
                 details={"provider": provider},
             )
 
-        try:
-            api_key_ref = normalize_assistant_secret_ref(
-                getattr(req, "api_key_ref", assistant_config.get("api_key_ref")),
-                strict=True,
-            )
-        except AssistantSecurityError as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="assistant_settings_update",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
         base_url = str(getattr(req, "base_url", assistant_config.get("base_url", "")) or "").strip()
         if base_url and not re.match(r"^https?://[^\s]+$", base_url, flags=re.IGNORECASE):
             raise ValidationDomainError(
@@ -1421,13 +1420,33 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
             )
 
+        legacy_secret_ref = getattr(req, "api_key_ref", None)
+        if legacy_secret_ref:
+            try:
+                normalize_assistant_secret_ref(legacy_secret_ref, strict=True, provider=provider)
+            except AssistantSecurityError as exc:
+                raise ValidationDomainError(
+                    str(exc),
+                    operation="assistant_settings_update",
+                    vault_id=str(vault.vault_path),
+                    internal_message=str(exc),
+                ) from exc
+
+        model = str(getattr(req, "model", assistant_config.get("model")) or "").strip() or default_model_for_provider(provider)
+        reasoning_effort = normalize_reasoning_effort(
+            getattr(req, "reasoning_effort", assistant_config.get("reasoning_effort"))
+        )
+        if reasoning_effort and reasoning_effort not in reasoning_efforts_for_model(provider, model):
+            reasoning_effort = ""
+
         next_config = {
             **assistant_config,
             "enabled": bool(getattr(req, "enabled", assistant_config.get("enabled"))),
             "provider": provider,
-            "model": str(getattr(req, "model", assistant_config.get("model")) or "").strip(),
-            "api_key_ref": api_key_ref,
+            "model": model,
+            "api_key_ref": provider_secret_ref(provider),
             "base_url": base_url,
+            "reasoning_effort": reasoning_effort,
             "allow_external_note_content": bool(
                 getattr(req, "allow_external_note_content", assistant_config.get("allow_external_note_content"))
             ),
@@ -1436,6 +1455,84 @@ class BackendApiService:
             "max_context_chars": getattr(req, "max_context_chars", assistant_config.get("max_context_chars")),
         }
         vault_config["assistant"] = normalize_assistant_config(next_config)
+        vault.write_config(vault_config)
+        return build_assistant_settings_response(vault_config["assistant"])
+
+    def save_assistant_provider_secret(self, req: Any) -> Any:
+        vault, _indexer = self.require_loaded()
+        provider = canonical_provider_id(str(getattr(req, "provider", "") or ""))
+        if provider not in SUPPORTED_ASSISTANT_PROVIDERS:
+            raise ValidationDomainError(
+                "Assistant provider adapter is not available.",
+                operation="assistant_secret_save",
+                vault_id=str(vault.vault_path),
+                details={"provider": provider},
+            )
+        api_key = str(getattr(req, "api_key", "") or "").strip()
+        if len(api_key) < 8:
+            raise ValidationDomainError(
+                "Assistant API key is too short.",
+                operation="assistant_secret_save",
+                vault_id=str(vault.vault_path),
+            )
+
+        try:
+            write_assistant_provider_secret(provider, api_key)
+        except AssistantSecretStoreError as exc:
+            raise InfrastructureDomainError(
+                "Assistant API key could not be saved.",
+                status_code=500,
+                operation="assistant_secret_save",
+                vault_id=str(vault.vault_path),
+                internal_message=redact_secrets(str(exc), known_secrets=[api_key]),
+            ) from exc
+
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        model = str(assistant_config.get("model") or "").strip()
+        if canonical_provider_id(str(assistant_config.get("provider") or "")) != provider or not model:
+            model = default_model_for_provider(provider)
+        vault_config["assistant"] = normalize_assistant_config(
+            {
+                **assistant_config,
+                "provider": provider,
+                "model": model,
+                "api_key_ref": provider_secret_ref(provider),
+            }
+        )
+        vault.write_config(vault_config)
+        return build_assistant_settings_response(vault_config["assistant"])
+
+    def delete_assistant_provider_secret(self, provider: str) -> Any:
+        vault, _indexer = self.require_loaded()
+        provider_id = canonical_provider_id(str(provider or ""))
+        if provider_id not in SUPPORTED_ASSISTANT_PROVIDERS:
+            raise ValidationDomainError(
+                "Assistant provider adapter is not available.",
+                operation="assistant_secret_delete",
+                vault_id=str(vault.vault_path),
+                details={"provider": provider_id},
+            )
+
+        try:
+            delete_assistant_provider_secret(provider_id)
+        except AssistantSecretStoreError as exc:
+            raise InfrastructureDomainError(
+                "Assistant API key could not be deleted.",
+                status_code=500,
+                operation="assistant_secret_delete",
+                vault_id=str(vault.vault_path),
+                internal_message=redact_secrets(str(exc)),
+            ) from exc
+
+        vault_config = vault.read_config()
+        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
+        vault_config["assistant"] = normalize_assistant_config(
+            {
+                **assistant_config,
+                "api_key_ref": provider_secret_ref(str(assistant_config.get("provider") or provider_id)),
+            }
+        )
         vault.write_config(vault_config)
         return build_assistant_settings_response(vault_config["assistant"])
 
@@ -1561,7 +1658,7 @@ class BackendApiService:
             ) from exc
 
     def assistant_organize_preview(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
+        vault, indexer = self.require_loaded()
         instruction = str(getattr(req, "instruction", "") or "").strip()
         actions = getattr(req, "actions", None)
         raw_actions = actions if isinstance(actions, list) else []
@@ -1572,6 +1669,8 @@ class BackendApiService:
                 "body": str(getattr(req, "body", "") or "").strip(),
                 "sourcePath": str(getattr(req, "source_path", "") or "").strip(),
                 "targetGroupKey": str(getattr(req, "target_group_key", "") or "").strip(),
+                "taskId": str(getattr(req, "task_id", "") or "").strip(),
+                "todoId": str(getattr(req, "todo_id", "") or "").strip(),
                 "attachments": getattr(req, "attachments", []) if isinstance(getattr(req, "attachments", []), list) else [],
             }
             raw_actions = [action]
@@ -1597,7 +1696,7 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
             )
         try:
-            return AssistantOrganizationService(vault=vault).preview(
+            return AssistantOrganizationService(vault=vault, indexer=indexer).preview(
                 instruction=instruction,
                 raw_actions=[action for action in raw_actions if isinstance(action, dict)],
                 assistant_config=assistant_config,
@@ -1651,6 +1750,7 @@ class BackendApiService:
             )
 
         content_action_types = {"replace_note_content", "add_note_tags", "add_related_links", "add_wikilinks"}
+        direct_action_types = {"mark_task_done", "mark_todo_done"}
         prepared: list[dict[str, Any]] = []
         for item in operations:
             if not isinstance(item, dict):
@@ -1660,7 +1760,7 @@ class BackendApiService:
                     vault_id=str(vault.vault_path),
                 )
             action_type = str(item.get("actionType") or "").strip()
-            if action_type not in {*content_action_types, "create_note", "create_task", "move_note"}:
+            if action_type not in {*content_action_types, *direct_action_types, "create_note", "create_task", "move_note"}:
                 raise ValidationDomainError(
                     f"Unsupported Assistant ChangeSet action: {action_type}",
                     operation="assistant_changeset_apply",
@@ -1697,6 +1797,57 @@ class BackendApiService:
                         "title": title,
                         "content": after_content,
                         "mediaAttachments": self._assistant_media_attachments_from_operation(item),
+                    }
+                )
+                continue
+            if action_type in direct_action_types:
+                try:
+                    relative_path = normalize_assistant_note_path(str(item.get("path") or ""))
+                except ValueError as exc:
+                    raise ValidationDomainError(
+                        str(exc),
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        internal_message=str(exc),
+                    ) from exc
+                file_path = self._resolve_note_request_path(vault=vault, raw_path=relative_path)
+                current_content = file_path.read_text(encoding="utf-8")
+                current_hash = content_hash(current_content)
+                before_hash = str(item.get("beforeHash") or "").strip()
+                if current_hash != before_hash:
+                    raise ConflictDomainError(
+                        "Die Notiz wurde seit Erstellung des Assistant-Vorschlags geaendert.",
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                        details={
+                            "path": relative_path,
+                            "expectedHash": before_hash,
+                            "currentHash": current_hash,
+                        },
+                    )
+                details = item.get("details") if isinstance(item.get("details"), dict) else {}
+                task_id = str(details.get("taskId") or item.get("taskId") or "").strip()
+                todo_id = str(details.get("todoId") or item.get("todoId") or "").strip()
+                if action_type == "mark_task_done" and not task_id:
+                    raise ValidationDomainError(
+                        "Assistant task operation needs a task id.",
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                    )
+                if action_type == "mark_todo_done" and not todo_id:
+                    raise ValidationDomainError(
+                        "Assistant todo operation needs a todo id.",
+                        operation="assistant_changeset_apply",
+                        vault_id=str(vault.vault_path),
+                    )
+                prepared.append(
+                    {
+                        "operationId": str(item.get("id") or ""),
+                        "actionType": action_type,
+                        "path": relative_path,
+                        "absolutePath": str(file_path),
+                        "taskId": task_id,
+                        "todoId": todo_id,
                     }
                 )
                 continue
@@ -1837,6 +1988,35 @@ class BackendApiService:
                             "status": "applied",
                             "fromPath": previous_path,
                             "path": next_path,
+                        }
+                    )
+                elif item["actionType"] == "mark_task_done":
+                    latest_result = self.mark_task_done(item["taskId"])
+                    previous_path = str(item["absolutePath"])
+                    next_path = str(latest_result.get("taskPath") or previous_path)
+                    applied_paths.extend([previous_path, next_path])
+                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
+                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
+                    operation_results.append(
+                        {
+                            "id": item["operationId"],
+                            "actionType": item["actionType"],
+                            "status": "applied",
+                            "path": next_path,
+                            "taskId": item["taskId"],
+                        }
+                    )
+                elif item["actionType"] == "mark_todo_done":
+                    latest_result = self.toggle_todo(item["todoId"], SimpleNamespace(checked=True))
+                    next_path = str(latest_result.get("notePath") or item["absolutePath"])
+                    applied_paths.append(next_path)
+                    operation_results.append(
+                        {
+                            "id": item["operationId"],
+                            "actionType": item["actionType"],
+                            "status": "applied",
+                            "path": next_path,
+                            "todoId": item["todoId"],
                         }
                     )
             except DomainError as exc:

@@ -289,7 +289,7 @@ export type AssistantSource = {
 }
 
 export type AssistantSuggestedAction = {
-  actionType: AssistantOrganizeActionType
+  actionType: AssistantActionType
   label: string
   instruction: string
   title: string
@@ -297,6 +297,8 @@ export type AssistantSuggestedAction = {
   sourcePath: string
   targetGroupKey: string
   requiresActiveNote: boolean
+  taskId: string
+  todoId: string
 }
 
 export type AssistantChatResponse = {
@@ -374,8 +376,8 @@ export type AssistantSettingsConfig = {
   enabled: boolean
   provider: string
   model: string
-  apiKeyRef: string
   baseUrl: string
+  reasoningEffort: string
   allowExternalNoteContent: boolean
   allowWriteActions: boolean
   maxContextNotes: number
@@ -391,6 +393,7 @@ export type AssistantSettingsResponse = {
   secretRef: string
   secretKind: string
   secretName: string
+  secretLabel: string
   secretConfigured: boolean
   secretStatus: string
   capabilities: Record<string, boolean>
@@ -446,10 +449,14 @@ export type AssistantChangeSetPreviewResponse = {
 export type AssistantOrganizeActionType =
   | 'create_note'
   | 'create_task'
+  | 'mark_task_done'
+  | 'mark_todo_done'
   | 'move_note'
   | 'add_note_tags'
   | 'add_related_links'
   | 'add_wikilinks'
+
+export type AssistantActionType = AssistantOrganizeActionType
 
 export type AssistantOrganizePreviewPayload = {
   instruction?: string
@@ -458,6 +465,8 @@ export type AssistantOrganizePreviewPayload = {
   body?: string
   sourcePath?: string
   targetGroupKey?: string
+  taskId?: string
+  todoId?: string
   attachments?: AssistantMediaStageResponse[]
 }
 
@@ -536,6 +545,7 @@ export type TodoPromoteResponse = {
 export type TaskDoneResponse = {
   done: boolean
   taskId: string
+  taskPath: string
 }
 
 export type NoteMediaResponse = {

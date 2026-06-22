@@ -1412,6 +1412,16 @@ function App() {
       })
       .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
   }, [explorerRows, toWikiTargetForRow, vaultPath])
+  const assistantNoteReferences = useMemo(
+    () =>
+      markdownLinkTargets.map((target) => ({
+        path: target.path,
+        title: target.title,
+        label: target.relativePath || target.title,
+        noteType: target.noteType,
+      })),
+    [markdownLinkTargets]
+  )
 
   const openTodoDashboardTab = () => {
     if (vaultLoaded) {
@@ -3501,6 +3511,7 @@ function App() {
             label: group.label,
             canCreateNotes: group.canCreateNotes,
           }))}
+          noteReferences={assistantNoteReferences}
           onOpenSource={(path, title) => {
             void openNoteInTab(path, title || toNoteDisplayName(path), {
               initialNoteType: 'note',

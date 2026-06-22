@@ -76,8 +76,8 @@ const DEFAULT_ASSISTANT_SETTINGS_CONFIG: AssistantSettingsConfig = {
   enabled: false,
   provider: 'openai',
   model: 'gpt-4.1-mini',
-  apiKeyRef: 'env:OPENAI_API_KEY',
   baseUrl: '',
+  reasoningEffort: '',
   allowExternalNoteContent: false,
   allowWriteActions: false,
   maxContextNotes: 8,
@@ -90,8 +90,8 @@ function normalizeAssistantSettingsConfig(config: Partial<AssistantSettingsConfi
     ...(config ?? {}),
     provider: String(config?.provider || DEFAULT_ASSISTANT_SETTINGS_CONFIG.provider).trim().toLowerCase(),
     model: String(config?.model || DEFAULT_ASSISTANT_SETTINGS_CONFIG.model).trim(),
-    apiKeyRef: String(config?.apiKeyRef || DEFAULT_ASSISTANT_SETTINGS_CONFIG.apiKeyRef).trim(),
     baseUrl: String(config?.baseUrl || '').trim(),
+    reasoningEffort: String(config?.reasoningEffort || '').trim().toLowerCase(),
     maxContextNotes: Number(config?.maxContextNotes ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextNotes),
     maxContextChars: Number(config?.maxContextChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextChars),
   }
@@ -99,6 +99,45 @@ function normalizeAssistantSettingsConfig(config: Partial<AssistantSettingsConfi
 
 function assistantSettingsEqual(left: AssistantSettingsConfig, right: AssistantSettingsConfig): boolean {
   return JSON.stringify(normalizeAssistantSettingsConfig(left)) === JSON.stringify(normalizeAssistantSettingsConfig(right))
+}
+
+type AssistantProviderOptionMeta = Record<string, unknown>
+
+function assistantProviderLabel(settings: AssistantSettingsResponse | null, provider: string): string {
+  const option = (settings?.providerOptions ?? []).find((item) => String(item.id || '').toLowerCase() === provider)
+  return String(option?.label || provider || 'Provider')
+}
+
+function assistantProviderOption(settings: AssistantSettingsResponse | null, provider: string): AssistantProviderOptionMeta | null {
+  return (settings?.providerOptions ?? []).find((item) => String(item.id || '').toLowerCase() === provider) ?? null
+}
+
+function assistantModelOptions(option: AssistantProviderOptionMeta | null): AssistantProviderOptionMeta[] {
+  const rawModels = option?.models
+  return Array.isArray(rawModels)
+    ? rawModels.filter((item): item is AssistantProviderOptionMeta => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : []
+}
+
+function assistantReasoningOptions(option: AssistantProviderOptionMeta | null, model: string): string[] {
+  const selectedModel = assistantModelOptions(option).find((item) => String(item.id ?? '') === model)
+  const rawEfforts = selectedModel?.reasoningEfforts
+  return Array.isArray(rawEfforts) ? rawEfforts.map((item) => String(item)).filter(Boolean) : []
+}
+
+function assistantReasoningLabel(value: string): string {
+  switch (value) {
+    case 'minimal':
+      return 'Minimal'
+    case 'low':
+      return 'Low'
+    case 'medium':
+      return 'Medium'
+    case 'high':
+      return 'High'
+    default:
+      return 'Aus'
+  }
 }
 
 type SettingsEditorPanelProps = {
@@ -235,6 +274,9 @@ export function SettingsEditorPanel({
   const [assistantProbeError, setAssistantProbeError] = useState('')
   const [assistantMessage, setAssistantMessage] = useState('')
   const [assistantError, setAssistantError] = useState('')
+  const [assistantSecretEditorOpen, setAssistantSecretEditorOpen] = useState(false)
+  const [assistantSecretDraft, setAssistantSecretDraft] = useState('')
+  const [assistantSecretPending, setAssistantSecretPending] = useState(false)
 
   const formatOneNoteImportError = (caught: unknown): string => {
     if (caught instanceof Error) {
@@ -296,6 +338,8 @@ export function SettingsEditorPanel({
       setAssistantError('')
       setAssistantProbeMessage('')
       setAssistantProbeError('')
+      setAssistantSecretEditorOpen(false)
+      setAssistantSecretDraft('')
       return
     }
 
@@ -313,6 +357,8 @@ export function SettingsEditorPanel({
         setAssistantMessage('')
         setAssistantProbeMessage('')
         setAssistantProbeError('')
+        setAssistantSecretEditorOpen(false)
+        setAssistantSecretDraft('')
       })
       .catch((caught) => {
         if (!cancelled) {
@@ -474,6 +520,10 @@ export function SettingsEditorPanel({
     : false
   const activeSectionIsAssistant = activeSectionId === 'assistant'
   const footerDirty = activeSectionIsAssistant ? assistantSettingsDirty : settingsDirty
+  const selectedAssistantProviderOption = assistantProviderOption(assistantSettings, assistantDraft.provider)
+  const selectedAssistantProviderLabel = assistantProviderLabel(assistantSettings, assistantDraft.provider)
+  const selectedAssistantModelOptions = assistantModelOptions(selectedAssistantProviderOption)
+  const selectedAssistantReasoningOptions = assistantReasoningOptions(selectedAssistantProviderOption, assistantDraft.model)
 
   const updateAssistantDraft = (patch: Partial<AssistantSettingsConfig>) => {
     setAssistantDraft((prev) => normalizeAssistantSettingsConfig({ ...prev, ...patch }))
@@ -486,12 +536,15 @@ export function SettingsEditorPanel({
   const selectAssistantProvider = (provider: string) => {
     const providerId = String(provider || '').trim().toLowerCase()
     const option = (assistantSettings?.providerOptions ?? []).find((item) => String(item.id || '').toLowerCase() === providerId)
+    const defaultModel = String(option?.defaultModel || '').trim() || assistantDraft.model
     updateAssistantDraft({
       provider: providerId,
-      model: String(option?.defaultModel || '').trim() || assistantDraft.model,
-      apiKeyRef: String(option?.defaultKeyRef || '').trim() || assistantDraft.apiKeyRef,
+      model: defaultModel,
+      reasoningEffort: '',
       baseUrl: '',
     })
+    setAssistantSecretEditorOpen(false)
+    setAssistantSecretDraft('')
   }
 
   const saveAssistantSettings = async () => {
@@ -528,6 +581,84 @@ export function SettingsEditorPanel({
     setAssistantError('')
     setAssistantProbeMessage('')
     setAssistantProbeError('')
+    setAssistantSecretEditorOpen(false)
+    setAssistantSecretDraft('')
+  }
+
+  const applyAssistantSettingsResponse = (response: AssistantSettingsResponse, options: { preserveDraft?: boolean } = {}) => {
+    const config = normalizeAssistantSettingsConfig(response.config)
+    setAssistantSettings({ ...response, config })
+    if (options.preserveDraft) {
+      setAssistantDraft((prev) =>
+        normalizeAssistantSettingsConfig({
+          ...prev,
+          provider: config.provider,
+          model: prev.model || config.model,
+          reasoningEffort: prev.reasoningEffort || config.reasoningEffort,
+        }),
+      )
+      return
+    }
+    setAssistantDraft(config)
+  }
+
+  const saveAssistantSecret = async () => {
+    const apiKey = assistantSecretDraft.trim()
+    if (!vaultLoaded || assistantSecretPending || apiKey.length < 8) {
+      if (apiKey.length > 0 && apiKey.length < 8) {
+        setAssistantError('Der API-Key ist zu kurz.')
+      }
+      return
+    }
+    setAssistantSecretPending(true)
+    setAssistantError('')
+    setAssistantMessage('')
+    setAssistantProbeMessage('')
+    setAssistantProbeError('')
+    try {
+      const response = await apiRequest<AssistantSettingsResponse>(backendUrl, '/assistant/provider/secret', {
+        method: 'PUT',
+        body: JSON.stringify({ provider: assistantDraft.provider, apiKey }),
+      })
+      applyAssistantSettingsResponse(response, { preserveDraft: true })
+      setAssistantSecretDraft('')
+      setAssistantSecretEditorOpen(false)
+      setAssistantMessage(`API-Key fuer ${assistantProviderLabel(response, response.config.provider)} gespeichert.`)
+    } catch (caught) {
+      setAssistantError(formatOneNoteImportError(caught))
+    } finally {
+      setAssistantSecretPending(false)
+    }
+  }
+
+  const deleteAssistantSecret = async () => {
+    if (!vaultLoaded || assistantSecretPending || !assistantSettings?.secretConfigured) {
+      return
+    }
+    const confirmed = window.confirm(`API-Key fuer ${selectedAssistantProviderLabel} aus NickNotes entfernen?`)
+    if (!confirmed) {
+      return
+    }
+    setAssistantSecretPending(true)
+    setAssistantError('')
+    setAssistantMessage('')
+    setAssistantProbeMessage('')
+    setAssistantProbeError('')
+    try {
+      const response = await apiRequest<AssistantSettingsResponse>(
+        backendUrl,
+        `/assistant/provider/secret/${encodeURIComponent(assistantDraft.provider)}`,
+        { method: 'DELETE' },
+      )
+      applyAssistantSettingsResponse(response, { preserveDraft: true })
+      setAssistantSecretDraft('')
+      setAssistantSecretEditorOpen(false)
+      setAssistantMessage(`API-Key fuer ${selectedAssistantProviderLabel} geloescht.`)
+    } catch (caught) {
+      setAssistantError(formatOneNoteImportError(caught))
+    } finally {
+      setAssistantSecretPending(false)
+    }
   }
 
   const testAssistantProvider = async () => {
@@ -860,145 +991,263 @@ export function SettingsEditorPanel({
                         onChange={(event) => updateAssistantDraft({ enabled: event.target.checked })}
                       />
                     </label>
-                    <label className="settings-toggle-row" htmlFor="settings-assistant-external">
-                      <span>
-                        <strong>Externe Notizinhalte erlauben</strong>
-                        <small>Erst danach duerfen relevante Ausschnitte an den Provider gesendet werden.</small>
-                      </span>
-                      <input
-                        id="settings-assistant-external"
-                        type="checkbox"
-                        checked={assistantDraft.allowExternalNoteContent}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ allowExternalNoteContent: event.target.checked })}
-                      />
-                    </label>
-                    <label className="settings-toggle-row" htmlFor="settings-assistant-write">
-                      <span>
-                        <strong>Schreibvorschlaege erlauben</strong>
-                        <small>ChangeSets fuer Notizen, Tasks und Verschieben zusaetzlich freischalten.</small>
-                      </span>
-                      <input
-                        id="settings-assistant-write"
-                        type="checkbox"
-                        checked={assistantDraft.allowWriteActions}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ allowWriteActions: event.target.checked })}
-                      />
-                    </label>
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-provider">Provider</label>
-                        <p className="muted-copy">Aktiver Adapter fuer Chat-Antworten.</p>
+                    <div className="settings-subsection">
+                      <div className="settings-subsection-header">
+                        <strong>Provider und API-Key</strong>
+                        <span>{selectedAssistantProviderLabel}</span>
                       </div>
-                      <select
-                        id="settings-assistant-provider"
-                        value={assistantDraft.provider}
-                        disabled={assistantPending}
-                        onChange={(event) => selectAssistantProvider(event.target.value)}
-                      >
-                        {(assistantSettings?.providerOptions ?? [{ id: 'openai', label: 'OpenAI / GPT', status: 'available' }]).map((option) => (
-                          <option key={String(option.id)} value={String(option.id)} disabled={String(option.status) !== 'available'}>
-                            {String(option.label)}
-                            {String(option.status) === 'planned' ? ' (geplant)' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-model">Modell</label>
-                        <p className="muted-copy">Modellname, den der aktive Provider erwartet.</p>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-provider">Provider</label>
+                          <p className="muted-copy">Aktiver Adapter fuer Chat-Antworten.</p>
+                        </div>
+                        <select
+                          id="settings-assistant-provider"
+                          value={assistantDraft.provider}
+                          disabled={assistantPending || assistantSecretPending}
+                          onChange={(event) => selectAssistantProvider(event.target.value)}
+                        >
+                          {(assistantSettings?.providerOptions ?? [{ id: 'openai', label: 'OpenAI / GPT', status: 'available' }]).map((option) => (
+                            <option key={String(option.id)} value={String(option.id)} disabled={String(option.status) !== 'available'}>
+                              {String(option.label)}
+                              {String(option.status) === 'planned' ? ' (geplant)' : ''}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <input
-                        id="settings-assistant-model"
-                        value={assistantDraft.model}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ model: event.target.value })}
-                        placeholder="gpt-4.1-mini"
-                      />
-                    </div>
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-base-url">Endpoint</label>
-                        <p className="muted-copy">Optionaler Provider-Endpunkt oder lokaler Proxy.</p>
+                      <div className="assistant-key-panel">
+                        <div className="assistant-key-state">
+                          <span className={assistantSettings?.secretConfigured ? 'ok' : 'warn'}>
+                            <LucideNamedIcon name={assistantSettings?.secretConfigured ? 'KeyRound' : 'TriangleAlert'} size={14} />
+                            {assistantSettings?.secretConfigured ? 'API-Key hinterlegt' : 'Kein API-Key hinterlegt'}
+                          </span>
+                          <small>{assistantSettings?.secretName ? `NickNotes-Key-Slot: ${assistantSettings.secretName}` : selectedAssistantProviderLabel}</small>
+                        </div>
+                        <div className="assistant-key-actions">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAssistantSecretEditorOpen(true)
+                              setAssistantSecretDraft('')
+                              setAssistantError('')
+                              setAssistantMessage('')
+                            }}
+                            disabled={assistantPending || assistantSecretPending}
+                          >
+                            <LucideNamedIcon name="KeyRound" size={13} />
+                            <span>{assistantSettings?.secretConfigured ? 'Key ersetzen' : 'Key hinterlegen'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => void deleteAssistantSecret()}
+                            disabled={assistantPending || assistantSecretPending || !assistantSettings?.secretConfigured}
+                          >
+                            <LucideNamedIcon name="Trash2" size={13} />
+                            <span>Key loeschen</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void testAssistantProvider()}
+                            disabled={
+                              assistantPending ||
+                              assistantSecretPending ||
+                              assistantProbePending ||
+                              assistantSettingsDirty ||
+                              !assistantSettings?.providerConfigured
+                            }
+                            title={assistantSettingsDirty ? 'Einstellungen zuerst speichern' : 'Provider-Verbindung testen'}
+                          >
+                            <LucideNamedIcon name="PlugZap" size={13} />
+                            <span>{assistantProbePending ? 'Test laeuft ...' : 'Verbindung testen'}</span>
+                          </button>
+                        </div>
                       </div>
-                      <input
-                        id="settings-assistant-base-url"
-                        value={assistantDraft.baseUrl}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ baseUrl: event.target.value })}
-                        placeholder="https://api.openai.com/v1/responses"
-                      />
+                      {assistantSecretEditorOpen ? (
+                        <div className="assistant-secret-editor">
+                          <label htmlFor="settings-assistant-api-key">API-Key fuer {selectedAssistantProviderLabel}</label>
+                          <div className="assistant-secret-input-row">
+                            <input
+                              id="settings-assistant-api-key"
+                              type="password"
+                              value={assistantSecretDraft}
+                              autoComplete="off"
+                              spellCheck={false}
+                              disabled={assistantSecretPending}
+                              onChange={(event) => {
+                                setAssistantSecretDraft(event.target.value)
+                                setAssistantError('')
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  void saveAssistantSecret()
+                                }
+                                if (event.key === 'Escape') {
+                                  setAssistantSecretEditorOpen(false)
+                                  setAssistantSecretDraft('')
+                                }
+                              }}
+                              placeholder="API-Key einfuegen"
+                            />
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={() => void saveAssistantSecret()}
+                              disabled={assistantSecretPending || assistantSecretDraft.trim().length < 8}
+                            >
+                              <LucideNamedIcon name="Save" size={13} />
+                              <span>{assistantSecretPending ? 'Speichert ...' : 'Speichern'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssistantSecretEditorOpen(false)
+                                setAssistantSecretDraft('')
+                              }}
+                              disabled={assistantSecretPending}
+                            >
+                              <LucideNamedIcon name="X" size={13} />
+                              <span>Abbrechen</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {assistantProbeMessage ? <p className="launch-message">{assistantProbeMessage}</p> : null}
+                      {assistantProbeError ? <p className="launch-error">{assistantProbeError}</p> : null}
                     </div>
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-secret-ref">Secret-Referenz</label>
-                        <p className="muted-copy">Environment-Variable im Backend-Prozess.</p>
+
+                    <div className="settings-subsection">
+                      <div className="settings-subsection-header">
+                        <strong>Modell</strong>
+                        <span>{assistantDraft.model || 'Standard'}</span>
                       </div>
-                      <input
-                        id="settings-assistant-secret-ref"
-                        value={assistantDraft.apiKeyRef}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ apiKeyRef: event.target.value })}
-                        placeholder="env:OPENAI_API_KEY"
-                      />
-                    </div>
-                    <div className="assistant-settings-status">
-                      <span className={assistantSettings?.secretConfigured ? 'ok' : 'warn'}>
-                        {assistantSettings?.secretConfigured ? 'Key gefunden' : 'Key fehlt'}
-                      </span>
-                      <span className={assistantSettings?.providerStatus === 'ready' ? 'ok' : 'warn'}>
-                        {assistantSettings?.providerStatus === 'ready' ? 'Provider bereit' : 'Provider nicht bereit'}
-                      </span>
-                      <span>{assistantSettings?.secretRef ?? assistantDraft.apiKeyRef}</span>
-                      <button
-                        type="button"
-                        onClick={() => void testAssistantProvider()}
-                        disabled={
-                          assistantPending ||
-                          assistantProbePending ||
-                          assistantSettingsDirty ||
-                          !assistantSettings?.providerConfigured
-                        }
-                        title={assistantSettingsDirty ? 'Einstellungen zuerst speichern' : 'Provider-Verbindung testen'}
-                      >
-                        <LucideNamedIcon name="PlugZap" size={13} />
-                        <span>{assistantProbePending ? 'Test laeuft ...' : 'Verbindung testen'}</span>
-                      </button>
-                    </div>
-                    {assistantProbeMessage ? <p className="launch-message">{assistantProbeMessage}</p> : null}
-                    {assistantProbeError ? <p className="launch-error">{assistantProbeError}</p> : null}
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-max-notes">Quellenlimit</label>
-                        <p className="muted-copy">Maximale Anzahl Kontextnotizen pro Chatfrage.</p>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-model">Modell</label>
+                          <p className="muted-copy">Kann jederzeit gewechselt werden.</p>
+                        </div>
+                        <select
+                          id="settings-assistant-model"
+                          value={assistantDraft.model}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ model: event.target.value, reasoningEffort: '' })}
+                        >
+                          {assistantDraft.model && !selectedAssistantModelOptions.some((option) => String(option.id || '') === assistantDraft.model) ? (
+                            <option value={assistantDraft.model}>{assistantDraft.model}</option>
+                          ) : null}
+                          {(selectedAssistantModelOptions.length ? selectedAssistantModelOptions : [{ id: assistantDraft.model || 'gpt-4.1-mini', label: assistantDraft.model || 'gpt-4.1-mini' }]).map((option) => (
+                            <option key={String(option.id)} value={String(option.id)}>
+                              {String(option.label || option.id)}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <input
-                        id="settings-assistant-max-notes"
-                        type="number"
-                        min={1}
-                        max={50}
-                        value={assistantDraft.maxContextNotes}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ maxContextNotes: Number(event.target.value) })}
-                      />
-                    </div>
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-assistant-max-chars">Kontextlimit</label>
-                        <p className="muted-copy">Maximale Zeichenmenge fuer lokalen Quellenkontext.</p>
+                      {selectedAssistantReasoningOptions.length > 0 ? (
+                        <div className="settings-row">
+                          <div>
+                            <label htmlFor="settings-assistant-reasoning">Reasoning</label>
+                            <p className="muted-copy">Steuert den Denkaufwand fuer unterstuetzte Modelle.</p>
+                          </div>
+                          <select
+                            id="settings-assistant-reasoning"
+                            value={assistantDraft.reasoningEffort}
+                            disabled={assistantPending}
+                            onChange={(event) => updateAssistantDraft({ reasoningEffort: event.target.value })}
+                          >
+                            <option value="">Aus</option>
+                            {selectedAssistantReasoningOptions.map((effort) => (
+                              <option key={effort} value={effort}>
+                                {assistantReasoningLabel(effort)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-base-url">Endpoint</label>
+                          <p className="muted-copy">Optionaler Provider-Endpunkt oder lokaler Proxy.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-base-url"
+                          value={assistantDraft.baseUrl}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ baseUrl: event.target.value })}
+                          placeholder="https://api.openai.com/v1/responses"
+                        />
                       </div>
-                      <input
-                        id="settings-assistant-max-chars"
-                        type="number"
-                        min={1000}
-                        max={200000}
-                        step={1000}
-                        value={assistantDraft.maxContextChars}
-                        disabled={assistantPending}
-                        onChange={(event) => updateAssistantDraft({ maxContextChars: Number(event.target.value) })}
-                      />
+                    </div>
+
+                    <div className="settings-subsection">
+                      <div className="settings-subsection-header">
+                        <strong>Freigaben</strong>
+                        <span>{assistantDraft.allowExternalNoteContent ? 'Provider-Kontext erlaubt' : 'Lokal geschuetzt'}</span>
+                      </div>
+                      <label className="settings-toggle-row" htmlFor="settings-assistant-external">
+                        <span>
+                          <strong>Externe Notizinhalte erlauben</strong>
+                          <small>Erst danach duerfen relevante Ausschnitte an den Provider gesendet werden.</small>
+                        </span>
+                        <input
+                          id="settings-assistant-external"
+                          type="checkbox"
+                          checked={assistantDraft.allowExternalNoteContent}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ allowExternalNoteContent: event.target.checked })}
+                        />
+                      </label>
+                      <label className="settings-toggle-row" htmlFor="settings-assistant-write">
+                        <span>
+                          <strong>Schreibvorschlaege erlauben</strong>
+                          <small>ChangeSets fuer Notizen, Tasks und Verschieben zusaetzlich freischalten.</small>
+                        </span>
+                        <input
+                          id="settings-assistant-write"
+                          type="checkbox"
+                          checked={assistantDraft.allowWriteActions}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ allowWriteActions: event.target.checked })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="settings-subsection">
+                      <div className="settings-subsection-header">
+                        <strong>Kontext</strong>
+                        <span>{assistantDraft.maxContextNotes} Quellen</span>
+                      </div>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-max-notes">Quellenlimit</label>
+                          <p className="muted-copy">Maximale Anzahl Kontextnotizen pro Chatfrage.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-max-notes"
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={assistantDraft.maxContextNotes}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ maxContextNotes: Number(event.target.value) })}
+                        />
+                      </div>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-max-chars">Kontextlimit</label>
+                          <p className="muted-copy">Maximale Zeichenmenge fuer lokalen Quellenkontext.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-max-chars"
+                          type="number"
+                          min={1000}
+                          max={200000}
+                          step={1000}
+                          value={assistantDraft.maxContextChars}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ maxContextChars: Number(event.target.value) })}
+                        />
+                      </div>
                     </div>
                     {assistantMessage ? <p className="launch-message">{assistantMessage}</p> : null}
                     {assistantError ? <p className="launch-error">{assistantError}</p> : null}

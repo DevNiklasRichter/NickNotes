@@ -48,9 +48,10 @@ NickNotes/
         assistant_changesets.py # Assistant-ChangeSet-Vorschlaege, Organisations-/Tag-/Link-/Medien-Aktionen, Diffs, Hashes und Provider-/Fallback-Erzeugung
         assistant_embeddings.py # Embedding-Entscheidungsstatus, Retrieval-Vergleich und rebuildbare Projektionsregeln
         assistant_retrieval_eval.py # Lokale Retrieval-Evaluationsfaelle und Messstatus ohne Provider-/Embedding-Aufruf
-        assistant_settings.py   # Assistant-Settings-Status, Provider-Optionen und Secret-Referenzanzeige
+        assistant_settings.py   # Assistant-Settings-Status, Provider-/Modelloptionen und Key-Status
+        assistant_secret_store.py # App-interner Assistant-Key-Store mit Windows-DPAPI und NickNotes-Key-Slots
         assistant_security.py   # Assistant-Config, Vault-Pfadregeln und externe Inhaltsfreigaben
-        llm_providers.py        # Provider-neutrale LLM-Basisschicht mit OpenAI-/Claude-/Gemini-Adaptern, Secret-Referenzen und Redaction
+        llm_providers.py        # Provider-neutrale LLM-Basisschicht mit OpenAI-/Claude-/Gemini-Adaptern, NickNotes-Secret-Slots und Redaction
         ai_client.py            # Kompatibler Smart-Tagging-Client auf der LLM-Basisschicht
       tests/
     desktop/
@@ -91,7 +92,7 @@ MeineNoteBase/
   <eigene Ordner>/              # frei organisierbare Markdown-Notizen und Tasks
   .media/                       # Medienassets
   .system/
-    config.json                 # Core/Smart-/Assistant-Konfiguration und optionale Provider-Referenzen
+    config.json                 # Core/Smart-/Assistant-Konfiguration ohne Klartext-Secrets
     index.db                    # wiederherstellbare SQLite-Projektion
     tag_groups.json             # eindeutige Tag-Definitionen
     favorite_folders.json       # favorisierte Ordner
@@ -154,7 +155,7 @@ Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags 
 
 ## Assistant-Zielerweiterung
 
-NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Quellen, Spracheingabe und pruefbaren ChangeSet-Vorschlaegen fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung.
+NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Markdown-Antworten, eingebetteten Quellenlinks, Spracheingabe und pruefbaren ChangeSet-Vorschlaegen fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung. Schreibaktionen werden wie normale Chatnachrichten aus dem Composer gesendet, koennen mit Slash-Aktionen und `@`-Referenzen konkretisiert werden und muessen conversational per Ja/Nein-Aktion oder Chatantwort bestaetigt werden; direkte LLM-Dateischreibzugriffe bleiben ausgeschlossen.
 
 Verbindliche Regeln fuer diese Erweiterung:
 
@@ -205,10 +206,10 @@ Die Endpunkte decken insbesondere folgende Bereiche ab:
 - Suche, Explorer, Review und Graph
 - Lokaler OneNote-`.onepkg`-Import
 - Persistente UI-Einstellungen
-- Provider-neutraler Assistant-Chat mit read-only Retrieval ueber FTS plus Graph-Nachbarn, Vault-relativen Quellen, kompakten Tool-Vorschlaegen, NDJSON-Streaming, OpenAI-SSE-Deltas plus Sync-Fallback fuer andere Provider, OpenAI-/Claude-/Gemini-Chat-Adaptern, sicherem Provider-Verbindungstest, gesichertem Voice-Provider-Status und optionaler providerbasierter Audio-Transkription ueber dieselben Freigaben
-- Assistant-Settings fuer Provider, Modell, Endpoint, Kontextlimits, externe Inhaltsfreigabe und Schreibfreigabe; die API liefert nur Secret-Referenzen und Key-Status, nie API-Key-Werte
+- Provider-neutraler Assistant-Chat mit read-only Retrieval ueber FTS plus Graph-Nachbarn, Vault-relativen Quellen, kompakten Tool-Vorschlaegen, NDJSON-Streaming, OpenAI-SSE-Deltas plus Sync-Fallback fuer andere Provider, OpenAI-/Claude-/Gemini-Chat-Adaptern, sicherem Provider-Verbindungstest, app-interner Key-Verwaltung, gesichertem Voice-Provider-Status und optionaler providerbasierter Audio-Transkription ueber dieselben Freigaben
+- Assistant-Settings fuer Provider, Modell-Dropdown, Reasoning-Optionen, Endpoint, Kontextlimits, externe Inhaltsfreigabe und Schreibfreigabe; die API liefert nur NickNotes-Key-Status und Slot-Namen, nie API-Key-Werte
 - Assistant-ChangeSet-Vorschau und Apply fuer freigegebene Notizverbesserungen mit Diff, Hash-Konfliktpruefung und bestehendem Save-/Reindex-/Graph-Pfad
-- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks, Verschieben, Tags, Related-Links, WikiLinks und gestagte Bildanhaenge ueber bestehende Save-/Move-/Medien-/Reindex-/Graph-Pfade
+- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks, Task-/To-do-Erledigung, Verschieben, Tags, Related-Links, WikiLinks und gestagte Bildanhaenge ueber bestehende Save-/Move-/Todo-/Task-/Medien-/Reindex-/Graph-Pfade
 - Assistant-Embedding-Status fuer die evaluierte, aktuell deaktivierte Embedding-Projektion mit Contract-Sync und ohne Embedding-Provider-Probe
 - Graph-gestuetzte Assistant-Quellenerweiterung aus `.system/graph-index.json`, ohne Vollscan der Markdown-Dateien und ohne neue fachliche Quelle
 - Assistant-Retrieval-Evaluation ueber `.system/assistant-retrieval-evaluation.json`, die lokale FTS-/Tag-/Graph-Treffer gegen erwartete Quellen misst, ohne Provider oder Embeddings aufzurufen
@@ -229,7 +230,7 @@ Electron kapselt die App, startet und stoppt das Backend und bietet eine kleine 
 Das React-Frontend bietet:
 
 - Explorer fuer Ordner, Notizen, Tasks und Tags
-- Assistant-Chat fuer read-only Fragen zur NoteBase mit Quellen, Graph-Quellenmarkierung, Diktat-Review, Quick-Capture-Uebergabe, kompakten Chat-Aktionsvorschlaegen, strukturierter ChangeSet-Review mit optionalem Diff und kompakter Organisationsplanung
+- Assistant-Chat fuer read-only Fragen zur NoteBase und offene Task-/To-do-Listen mit Markdown-Rendering, direkt eingebetteten Quellenlinks, Graph-Quellenmarkierung, Diktat-Review, Quick-Capture-Uebergabe, Slash-/At-Composer, natuerlicher Aktionserkennung, kompakten Chat-Aktionsvorschlaegen und conversationaler ChangeSet-Freigabe im Chatverlauf mit optionalem Diff
 - CodeMirror-Markdown-Editor mit Tabs und Split-Ansicht
 - Eigenschaften fuer Metadaten, Tags und Beziehungen
 - Quick Capture
@@ -257,7 +258,7 @@ Der Chat-Assistant darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
 - Linting: `eslint.config.js`
 - Dokumentation: `PROJECT_ARCHITECTURE.md` als Leitplanke, weitere Dokumentation in `doc/`
 - NoteBase-Konfiguration: `<NoteBase>/.system/config.json`
-- Optionale LLM-Nutzung: Smart-Modus/Assistant plus API-Key-Referenz aus Environment-Variable oder spaeter sicherem Secret-Store; Klartext-Keys gehoeren nicht in `.system/config.json`. Der Settings-Dialog zeigt fuer Assistant-Keys nur Referenz und Status.
+- Optionale LLM-Nutzung: Smart-Modus bleibt kompatibel, der Assistant nutzt app-interne NickNotes-Key-Slots wie `NICKNOTES_OPENAI_API_KEY`, `NICKNOTES_ANTHROPIC_API_KEY` und `NICKNOTES_GEMINI_API_KEY`. Klartext-Keys gehoeren nicht in `.system/config.json`, Frontend-State, Logs oder Fehlerantworten. Der Settings-Dialog verwaltet Assistant-Keys ueber Hinterlegen, Ersetzen und Loeschen statt ueber Environment-Variablen.
 - Entwicklungsstart: `npm run dev`
 - Build: `npm run build`
 - Backend separat: `npm run dev:backend`

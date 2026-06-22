@@ -758,6 +758,8 @@ class AssistantOrganizePreviewRequest(BaseModel):
     body: str = ""
     source_path: str = Field(default="", alias="sourcePath")
     target_group_key: str = Field(default="", alias="targetGroupKey")
+    task_id: str = Field(default="", alias="taskId")
+    todo_id: str = Field(default="", alias="todoId")
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     actions: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -779,12 +781,17 @@ class AssistantSettingsUpdateRequest(BaseModel):
     enabled: bool = False
     provider: str = "openai"
     model: str = ""
-    api_key_ref: str = Field(default="env:OPENAI_API_KEY", alias="apiKeyRef")
     base_url: str = Field(default="", alias="baseUrl")
+    reasoning_effort: str = Field(default="", alias="reasoningEffort")
     allow_external_note_content: bool = Field(default=False, alias="allowExternalNoteContent")
     allow_write_actions: bool = Field(default=False, alias="allowWriteActions")
     max_context_notes: int = Field(default=8, alias="maxContextNotes")
     max_context_chars: int = Field(default=24_000, alias="maxContextChars")
+
+
+class AssistantProviderSecretSaveRequest(BaseModel):
+    provider: str = "openai"
+    api_key: str = Field(alias="apiKey")
 
 
 class FocusMitUpdateRequest(BaseModel):
@@ -1249,6 +1256,22 @@ def update_assistant_settings(req: AssistantSettingsUpdateRequest)-> dict[str, A
 
 def update_assistant_settings_impl(req: AssistantSettingsUpdateRequest)-> dict[str, Any]:
     return backend_api_service.update_assistant_settings(req)
+
+
+@app.put("/assistant/provider/secret", response_model=AssistantSettingsResponse)
+def save_assistant_provider_secret(req: AssistantProviderSecretSaveRequest)-> dict[str, Any]:
+    return backend_api_service.save_assistant_provider_secret(req)
+
+def save_assistant_provider_secret_impl(req: AssistantProviderSecretSaveRequest)-> dict[str, Any]:
+    return backend_api_service.save_assistant_provider_secret(req)
+
+
+@app.delete("/assistant/provider/secret/{provider}", response_model=AssistantSettingsResponse)
+def delete_assistant_provider_secret(provider: str)-> dict[str, Any]:
+    return backend_api_service.delete_assistant_provider_secret(provider)
+
+def delete_assistant_provider_secret_impl(provider: str)-> dict[str, Any]:
+    return backend_api_service.delete_assistant_provider_secret(provider)
 
 
 @app.post("/assistant/provider/probe", response_model=AssistantProviderProbeResponse)
