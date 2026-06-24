@@ -14,6 +14,11 @@ import type {
 } from './AppShared'
 import type { TagActionDialogAction, TagActionDialogResult, TagFormValues, TagGroupFormValues } from '../tags/TagActionDialogModal'
 import {
+  ASSISTANT_SIDEBAR_WIDTH_DEFAULT,
+  ASSISTANT_SIDEBAR_WIDTH_MAX,
+  ASSISTANT_SIDEBAR_WIDTH_MIN,
+} from './appConfig'
+import {
   apiRequest,
   clearStoredLastNoteBasePath,
   getPreferredTheme,
@@ -77,6 +82,7 @@ type UiSettingsSnapshot = {
   getTaskFeatureSettings: () => TaskFeatureSettings
   getExplorerOptions: () => ExplorerOptions
   getExplorerWidth: () => number
+  getAssistantSidebarWidth: () => number
   isEditorPanelOpen: () => boolean
   isCapturePanelOpen: () => boolean
   isCapturePinned: () => boolean
@@ -127,6 +133,7 @@ type AppLifecycleWriter = {
   setSavedTaskFeatureSettings: (settings: TaskFeatureSettings) => void
   setSavedExplorerOptions: (options: ExplorerOptions) => void
   setExplorerWidth: (value: number) => void
+  setAssistantSidebarWidth: (value: number) => void
   setEditorPanelOpen: (open: boolean) => void
   setCapturePanelOpen: (open: boolean) => void
   setCapturePinned: (pinned: boolean) => void
@@ -259,6 +266,7 @@ export class AppLifecycleService {
     taskFeatureSettings: this.snapshot.getTaskFeatureSettings(),
     explorerOptions: this.snapshot.getExplorerOptions(),
     explorerWidth: this.snapshot.getExplorerWidth(),
+    assistantSidebarWidth: this.snapshot.getAssistantSidebarWidth(),
     editorPanelOpen: this.snapshot.isEditorPanelOpen(),
     capturePanelOpen: this.snapshot.isCapturePanelOpen(),
     capturePinned: this.snapshot.isCapturePinned(),
@@ -269,6 +277,7 @@ export class AppLifecycleService {
 
   buildLayoutUiSettings = (): Record<string, unknown> => ({
     explorerWidth: this.snapshot.getExplorerWidth(),
+    assistantSidebarWidth: this.snapshot.getAssistantSidebarWidth(),
     editorPanelOpen: this.snapshot.isEditorPanelOpen(),
     capturePanelOpen: this.snapshot.isCapturePanelOpen(),
     capturePinned: this.snapshot.isCapturePinned(),
@@ -291,6 +300,12 @@ export class AppLifecycleService {
     const nextTaskFeatureSettings = toTaskFeatureSettingsFromSettings(appSettings.taskFeatureSettings)
     const nextExplorerOptions = toExplorerOptionsFromSettings(appSettings.explorerOptions)
     const nextExplorerWidth = toBoundedNumber(appSettings.explorerWidth, 300, 220, 520)
+    const nextAssistantSidebarWidth = toBoundedNumber(
+      appSettings.assistantSidebarWidth,
+      ASSISTANT_SIDEBAR_WIDTH_DEFAULT,
+      ASSISTANT_SIDEBAR_WIDTH_MIN,
+      ASSISTANT_SIDEBAR_WIDTH_MAX
+    )
     const nextEditorPanelOpen = toBoolean(appSettings.editorPanelOpen, true)
     const nextCapturePanelOpen = toBoolean(appSettings.capturePanelOpen, true)
     const nextCapturePinned = toBoolean(appSettings.capturePinned, true)
@@ -315,6 +330,7 @@ export class AppLifecycleService {
     this.writer.setSavedTaskFeatureSettings(nextTaskFeatureSettings)
     this.writer.setSavedExplorerOptions(nextExplorerOptions)
     this.writer.setExplorerWidth(nextExplorerWidth)
+    this.writer.setAssistantSidebarWidth(nextAssistantSidebarWidth)
     this.writer.setEditorPanelOpen(nextEditorPanelOpen)
     this.writer.setCapturePanelOpen(nextCapturePanelOpen)
     this.writer.setCapturePinned(nextCapturePinned)

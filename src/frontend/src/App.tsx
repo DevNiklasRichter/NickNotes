@@ -63,6 +63,9 @@ import {
   DEFAULT_DISPLAY_NAME,
   DEFAULT_NOTEBASE_NAME,
   EXPLORER_DEFAULT_WIDTH,
+  ASSISTANT_SIDEBAR_WIDTH_DEFAULT,
+  ASSISTANT_SIDEBAR_WIDTH_MIN,
+  ASSISTANT_SIDEBAR_WIDTH_MAX,
   CAPTURE_INLINE_HEIGHT_DEFAULT,
   CAPTURE_PANEL_MIN_HEIGHT,
   CAPTURE_PANEL_BOTTOM_OFFSET,
@@ -75,7 +78,6 @@ import {
   FOCUS_DASHBOARD_TAB_PATH,
   REVIEW_DASHBOARD_TAB_PATH,
   GRAPH_DASHBOARD_TAB_PATH,
-  ASSISTANT_CHAT_TAB_PATH,
   DEFAULT_STATUS_BAR_PREFS,
   DEFAULT_TASK_FEATURE_SETTINGS,
   DEFAULT_EXPLORER_OPTIONS,
@@ -222,8 +224,12 @@ function App() {
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('notes')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(false)
+  const [assistantSidebarWidth, setAssistantSidebarWidth] = useState(ASSISTANT_SIDEBAR_WIDTH_DEFAULT)
+  const [assistantResizing, setAssistantResizing] = useState(false)
   const [displayName, setDisplayName] = useState(DEFAULT_DISPLAY_NAME)
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
+  const settingsDialogWasOpenRef = useRef(false)
   const [createNoteBaseDialogOpen, setCreateNoteBaseDialogOpen] = useState(false)
   const [createNoteBaseParentPath, setCreateNoteBaseParentPath] = useState('')
   const [createNoteBaseName, setCreateNoteBaseName] = useState('')
@@ -388,6 +394,36 @@ function App() {
       window.removeEventListener('pointerup', onPointerUp)
     }
   }, [captureResizing])
+
+  useEffect(() => {
+    if (!assistantResizing) {
+      return
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      event.preventDefault()
+      const host = workspaceGridRef.current
+      if (!host) {
+        return
+      }
+      const rect = host.getBoundingClientRect()
+      const availableMaxWidth = Math.max(ASSISTANT_SIDEBAR_WIDTH_MIN, Math.min(ASSISTANT_SIDEBAR_WIDTH_MAX, rect.width - 320))
+      const nextWidth = Math.round(rect.right - event.clientX)
+      const bounded = Math.max(ASSISTANT_SIDEBAR_WIDTH_MIN, Math.min(availableMaxWidth, nextWidth))
+      setAssistantSidebarWidth(bounded)
+    }
+
+    const onPointerUp = () => {
+      setAssistantResizing(false)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+    }
+  }, [assistantResizing])
 
   useEffect(() => {
     tagActionDialogRef.current = tagActionDialog
@@ -834,6 +870,7 @@ function App() {
               getTaskFeatureSettings: () => taskFeatureSettings,
               getExplorerOptions: () => explorerOptions,
               getExplorerWidth: () => explorerWidth,
+              getAssistantSidebarWidth: () => assistantSidebarWidth,
               isEditorPanelOpen: () => editorPanelOpen,
               isCapturePanelOpen: () => capturePanelOpen,
               isCapturePinned: () => capturePinned,
@@ -863,6 +900,7 @@ function App() {
               setSavedTaskFeatureSettings,
               setSavedExplorerOptions,
               setExplorerWidth,
+              setAssistantSidebarWidth,
               setEditorPanelOpen,
               setCapturePanelOpen,
               setCapturePinned,
@@ -930,6 +968,7 @@ function App() {
       searchQuery,
       explorerOptions,
       explorerWidth,
+      assistantSidebarWidth,
       openTagActionDialog,
       requestSaveBeforeNoteBaseSwitch,
       clearAppStateForClosedNoteBase,
@@ -1110,6 +1149,7 @@ function App() {
     editorPanelOpen,
     expandedFolders,
     explorerWidth,
+    assistantSidebarWidth,
     vaultLoaded,
     workspaceState.layoutMode,
     workspaceState.splitRatio,
@@ -1422,6 +1462,21 @@ function App() {
       })),
     [markdownLinkTargets]
   )
+  const assistantNoteGroupOptions = useMemo(
+    () =>
+      noteGroups.map((group) => ({
+        key: group.key,
+        label: group.label,
+        canCreateNotes: group.canCreateNotes,
+      })),
+    [noteGroups]
+  )
+  const assistantProviderStatus = assistantChat.voice.providerStatus
+  const refreshAssistantVoiceStatus = assistantChat.refreshVoiceStatus
+  const assistantConfigured = Boolean(
+    vaultLoaded && assistantProviderStatus?.assistantEnabled && assistantProviderStatus?.providerConfigured
+  )
+  const showAssistantSidebar = assistantConfigured && assistantSidebarOpen
 
   const openTodoDashboardTab = () => {
     if (vaultLoaded) {
@@ -1601,42 +1656,6 @@ function App() {
         kind: 'graph_dashboard',
         path: GRAPH_DASHBOARD_TAB_PATH,
         title: 'Graph Preview',
-        content: '',
-        loading: false,
-        dirty: false,
-      },
-    ])
-    setEditorPanelOpen(true)
-    dispatchWorkspace({
-      type: 'OPEN_TAB',
-      paneId: targetPane,
-      tabId: nextTabId,
-      activate: true,
-    })
-  }
-
-  const openAssistantChatTab = () => {
-    const existing = findTabByPath(ASSISTANT_CHAT_TAB_PATH, openTabs)
-    const targetPane = workspaceStateRef.current.lastFocusedPane
-    if (existing) {
-      setEditorPanelOpen(true)
-      dispatchWorkspace({
-        type: 'OPEN_TAB',
-        paneId: targetPane,
-        tabId: existing.id,
-        activate: true,
-      })
-      return
-    }
-
-    const nextTabId = createTabId()
-    setOpenTabs((prev) => [
-      ...prev,
-      {
-        id: nextTabId,
-        kind: 'assistant_chat',
-        path: ASSISTANT_CHAT_TAB_PATH,
-        title: 'Assistant',
         content: '',
         loading: false,
         dirty: false,
@@ -3289,6 +3308,34 @@ function App() {
     )
   }
 
+  const resolveAssistantSidebarChangeTarget = (): AssistantChangeTarget | null => {
+    return (
+      toAssistantChangeTarget(activeTab) ??
+      [...openTabs].reverse().map(toAssistantChangeTarget).find((target): target is AssistantChangeTarget => Boolean(target)) ??
+      null
+    )
+  }
+
+  const renderAssistantChatWorkspace = (changeTarget: AssistantChangeTarget | null, targetPane: PaneId) => (
+    <AssistantChatWorkspace
+      controller={assistantChat}
+      vaultLoaded={vaultLoaded}
+      changeTarget={changeTarget}
+      noteGroups={assistantNoteGroupOptions}
+      noteReferences={assistantNoteReferences}
+      onOpenSource={(path, title) => {
+        void openNoteInTab(path, title || toNoteDisplayName(path), {
+          initialNoteType: 'note',
+          targetPane,
+        })
+      }}
+      onUseTranscriptAsCapture={appendAssistantTranscriptToCapture}
+      onChangeSetApplied={(response) => {
+        void handleAssistantChangeSetApplied(response)
+      }}
+    />
+  )
+
   const handleAssistantChangeSetApplied = async (response: AssistantChangeSetApplyResponse) => {
     setError('')
     setCounts(response.counts)
@@ -3361,6 +3408,33 @@ function App() {
     setSidebarView(view)
     setSidebarOpen(true)
   }
+
+  const toggleAssistantSidebar = useCallback(() => {
+    if (!assistantConfigured) {
+      return
+    }
+    setAssistantSidebarOpen((previous) => !previous)
+  }, [assistantConfigured])
+
+  useEffect(() => {
+    if (!assistantConfigured && assistantSidebarOpen) {
+      setAssistantSidebarOpen(false)
+    }
+  }, [assistantConfigured, assistantSidebarOpen])
+
+  useEffect(() => {
+    if (settingsDialogOpen) {
+      settingsDialogWasOpenRef.current = true
+      return
+    }
+    if (!settingsDialogWasOpenRef.current) {
+      return
+    }
+    settingsDialogWasOpenRef.current = false
+    if (vaultLoaded) {
+      void refreshAssistantVoiceStatus()
+    }
+  }, [refreshAssistantVoiceStatus, settingsDialogOpen, vaultLoaded])
 
   useEffect(() => {
     const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -3501,29 +3575,7 @@ function App() {
     }
 
     if (paneTab.kind === 'assistant_chat') {
-      return (
-        <AssistantChatWorkspace
-          controller={assistantChat}
-          vaultLoaded={vaultLoaded}
-          changeTarget={resolveAssistantChangeTarget(paneId)}
-          noteGroups={noteGroups.map((group) => ({
-            key: group.key,
-            label: group.label,
-            canCreateNotes: group.canCreateNotes,
-          }))}
-          noteReferences={assistantNoteReferences}
-          onOpenSource={(path, title) => {
-            void openNoteInTab(path, title || toNoteDisplayName(path), {
-              initialNoteType: 'note',
-              targetPane: paneId,
-            })
-          }}
-          onUseTranscriptAsCapture={appendAssistantTranscriptToCapture}
-          onChangeSetApplied={(response) => {
-            void handleAssistantChangeSetApplied(response)
-          }}
-        />
-      )
+      return renderAssistantChatWorkspace(resolveAssistantChangeTarget(paneId), paneId)
     }
 
     const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path))
@@ -3586,6 +3638,17 @@ function App() {
   }
 
   const showCaptureInline = capturePanelOpen && capturePinned
+  const workspaceGridClassName = [
+    'workspace-grid',
+    showCaptureInline ? 'with-capture-column' : '',
+    showAssistantSidebar ? 'with-assistant-sidebar' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const workspaceGridStyle = {
+    '--assistant-sidebar-width': `${assistantSidebarWidth}px`,
+    ...(showCaptureInline ? { '--capture-inline-height': `${captureInlineHeight}px` } : {}),
+  } as CSSProperties
   const windowTitlebar = (
     <div className="window-titlebar">
       <div className="window-titlebar-brand" aria-label="NickNotes">
@@ -3977,9 +4040,10 @@ function App() {
         <div className="workbench-shell">
       <ActivityRail
         sidebarView={sidebarView}
-        assistantActive={activeTab?.kind === 'assistant_chat'}
+        assistantActive={showAssistantSidebar}
+        assistantAvailable={assistantConfigured}
         onOpenSidebarView={openSidebarView}
-        onOpenAssistant={openAssistantChatTab}
+        onOpenAssistant={toggleAssistantSidebar}
         onOpenSettings={openSettingsDialog}
       />
 
@@ -4123,53 +4187,79 @@ function App() {
       <section className="main-region">
         <div
           ref={workspaceGridRef}
-          className={`workspace-grid ${showCaptureInline ? 'with-capture-column' : ''}`}
-          style={
-            showCaptureInline
-              ? ({
-                  '--capture-inline-height': `${captureInlineHeight}px`,
-                } as CSSProperties)
-              : undefined
-          }
+          className={workspaceGridClassName}
+          style={workspaceGridStyle}
         >
-          {editorPanelOpen ? (
-            <EditorWorkspaceLayout
-              workspace={workspaceState}
-              paneTabs={paneTabs}
-              paneActiveTabs={paneActiveTabs}
-              activePaneId={activePaneId}
-              disableSave={!activeTab || !activeTab.dirty}
-              disableReveal={activeTab?.kind !== 'note'}
-              onSaveActive={() => {
-                if (activeTab) {
-                  void saveTab(activeTab.path)
-                }
-              }}
-              onRevealActive={revealActiveNoteInExplorer}
-              onToggleSplitMode={toggleSplitView}
-              onCloseEditorPanel={toggleEditorPanel}
-              onSetSplitRatio={(nextRatio) => {
-                dispatchWorkspace({
-                  type: 'SET_SPLIT_RATIO',
-                  splitRatio: nextRatio,
-                })
-              }}
-              onActivateTab={handleActivatePaneTab}
-              onCloseTab={(tabId) => {
-                void closeEditorTab(tabId)
-              }}
-              onFocusPane={handleFocusPane}
-              onMoveTabWithinPane={handleMoveTabWithinPane}
-              onMoveTabToPane={handleMoveTabToOtherPane}
-              onDropExternalNote={handleWorkspaceExternalDrop}
-              onTabContextMenu={(tabId, x, y) => {
-                setTabContextMenu({ x, y, tabId })
-              }}
-              renderPaneContent={renderWorkspacePaneContent}
-              resolveTabIconName={resolveNoteTabIconName}
-              getTabTooltip={getTabTooltip}
-            />
-          ) : null}
+          <div className="workspace-main-row">
+            {editorPanelOpen ? (
+              <EditorWorkspaceLayout
+                workspace={workspaceState}
+                paneTabs={paneTabs}
+                paneActiveTabs={paneActiveTabs}
+                activePaneId={activePaneId}
+                disableSave={!activeTab || !activeTab.dirty}
+                disableReveal={activeTab?.kind !== 'note'}
+                onSaveActive={() => {
+                  if (activeTab) {
+                    void saveTab(activeTab.path)
+                  }
+                }}
+                onRevealActive={revealActiveNoteInExplorer}
+                onToggleSplitMode={toggleSplitView}
+                onCloseEditorPanel={toggleEditorPanel}
+                onSetSplitRatio={(nextRatio) => {
+                  dispatchWorkspace({
+                    type: 'SET_SPLIT_RATIO',
+                    splitRatio: nextRatio,
+                  })
+                }}
+                onActivateTab={handleActivatePaneTab}
+                onCloseTab={(tabId) => {
+                  void closeEditorTab(tabId)
+                }}
+                onFocusPane={handleFocusPane}
+                onMoveTabWithinPane={handleMoveTabWithinPane}
+                onMoveTabToPane={handleMoveTabToOtherPane}
+                onDropExternalNote={handleWorkspaceExternalDrop}
+                onTabContextMenu={(tabId, x, y) => {
+                  setTabContextMenu({ x, y, tabId })
+                }}
+                renderPaneContent={renderWorkspacePaneContent}
+                resolveTabIconName={resolveNoteTabIconName}
+                getTabTooltip={getTabTooltip}
+              />
+            ) : null}
+
+            {showAssistantSidebar ? (
+              <div
+                className={`assistant-resize-handle ${assistantResizing ? 'active' : ''}`}
+                role="separator"
+                aria-orientation="vertical"
+                tabIndex={0}
+                title="KI-Assistent Breite anpassen"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  setAssistantResizing(true)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                    return
+                  }
+                  event.preventDefault()
+                  const delta = event.key === 'ArrowLeft' ? 24 : -24
+                  setAssistantSidebarWidth((current) =>
+                    Math.max(ASSISTANT_SIDEBAR_WIDTH_MIN, Math.min(ASSISTANT_SIDEBAR_WIDTH_MAX, current + delta))
+                  )
+                }}
+              />
+            ) : null}
+
+            {showAssistantSidebar ? (
+              <aside className="assistant-side-panel" aria-label="KI-Assistent">
+                {renderAssistantChatWorkspace(resolveAssistantSidebarChangeTarget(), activePaneId)}
+              </aside>
+            ) : null}
+          </div>
 
           {showCaptureInline ? (
             <div

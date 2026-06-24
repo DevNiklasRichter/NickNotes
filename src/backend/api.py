@@ -101,6 +101,23 @@ from .application_services import BackendApiService
 from .use_cases import GetFocusDashboardUseCase
 from .nicknotes_backend.parser import CaptureParser
 from .nicknotes_backend.vault import VaultManager
+from .nicknotes_backend.assistant_limits import (
+    ASSISTANT_DEFAULT_CONTEXT_CHARS,
+    ASSISTANT_DEFAULT_CONTEXT_NOTES,
+    ASSISTANT_MAX_CHAT_MESSAGE_CHARS,
+    ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+    ASSISTANT_DEFAULT_REQUEST_CHARS,
+    ASSISTANT_DEFAULT_RESPONSE_CHARS,
+    ASSISTANT_MAX_CONTEXT_CHARS,
+    ASSISTANT_MAX_CONTEXT_NOTES,
+    ASSISTANT_MAX_PROVIDER_RETRIES,
+    ASSISTANT_MAX_RESPONSE_CHARS,
+    ASSISTANT_MAX_REQUEST_CHARS,
+    ASSISTANT_MIN_CONTEXT_CHARS,
+    ASSISTANT_MIN_PROVIDER_RETRIES,
+    ASSISTANT_MIN_RESPONSE_CHARS,
+    ASSISTANT_MIN_REQUEST_CHARS,
+)
 from .errors import DomainError
 from .operation_context import clear_operation_context, get_operation_context, set_operation_context
 
@@ -737,8 +754,13 @@ class CaptureSaveRequest(BaseModel):
 
 
 class AssistantChatRequest(BaseModel):
-    message: str
-    max_sources: int | None = Field(default=None, alias="maxSources")
+    message: str = Field(max_length=ASSISTANT_MAX_CHAT_MESSAGE_CHARS)
+    max_sources: int | None = Field(
+        default=None,
+        alias="maxSources",
+        ge=1,
+        le=ASSISTANT_MAX_CONTEXT_NOTES,
+    )
 
 
 class AssistantChangeSetPreviewRequest(BaseModel):
@@ -785,8 +807,36 @@ class AssistantSettingsUpdateRequest(BaseModel):
     reasoning_effort: str = Field(default="", alias="reasoningEffort")
     allow_external_note_content: bool = Field(default=False, alias="allowExternalNoteContent")
     allow_write_actions: bool = Field(default=False, alias="allowWriteActions")
-    max_context_notes: int = Field(default=8, alias="maxContextNotes")
-    max_context_chars: int = Field(default=24_000, alias="maxContextChars")
+    max_context_notes: int = Field(
+        default=ASSISTANT_DEFAULT_CONTEXT_NOTES,
+        ge=ASSISTANT_MIN_CONTEXT_NOTES,
+        le=ASSISTANT_MAX_CONTEXT_NOTES,
+        alias="maxContextNotes",
+    )
+    max_context_chars: int = Field(
+        default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
+        ge=ASSISTANT_MIN_CONTEXT_CHARS,
+        le=ASSISTANT_MAX_CONTEXT_CHARS,
+        alias="maxContextChars",
+    )
+    provider_retries: int = Field(
+        default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+        ge=ASSISTANT_MIN_PROVIDER_RETRIES,
+        le=ASSISTANT_MAX_PROVIDER_RETRIES,
+        alias="providerRetries",
+    )
+    max_request_chars: int = Field(
+        default=ASSISTANT_DEFAULT_REQUEST_CHARS,
+        ge=ASSISTANT_MIN_REQUEST_CHARS,
+        le=ASSISTANT_MAX_REQUEST_CHARS,
+        alias="maxRequestChars",
+    )
+    max_response_chars: int = Field(
+        default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
+        ge=ASSISTANT_MIN_RESPONSE_CHARS,
+        le=ASSISTANT_MAX_RESPONSE_CHARS,
+        alias="maxResponseChars",
+    )
 
 
 class AssistantProviderSecretSaveRequest(BaseModel):

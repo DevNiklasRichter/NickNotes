@@ -155,7 +155,7 @@ Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags 
 
 ## Assistant-Zielerweiterung
 
-NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein eigener Chat-Arbeitsbereich mit Markdown-Antworten, eingebetteten Quellenlinks, Spracheingabe und pruefbaren ChangeSet-Vorschlaegen fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung. Schreibaktionen werden wie normale Chatnachrichten aus dem Composer gesendet, koennen mit Slash-Aktionen und `@`-Referenzen konkretisiert werden und muessen conversational per Ja/Nein-Aktion oder Chatantwort bestaetigt werden; direkte LLM-Dateischreibzugriffe bleiben ausgeschlossen.
+NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein rechter, breitenverstellbarer Chat-Arbeitsbereich neben Editor, Dashboards und Graph, wird nur bei aktivierter und providerkonfigurierter Assistant-Funktion ueber die Activity-Rail eingeblendet und bleibt oberhalb von Quick Capture. Er liefert Markdown-Antworten, eingebettete Quellenlinks, Spracheingabe und pruefbare ChangeSet-Vorschlaege fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung. Schreibaktionen werden wie normale Chatnachrichten aus dem Composer gesendet, koennen mit Slash-Aktionen und `@`-Referenzen konkretisiert werden und muessen conversational per Ja/Nein-Aktion oder Chatantwort bestaetigt werden; direkte LLM-Dateischreibzugriffe bleiben ausgeschlossen.
 
 Verbindliche Regeln fuer diese Erweiterung:
 

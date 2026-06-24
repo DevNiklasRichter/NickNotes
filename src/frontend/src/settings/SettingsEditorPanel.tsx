@@ -15,6 +15,23 @@ import {
 import type { AssistantProviderProbeResponse, AssistantSettingsConfig, AssistantSettingsResponse } from '../contracts/apiContracts'
 import type { ExplorerOptions } from '../explorer/types'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import {
+  ASSISTANT_DEFAULT_CONTEXT_CHARS,
+  ASSISTANT_DEFAULT_CONTEXT_NOTES,
+  ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+  ASSISTANT_DEFAULT_REQUEST_CHARS,
+  ASSISTANT_DEFAULT_RESPONSE_CHARS,
+  ASSISTANT_MAX_CONTEXT_CHARS,
+  ASSISTANT_MAX_CONTEXT_NOTES,
+  ASSISTANT_MAX_PROVIDER_RETRIES,
+  ASSISTANT_MAX_REQUEST_CHARS,
+  ASSISTANT_MAX_RESPONSE_CHARS,
+  ASSISTANT_MIN_CONTEXT_CHARS,
+  ASSISTANT_MIN_CONTEXT_NOTES,
+  ASSISTANT_MIN_PROVIDER_RETRIES,
+  ASSISTANT_MIN_REQUEST_CHARS,
+  ASSISTANT_MIN_RESPONSE_CHARS,
+} from '../assistant/assistantLimits'
 
 type ThemeMode = 'light' | 'dark'
 
@@ -80,8 +97,25 @@ const DEFAULT_ASSISTANT_SETTINGS_CONFIG: AssistantSettingsConfig = {
   reasoningEffort: '',
   allowExternalNoteContent: false,
   allowWriteActions: false,
-  maxContextNotes: 8,
-  maxContextChars: 24000,
+  maxContextNotes: ASSISTANT_DEFAULT_CONTEXT_NOTES,
+  maxContextChars: ASSISTANT_DEFAULT_CONTEXT_CHARS,
+  providerRetries: ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+  maxRequestChars: ASSISTANT_DEFAULT_REQUEST_CHARS,
+  maxResponseChars: ASSISTANT_DEFAULT_RESPONSE_CHARS,
+}
+
+function normalizeAssistantInt(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+  if (parsed < min) {
+    return min
+  }
+  if (parsed > max) {
+    return max
+  }
+  return parsed
 }
 
 function normalizeAssistantSettingsConfig(config: Partial<AssistantSettingsConfig> | null | undefined): AssistantSettingsConfig {
@@ -92,8 +126,36 @@ function normalizeAssistantSettingsConfig(config: Partial<AssistantSettingsConfi
     model: String(config?.model || DEFAULT_ASSISTANT_SETTINGS_CONFIG.model).trim(),
     baseUrl: String(config?.baseUrl || '').trim(),
     reasoningEffort: String(config?.reasoningEffort || '').trim().toLowerCase(),
-    maxContextNotes: Number(config?.maxContextNotes ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextNotes),
-    maxContextChars: Number(config?.maxContextChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextChars),
+    maxContextNotes: normalizeAssistantInt(
+      config?.maxContextNotes ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextNotes,
+      ASSISTANT_DEFAULT_CONTEXT_NOTES,
+      ASSISTANT_MIN_CONTEXT_NOTES,
+      ASSISTANT_MAX_CONTEXT_NOTES
+    ),
+    maxContextChars: normalizeAssistantInt(
+      config?.maxContextChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxContextChars,
+      ASSISTANT_DEFAULT_CONTEXT_CHARS,
+      ASSISTANT_MIN_CONTEXT_CHARS,
+      ASSISTANT_MAX_CONTEXT_CHARS
+    ),
+    providerRetries: normalizeAssistantInt(
+      config?.providerRetries ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.providerRetries,
+      ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+      ASSISTANT_MIN_PROVIDER_RETRIES,
+      ASSISTANT_MAX_PROVIDER_RETRIES
+    ),
+    maxRequestChars: normalizeAssistantInt(
+      config?.maxRequestChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxRequestChars,
+      ASSISTANT_DEFAULT_REQUEST_CHARS,
+      ASSISTANT_MIN_REQUEST_CHARS,
+      ASSISTANT_MAX_REQUEST_CHARS
+    ),
+    maxResponseChars: normalizeAssistantInt(
+      config?.maxResponseChars ?? DEFAULT_ASSISTANT_SETTINGS_CONFIG.maxResponseChars,
+      ASSISTANT_DEFAULT_RESPONSE_CHARS,
+      ASSISTANT_MIN_RESPONSE_CHARS,
+      ASSISTANT_MAX_RESPONSE_CHARS
+    ),
   }
 }
 
@@ -1225,8 +1287,8 @@ export function SettingsEditorPanel({
                         <input
                           id="settings-assistant-max-notes"
                           type="number"
-                          min={1}
-                          max={50}
+                          min={ASSISTANT_MIN_CONTEXT_NOTES}
+                          max={ASSISTANT_MAX_CONTEXT_NOTES}
                           value={assistantDraft.maxContextNotes}
                           disabled={assistantPending}
                           onChange={(event) => updateAssistantDraft({ maxContextNotes: Number(event.target.value) })}
@@ -1240,12 +1302,66 @@ export function SettingsEditorPanel({
                         <input
                           id="settings-assistant-max-chars"
                           type="number"
-                          min={1000}
-                          max={200000}
+                          min={ASSISTANT_MIN_CONTEXT_CHARS}
+                          max={ASSISTANT_MAX_CONTEXT_CHARS}
                           step={1000}
                           value={assistantDraft.maxContextChars}
                           disabled={assistantPending}
                           onChange={(event) => updateAssistantDraft({ maxContextChars: Number(event.target.value) })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="settings-subsection">
+                      <div className="settings-subsection-header">
+                        <strong>Providergrenzen</strong>
+                        <span>{assistantDraft.providerRetries} Wiederholungsversuche</span>
+                      </div>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-provider-retries">Retry-Limit</label>
+                          <p className="muted-copy">Wiederholung bei voruebergehenden Provider-Fehlern.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-provider-retries"
+                          type="number"
+                          min={ASSISTANT_MIN_PROVIDER_RETRIES}
+                          max={ASSISTANT_MAX_PROVIDER_RETRIES}
+                          value={assistantDraft.providerRetries}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ providerRetries: Number(event.target.value) })}
+                        />
+                      </div>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-max-request-chars">Request-Limit</label>
+                          <p className="muted-copy">Maximale Zeichen pro Provider-Request.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-max-request-chars"
+                          type="number"
+                          min={ASSISTANT_MIN_REQUEST_CHARS}
+                          max={ASSISTANT_MAX_REQUEST_CHARS}
+                          step={1000}
+                          value={assistantDraft.maxRequestChars}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ maxRequestChars: Number(event.target.value) })}
+                        />
+                      </div>
+                      <div className="settings-row">
+                        <div>
+                          <label htmlFor="settings-assistant-max-response-chars">Response-Limit</label>
+                          <p className="muted-copy">Maximale Zeichen im Provider-Response.</p>
+                        </div>
+                        <input
+                          id="settings-assistant-max-response-chars"
+                          type="number"
+                          min={ASSISTANT_MIN_RESPONSE_CHARS}
+                          max={ASSISTANT_MAX_RESPONSE_CHARS}
+                          step={1000}
+                          value={assistantDraft.maxResponseChars}
+                          disabled={assistantPending}
+                          onChange={(event) => updateAssistantDraft({ maxResponseChars: Number(event.target.value) })}
                         />
                       </div>
                     </div>

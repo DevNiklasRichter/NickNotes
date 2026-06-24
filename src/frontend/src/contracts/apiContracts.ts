@@ -382,6 +382,9 @@ export type AssistantSettingsConfig = {
   allowWriteActions: boolean
   maxContextNotes: number
   maxContextChars: number
+  providerRetries: number
+  maxRequestChars: number
+  maxResponseChars: number
 }
 
 export type AssistantSettingsResponse = {

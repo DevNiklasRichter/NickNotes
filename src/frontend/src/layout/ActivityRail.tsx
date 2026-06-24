@@ -5,12 +5,20 @@ type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'r
 type ActivityRailProps = {
   sidebarView: SidebarView
   assistantActive: boolean
+  assistantAvailable: boolean
   onOpenSidebarView: (view: SidebarView) => void
   onOpenAssistant: () => void
   onOpenSettings: () => void
 }
 
-export function ActivityRail({ sidebarView, assistantActive, onOpenSidebarView, onOpenAssistant, onOpenSettings }: ActivityRailProps) {
+export function ActivityRail({
+  sidebarView,
+  assistantActive,
+  assistantAvailable,
+  onOpenSidebarView,
+  onOpenAssistant,
+  onOpenSettings,
+}: ActivityRailProps) {
   const activeSidebarView = assistantActive ? null : sidebarView
 
   return (
@@ -68,12 +76,14 @@ export function ActivityRail({ sidebarView, assistantActive, onOpenSidebarView, 
           </span>
           <span className="rail-label">Graph</span>
         </button>
-        <button className={assistantActive ? 'active' : ''} onClick={onOpenAssistant} title="Assistant">
-          <span className="rail-glyph">
-            <LucideNamedIcon name="MessageCircle" size={14} />
-          </span>
-          <span className="rail-label">Assistant</span>
-        </button>
+        {assistantAvailable ? (
+          <button className={assistantActive ? 'active' : ''} onClick={onOpenAssistant} title="KI-Assistent">
+            <span className="rail-glyph">
+              <LucideNamedIcon name="MessageCircle" size={14} />
+            </span>
+            <span className="rail-label">KI-Assistent</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="rail-spacer" />

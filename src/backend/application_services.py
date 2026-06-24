@@ -14,7 +14,7 @@ from importlib import import_module
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .config import (
     REVIEW_DASHBOARD_DEFAULT_DAYS,
@@ -41,6 +41,23 @@ from .nicknotes_backend.assistant_security import (
     normalize_assistant_secret_ref,
     normalize_reasoning_effort,
 )
+from .nicknotes_backend.assistant_limits import (
+    ASSISTANT_DEFAULT_CONTEXT_CHARS,
+    ASSISTANT_DEFAULT_CONTEXT_NOTES,
+    ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+    ASSISTANT_DEFAULT_REQUEST_CHARS,
+    ASSISTANT_DEFAULT_RESPONSE_CHARS,
+    ASSISTANT_MAX_CHAT_MESSAGE_CHARS,
+    ASSISTANT_MAX_CONTEXT_CHARS,
+    ASSISTANT_MAX_PROVIDER_RETRIES,
+    ASSISTANT_MAX_REQUEST_CHARS,
+    ASSISTANT_MAX_RESPONSE_CHARS,
+    ASSISTANT_MIN_CONTEXT_CHARS,
+    ASSISTANT_MIN_PROVIDER_RETRIES,
+    ASSISTANT_MIN_REQUEST_CHARS,
+    ASSISTANT_MIN_RESPONSE_CHARS,
+)
+
 from .nicknotes_backend.assistant_secret_store import (
     AssistantSecretStoreError,
     delete_assistant_provider_secret,
@@ -101,6 +118,50 @@ def _provider_capabilities_to_dict(value: Any) -> dict[str, bool]:
         "transcription": bool(getattr(value, "transcription", False)),
         "embeddings": bool(getattr(value, "embeddings", False)),
     }
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _build_assistant_provider_config(
+    assistant_config: Mapping[str, Any],
+    *,
+    timeout_seconds: float = 10.0,
+) -> LlmProviderConfig:
+    provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
+    model = str(assistant_config.get("model") or "").strip() or "gpt-4.1-mini"
+    base_url = str(assistant_config.get("base_url") or "").strip() or None
+    return LlmProviderConfig(
+        enabled=True,
+        provider=provider_id,
+        model=model,
+        api_key_ref=str(assistant_config.get("api_key_ref") or ""),
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        provider_retries=_bounded_int(
+            assistant_config.get("provider_retries"),
+            default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+            minimum=ASSISTANT_MIN_PROVIDER_RETRIES,
+            maximum=ASSISTANT_MAX_PROVIDER_RETRIES,
+        ),
+        max_request_chars=_bounded_int(
+            assistant_config.get("max_request_chars"),
+            default=ASSISTANT_DEFAULT_REQUEST_CHARS,
+            minimum=ASSISTANT_MIN_REQUEST_CHARS,
+            maximum=ASSISTANT_MAX_REQUEST_CHARS,
+        ),
+        max_response_chars=_bounded_int(
+            assistant_config.get("max_response_chars"),
+            default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
+            minimum=ASSISTANT_MIN_RESPONSE_CHARS,
+            maximum=ASSISTANT_MAX_RESPONSE_CHARS,
+        ),
+        extra=dict(assistant_config),
+    )
 
 
 def _sanitize_provider_probe_error(exc: Exception) -> str:
@@ -731,7 +792,7 @@ class BackendApiService:
             )
         except DomainError as exc:
             self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
-        except Exception as exc:
+        except LlmProviderError as exc:
             logger.exception("Could not open NoteBase in background.")
             self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
 
@@ -782,7 +843,7 @@ class BackendApiService:
                 "tagGroups": tag_groups,
                 "graphStatus": graph_status,
             }
-        except Exception as exc:
+        except LlmProviderError as exc:
             logger.exception("NoteBase reindex failed")
             raise InfrastructureDomainError(
                 "Could not reindex NoteBase.",
@@ -1145,6 +1206,13 @@ class BackendApiService:
                 operation="assistant_chat",
                 vault_id=str(vault.vault_path),
             )
+        if len(message) > ASSISTANT_MAX_CHAT_MESSAGE_CHARS:
+            raise ValidationDomainError(
+                f"Assistant message too long ({len(message)} characters).",
+                operation="assistant_chat",
+                vault_id=str(vault.vault_path),
+                details={"maxChars": ASSISTANT_MAX_CHAT_MESSAGE_CHARS},
+            )
 
         vault_config = vault.read_config()
         assistant_config = normalize_assistant_config(vault_config.get("assistant"))
@@ -1155,26 +1223,36 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
             )
 
-        configured_max_sources = int(assistant_config.get("max_context_notes") or 8)
+        configured_max_sources = _bounded_int(
+            assistant_config.get("max_context_notes"),
+            default=ASSISTANT_DEFAULT_CONTEXT_NOTES,
+            minimum=ASSISTANT_MIN_CONTEXT_NOTES,
+            maximum=ASSISTANT_MAX_CONTEXT_NOTES,
+        )
         requested_max_sources = getattr(req, "max_sources", None)
-        if requested_max_sources is None:
-            max_sources = configured_max_sources
-        else:
-            try:
-                max_sources = int(requested_max_sources)
-            except (TypeError, ValueError):
-                max_sources = configured_max_sources
-            max_sources = max(1, min(configured_max_sources, max_sources))
+        max_sources = _bounded_int(
+            requested_max_sources,
+            default=configured_max_sources,
+            minimum=ASSISTANT_MIN_CONTEXT_NOTES,
+            maximum=ASSISTANT_MAX_CONTEXT_NOTES,
+        )
+        max_sources = min(configured_max_sources, max_sources)
 
         return vault, indexer, message, assistant_config, max_sources
 
     def assistant_chat(self, req: Any) -> Any:
         vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
+        max_context_chars = _bounded_int(
+            assistant_config.get("max_context_chars"),
+            default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
+            minimum=ASSISTANT_MIN_CONTEXT_CHARS,
+            maximum=ASSISTANT_MAX_CONTEXT_CHARS,
+        )
         return AssistantChatService(vault=vault, indexer=indexer).answer(
             question=message,
             assistant_config=assistant_config,
             max_sources=max_sources,
-            max_context_chars=int(assistant_config.get("max_context_chars") or 24_000),
+            max_context_chars=max_context_chars,
         )
 
     def assistant_chat_stream(self, req: Any) -> Any:
@@ -1182,11 +1260,17 @@ class BackendApiService:
         try:
             vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
             service = AssistantChatService(vault=vault, indexer=indexer)
+            max_context_chars = _bounded_int(
+                assistant_config.get("max_context_chars"),
+                default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
+                minimum=ASSISTANT_MIN_CONTEXT_CHARS,
+                maximum=ASSISTANT_MAX_CONTEXT_CHARS,
+            )
             for event in service.stream_answer(
                 question=message,
                 assistant_config=assistant_config,
                 max_sources=max_sources,
-                max_context_chars=int(assistant_config.get("max_context_chars") or 24_000),
+                max_context_chars=max_context_chars,
             ):
                 event_type = str(event.get("type") or "delta")
                 payload = {key: value for key, value in event.items() if key != "type"}
@@ -1196,7 +1280,7 @@ class BackendApiService:
             return
         except Exception:
             logger.exception("Assistant stream failed")
-            yield _assistant_stream_event("error", {"message": "Assistant-Anfrage fehlgeschlagen."})
+            yield _assistant_stream_event("error", {"message": "Assistant-Anfrage fehlgeschlagen.", "code": "service.unexpected"})
             return
 
     def assistant_voice_status(self) -> Any:
@@ -1217,13 +1301,7 @@ class BackendApiService:
             reason = "external_content_not_allowed"
         else:
             reason = "provider_not_configured"
-            provider_config = LlmProviderConfig(
-                enabled=True,
-                provider=provider_id,
-                model=model,
-                api_key_ref=str(assistant_config.get("api_key_ref") or ""),
-                base_url=str(assistant_config.get("base_url") or "").strip() or None,
-            )
+            provider_config = _build_assistant_provider_config(assistant_config)
             try:
                 provider = create_llm_provider(provider_config)
                 provider_configured = provider.is_configured()
@@ -1270,8 +1348,26 @@ class BackendApiService:
             model=str(assistant_config.get("model") or "gpt-4o-mini"),
             api_key_ref=str(assistant_config.get("api_key_ref") or ""),
             base_url=str(assistant_config.get("base_url") or "").strip() or None,
-            extra=dict(assistant_config),
             timeout_seconds=30.0,
+        provider_retries=_bounded_int(
+            assistant_config.get("provider_retries"),
+            default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
+            minimum=ASSISTANT_MIN_PROVIDER_RETRIES,
+            maximum=ASSISTANT_MAX_PROVIDER_RETRIES,
+        ),
+        max_request_chars=_bounded_int(
+            assistant_config.get("max_request_chars"),
+            default=ASSISTANT_DEFAULT_REQUEST_CHARS,
+            minimum=ASSISTANT_MIN_REQUEST_CHARS,
+            maximum=ASSISTANT_MAX_REQUEST_CHARS,
+        ),
+        max_response_chars=_bounded_int(
+            assistant_config.get("max_response_chars"),
+            default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
+            minimum=ASSISTANT_MIN_RESPONSE_CHARS,
+            maximum=ASSISTANT_MAX_RESPONSE_CHARS,
+        ),
+            extra=dict(assistant_config),
         )
         try:
             provider = create_llm_provider(provider_config)
@@ -1320,7 +1416,7 @@ class BackendApiService:
                     language=str(getattr(req, "language", "") or "").strip(),
                 )
             )
-        except (LlmProviderError, OSError, TimeoutError, ValueError) as exc:
+        except LlmProviderError as exc:
             raise InfrastructureDomainError(
                 "Assistant transcription failed.",
                 status_code=502,
@@ -1453,6 +1549,9 @@ class BackendApiService:
             "allow_write_actions": bool(getattr(req, "allow_write_actions", assistant_config.get("allow_write_actions"))),
             "max_context_notes": getattr(req, "max_context_notes", assistant_config.get("max_context_notes")),
             "max_context_chars": getattr(req, "max_context_chars", assistant_config.get("max_context_chars")),
+            "provider_retries": getattr(req, "provider_retries", assistant_config.get("provider_retries")),
+            "max_request_chars": getattr(req, "max_request_chars", assistant_config.get("max_request_chars")),
+            "max_response_chars": getattr(req, "max_response_chars", assistant_config.get("max_response_chars")),
         }
         vault_config["assistant"] = normalize_assistant_config(next_config)
         vault.write_config(vault_config)
@@ -1542,15 +1641,7 @@ class BackendApiService:
         assistant_config = normalize_assistant_config(vault_config.get("assistant"))
         provider_id = canonical_provider_id(str(assistant_config.get("provider") or "openai"))
         model = str(assistant_config.get("model") or "").strip()
-        provider_config = LlmProviderConfig(
-            enabled=True,
-            provider=provider_id,
-            model=model,
-            api_key_ref=str(assistant_config.get("api_key_ref") or ""),
-            base_url=str(assistant_config.get("base_url") or "").strip() or None,
-            timeout_seconds=10.0,
-            extra=dict(assistant_config),
-        )
+        provider_config = _build_assistant_provider_config(assistant_config)
         base_response = {
             "provider": provider_id,
             "model": model,
@@ -1598,7 +1689,7 @@ class BackendApiService:
                     response_format="text",
                 )
             )
-        except Exception as exc:
+        except LlmProviderError as exc:
             return {
                 **base_response,
                 "capabilities": capabilities,
