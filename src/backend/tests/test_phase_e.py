@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-import importlib.util
 import shutil
 import uuid
 from datetime import datetime
@@ -12,17 +11,9 @@ from src.backend.nicknotes_backend.markdown_io import dump_markdown, parse_markd
 from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
 from src.backend.nicknotes_backend.vault import VaultManager
 
-try:
-    from src.backend import api as backend_api
-except Exception:  # pragma: no cover - optional dependency in local env
-    backend_api = None
+from src.backend import api as backend_api
 
-TestClient = None
-if importlib.util.find_spec("httpx") is not None:
-    try:
-        from fastapi.testclient import TestClient
-    except Exception:  # pragma: no cover - optional dependency in local env
-        TestClient = None
+from src.backend.tests.http_client import TestClient
 
 
 class PhaseEBackendTests(unittest.TestCase):
@@ -146,8 +137,7 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(len(self.indexer.list_tasks()), 0)
         self.assertEqual(len(self.indexer.list_todos()), 0)
 
-    @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
-    def test_compute_done_today_counts_uses_completed_at_and_fallback(self) -> None:
+    def test_compute_done_today_counts_does_not_invent_legacy_completion_times(self) -> None:
         tasks = [
             {"status": "done", "completed_at": "2026-04-19T10:00:00", "updated_at": "2026-04-18T10:00:00"},
             {"status": "done", "completed_at": "", "updated_at": "2026-04-19T11:00:00"},
@@ -159,10 +149,9 @@ class PhaseEBackendTests(unittest.TestCase):
             {"checked": False, "completed_at": "2026-04-19T16:00:00", "updated_at": "2026-04-19T16:00:00"},
         ]
         done_tasks, done_todos = backend_api._compute_done_today_counts(tasks=tasks, todos=todos, day_iso="2026-04-19")
-        self.assertEqual(done_tasks, 2)
-        self.assertEqual(done_todos, 2)
+        self.assertEqual(done_tasks, 1)
+        self.assertEqual(done_todos, 1)
 
-    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
     def test_open_endpoint_recovers_corrupt_index_db(self) -> None:
         self.indexer.close()
         self.vault.db_path.write_text("NOT A SQLITE DATABASE", encoding="utf-8")
@@ -180,7 +169,6 @@ class PhaseEBackendTests(unittest.TestCase):
 
         self.indexer = VaultIndexer(self.vault.db_path)
 
-    @unittest.skipIf(backend_api is None, "FastAPI backend dependencies are not available in this environment.")
     def test_compute_focus_stats_includes_phase_f_hygiene_counts(self) -> None:
         tasks = [
             {
@@ -235,7 +223,6 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(int(stats.get("unknownBlockerTaskCount", 0)), 1)
         self.assertEqual(int(stats.get("unknownBlockerReferenceCount", 0)), 1)
 
-    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
     def test_focus_dashboard_endpoint_returns_aggregate_structure(self) -> None:
         backend_api.state.close()
         client = TestClient(backend_api.app)
@@ -282,14 +269,13 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIn("counts", payload)
 
         stats = payload.get("stats") or {}
-        self.assertGreaterEqual(int(stats.get("doneTodayTasks", 0)), 1)
+        self.assertEqual(int(stats.get("doneTodayTasks", 0)), 0)  # Legacy completion date is unknown.
         self.assertGreaterEqual(int(stats.get("doneToday", 0)), int(stats.get("doneTodayTasks", 0)))
         self.assertIn("openTasksWithoutEstimateCount", stats)
         self.assertIn("waitingWithoutFollowUpCount", stats)
         self.assertIn("unknownBlockerTaskCount", stats)
         self.assertIn("unknownBlockerReferenceCount", stats)
 
-    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
     def test_daily_open_today_endpoint_creates_then_reuses_daily(self) -> None:
         backend_api.state.close()
         client = TestClient(backend_api.app)
@@ -315,7 +301,6 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertFalse(bool(second_payload.get("created")))
         self.assertEqual(str(second_payload.get("notePath", "")).strip(), first_path)
 
-    @unittest.skipIf(backend_api is None or TestClient is None, "FastAPI TestClient is not available in this environment.")
     def test_review_dashboard_endpoint_returns_timeseries_payload(self) -> None:
         now = datetime(2026, 4, 20, 9, 0, 0)
         self.vault._create_task_file(
@@ -471,7 +456,7 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertTrue((self.vault.vault_path / media_path).exists())
         self.assertEqual(result["markdown_path"], f"/{media_path}")
 
-    def test_note_move_relocates_referenced_media_in_background_queue(self) -> None:
+    def test_note_move_keeps_stable_shared_media_references(self) -> None:
         self.vault.create_note_group("Projects", "")
         self.vault.create_note_group("Archive", "")
         created = self.vault.create_note_in_group("Projects", "Move Media", self.indexer)
@@ -506,15 +491,14 @@ class PhaseEBackendTests(unittest.TestCase):
         )
 
         moved_path = self.vault.move_note_file(str(note_path), "Archive", self.indexer)
-        self.vault._media_queue.join()
 
         updated = moved_path.read_text(encoding="utf-8")
-        self.assertIn("](/.media/Archive/Move_Media/", updated)
-        self.assertFalse(old_media_path.exists())
-        self.assertTrue((self.vault.media_root_path / "Archive" / "Move_Media").is_dir())
-        self.assertEqual(len(list((self.vault.media_root_path / "Archive" / "Move_Media").iterdir())), 1)
+        self.assertIn(f"]({media_result['markdown_path']})", updated)
+        self.assertTrue(old_media_path.exists())
+        self.assertTrue(old_media_path.parent.is_dir())
+        self.assertEqual(len(list(old_media_path.parent.iterdir())), 1)
 
-    def test_folder_rename_removes_old_empty_media_directories(self) -> None:
+    def test_folder_rename_keeps_existing_media_references(self) -> None:
         self.vault.create_note_group("Old Folder", "")
         created = self.vault.create_note_in_group("Old_Folder", "Media Note", self.indexer)
         note_path = Path(created["note_path"])
@@ -547,13 +531,12 @@ class PhaseEBackendTests(unittest.TestCase):
         )
 
         self.vault.rename_note_group("Old_Folder", "New Folder", self.indexer)
-        self.vault._media_queue.join()
 
         new_note_path = self.vault.vault_path / "New_Folder" / "Media_Note.md"
         _meta, body = parse_markdown(new_note_path)
-        self.assertIn("](/.media/New_Folder/Media_Note/", body)
-        self.assertFalse((self.vault.media_root_path / "Old_Folder").exists())
-        self.assertTrue((self.vault.media_root_path / "New_Folder" / "Media_Note").is_dir())
+        self.assertIn(media_result["markdown_path"], body)
+        self.assertTrue((self.vault.vault_path / media_result["media_path"]).exists())
+        self.assertTrue((self.vault.vault_path / media_result["media_path"]).parent.is_dir())
 
     def test_note_move_rewrites_wikilinks_and_related_frontmatter(self) -> None:
         self.vault.create_note_group("Projects", "")
@@ -608,7 +591,6 @@ class PhaseEBackendTests(unittest.TestCase):
         )
 
         moved_path = self.vault.move_note_file(str(target["note_path"]), "Archive", self.indexer)
-        self.vault._link_queue.join()
 
         source_meta, source_body = parse_markdown(source_path)
         task_meta, task_body = parse_markdown(task_path)
@@ -651,7 +633,6 @@ class PhaseEBackendTests(unittest.TestCase):
         )
 
         self.vault.move_note_group("Projects/References", "Archive", self.indexer)
-        self.vault._link_queue.join()
 
         meta, body = parse_markdown(source_path)
         self.assertTrue((self.vault.vault_path / "Archive" / "References" / "First.md").exists())

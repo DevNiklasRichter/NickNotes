@@ -35,6 +35,7 @@ export const DEFAULT_GRAPH_STATE: GraphState = {
 export type FilteredGraph = {
   nodes: GraphNode[]
   edges: GraphEdge[]
+  truncated?: boolean
 }
 
 export async function fetchGraphIndex(baseUrl: string): Promise<GraphIndex> {
@@ -125,15 +126,16 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
     return visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
   })
 
-  if (mode !== 'focus') {
-    return { nodes, edges }
-  }
-  return applyFocusLimit(nodes, edges, focusNodeId)
+  const selected = mode === 'focus' ? applyFocusLimit(nodes, edges, focusNodeId) : {nodes, edges}
+  const limitedNodes = selected.nodes.slice(0, 500)
+  const limitedIds = new Set(limitedNodes.map(node => node.id))
+  const limitedEdges = selected.edges.filter(edge => limitedIds.has(edge.source) && limitedIds.has(edge.target)).slice(0, 1500)
+  return {nodes: limitedNodes, edges: limitedEdges, truncated: selected.truncated || selected.nodes.length > limitedNodes.length || selected.edges.length > limitedEdges.length}
 }
 
 function normalizeGraphIndex(value: unknown): GraphIndex {
   const fallback: GraphIndex = {
-    version: 1,
+    version: 2,
     updated_at: '',
     source: {},
     files: {},
@@ -183,6 +185,7 @@ function applyFocusLimit(nodes: GraphNode[], edges: GraphEdge[], focusNodeId: st
   if (!focusNode) {
     return { nodes: [], edges: [] }
   }
+  const allFocusEdges = edges.filter(edge => edge.source === focusNode.id || edge.target === focusNode.id)
   const focusEdges = edges
     .filter((edge) => edge.source === focusNode.id || edge.target === focusNode.id)
     .sort((left, right) => right.weight - left.weight || left.type.localeCompare(right.type))
@@ -198,7 +201,7 @@ function applyFocusLimit(nodes: GraphNode[], edges: GraphEdge[], focusNodeId: st
   const limitedNodes = nodes.filter((node) => nodeIds.has(node.id)).slice(0, 100)
   const limitedIds = new Set(limitedNodes.map((node) => node.id))
   const limitedEdges = focusEdges.filter((edge) => limitedIds.has(edge.source) && limitedIds.has(edge.target))
-  return { nodes: limitedNodes, edges: limitedEdges }
+  return { nodes: limitedNodes, edges: limitedEdges, truncated: allFocusEdges.length > limitedEdges.length }
 }
 
 function toGraphMode(value: unknown): GraphMode {

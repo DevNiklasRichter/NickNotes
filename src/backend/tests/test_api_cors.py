@@ -2,18 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-try:
-    from fastapi.testclient import TestClient
-    from src.backend import api as backend_api
-except Exception:  # pragma: no cover - optional dependency or backend import path issues in env
-    TestClient = None
-    backend_api = None
+from src.backend.tests.http_client import TestClient
+from src.backend import api as backend_api
 
 
-@unittest.skipIf(
-    backend_api is None or TestClient is None,
-    "FastAPI TestClient oder Backend-API sind in dieser Umgebung nicht verfügbar.",
-)
 class ApiCorsTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_api.state.close()
@@ -32,7 +24,7 @@ class ApiCorsTests(unittest.TestCase):
             "http://127.0.0.1:5173",
             "http://localhost:8765",
             "http://127.0.0.1:8765",
-            "null",
+            "nicknotes://app",
         ]
         for origin in allowed:
             response = client.options("/state", headers=self._preflight_headers(origin))

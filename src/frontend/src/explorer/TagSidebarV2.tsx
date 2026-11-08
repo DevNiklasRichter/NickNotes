@@ -42,7 +42,7 @@ type TagSidebarProps = {
   onRenameTag: (groupId: string, tagId: string) => void
   onDeleteTag: (groupId: string, tagId: string) => void
   onOpenTagOverview?: (groupId: string, tagId: string) => void
-  onOpenTagMatchAssistant: () => void
+  onOpenTagMatchWorkflow: () => void
 }
 
 type VisibleTagGroup = {
@@ -121,7 +121,7 @@ export function TagSidebar({
   onRenameTag,
   onDeleteTag,
   onOpenTagOverview,
-  onOpenTagMatchAssistant,
+  onOpenTagMatchWorkflow,
 }: TagSidebarProps) {
   const [filterQuery, setFilterQuery] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState<string>('')
@@ -243,7 +243,7 @@ export function TagSidebar({
       return
     }
     const nextIndex =
-      searchCursor < 0
+      searchCursor < 0 || searchCursor >= searchMatches.length
         ? direction === 1
           ? 0
           : searchMatches.length - 1
@@ -261,28 +261,8 @@ export function TagSidebar({
     }
   }
 
-  useEffect(() => {
-    if (!selectedGroupId && visibleGroups.length > 0) {
-      setSelectedGroupId(visibleGroups[0].group.id)
-      return
-    }
-    if (selectedGroupId && !groups.some((group) => group.id.toLowerCase() === selectedGroupId.toLowerCase())) {
-      setSelectedGroupId(visibleGroups[0]?.group.id ?? groups[0]?.id ?? '')
-    }
-  }, [groups, selectedGroupId, visibleGroups])
-
-  useEffect(() => {
-    if (!selectedTagKey) {
-      return
-    }
-    const selectedKey = selectedTagKey.toLowerCase()
-    const stillExists = groups.some((group) =>
-      group.tags.some((tag) => `${group.id}:${tag.id}`.toLowerCase() === selectedKey)
-    )
-    if (!stillExists) {
-      setSelectedTagKey('')
-    }
-  }, [groups, selectedTagKey])
+  const effectiveSelectedGroupId = groups.some(group => group.id === selectedGroupId) ? selectedGroupId : (visibleGroups[0]?.group.id ?? groups[0]?.id ?? '')
+  const effectiveSelectedTagKey = groups.some(group => group.tags.some(tag => `${group.id}:${tag.id}` === selectedTagKey)) ? selectedTagKey : ''
 
   useEffect(() => {
     if (!contextMenu) {
@@ -313,17 +293,6 @@ export function TagSidebar({
     window.addEventListener('pointerdown', onPointerDown)
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [sortMenuOpen])
-
-  useEffect(() => {
-    setSearchCursor(-1)
-  }, [filterQuery])
-
-  useEffect(() => {
-    if (searchCursor < searchMatches.length) {
-      return
-    }
-    setSearchCursor(-1)
-  }, [searchCursor, searchMatches.length])
 
   return (
     <div
@@ -383,7 +352,7 @@ export function TagSidebar({
               className="icon-button compact"
               onClick={(event) => {
                 event.stopPropagation()
-                onOpenTagMatchAssistant()
+                onOpenTagMatchWorkflow()
               }}
               disabled={!vaultLoaded || groups.length === 0}
               title="NoteBase nach Tag-Fundstellen durchsuchen"
@@ -405,7 +374,7 @@ export function TagSidebar({
               className="icon-button compact"
               onClick={(event) => {
                 event.stopPropagation()
-                onCreateTag(selectedGroupId || null)
+                onCreateTag(effectiveSelectedGroupId || null)
               }}
               disabled={!vaultLoaded || groups.length === 0}
               title="Neuer Tag in bestehender Gruppe"
@@ -422,7 +391,7 @@ export function TagSidebar({
               ref={searchInputRef}
               className="explorer-search-input"
               value={filterQuery}
-              onChange={(event) => setFilterQuery(event.target.value)}
+              onChange={(event) => {setFilterQuery(event.target.value); setSearchCursor(-1)}}
               placeholder="Search"
               title={filterQuery ? 'Enter: naechster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
               onClick={(event) => event.stopPropagation()}
@@ -441,7 +410,7 @@ export function TagSidebar({
                 onPointerDown={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  setFilterQuery('')
+                  setFilterQuery(''); setSearchCursor(-1)
                   setSearchCursor(-1)
                   window.requestAnimationFrame(() => {
                     searchInputRef.current?.focus()
@@ -476,7 +445,7 @@ export function TagSidebar({
         {visibleGroups.map((entry) => {
           const { group } = entry
           const isOpen = expandedGroups[entry.folderKey] ?? true
-          const isSelected = selectedGroupId.toLowerCase() === group.id.toLowerCase()
+          const isSelected = effectiveSelectedGroupId.toLowerCase() === group.id.toLowerCase()
 
           return (
             <div key={entry.folderKey} className="explorer-row-wrap">
@@ -547,7 +516,7 @@ export function TagSidebar({
                     return (
                     <div
                       key={tagKey}
-                      className={`explorer-row compact tag-entry-row ${selectedTagKey.toLowerCase() === tagKey.toLowerCase() ? 'selected' : ''}`}
+                      className={`explorer-row compact tag-entry-row ${effectiveSelectedTagKey.toLowerCase() === tagKey.toLowerCase() ? 'selected' : ''}`}
                       style={{ marginLeft: '30px' }}
                       onClick={(event) => {
                         event.stopPropagation()

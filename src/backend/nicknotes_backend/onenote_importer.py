@@ -15,6 +15,9 @@ from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree as ET
 
 from .markdown_io import dump_markdown
+from .file_io import atomic_write_text, atomic_write_bytes
+from .process_limits import bounded_export
+from .source_journal import SourceJournal
 from .parser import make_note_id, slugify
 from ..config import (
     ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS,
@@ -368,7 +371,8 @@ class OneNoteLocalImporter:
             for page in pages:
                 try:
                     self._progress("OneNote-Seiten werden importiert ...", result.imported_pages, total_pages, page.title)
-                    note_path, media_count = self._import_page(page, planned_note_paths[page.source_path], wiki_target_map)
+                    with SourceJournal(self.vault, 'import-page'):
+                        note_path, media_count = self._import_page(page, planned_note_paths[page.source_path], wiki_target_map)
                 except OSError as exc:
                     result.skipped_pages += 1
                     result.warnings.append(f"{page.source_path}: konnte nicht importiert werden ({exc}).")
@@ -480,13 +484,14 @@ class OneNoteLocalImporter:
                 details={"path": str(package_path), "maxLength": ONENOTE_IMPORT_MAX_SOURCE_PATH_LENGTH},
             )
 
-        completed = subprocess.run(
-            self._build_export_command(script_path=script_path, package_path=package_path, output_dir=package_output_dir, result_path=result_path),
-            cwd=str(self.vault.vault_path),
-            capture_output=True,
-            timeout=ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS,
-            check=False,
-        )
+        try:
+            completed = bounded_export(
+                self._build_export_command(script_path=script_path, package_path=package_path, output_dir=package_output_dir, result_path=result_path),
+                package_output_dir, self.vault.vault_path,
+                ONENOTE_IMPORT_EXPORT_TIMEOUT_SECONDS, ONENOTE_IMPORT_MAX_RESULT_BYTES,
+            )
+        except (ValueError, subprocess.TimeoutExpired) as exc:
+            raise OneNoteImportExecutionError('onenote.import.resource_limit', 'OneNote-Export hat eine Zeit-, Ausgabe- oder Entpackgrenze erreicht.') from exc
         if completed.returncode != 0:
             detail = _decode_process_output(completed.stderr or completed.stdout)
             if not detail:
@@ -510,6 +515,8 @@ class OneNoteLocalImporter:
 
         raw_output = ""
         if result_path.exists():
+            if result_path.stat().st_size > ONENOTE_IMPORT_MAX_RESULT_BYTES:
+                raise OneNoteImportExecutionError('onenote.import.result_too_large', 'OneNote-Resultat ist zu gross.')
             try:
                 raw_output = _clean_optional_text(result_path.read_text(encoding="utf-8-sig"))
             except OSError:
@@ -552,6 +559,8 @@ class OneNoteLocalImporter:
                 details={"packagePath": str(package_path)},
             )
 
+        if len(raw_pages)>2000:
+            raise OneNoteImportExecutionError('onenote.import.too_many_pages', 'Ein Paket darf maximal 2000 Seiten enthalten.')
         pages: list[ImportPage] = []
         package_notebook = self._safe_display_name(package_path.stem)
         package_output_root = package_output_dir.resolve()
@@ -571,8 +580,10 @@ class OneNoteLocalImporter:
                     f"{package_path.name}: Exportpfad war unerwartet ausserhalb des Quellordners.",
                     details={"exportPath": raw_exported_path},
                 )
-            if not exported_path.exists() or exported_path.suffix.lower() != ".xml":
+            if not exported_path.exists() or exported_path.suffix.lower() != '.xml':
                 continue
+            if exported_path.stat().st_size>16*1024*1024:
+                raise OneNoteImportExecutionError('onenote.import.page_too_large','Eine exportierte Seite ist groesser als 16 MB.')
             notebook = self._safe_display_name(str(raw_page.get("notebook", "")) or package_notebook)
             title = self._safe_display_name(str(raw_page.get("title", "")) or exported_path.stem)
             raw_sections = raw_page.get("sections", [])
@@ -749,7 +760,7 @@ class OneNoteLocalImporter:
             "related_auto": [],
         }
         body = body.strip() or "_Leere OneNote-Seite importiert._"
-        note_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        atomic_write_text(note_path, dump_markdown(frontmatter, body))
         return note_path, media_count
 
     def _import_page_images(self, page: ImportPage, media_dir: Path) -> tuple[dict[str, str], int]:
@@ -766,7 +777,7 @@ class OneNoteLocalImporter:
             while target_path.exists():
                 target_path = media_dir / f"image_{index:03d}_{counter}{suffix}"
                 counter += 1
-            target_path.write_bytes(payload)
+            atomic_write_bytes(target_path, payload)
             media_refs[callback_id] = f"/{target_path.relative_to(self.vault.vault_path).as_posix()}"
             imported += 1
         return media_refs, imported
@@ -1234,6 +1245,8 @@ def _rewrite_wikilinks_to_relative_paths(markdown: str, target_map: dict[str, st
 
 
 def _read_base64_file(path: Path) -> bytes:
+    if path.stat().st_size>28*1024*1024:
+        raise ValueError('Ein Medienobjekt ist zu gross.')
     raw = "".join(path.read_text(encoding="ascii", errors="ignore").split())
     if not raw:
         raise ValueError("Leere Bilddaten.")
@@ -1241,6 +1254,8 @@ def _read_base64_file(path: Path) -> bytes:
         payload = base64.b64decode(raw, validate=True)
     except binascii.Error as exc:
         raise ValueError("Ungueltige Base64-Bilddaten.") from exc
+    if len(payload)>20*1024*1024:
+        raise ValueError('Ein Medienobjekt ist groesser als 20 MB.')
     if not payload:
         raise ValueError("Leere Bilddaten.")
     return payload

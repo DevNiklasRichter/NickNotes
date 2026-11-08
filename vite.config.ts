@@ -3,10 +3,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  root: path.resolve(__dirname, 'src/frontend'),
+  root: path.resolve(import.meta.dirname, 'src/frontend'),
   plugins: [react()],
   build: {
-    outDir: path.resolve(__dirname, 'dist/frontend'),
+    outDir: path.resolve(import.meta.dirname, 'dist/frontend'),
     emptyOutDir: true,
   },
 })

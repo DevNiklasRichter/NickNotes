@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from 'react'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
@@ -834,29 +834,33 @@ export function CodeMirrorMarkdownEditor({
     selectedTagSuggestionKeysRef.current = selectedTagSuggestionKeys
   }, [selectedTagSuggestionKeys])
 
-  const pruneLocalEchoValues = (now: number) => {
+  const openWikiRef = useRef(onOpenWikiLink)
+  const openTagRef = useRef(onOpenTagReference)
+  useEffect(() => {openWikiRef.current=onOpenWikiLink;openTagRef.current=onOpenTagReference}, [onOpenWikiLink,onOpenTagReference])
+
+  const pruneLocalEchoValues = useCallback((now: number) => {
     localEchoValuesRef.current = localEchoValuesRef.current.filter((entry) => now - entry.at <= LOCAL_ECHO_TTL_MS)
     if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
       localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
     }
-  }
+  }, [])
 
-  const rememberLocalEchoValue = (nextValue: string) => {
+  const rememberLocalEchoValue = useCallback((nextValue: string) => {
     const now = Date.now()
     pruneLocalEchoValues(now)
     localEchoValuesRef.current.push({ value: nextValue, at: now })
     if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
       localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
     }
-  }
+  }, [pruneLocalEchoValues])
 
-  const isRecentLocalEchoValue = (nextValue: string): boolean => {
+  const isRecentLocalEchoValue = useCallback((nextValue: string): boolean => {
     const now = Date.now()
     pruneLocalEchoValues(now)
     return localEchoValuesRef.current.some((entry) => entry.value === nextValue)
-  }
+  }, [pruneLocalEchoValues])
 
-  const flushQueuedOnChange = () => {
+  const flushQueuedOnChange = useCallback(() => {
     if (onChangeFrameRef.current !== null) {
       window.cancelAnimationFrame(onChangeFrameRef.current)
       onChangeFrameRef.current = null
@@ -867,9 +871,9 @@ export function CodeMirrorMarkdownEditor({
       rememberLocalEchoValue(queued)
       onChangeRef.current(queued)
     }
-  }
+  }, [rememberLocalEchoValue])
 
-  const scheduleOnChange = (nextValue: string) => {
+  const scheduleOnChange = useCallback((nextValue: string) => {
     pendingDocRef.current = nextValue
     if (onChangeFrameRef.current !== null) {
       return
@@ -884,7 +888,7 @@ export function CodeMirrorMarkdownEditor({
         onChangeRef.current(queued)
       }
     })
-  }
+  }, [rememberLocalEchoValue])
 
   useEffect(() => {
     onInsertImageAssetRef.current = onInsertImageAsset
@@ -894,14 +898,15 @@ export function CodeMirrorMarkdownEditor({
     linkTargetsRef.current = linkTargets
   }, [linkTargets])
 
+  const paletteMode = paletteState?.mode
   useEffect(() => {
     if (
-      !paletteState ||
-      (paletteState.mode !== 'palette' &&
-        paletteState.mode !== 'tag-group' &&
-        paletteState.mode !== 'tag-item' &&
-        paletteState.mode !== 'link-browse' &&
-        paletteState.mode !== 'table-size')
+      !paletteMode ||
+      (paletteMode !== 'palette' &&
+        paletteMode !== 'tag-group' &&
+        paletteMode !== 'tag-item' &&
+        paletteMode !== 'link-browse' &&
+        paletteMode !== 'table-size')
     ) {
       return
     }
@@ -916,7 +921,7 @@ export function CodeMirrorMarkdownEditor({
         input.setSelectionRange(cursor, cursor)
       }
     })
-  }, [paletteState?.mode])
+  }, [paletteMode])
 
   useEffect(() => {
     if (!paletteState) {
@@ -1339,8 +1344,8 @@ export function CodeMirrorMarkdownEditor({
               notePath: initialNotePathRef.current,
               backendUrl: initialBackendUrlRef.current,
               linkTargets: initialLinkTargetsRef.current,
-              onOpenWikiLink,
-              onOpenTagReference,
+              onOpenWikiLink: target => openWikiRef.current?.(target),
+              onOpenTagReference: (groupId, tagId) => openTagRef.current?.(groupId, tagId),
             })
           ),
           readOnlyCompartmentRef.current.of([
@@ -1535,7 +1540,7 @@ export function CodeMirrorMarkdownEditor({
       instance.destroy()
       editorRef.current = null
     }
-  }, [editorApiRef])
+  }, [editorApiRef, flushQueuedOnChange, scheduleOnChange])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -1638,7 +1643,7 @@ export function CodeMirrorMarkdownEditor({
       scrollIntoView: false,
     })
     syncingRef.current = false
-  }, [value])
+  }, [value, isRecentLocalEchoValue])
 
   const onPaletteInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (
@@ -1913,7 +1918,7 @@ export function CodeMirrorMarkdownEditor({
     : null
 
   useEffect(() => {
-    if (!paletteState || paletteState.mode === 'table-size' || paletteItems.length === 0) {
+    if (!paletteMode || paletteMode === 'table-size' || paletteItems.length === 0) {
       return
     }
     window.requestAnimationFrame(() => {
@@ -1922,7 +1927,7 @@ export function CodeMirrorMarkdownEditor({
         inline: 'nearest',
       })
     })
-  }, [activeCommandIndex, paletteItems.length, paletteState?.mode])
+  }, [activeCommandIndex, paletteItems.length, paletteMode])
 
   return (
     <div

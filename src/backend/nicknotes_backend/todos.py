@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime
+import uuid
 from dataclasses import dataclass
 
 
@@ -9,6 +11,7 @@ TODO_LINE_PATTERN = re.compile(r"^(\s*[-*+]\s+\[([ xX])\]\s+)(.*)$")
 from .task_domain import normalize_tag_id
 FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 PROMOTION_MARKER_PATTERN = re.compile(r"\s*<!--\s*nn:todo:promoted:([A-Za-z0-9][A-Za-z0-9_-]{1,120})\s*-->\s*$")
+HISTORY_PATTERN = re.compile(r'\s*<!-- nn:todo created=([^ ]*) completed=([^ ]*) -->')
 BLOCK_REF_PATTERN = re.compile(r"\s+\^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\s*$")
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
@@ -27,6 +30,8 @@ class ExtractedTodo:
     links: list[str]
     promoted: bool
     promoted_task_id: str | None
+    created_at: str = ""
+    completed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,8 @@ class _TodoMatch:
     links: list[str]
     promoted: bool
     promoted_task_id: str | None
+    created_at: str = ""
+    completed_at: str | None = None
 
 
 def _normalized_for_id(value: str) -> str:
@@ -51,6 +58,8 @@ def _normalized_for_id(value: str) -> str:
 
 
 def _build_todo_id(note_anchor: str, line_no: int, text: str, block_ref: str | None) -> str:
+    if block_ref and block_ref.startswith("nn-todo_"):
+        return block_ref[3:]
     clean_anchor = note_anchor.strip() or "note"
     clean_text = _normalized_for_id(text)
     stable_ref = f"ref:{block_ref}" if block_ref else f"line:{line_no}:{clean_text}"
@@ -153,7 +162,10 @@ def _scan_todos(lines: list[str], note_anchor: str, inherited_tags: list[str]) -
         tail = match.group(3).rstrip()
         without_marker, promoted_task_id = _split_promotion_marker(tail)
         without_block_ref, block_ref = _split_block_ref(without_marker)
-        raw_text = without_block_ref.strip()
+        history = HISTORY_PATTERN.search(without_block_ref)
+        created_at = history.group(1) if history else ''
+        completed_at = (history.group(2) or None) if history else None
+        raw_text = HISTORY_PATTERN.sub('', without_block_ref).strip()
         if not raw_text:
             continue
 
@@ -176,6 +188,8 @@ def _scan_todos(lines: list[str], note_anchor: str, inherited_tags: list[str]) -
                 links=links,
                 promoted=bool(promoted_task_id),
                 promoted_task_id=promoted_task_id,
+                created_at=created_at,
+                completed_at=completed_at,
             )
         )
 
@@ -197,6 +211,8 @@ def extract_todos_from_body(body: str, note_anchor: str, inherited_tags: list[st
             links=item.links,
             promoted=item.promoted,
             promoted_task_id=item.promoted_task_id,
+            created_at=item.created_at,
+            completed_at=item.completed_at,
         )
         for item in matches
     ]
@@ -228,11 +244,19 @@ def toggle_todo_checkbox(
             links=target.links,
             promoted=target.promoted,
             promoted_task_id=target.promoted_task_id,
+            created_at=target.created_at,
+            completed_at=target.completed_at,
         )
 
     next_marker = "[x]" if next_checked else "[ ]"
     next_prefix = re.sub(r"\[[ xX]\]", next_marker, target.prefix, count=1)
-    lines[target.line_index] = f"{next_prefix}{target.tail}"
+    block_ref = target.block_ref or f'nn-{target.id}'
+    created = target.created_at
+    completed = datetime.now().astimezone().isoformat(timespec='seconds') if next_checked else ''
+    tail = f'{target.raw_text} <!-- nn:todo created={created} completed={completed} --> ^{block_ref}'
+    if target.promoted_task_id:
+        tail += f' <!-- nn:todo:promoted:{target.promoted_task_id} -->'
+    lines[target.line_index] = f"{next_prefix}{tail}"
 
     next_body = "\n".join(lines)
     refreshed = extract_todos_from_body(next_body, note_anchor=note_anchor, inherited_tags=inherited_tags or [])
@@ -265,13 +289,46 @@ def mark_todo_promoted(
             links=target.links,
             promoted=target.promoted,
             promoted_task_id=target.promoted_task_id,
+            created_at=target.created_at,
+            completed_at=target.completed_at,
         )
 
-    plain_tail, _existing_task = _split_promotion_marker(target.tail)
-    updated_tail = f"{plain_tail.rstrip()} <!-- nn:todo:promoted:{task_id} -->".rstrip()
+    block_ref=target.block_ref or f'nn-{target.id}'
+    updated_tail = f"{target.raw_text} <!-- nn:todo created={target.created_at} completed={target.completed_at or ''} --> ^{block_ref} <!-- nn:todo:promoted:{task_id} -->"
     lines[target.line_index] = f"{target.prefix}{updated_tail}"
 
     next_body = "\n".join(lines)
     refreshed = extract_todos_from_body(next_body, note_anchor=note_anchor, inherited_tags=inherited_tags or [])
     updated = next((item for item in refreshed if item.id == todo_id), None)
     return next_body, updated
+
+
+def synchronize_todo_history(previous_body: str, body: str, previous_anchor: str, note_anchor: str) -> str:
+    """Adopt stable references and persist editor checkbox transitions in the source."""
+    previous=_scan_todos(previous_body.splitlines(),previous_anchor,[])
+    current=_scan_todos(body.splitlines(),note_anchor,[])
+    by_id={item.id:item for item in previous}
+    by_text={}
+    for item in previous:
+        by_text.setdefault(_normalized_for_id(item.raw_text),[]).append(item)
+    lines=body.splitlines()
+    now=datetime.now().astimezone().isoformat(timespec='seconds')
+    used=set()
+    for item in current:
+        old=by_id.get(item.id)
+        candidates=by_text.get(_normalized_for_id(item.raw_text),[])
+        if old is None and len(candidates)==1 and candidates[0].id not in used:
+            old=candidates[0]
+        if old:
+            used.add(old.id)
+        stable=item.block_ref or ('nn-'+(old.id if old else item.id))
+        created=item.created_at or (old.created_at if old else now)
+        completed=item.completed_at if item.checked else None
+        if item.checked and not completed:
+            completed=(old.completed_at if old and old.checked else now)
+        tail=f"{item.raw_text} <!-- nn:todo created={created} completed={completed or ''} --> ^{stable}"
+        promoted=item.promoted_task_id or (old.promoted_task_id if old else None)
+        if promoted:
+            tail+=f' <!-- nn:todo:promoted:{promoted} -->'
+        lines[item.line_index]=item.prefix+tail
+    return '\n'.join(lines)+('\n' if body.endswith('\n') else '')

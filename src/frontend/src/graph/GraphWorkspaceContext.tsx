@@ -1,11 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {apiRequest} from '../app/apiClient'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
-  GraphEdge,
   GraphFilters,
+  GraphEdge,
   GraphIndex,
   GraphIndexStatus,
   GraphMode,
-  GraphNode,
   GraphNodePosition,
   GraphState,
   GraphViewMode,
@@ -24,50 +24,11 @@ import {
 
 const DEFAULT_GRAPH_VIEWPORT: GraphViewport = { zoom: 1, pan: { x: 0, y: 0 } }
 
-type GraphWorkspaceValue = {
-  index: GraphIndex | null
-  mode: GraphMode
-  viewMode: GraphViewMode
-  filters: GraphFilters
-  loading: boolean
-  rebuilding: boolean
-  savingState: boolean
-  stateLoaded: boolean
-  graphStatus: GraphIndexStatus | null
-  focusNodeId: string
-  positions: Record<string, GraphNodePosition>
-  viewport: GraphViewport
-  layoutVersion: number
-  fitRequestVersion: number
-  graphStale: boolean
-  error: string
-  filtered: { nodes: GraphNode[]; edges: GraphEdge[] }
-  fileCount: number
-  hiddenNodeCount: number
-  hiddenEdgeCount: number
-  sharedTagEdgeCount: number
-  nodeById: Map<string, GraphNode>
-  setMode: (mode: GraphMode) => void
-  setViewMode: (mode: GraphViewMode) => void
-  updateFilters: (patch: Partial<GraphFilters>) => void
-  setFocusNodeId: (nodeId: string) => void
-  setPositions: (positions: Record<string, GraphNodePosition>) => void
-  setViewport: (viewport: GraphViewport) => void
-  loadGraph: () => Promise<void>
-  triggerRebuild: () => Promise<void>
-  resetFilters: () => void
-  resetLayoutState: () => void
-  rerunLayout: () => void
-  requestFitGraph: () => void
-  onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
-  onRevealNodePath?: (path: string) => void
-}
-
-const GraphWorkspaceContext = createContext<GraphWorkspaceValue | null>(null)
-
+import {GraphWorkspaceContext, type GraphWorkspaceValue} from './useGraphWorkspace'
 type GraphWorkspaceProviderProps = {
   backendUrl: string
   vaultLoaded: boolean
+  enabled?: boolean
   graphUpdateToken: number
   latestGraphStatus: GraphIndexStatus | null
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
@@ -78,6 +39,7 @@ type GraphWorkspaceProviderProps = {
 export function GraphWorkspaceProvider({
   backendUrl,
   vaultLoaded,
+  enabled = true,
   graphUpdateToken,
   latestGraphStatus,
   onOpenNodePath,
@@ -88,7 +50,7 @@ export function GraphWorkspaceProvider({
   const [mode, setMode] = useState<GraphMode>(DEFAULT_GRAPH_STATE.activeMode)
   const [viewMode, setViewMode] = useState<GraphViewMode>(DEFAULT_GRAPH_STATE.viewMode ?? 'graph')
   const [filters, setFilters] = useState<GraphFilters>({ ...DEFAULT_GRAPH_FILTERS })
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [rebuilding, setRebuilding] = useState(false)
   const [savingState, setSavingState] = useState(false)
   const [stateLoaded, setStateLoaded] = useState(false)
@@ -98,26 +60,14 @@ export function GraphWorkspaceProvider({
   const [viewport, setViewport] = useState<GraphViewport>(DEFAULT_GRAPH_VIEWPORT)
   const [layoutVersion, setLayoutVersion] = useState(0)
   const [fitRequestVersion, setFitRequestVersion] = useState(0)
-  const [graphStale, setGraphStale] = useState(false)
+  const graphStale = Boolean(enabled && latestGraphStatus?.updated_at && latestGraphStatus.updated_at !== index?.updated_at)
   const [error, setError] = useState('')
   const saveTimerRef = useRef<number | null>(null)
   const seenGraphUpdateTokenRef = useRef(graphUpdateToken)
 
-  const loadGraph = useCallback(async () => {
-    if (!vaultLoaded) {
-      setIndex(null)
-      setStateLoaded(false)
-      setGraphStale(false)
-      return
-    }
-    setLoading(true)
-    setError('')
-    try {
-      const [nextIndex, nextState, nextStatus] = await Promise.all([
-        fetchGraphIndex(backendUrl),
-        fetchGraphState(backendUrl),
-        fetchGraphIndexStatus(backendUrl),
-      ])
+  const loadGraph = useCallback(() => {
+    if (!vaultLoaded || !enabled) return Promise.resolve()
+    return Promise.all([fetchGraphIndex(backendUrl), fetchGraphState(backendUrl), fetchGraphIndexStatus(backendUrl)]).then(([nextIndex, nextState, nextStatus]) => {
       setIndex(nextIndex)
       setMode(nextState.activeMode)
       setViewMode(nextState.viewMode ?? 'graph')
@@ -125,14 +75,9 @@ export function GraphWorkspaceProvider({
       setPositions(nextState.positions ?? {})
       setViewport(nextState.viewport ?? DEFAULT_GRAPH_VIEWPORT)
       setGraphStatus(nextStatus)
-      setGraphStale(false)
       setStateLoaded(true)
-    } catch (caught) {
-      setError(`Graph konnte nicht geladen werden: ${String(caught)}`)
-    } finally {
-      setLoading(false)
-    }
-  }, [backendUrl, vaultLoaded])
+    }).catch(caught => setError(`Graph konnte nicht geladen werden: ${String(caught)}`)).finally(() => setLoading(false))
+  }, [backendUrl, vaultLoaded, enabled])
 
   useEffect(() => {
     void loadGraph()
@@ -170,26 +115,34 @@ export function GraphWorkspaceProvider({
     }
     seenGraphUpdateTokenRef.current = graphUpdateToken
 
-    setGraphStale(true)
-    if (latestGraphStatus) {
-      setGraphStatus(latestGraphStatus)
-    }
-
     if (!latestGraphStatus || !index?.updated_at || !latestGraphStatus.updated_at || latestGraphStatus.updated_at !== index.updated_at) {
       void loadGraph()
       return
     }
 
-    setGraphStale(false)
   }, [graphUpdateToken, index?.updated_at, latestGraphStatus, loadGraph, vaultLoaded])
 
-  const graphFilterFocusNodeId = mode === 'focus' ? focusNodeId : ''
-  const filtered = useMemo(() => filterGraph(index, mode, filters, graphFilterFocusNodeId), [filters, graphFilterFocusNodeId, index, mode])
+  const [related, setRelated] = useState<{focus: string; edges: GraphEdge[]; total: number; truncated: boolean}>({focus: '', edges: [], total: 0, truncated: false})
+  const focusPath = index?.nodes.find(node => node.id === focusNodeId)?.path
+  useEffect(() => {
+    if (!focusPath || !filters.showSharedTagEdges || !enabled) return
+    const controller = new AbortController()
+    type Neighbours = {items: Array<{id: string; sharedTags: string[]; sharedWeight: number}>; total: number; truncated: boolean}
+    void apiRequest<Neighbours>(backendUrl, `/graph/related?path=${encodeURIComponent(focusPath)}&limit=50`, {signal: controller.signal}).then(result => {
+      setRelated({focus: focusNodeId, total: result.total, truncated: result.truncated, edges: result.items.filter(item => item.sharedTags.length > 0).map(item => ({id: `sharedTag:${focusNodeId}->${item.id}`, source: focusNodeId, target: item.id, type: 'sharedTag', weight: item.sharedWeight, reasons: item.sharedTags.map(tag => `Shared tag ${tag}`)}))})
+    }).catch(error => { if (!controller.signal.aborted) setError(String(error)) })
+    return () => controller.abort()
+  }, [backendUrl, enabled, focusNodeId, focusPath, filters.showSharedTagEdges, index?.updated_at])
+  const virtualEdges = useMemo(() => related.focus === focusNodeId && filters.showSharedTagEdges ? related.edges : [], [related, focusNodeId, filters.showSharedTagEdges])
+  const projected = useMemo(() => index ? {...index, edges: [...index.edges, ...virtualEdges]} : null, [index, virtualEdges])
+  const filtered = useMemo(() => filterGraph(projected, mode, filters, mode === 'focus' ? focusNodeId : ''), [filters, focusNodeId, projected, mode])
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
   const fileCount = index ? Object.keys(index.files).length : 0
   const hiddenNodeCount = index ? Math.max(0, index.nodes.length - filtered.nodes.length) : 0
-  const hiddenEdgeCount = index ? Math.max(0, index.edges.length - filtered.edges.length) : 0
-  const sharedTagEdgeCount = index?.edges.filter((edge) => edge.type === 'sharedTag').length ?? 0
+  const hiddenEdgeCount = projected ? Math.max(0, projected.edges.length - filtered.edges.length) : 0
+  const sharedTagEdgeCount = virtualEdges.length
+  const relatedTruncated = related.focus === focusNodeId && filters.showSharedTagEdges && related.truncated
+  const viewTruncated = Boolean(filtered.truncated)
 
   const updateFilters = (patch: Partial<GraphFilters>) => setFilters((current) => ({ ...current, ...patch }))
 
@@ -203,7 +156,6 @@ export function GraphWorkspaceProvider({
       const rebuilt = await rebuildGraphIndex(backendUrl)
       setIndex(rebuilt)
       setGraphStatus(await fetchGraphIndexStatus(backendUrl))
-      setGraphStale(false)
     } catch (caught) {
       setError(`Graph-Rebuild ist fehlgeschlagen: ${String(caught)}`)
     } finally {
@@ -231,6 +183,8 @@ export function GraphWorkspaceProvider({
     filtered,
     fileCount,
     hiddenNodeCount,
+    relatedTruncated,
+    viewTruncated,
     hiddenEdgeCount,
     sharedTagEdgeCount,
     nodeById,
@@ -259,12 +213,4 @@ export function GraphWorkspaceProvider({
   }
 
   return <GraphWorkspaceContext.Provider value={value}>{children}</GraphWorkspaceContext.Provider>
-}
-
-export function useGraphWorkspace(): GraphWorkspaceValue {
-  const value = useContext(GraphWorkspaceContext)
-  if (!value) {
-    throw new Error('useGraphWorkspace must be used inside GraphWorkspaceProvider')
-  }
-  return value
 }

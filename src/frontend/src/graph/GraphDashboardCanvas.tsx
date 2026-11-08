@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { GraphNetworkView } from './GraphNetworkView'
-import { useGraphWorkspace } from './GraphWorkspaceContext'
+import { useGraphWorkspace } from './useGraphWorkspace'
 
 export function GraphDashboardCanvas() {
   const graph = useGraphWorkspace()
@@ -22,6 +22,7 @@ export function GraphDashboardCanvas() {
           </button>
         </div>
       ) : null}
+      {graph.viewTruncated || graph.relatedTruncated ? <p className="graph-warning graph-editor-overlay" role="status">Begrenzter Ausschnitt: maximal 500 Knoten und 1.500 Verbindungen; gemeinsame Tags fuer die Auswahl maximal 50 Nachbarn. Suche oder Fokus grenzen weiter ein.</p> : null}
       {graph.loading ? <p className="graph-editor-empty">Graph wird geladen ...</p> : null}
       {!graph.loading && graph.index && graph.index.nodes.length === 0 ? (
         <p className="graph-editor-empty">Keine Graph-Daten vorhanden. Oeffne die Graph-Sidebar zum Neuaufbau.</p>
@@ -44,6 +45,7 @@ export function GraphDashboardCanvas() {
         onViewportChange={graph.setViewport}
         onShowNeighbors={(nodeId) => {
           graph.setFocusNodeId(nodeId)
+          graph.setMode('focus')
         }}
         onClearSelection={() => graph.setFocusNodeId('')}
       />

@@ -1,3 +1,4 @@
+import {useSyncedDraft} from '../editor/useSyncedDraft'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type {
@@ -292,7 +293,7 @@ function resolveOpenPath(node: ExplorerNode): string {
 function slugifyForDuplicateCheck(raw: string): string {
   return normalizeLabel(raw)
     .toLowerCase()
-    .replace(/[^a-z0-9_\-]+/g, '_')
+    .replace(/[^a-z0-9_-]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
 }
@@ -419,19 +420,27 @@ export function ExplorerSidebar({
   viewStateSeedId,
   onViewStateChange,
 }: ExplorerSidebarProps) {
+  const seed = useMemo(() => ({
+    expanded: toSafeExpanded(viewStateSeed?.expandedNodes),
+    selected: typeof viewStateSeed?.selectedNodeId === 'string' ? viewStateSeed.selectedNodeId : null,
+    query: typeof viewStateSeed?.filterQuery === 'string' ? viewStateSeed.filterQuery : '',
+    order: toSafeOrder(viewStateSeed?.folderOrder),
+    icons: toSafeIconOverrides(viewStateSeed?.iconOverrides),
+  }), [viewStateSeed])
+  const seedIdentity = String(viewStateSeedId ?? '')
   const treeRef = useRef<HTMLElement | null>(null)
   const contextPanelRef = useRef<HTMLDivElement | null>(null)
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({})
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [selectedFileNodeIds, setSelectedFileNodeIds] = useState<Set<string>>(() => new Set())
-  const [selectionAnchorNodeId, setSelectionAnchorNodeId] = useState<string | null>(null)
+  const [expandedNodes, setExpandedNodes] = useSyncedDraft(seedIdentity, seed.expanded)
+  const [selectedNodeId, setSelectedNodeId] = useSyncedDraft<string | null>(seedIdentity, seed.selected)
+  const [rawSelectedFileNodeIds, setSelectedFileNodeIds] = useState<Set<string>>(() => new Set())
+  const [rawSelectionAnchorNodeId, setSelectionAnchorNodeId] = useState<string | null>(null)
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
   const [draggingFileNodeIds, setDraggingFileNodeIds] = useState<Set<string>>(() => new Set())
   const [dropIndicator, setDropIndicator] = useState<DropIndicator>(null)
-  const [filterQuery, setFilterQuery] = useState('')
-  const [folderOrder, setFolderOrder] = useState<Record<string, string[]>>({})
+  const [filterQuery, setFilterQuery] = useSyncedDraft(seedIdentity, seed.query)
+  const [rawFolderOrder, setFolderOrder] = useSyncedDraft(seedIdentity, seed.order)
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null)
-  const [iconOverrides, setIconOverrides] = useState<NodeIconOverrides>({ folders: {}, files: {} })
+  const [rawIconOverrides, setIconOverrides] = useSyncedDraft(seedIdentity, seed.icons)
   const [iconPicker, setIconPicker] = useState<IconPickerState>(null)
   const [iconSearchQuery, setIconSearchQuery] = useState('')
   const [actionDialog, setActionDialog] = useState<ExplorerActionDialogState | null>(null)
@@ -440,8 +449,6 @@ export function ExplorerSidebar({
   const onViewStateChangeRef = useRef(onViewStateChange)
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const lastAutoRevealPathRef = useRef('')
-  const lastHandledRevealRequestRef = useRef<number | null>(null)
 
   const fixedRootKeys = useMemo(() => {
     const byToken = new Map<string, string>()
@@ -458,6 +465,9 @@ export function ExplorerSidebar({
     }
     return ROOT_TOKENS.map((token) => byToken.get(token) ?? '').filter(Boolean)
   }, [groups])
+
+  const folderOrder = useMemo(() => sanitizeOrder(rawFolderOrder, new Set(groups.map(group => normalizeGroupKey(group.key))), fixedRootKeys), [rawFolderOrder, groups, fixedRootKeys])
+  const iconOverrides = useMemo(() => pruneIconOverrides(rawIconOverrides, new Set(groups.map(group => normalizeGroupKey(group.key))), new Set(files.map(file => normalizeFilePathKey(file.path)))), [rawIconOverrides, files, groups])
 
   const tasksRootKey = useMemo(() => {
     for (const group of groups) {
@@ -563,21 +573,6 @@ export function ExplorerSidebar({
   }, [sortMenuOpen])
 
   useEffect(() => {
-    const seed = viewStateSeed ?? {
-      expandedNodes: {},
-      selectedNodeId: null,
-      filterQuery: '',
-      folderOrder: {},
-      iconOverrides: { folders: {}, files: {} },
-    }
-    setExpandedNodes(toSafeExpanded(seed.expandedNodes))
-    setSelectedNodeId(typeof seed.selectedNodeId === 'string' ? seed.selectedNodeId : null)
-    setFilterQuery(typeof seed.filterQuery === 'string' ? seed.filterQuery : '')
-    setFolderOrder(toSafeOrder(seed.folderOrder))
-    setIconOverrides(toSafeIconOverrides(seed.iconOverrides))
-  }, [viewStateSeed, viewStateSeedId])
-
-  useEffect(() => {
     const notify = onViewStateChangeRef.current
     if (!notify) {
       return
@@ -594,20 +589,6 @@ export function ExplorerSidebar({
   useEffect(() => {
     onFilterQueryChange?.(filterQuery)
   }, [filterQuery, onFilterQueryChange])
-
-  useEffect(() => {
-    const valid = new Set(groups.map((group) => normalizeGroupKey(group.key)))
-    setFolderOrder((prev) => sanitizeOrder(prev, valid, fixedRootKeys))
-  }, [fixedRootKeys, groups])
-
-  useEffect(() => {
-    if (!vaultLoaded || groups.length === 0) {
-      return
-    }
-    const validFolders = new Set(groups.map((group) => normalizeGroupKey(group.key)))
-    const validFiles = new Set(files.map((file) => normalizeFilePathKey(file.path)))
-    setIconOverrides((prev) => pruneIconOverrides(prev, validFolders, validFiles))
-  }, [files, groups, vaultLoaded])
 
   const tree = useMemo(
     () =>
@@ -638,6 +619,9 @@ export function ExplorerSidebar({
       vaultPath,
     ]
   )
+
+  const selectedFileNodeIds = useMemo(() => new Set([...rawSelectedFileNodeIds].filter(id => tree.nodeById.get(id)?.type === 'file')), [rawSelectedFileNodeIds, tree.nodeById])
+  const selectionAnchorNodeId = rawSelectionAnchorNodeId && tree.nodeById.get(rawSelectionAnchorNodeId)?.type === 'file' ? rawSelectionAnchorNodeId : null
 
   const visibleFileNodeIds = useMemo(() => collectVisibleFileNodeIdsInOrder(tree.visibleNodes), [tree.visibleNodes])
 
@@ -702,33 +686,6 @@ export function ExplorerSidebar({
     }
     return ids
   }, [draggingFileNodeIds, visibleFileNodeIds])
-
-  useEffect(() => {
-    setSelectedFileNodeIds((prev) => {
-      let changed = false
-      const next = new Set<string>()
-      for (const nodeId of prev) {
-        const node = tree.nodeById.get(nodeId)
-        if (node?.type === 'file') {
-          next.add(nodeId)
-        } else {
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [tree.nodeById])
-
-  useEffect(() => {
-    if (!selectionAnchorNodeId) {
-      return
-    }
-    const node = tree.nodeById.get(selectionAnchorNodeId)
-    if (node?.type === 'file') {
-      return
-    }
-    setSelectionAnchorNodeId(null)
-  }, [selectionAnchorNodeId, tree.nodeById])
 
   const folderFileCounts = useMemo(() => {
     const counts = new Map<string, FolderFileCount>()
@@ -797,39 +754,22 @@ export function ExplorerSidebar({
       })
       return true
     },
-    [selectSingleFile, tree.fileNodeIdByPath, tree.parentById]
+    [selectSingleFile, tree.fileNodeIdByPath, tree.parentById, setExpandedNodes, setSelectedNodeId]
   )
 
-  useEffect(() => {
-    if (!activeFilePath) {
-      lastAutoRevealPathRef.current = ''
-      return
-    }
-    if (lastAutoRevealPathRef.current === activeFilePath) {
-      return
-    }
-    const revealed = revealPathInTree(activeFilePath)
-    if (revealed) {
-      lastAutoRevealPathRef.current = activeFilePath
-    }
-  }, [activeFilePath, revealPathInTree])
-
-  useEffect(() => {
-    if (typeof revealRequestId !== 'number') {
-      return
-    }
-    if (lastHandledRevealRequestRef.current === revealRequestId) {
-      return
-    }
-    lastHandledRevealRequestRef.current = revealRequestId
-    if (!revealFilePath) {
-      return
-    }
-    const revealed = revealPathInTree(revealFilePath)
-    if (revealed) {
-      lastAutoRevealPathRef.current = revealFilePath
-    }
-  }, [revealFilePath, revealRequestId, revealPathInTree])
+  const [lastAutoRevealPath, setLastAutoRevealPath] = useState('')
+  const [lastRevealRequest, setLastRevealRequest] = useState<number | null>(null)
+  if (!activeFilePath && lastAutoRevealPath) {
+    setLastAutoRevealPath('')
+  } else if (activeFilePath && activeFilePath !== lastAutoRevealPath && tree.fileNodeIdByPath.has(activeFilePath)) {
+    setLastAutoRevealPath(activeFilePath)
+    revealPathInTree(activeFilePath)
+  }
+  if (typeof revealRequestId === 'number' && revealRequestId !== lastRevealRequest && revealFilePath && tree.fileNodeIdByPath.has(revealFilePath)) {
+    setLastRevealRequest(revealRequestId)
+    setLastAutoRevealPath(revealFilePath)
+    revealPathInTree(revealFilePath)
+  }
 
   const selectedNode = useMemo(() => tree.visibleNodes.find((entry) => entry.node.selected)?.node ?? null, [tree.visibleNodes])
   const selectedFolderKeyForCreate = useMemo(() => {
@@ -1086,7 +1026,7 @@ export function ExplorerSidebar({
       }
       return changed ? next : prev
     })
-  }, [])
+  }, [setExpandedNodes])
 
   const expandAllFolders = useCallback(() => {
     const folderIds: string[] = []
@@ -1147,7 +1087,7 @@ export function ExplorerSidebar({
       return
     }
     setExpandedNodes((prev) => ({ ...prev, [node.id]: true }))
-  }, [collapseFolderSubtree])
+  }, [collapseFolderSubtree, setExpandedNodes])
 
   const resolveFileDropTargetKey = useCallback(
     (target: ExplorerNode, position: DropPosition): string => {
@@ -1228,7 +1168,7 @@ export function ExplorerSidebar({
         })
       }
     },
-    [fixedRootKeys, groups, onMoveFile, onMoveFolder, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
+    [fixedRootKeys, groups, onMoveFile, onMoveFolder, resolveFileDropTargetKey, tree.nodeById, tree.parentById, setFolderOrder]
   )
 
   const onDrop = useCallback(
@@ -1287,7 +1227,7 @@ export function ExplorerSidebar({
     }
     setSelectedNodeId(node.id)
     setContextMenu({ x: event.clientX, y: event.clientY, target: 'node', nodeId: node.id })
-  }, [clearFileSelection, selectedFileNodeIds])
+  }, [clearFileSelection, selectedFileNodeIds, setSelectedNodeId])
 
   const openTreeContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
@@ -1451,7 +1391,7 @@ export function ExplorerSidebar({
       }
       return { ...prev, files: nextFiles }
     })
-  }, [])
+  }, [setIconOverrides])
 
   useEffect(() => {
     if (!contextMenu) {

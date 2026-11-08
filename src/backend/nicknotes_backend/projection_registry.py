@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-INDEXER_SCHEMA_VERSION = 1
-GRAPH_INDEX_SCHEMA_VERSION = 1
+INDEXER_SCHEMA_VERSION = 3
+GRAPH_INDEX_SCHEMA_VERSION = 2
 TASK_LINK_INDEX_SCHEMA_VERSION = 1
 GRAPH_STATE_SCHEMA_VERSION = 2
 

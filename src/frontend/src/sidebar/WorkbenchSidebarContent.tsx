@@ -74,7 +74,7 @@ type WorkbenchSidebarContentProps = {
   onRenameTag: (groupName: string, tagName: string) => void
   onDeleteTag: (groupName: string, tagName: string) => void
   onOpenTagOverview?: (groupName: string, tagName: string) => void
-  onOpenTagMatchAssistant: () => void
+  onOpenTagMatchWorkflow: () => void
   noteGroups: ExplorerSourceGroup[]
   explorerRows: ExplorerSourceFile[]
   activeNotePath: string
@@ -189,7 +189,7 @@ export function WorkbenchSidebarContent({
   onRenameTag,
   onDeleteTag,
   onOpenTagOverview,
-  onOpenTagMatchAssistant,
+  onOpenTagMatchWorkflow,
   noteGroups,
   explorerRows,
   activeNotePath,
@@ -577,13 +577,6 @@ export function WorkbenchSidebarContent({
     if (!taskOpenDropdown) {
       return
     }
-    setTaskDropdownActiveIndex((prev) => ({ ...prev, [taskOpenDropdown]: 0 }))
-  }, [taskOpenDropdown])
-
-  useEffect(() => {
-    if (!taskOpenDropdown) {
-      return
-    }
     const menu = document.querySelector<HTMLElement>(`.todo-multiselect-menu[data-dropdown-key="task_${taskOpenDropdown}"]`)
     const active = menu?.querySelector<HTMLElement>('.todo-multiselect-option.is-active')
     if (!active) {
@@ -619,13 +612,6 @@ export function WorkbenchSidebarContent({
     return () => {
       window.removeEventListener('pointerdown', onPointerDown)
     }
-  }, [todoOpenDropdown])
-
-  useEffect(() => {
-    if (!todoOpenDropdown) {
-      return
-    }
-    setTodoDropdownActiveIndex((prev) => ({ ...prev, [todoOpenDropdown]: 0 }))
   }, [todoOpenDropdown])
 
   useEffect(() => {
@@ -711,6 +697,7 @@ export function WorkbenchSidebarContent({
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
+            setTodoDropdownActiveIndex((previous) => ({...previous, [dropdownKey]: 0}))
             setTodoOpenDropdown((current) => {
               const next = current === dropdownKey ? null : dropdownKey
               if (next === null) {
@@ -867,6 +854,7 @@ export function WorkbenchSidebarContent({
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
+            setTaskDropdownActiveIndex((previous) => ({...previous, [dropdownKey]: 0}))
             setTaskOpenDropdown((current) => {
               const next = current === dropdownKey ? null : dropdownKey
               if (next === null) {
@@ -1721,7 +1709,7 @@ export function WorkbenchSidebarContent({
         onRenameTag={onRenameTag}
         onDeleteTag={onDeleteTag}
         onOpenTagOverview={onOpenTagOverview}
-        onOpenTagMatchAssistant={onOpenTagMatchAssistant}
+        onOpenTagMatchWorkflow={onOpenTagMatchWorkflow}
       />
     )
   }

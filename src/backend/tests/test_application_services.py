@@ -1,29 +1,21 @@
 from __future__ import annotations
 
 import tempfile
+import hashlib
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-try:
-    from src.backend.application_services import BackendApiService
-    from src.backend import api as backend_api
-except Exception:  # pragma: no cover - environment-specific import guard
-    BackendApiService = None
-    backend_api = None
+from src.backend.application_services import BackendApiService
+from src.backend import api as backend_api
 
 
-@unittest.skipIf(
-    BackendApiService is None or backend_api is None,
-    "Backend-Service-API nicht importierbar.",
-)
 class BackendApiServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_api.state.dispose_session()
         self.service = BackendApiService(runtime=backend_api.state, capabilities=backend_api.BACKEND_CAPABILITIES)
         # Keep a deterministic module target and avoid re-import side effects in tests.
-        self.service._api_module = backend_api
 
     @staticmethod
     def _mock_note_path(path: str, *, exists: bool, content: str = "") -> Path:
@@ -35,6 +27,7 @@ class BackendApiServiceTests(unittest.TestCase):
         fake_path.exists.return_value = exists
         fake_path.is_file.return_value = True
         fake_path.read_text.return_value = content
+        fake_path.read_bytes.return_value = content.encode('utf-8')
         fake_path.write_text.return_value = None
         fake_path.unlink.return_value = None
         fake_path.mkdir.return_value = None
@@ -128,27 +121,10 @@ class BackendApiServiceTests(unittest.TestCase):
             self.assertFalse(result["vaultLoaded"])
             self.assertFalse(backend_api.state.vault)
 
-    def test_dynamic_route_methods_are_supported_via_fallback(self) -> None:
-        expected = {"ok": True}
-        method_name = "health_probe"
-        impl_name = f"{method_name}_impl"
-        dynamic_impl = mock.MagicMock(return_value=expected)
-        previous_impl = getattr(backend_api, impl_name, None)
-        setattr(backend_api, impl_name, dynamic_impl)
-        try:
-            probe = getattr(self.service, method_name)
-            result = probe(1, named=True)
-            self.assertIs(result, expected)
-            dynamic_impl.assert_called_once_with(1, named=True)
-        finally:
-            if previous_impl is None:
-                delattr(backend_api, impl_name)
-            else:
-                setattr(backend_api, impl_name, previous_impl)
 
     def test_save_note_content_executes_transaction_with_recovery_log(self) -> None:
         fake_path = self._mock_note_path("note.md", exists=True, content="title: A\\n\\nbody")
-        request = backend_api.NoteSaveRequest(path="note.md", content="title: B\\n\\nbody")
+        request = backend_api.NoteSaveRequest(expectedRevision=hashlib.sha256(fake_path.read_bytes()).hexdigest(), path="note.md", content="title: B\\n\\nbody")
         vault = mock.MagicMock()
         vault.vault_path = Path("C:/dummy")
         vault.save_note_document.return_value = {
@@ -190,7 +166,7 @@ class BackendApiServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             rollback_path = Path(tmpdir) / "rollback.md"
             fake_path = self._mock_note_path(str(rollback_path), exists=True, content="title: Rollback\\n\\nbody")
-            request = backend_api.NoteSaveRequest(path=str(rollback_path), content="title: Updated\\n\\nbody")
+            request = backend_api.NoteSaveRequest(expectedRevision=hashlib.sha256(fake_path.read_bytes()).hexdigest(), path=str(rollback_path), content="title: Updated\\n\\nbody")
             vault = mock.MagicMock()
             vault.vault_path = Path("C:/dummy")
             vault.save_note_document.return_value = {

@@ -1,21 +1,41 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } from 'electron'
-import { spawn, spawnSync } from 'node:child_process'
+import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, protocol, net } from 'electron'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const BACKEND_PORT = 8765
+const BACKEND_PORT = Number(process.env.NICKNOTES_PORT || 8765)
+const API_TOKEN = randomBytes(32).toString('hex')
+const PROJECT_ROOT = path.resolve(__dirname, '../..')
+app.setName('NickNotes')
+if (process.env.NICKNOTES_USER_DATA) app.setPath('userData', process.env.NICKNOTES_USER_DATA)
+protocol.registerSchemesAsPrivileged([{ scheme: 'nicknotes', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
+const isTrusted = (event) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return false
+  const url = new URL(event.senderFrame.url)
+  return app.isPackaged ? url.protocol === 'nicknotes:' && url.hostname === 'app' : url.origin === 'http://localhost:5173'
+}
+const handle = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+  if (!isTrusted(event)) throw new Error('Untrusted app frame')
+  return handler(event, ...args)
+})
+const listen = (channel, handler) => ipcMain.on(channel, (event, ...args) => {
+  if (isTrusted(event)) handler(event, ...args)
+})
 
+
+let backendReady = false
 let backendProcess = null
 let mainWindow = null
 let backendStopping = false
 const unsavedByWebContentsId = new Map()
 const pendingSaveBeforeCloseByWebContentsId = new Set()
 const allowCloseByWebContentsId = new Set()
-const EXTERNAL_URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'file:'])
+const EXTERNAL_URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:'])
 
 const NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS = process.env.NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS?.split(',')
   .map((value) => value.trim())
@@ -129,8 +149,8 @@ function applyWindowTheme(win, theme = 'dark') {
 function resolvePythonBinary() {
   const venvPython =
     process.platform === 'win32'
-      ? path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')
-      : path.join(process.cwd(), '.venv', 'bin', 'python')
+      ? path.join(PROJECT_ROOT, '.venv', 'Scripts', 'python.exe')
+      : path.join(PROJECT_ROOT, '.venv', 'bin', 'python')
 
   if (fs.existsSync(venvPython)) {
     return venvPython
@@ -139,72 +159,43 @@ function resolvePythonBinary() {
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 
-function stopProcessListeningOnBackendPort() {
-  if (process.platform !== 'win32') {
-    return
-  }
-
-  const script = `
-$connections = Get-NetTCPConnection -LocalPort ${BACKEND_PORT} -State Listen -ErrorAction SilentlyContinue
-foreach ($connection in $connections) {
-  if ($connection.OwningProcess -and $connection.OwningProcess -ne $PID) {
-    Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
-  }
-}
-`
-  spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
-    stdio: 'ignore',
-    windowsHide: true,
-  })
-}
-
-function startBackend() {
-  if (backendProcess) {
-    return
-  }
-
-  stopProcessListeningOnBackendPort()
+async function startBackend() {
+  const packaged = path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'nicknotes-backend.exe' : 'nicknotes-backend')
   backendStopping = false
-  const python = resolvePythonBinary()
-  backendProcess = spawn(python, ['-m', 'src.backend.server'], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      PYTHONUNBUFFERED: '1',
-      NICKNOTES_PARENT_PID: String(process.pid),
-    },
+  backendProcess = spawn(app.isPackaged ? packaged : resolvePythonBinary(), app.isPackaged ? [] : ['-m', 'src.backend.server'], {
+    cwd: app.isPackaged ? app.getPath('userData') : PROJECT_ROOT,
+    stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    env: { ...process.env, NICKNOTES_DESKTOP_BOOT: '1', PYTHONUNBUFFERED: '1' },
   })
-
-  backendProcess.on('exit', () => {
-    backendProcess = null
-    backendStopping = false
-  })
-}
-
-function stopBackend() {
-  if (!backendProcess || backendStopping) {
-    return
-  }
-
-  backendStopping = true
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(backendProcess.pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
+  backendProcess.stdin.on('error', () => {}) // Process exit is reported by the readiness handler.
+  backendProcess.stdin.write(JSON.stringify({ token: API_TOKEN, port: BACKEND_PORT, parent_pid: process.pid, user_data: app.getPath('userData') }) + '\n')
+  backendProcess.stderr.on('data', data => process.stderr.write(data))
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Backend antwortet nicht.')), 45000)
+    let pending = ''
+    backendProcess.stdout.on('data', data => {
+      pending += data.toString()
+      let index
+      while ((index = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, index); pending = pending.slice(index + 1)
+        try { if (JSON.parse(line).event === 'ready') { clearTimeout(timer); resolve() } } catch {}
+      }
     })
-  } else {
-    backendProcess.kill('SIGTERM')
-  }
-  backendProcess = null
-  backendStopping = false
+    backendProcess.once('error', error => { clearTimeout(timer); reject(error) })
+    backendProcess.once('exit', code => { clearTimeout(timer); reject(new Error(`Backend wurde beendet (${code}). Möglicherweise ist Port ${BACKEND_PORT} belegt.`)) })
+  })
+  backendProcess.on('exit', () => { backendProcess = null })
 }
 
-function stopBackendAndQuit(signal = '') {
-  stopBackend()
-  if (signal) {
-    process.exit(0)
-  }
+async function stopBackend() {
+  const child = backendProcess
+  if (!child || backendStopping) return
+  if (child.exitCode !== null || child.signalCode !== null) { backendProcess = null; return }
+  backendStopping = true
+  try { child.stdin.write(JSON.stringify({ command: 'shutdown' }) + '\n') } catch {}
+  await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))])
+  if (child.exitCode === null) child.kill()
+  backendProcess = null
 }
 
 function createWindow() {
@@ -223,8 +214,11 @@ function createWindow() {
     backgroundColor: '#1f252f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
     },
   })
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => { if (url !== win.webContents.getURL()) event.preventDefault() })
   win.setMenuBarVisibility(false)
   applyWindowTheme(win, 'dark')
   mainWindow = win
@@ -282,18 +276,38 @@ function createWindow() {
     return
   }
 
-  win.loadFile(path.join(process.cwd(), 'dist', 'frontend', 'index.html'))
+  win.loadURL(backendReady ? 'nicknotes://app/index.html' : 'nicknotes://app/startup.html')
 }
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null)
-  startBackend()
+const hasInstanceLock = app.requestSingleInstanceLock()
+if (!hasInstanceLock) app.quit()
+app.on('second-instance', () => { if (mainWindow) { mainWindow.restore(); mainWindow.focus() } })
 
-  ipcMain.on('app:set-unsaved', (event, payload) => {
+app.whenReady().then(async () => {
+  if (!hasInstanceLock) return
+  fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  protocol.handle('nicknotes', async request => {
+    const url = new URL(request.url)
+    const root = path.join(app.getAppPath(), 'frontend')
+    const target = path.resolve(root, '.' + decodeURIComponent(url.pathname))
+    if (url.hostname !== 'app' || !target.startsWith(root + path.sep)) return new Response('Forbidden', { status: 403 })
+    const response = await net.fetch(pathToFileURL(target).toString())
+    const headers = new Headers(response.headers)
+    headers.set('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src http://127.0.0.1:${BACKEND_PORT}; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'`)
+    return new Response(response.body, { status: response.status, headers })
+  })
+  Menu.setApplicationMenu(null)
+  if (app.isPackaged) createWindow()
+  try { await startBackend(); backendReady = true } catch (error) {
+    dialog.showErrorBox('NickNotes konnte nicht starten', String(error.message || error))
+    await stopBackend(); app.quit(); return
+  }
+
+  listen('app:set-unsaved', (event, payload) => {
     unsavedByWebContentsId.set(event.sender.id, Boolean(payload))
   })
 
-  ipcMain.on('app:save-before-close-result', (event, payload) => {
+  listen('app:save-before-close-result', (event, payload) => {
     const webContentsId = event.sender.id
     if (!pendingSaveBeforeCloseByWebContentsId.has(webContentsId)) {
       return
@@ -311,7 +325,7 @@ app.whenReady().then(() => {
     targetWindow.close()
   })
 
-  ipcMain.handle('dialog:selectDirectory', async () => {
+  handle('dialog:selectDirectory', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
     })
@@ -323,7 +337,7 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('dialog:selectImportSources', async () => {
+  handle('dialog:selectImportSources', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile', 'multiSelections'],
       filters: [
@@ -341,11 +355,13 @@ app.whenReady().then(() => {
     return result.filePaths
   })
 
-  ipcMain.handle('backend:url', async () => {
+  handle('backend:token', async () => API_TOKEN)
+
+  handle('backend:url', async () => {
     return `http://127.0.0.1:${BACKEND_PORT}`
   })
 
-  ipcMain.handle('shell:openExternal', async (_event, url) => {
+  handle('shell:openExternal', async (_event, url) => {
     const decision = validateExternalUrl(url)
     if (!decision.allowed) {
       console.warn('[nicknotes-security] blocked external URL', { url, code: decision.code })
@@ -361,7 +377,7 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('shell:openPathInFileExplorer', async (_event, rawPath) => {
+  handle('shell:openPathInFileExplorer', async (_event, rawPath) => {
     const decision = validateLocalDirectoryPath(rawPath)
     if (!decision.allowed) {
       return { ok: false, code: decision.code, message: decision.message }
@@ -378,7 +394,7 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('window:set-theme', async (_event, theme) => {
+  handle('window:set-theme', async (_event, theme) => {
     if (!mainWindow) {
       return { ok: false }
     }
@@ -386,7 +402,8 @@ app.whenReady().then(() => {
     return { ok: true }
   })
 
-  createWindow()
+  if (mainWindow) mainWindow.loadURL('nicknotes://app/index.html')
+  else createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -395,30 +412,12 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    stopBackend()
-    app.quit()
-  }
+app.on('window-all-closed', () => { app.quit() })
+let quitting = false
+app.on('will-quit', event => {
+  if (quitting || !backendProcess) return
+  event.preventDefault(); quitting = true
+  void stopBackend().finally(() => app.quit())
 })
-
-app.on('before-quit', () => {
-  stopBackend()
-})
-
-process.once('SIGINT', () => {
-  stopBackendAndQuit('SIGINT')
-})
-
-process.once('SIGTERM', () => {
-  stopBackendAndQuit('SIGTERM')
-})
-
-process.once('exit', () => {
-  stopBackend()
-})
-
-
-
-
-
+process.once('SIGINT', () => { void stopBackend().finally(() => app.quit()) })
+process.once('SIGTERM', () => { void stopBackend().finally(() => app.quit()) })

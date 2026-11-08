@@ -5,7 +5,7 @@ DEFAULT_CORS_ORIGINS: list[str] = [
   "http://127.0.0.1:5173",
   "http://localhost:8765",
   "http://127.0.0.1:8765",
-  "null",
+  "nicknotes://app",
 ]
 
 REVIEW_DASHBOARD_DEFAULT_DAYS = 30

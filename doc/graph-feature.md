@@ -12,7 +12,7 @@ Die Graph-Ansicht macht Beziehungen innerhalb einer NoteBase sichtbar. Markdown-
 
 ## `graph-index.json`
 
-Der Index ist versioniert (`version: 1`) und enthaelt:
+Der Index ist versioniert (`version: 2`) und enthaelt:
 
 - `files`: pro Markdown-Datei ein Eintrag mit ID, Typ, Titel, Hash, mtime, Tags und WikiLinks.
 - `nodes`: Datei-Knoten (`note`, `task`) und Tag-Knoten (`tag`).
@@ -39,7 +39,8 @@ Defekte oder inkompatible States fallen auf Defaults zurueck und sollen die App 
 
 - `link`: direkte WikiLinks aus Markdown, Gewicht `5`.
 - `tagUsage`: Datei verwendet Tag, Gewicht `2`.
-- `sharedTag`: Similarity-Kante zwischen Dateien mit gemeinsamen Tags.
+- `sharedTag`: virtuelle Similarity-Kante fuer die ausgewaehlte Nachbarschaft;
+  wird nicht persistiert.
 
 Backlinks werden nicht mehr als eigene Kanten persistiert. Ein Backlink ist nur die Rueckperspektive auf eine vorhandene `link`-Kante und bringt fuer den Graph-Index keinen zusaetzlichen Informationsgehalt. Eingehende Links koennen im Frontend bei Bedarf aus den `link`-Kanten berechnet werden.
 
@@ -48,10 +49,13 @@ SharedTag-Gewichtung:
 - `project:*`: `+3`
 - `person:*`: `+2`
 - andere Tags: `+1`
-- mehrere gemeinsame Tags: `+1` extra
-- Kante entsteht ab Gewicht `>= 2`
+- mehrere gemeinsame Tags addieren ihre Gewichte
+- direkte Nachbarschaft addiert Gewicht `5`
 
-SharedTag-Kanten werden ueber Tag-Buckets berechnet, nicht durch globalen Vergleich aller Dateien.
+SharedTag-Allpaare werden weder erzeugt noch gespeichert. `GET /graph/related`
+berechnet fuer eine ausgewaehlte Datei eine linear gescannte, nach Gewicht und
+Pfad sortierte Nachbarschaft mit gemeinsamen Tags und Linkbegruendung.
+Standardlimit 50, maximal 200; `truncated` kennzeichnet weitere Treffer.
 
 ## Update-Mechanismus
 
@@ -61,13 +65,28 @@ Das Frontend laedt den Graph nach Save nicht automatisch neu. Stattdessen zeigt 
 
 ## Watcher-Verhalten
 
-Der Backend-Watcher ist ein einfacher Polling-Watcher ohne zusaetzliche Dependency. Er startet beim Oeffnen einer NoteBase, ignoriert `.system` und Systemordner, nutzt ein kurzes Debounce-Fenster und stoesst fuer geaenderte Markdown-Dateien das gleiche inkrementelle Update an wie der Save-Pfad.
+Der Backend-Watcher ist ein einfacher Polling-Watcher ohne zusaetzliche Dependency.
+Er nutzt das gemeinsame Inventar, ignoriert System-/Medien-/generierte Dateien
+und buendelt Aenderungen unter der gemeinsamen Operationssperre. SQLite und Graph
+werden zusammen aktualisiert, groessere Batches einmal neu aufgebaut. Die
+Session-Aenderungsversion aktualisiert saubere offene Dokumente; Dirty-Drafts
+bleiben erhalten und zeigen Konflikte. Fehler sind im Status sichtbar.
 
 Der Watcher ist bewusst kein komplexes Background-Job-System. Externe Aenderungen werden best-effort verarbeitet.
 
 ## Grosse Graphen
 
-SharedTag-Kanten sind standardmaessig ausgeblendet, weil sie sehr viele Kanten erzeugen koennen. Bei grossen sichtbaren Graphen zeigt die UI Warnungen und empfiehlt Focus-Modus oder staerkere Filter. Cytoscape-Layouts werden nicht bei jeder kleinen Aenderung neu gestartet; manuelle Positionen und Viewport werden gespeichert.
+Die globale Ansicht ist auf 500 Knoten und 1.500 Kanten begrenzt, die
+Fokusansicht auf 100 Knoten. Virtuelle SharedTag-Beziehungen kommen aus derselben
+begrenzten Nachbarschaft wie MCP. Die UI kennzeichnet den Ausschnitt.
+Cytoscape-Layouts werden nicht bei jeder kleinen Aenderung neu gestartet;
+manuelle Positionen und Viewport werden gespeichert.
+
+Messung am 8. November 2026 mit 10.000 synthetischen Notizen und einem gemeinsam
+genutzten Tag: 10.001 Knoten, 10.000 gespeicherte Kanten, null SharedTag-Allpaare,
+4.663.648 Bytes Projektion, Vollaufbau 40.147 ms, Einzelupdate 554 ms,
+Nachbarschaft 60 ms. Dies ist ein lokaler Lauf, keine hardwareunabhaengige Zusage.
+Reproduktion: `.venv/Scripts/python scripts/benchmark-graph.py --count 10000`.
 
 ## Bekannte Einschraenkungen
 
@@ -76,7 +95,9 @@ SharedTag-Kanten sind standardmaessig ausgeblendet, weil sie sehr viele Kanten e
 - Kein Export.
 - Kein nativer OS-File-Watcher.
 - Keine persistierten Analysemetriken oder Rankings.
-- Sehr grosse SharedTag-Buckets koennen viele Kanten erzeugen; sie crashen nicht, koennen aber die Ansicht dicht machen.
+- Die Nachbarschaftsabfrage scannt derzeit linear die Dateieintraege; bei deutlich
+  groesseren Bestaenden als der Messbasis waere ein zusaetzlicher Posting-Index
+  erst nach Messung zu rechtfertigen.
 
 ## Tests
 

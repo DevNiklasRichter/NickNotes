@@ -1,277 +1,174 @@
 # NickNotes Projektarchitektur
 
-## Zielbild
+Stand: 8. November 2026, Windows-Kandidat 2.1.0-rc.1. Der
+[Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
+Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
+[Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
+beschreiben Betrieb und Nachweise.
 
-NickNotes ist eine lokale Desktop-App fuer eine portable, folder-basierte NoteBase. Die Inhalte sollen ohne App lesbar und editierbar bleiben. Notizen und eigenstaendige Tasks liegen deshalb als Markdown-Dateien vor; abgeleitete Indizes beschleunigen Suche, Dashboards und Graph, ersetzen aber nie die Markdown-Quelle.
+## Produkt und Datenhoheit
 
-Die App ist Windows-first, das Datenformat bleibt grundsaetzlich plattformunabhaengig und kann zum Beispiel in einem synchronisierten Ordner liegen.
+NickNotes ist eine lokale Windows-first Desktop-App fuer eine portable Markdown-
+NoteBase. Notizen und eigenstaendige Tasks sind Markdown-Dateien, Checkbox-To-dos
+stehen in ihren Ursprungsnotizen. Die Dateien bleiben ohne App lesbar.
+`.system/tag_groups.json` definiert Tags eindeutig als `gruppe:tag`; im Text gilt
+`{tag:gruppe/tag}`. SQLite, Graph, Task-Links und Tag-Uebersichten sind ableitbar.
+Keine fachlichen Daten ausschliesslich in einer Projektion speichern.
 
-## Technischer Stack
+Es gibt keinen eingebauten Chat-, Voice- oder Provider-Assistant mehr. Externe
+Agenten greifen ueber einen geschuetzten lokalen MCP-Endpunkt auf denselben Kern
+wie die UI zu. Deterministische Tagvorschlaege und Tag-Matching bleiben erhalten.
 
-| Bereich | Technik |
-| --- | --- |
-| Desktop-App | Electron, JavaScript (`src/desktop`) |
-| Frontend | React 19, TypeScript, Vite (`src/frontend`) |
-| Editor | CodeMirror 6, Markdown, Live Preview |
-| UI-Helfer | `lucide-react`, `react-markdown`, `remark-gfm` |
-| Graph | Cytoscape |
-| Backend | Python, FastAPI, Uvicorn (`src/backend`) |
-| Lokaler Index | SQLite mit FTS5 |
-| Tests/Qualitaet | Python `unittest`, TypeScript-Build, ESLint |
-
-`npm run dev` startet Vite und Electron. Electron startet das Python-Backend lokal auf `http://127.0.0.1:8765`. `npm run build` erzeugt das Frontend-Bundle unter `dist/frontend`.
-
-## Projektstruktur
+## Laufzeit und Grenzen
 
 ```text
-NickNotes/
-  src/
-    backend/
-      api.py                    # FastAPI-Endpunkte und Runtime-State
-      application_services.py   # Service-Fassade fuer API-Use-Cases und Vault-gebundene IO-Regeln
-      use_cases.py              # Wiederverwendbare Use-Case-Orchestrierung
-      contracts.py              # Geteilte API-Vertragsmodelle und validierte Request-/Response-Typen
-      errors.py                 # Einheitliche Domain-Fehler und Fehlerkategorien
-      operation_context.py      # Request-/Operation-Kontext fuer Trace, Diagnose und Rollback-Kontext
-      config.py                 # Zentrale Runtime-, Sicherheits- und Infrastrukturkonfiguration
-      server.py                 # Uvicorn-Start und Parent-Watchdog
-      nicknotes_backend/
-        vault.py                # NoteBase-Dateien, Migrationen, Tags, Tasks, Medien
-        indexer.py              # SQLite-Projektion, Suche, Review-Daten
-        todos.py                # Checkbox-To-dos aus Markdown
-        graph_index.py          # Graph-Projektion aus Markdown
-        graph_storage.py        # Graph-Index und UI-State
-        graph_watcher.py        # Best-effort Polling fuer externe Aenderungen
-        parser.py               # Quick-Capture-Parsing und Tag-Vorschlaege
-        onenote_importer.py     # Lokaler OneNote-.onepkg-Import
-        assistant_chat.py       # Read-only Assistant-Retrieval mit FTS-/Graph-Kandidaten, Chatantworten, Tool-Vorschlaegen, natives Provider-Streaming und Voice-Status-Anbindung
-        assistant_changesets.py # Assistant-ChangeSet-Vorschlaege, Organisations-/Tag-/Link-/Medien-Aktionen, Diffs, Hashes und Provider-/Fallback-Erzeugung
-        assistant_embeddings.py # Embedding-Entscheidungsstatus, Retrieval-Vergleich und rebuildbare Projektionsregeln
-        assistant_retrieval_eval.py # Lokale Retrieval-Evaluationsfaelle und Messstatus ohne Provider-/Embedding-Aufruf
-        assistant_settings.py   # Assistant-Settings-Status, Provider-/Modelloptionen und Key-Status
-        assistant_secret_store.py # App-interner Assistant-Key-Store mit Windows-DPAPI und NickNotes-Key-Slots
-        assistant_security.py   # Assistant-Config, Vault-Pfadregeln und externe Inhaltsfreigaben
-        llm_providers.py        # Provider-neutrale LLM-Basisschicht mit OpenAI-/Claude-/Gemini-Adaptern, NickNotes-Secret-Slots und Redaction
-        ai_client.py            # Kompatibler Smart-Tagging-Client auf der LLM-Basisschicht
-      tests/
-    desktop/
-      main.mjs                  # Electron-Fenster, Backend-Prozess, Dialoge
-      preload.cjs               # Schmale IPC-Bridge zum Frontend
-    frontend/
-      src/
-        App.tsx                 # App-Orchestrierung
-        assistant/              # Chat-Assistant UI, Chat-Hook und Assistant-API-Client
-        editor/                 # Markdown-Editor und Eigenschaften
-        explorer/               # Ordner-, Datei- und Tag-Navigation
-        workspace/              # Tabs und Split-Editor
-        todos/, tasks/          # Arbeitslisten
-        focus/, review/         # Fokus- und Review-Dashboards
-        graph/                  # Graph-Dashboard
-        settings/, layout/      # Einstellungen und Shell
-  doc/
-    graph-feature.md
-  package.json
-  requirements.txt
-  Start-NickNotes.ps1
+Electron (Fenster, Ressourcen, Prozesslebensdauer, vertrauensgebundene IPC)
+  React / CodeMirror / Cytoscape -- authentifizierte REST-API --+
+  Externer Agent -- eigene Freigabe -- MCP /mcp/ -------------+
+                                                           |
+                        BackendApiService / Commands / Session
+                                      |
+                      VaultManager + Schreibkoordination
+                                      |
+                           Markdown / Tags / Medien
+                                      |
+                     SQLite FTS5 / Graph / Uebersichten
 ```
 
-## NoteBase-Struktur
+Ein Backendprozess und eine aktive NoteBase pro Appinstanz. `api.py` ist der
+FastAPI-Transport, `mcp_server.py` der SDK-Transport. `application_services.py`
+importiert weder FastAPI noch API-Routing; `session.py` besitzt RuntimeState,
+VaultSession, Operationssperre und Sessiongeneration. `commands.py` definiert
+Eingaben, `contracts.py` Antworten. Domain-Fehler werden am Transport uebersetzt.
+Kein zweiter Fachkern fuer MCP und kein allgemeines Serviceframework.
 
-Eine geoeffnete NoteBase wird von `VaultManager.ensure_structure()` vorbereitet:
+Die App startet Uvicorn nur auf Loopback (Standardport 8765). Ein zufaelliger
+App-Schluessel geht ueber die Prozesspipe an das Backend und ueber eng begrenzte
+IPC an den Renderer. Host, Origin, Pfade und Eingabegroessen werden geprueft.
+Electron verwendet Context Isolation, Sandbox, CSP und `nicknotes://app`.
+Fremde Prozesse auf belegten Ports werden nicht beendet. Pipe und Parent-Watchdog
+beenden den eigenen Backendprozess mit der App.
+
+MCP verwendet das offizielle Python-SDK, Streamable HTTP und eigene widerrufbare
+Tokens. Freigaben gelten fuer eine NoteBase und besitzen getrenntes Schreibrecht.
+Nur Token-Hashes liegen im geraetelokalen Profil. Rechte werden bei jedem Aufruf
+geprueft. Keine Shell, freie Host-Dateioperationen oder NoteBase-Loeschung per MCP.
+Erstellen/Anhaengen besitzen persistente Wiederholungsbelege; mehrdeutig
+unterbrochene Wiederholungen werden als Konflikt gemeldet.
+
+## NoteBase und Format
 
 ```text
 MeineNoteBase/
-  daily/                        # Tagesnotizen, gruppiert nach YYYY.MM
-  tags/                         # generierte Tag-Uebersichten
-  tasks/                        # Task-Statusordner und Task-Verknuepfungen
-    new_topic/
-    open/
-    in_progress/
-    on_hold/
-    done/
-  <eigene Ordner>/              # frei organisierbare Markdown-Notizen und Tasks
-  .media/                       # Medienassets
+  daily/YYYY.MM/                 Tagesnotizen, Quick Capture, MITs
+  tasks/                         Tasks und generierte Statusverknuepfungen
+  tags/                          generierte Uebersichten
+  <eigene Ordner>/                Notizen und eigenstaendige Tasks
+  .media/                        Medien; keine automatische Save-Bereinigung
   .system/
-    config.json                 # Core/Smart-/Assistant-Konfiguration ohne Klartext-Secrets
-    index.db                    # wiederherstellbare SQLite-Projektion
-    tag_groups.json             # eindeutige Tag-Definitionen
-    favorite_folders.json       # favorisierte Ordner
-    ui_settings.json            # persistente UI-Einstellungen inkl. aktivem Theme
-    task_status_links.json      # Hilfsindex fuer Task-Statusverknuepfungen
-    graph-index.json            # wiederherstellbare Graph-Projektion
-    graph-state.json            # gespeicherter Graph-UI-State
-    assistant-retrieval-evaluation.json # optionales lokales Evaluationsset fuer Assistant-Retrieval
+    config.json                  Formatversion 2, stabile vault_id
+    tag_groups.json              einzige Tagdefinitionsquelle
+    ui_settings.json             Themes und portable UI-Einstellungen
+    favorite_folders.json
+    index.db                     SQLite-Projektion, Schema 3
+    graph-index.json             Graph-Projektion, Version 2
+    graph-state.json             Graph-UI-Zustand, Version 2
+    migrations/                  Konfigurationssicherungen und Nachweise
+    recovery/                    Schreibjournale und Wiederherstellung
+    mcp-operations/               Wiederholungsbelege, keine zweite Inhaltsquelle
 ```
 
-Alte Namen wie `01_daily`, `02_tags`, `03_tasks`, `system` oder `99_system` werden beim Oeffnen gezielt migriert oder tolerant gelesen. Neue Funktionen sollen die moderne Struktur verwenden.
+Frontmatter wird mit sicherem YAML gelesen. Unbekannte verschachtelte Felder
+bleiben erhalten; doppelte Schluessel und unsichere Typen werden abgelehnt.
+Datei-, Frontmatter-, Tiefe- und Aliaslimits begrenzen die Verarbeitung. Stabile
+`id` und `node_id` identifizieren Dokumente; doppelte IDs verhindern den Reindex.
+Manuelle `tags`/`related` und aus dem Body abgeleitete `tags_auto`/`related_auto`
+werden gemeinsam projiziert. Task-Typen gelten unabhaengig vom Ordner.
 
-## Markdown Als Datenbasis
+To-dos erhalten beim Bearbeiten stabile Blockreferenzen und Zeitfelder direkt
+im Markdown (`<!-- nn:todo created=... completed=... --> ^nn-todo_...`).
+Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
+einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
+im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.
 
-Notizen und Tasks verwenden YAML-aehnliches Frontmatter und einen Markdown-Body. Beim Speichern normalisiert das Backend das Dokument und ergaenzt abgeleitete Felder.
+Alte Konfigurationen und Systemordner werden gezielt migriert. Widerspruechliche
+Tagquellen und unbekannte kuenftige Formate brechen vor inhaltlichen Aenderungen
+ab. Vorhandene Inhalte werden nicht durch geratenes Zusammenfuehren ersetzt.
+Downgrade auf alte Fassungen ist nicht unterstuetzt; dafuer gesicherte NoteBase
+und passende Programmfassung verwenden.
 
-```markdown
----
-id: nt_20260602_120000_ab12
-node_id: nt_20260602_120000_ab12
-title: Beispielnotiz
-type: note
-status: open
-priority: medium
-due_date:
-created_at: 2026-06-02T12:00:00
-updated_at: 2026-06-02T12:00:00
-tags:
-  - projekt:nicknotes
-tags_auto:
-  - person:max
-related:
-  - Pfad/Andere Notiz
-related_auto:
-  - Noch eine Notiz
----
+## Schreiben und Projektionen
 
-Text mit {tag:person/max} und [[Pfad/Andere Notiz]].
-```
+Mutationen laufen unter gemeinsamer Sperre und Sessionpruefung. Dokument-Saves
+verwenden erwartete Inhaltsrevisionen. Ein veralteter Stand wird nicht still
+ueberschrieben. Einzeldateien werden ueber Nachbardatei, fsync und atomaren
+Replace geschrieben. Mehrdateioperationen sichern Originale vor dem ersten
+Schreiben in einem begrenzten Journal. Fehler kompensieren Quellen; offene
+Vorgaenge werden beim Oeffnen sichtbar und sperren weitere Mutationen bis zur
+bewussten Wiederherstellung oder Uebernahme. Wiederherstellung sichert den
+aktuellen Stand erneut. Einstellungen bieten diesen Ablauf an.
 
-Wichtige Regeln:
+Dateipfadaktionen beruecksichtigen Link-Rewrite, Medien, Index und Graph.
+WikiLinks, Related-Felder und uebliche relative Markdown-Links werden angepasst;
+Codebeispiele bleiben unveraendert. Medien werden beim Save weder global
+verschoben noch nach vermeintlicher Nichtverwendung geloescht.
 
-- `type: note` und `type: task` sind beide Markdown-Dokumente.
-- Manuelle Metadaten liegen in `tags` und `related`.
-- Aus Body-Referenzen abgeleitete Metadaten liegen in `tags_auto` und `related_auto`.
-- WikiLinks `[[...]]` und relative Markdown-Links werden bei Verschieben oder Umbenennen nachgezogen.
-- Medien liegen unter `.media` und werden aus Markdown referenziert.
-- Editor-Spaltenbreiten fuer Markdown-Tabellen duerfen direkt vor der Tabelle als HTML-Kommentar
-  `<!-- nicknotes-table-widths: 30.0%, 45.0%, 25.0% -->` gespeichert werden; der Kommentar ist
-  UI-Metadatum im Markdown, nicht fachliche Projektion.
-- Tagesnotizen unter `daily/YYYY.MM/YYYY-MM-DD.md` sammeln Quick Captures, schnelle To-dos und bis zu drei MITs.
+`inventory.py` liefert ein gemeinsames, beschnittenes Dateiinventar einschliesslich
+Wurzelnotizen und ohne System-/Medien-/generierte Dateien. SQLite-Vollaufbau und
+Einzeldatei-Reindex nutzen denselben Pfad, WAL und gebuendelte Transaktionen.
+Dateistatistiken erlauben beim Wiedereroeffnen die Wiederverwendung unveraenderter
+Projektionen. Ein dirty-Marker ermoeglicht Reparatur nach Projektionsfehlern.
 
-## Tagsystem
+Der Graph speichert explizite Links und Tag-Nutzung, keine Shared-Tag-Allpaare.
+`related_files` bewertet eine Nachbarschaft bei Bedarf (50, maximal 200 Treffer),
+mit Begruendung und Trunkierung. Die Abfrage scannt derzeit linear die
+Dateieintraege. Die UI begrenzt globale Ausschnitte auf 500 Knoten/1.500 Kanten.
+Details und Messwerte: [Graph](doc/graph-feature.md).
 
-Das Tag-Vokabular liegt eindeutig in `.system/tag_groups.json`. Ein Tag besteht aus Gruppe und ID, zum Beispiel `projekt:nicknotes`; im Body wird er als `{tag:projekt/nicknotes}` referenziert.
+Ein einfacher Polling-Watcher verarbeitet externe Aenderungen unter derselben
+Sperre, buendelt SQLite-/Graph-Updates und meldet eine Aenderungsversion.
+Fehler bleiben sichtbar; ein manuelles Reindex ist weiterhin moeglich.
 
-Das Backend kann Gruppen und Tags anlegen, umbenennen, verschieben und loeschen. Referenzen in Markdown werden bei entsprechenden Aktionen aktualisiert. Unter `tags/` erzeugt das Backend lesbare Uebersichtsseiten. Diese Uebersichten und die SQLite-Tabellen `tags` sowie `note_tags` sind Ableitungen, nicht die Definitionsquelle.
+## Frontend
 
-Quick Capture erkennt explizite `gruppe:tag`-Angaben und schlaegt bekannte Tags deterministisch vor. Im optionalen Smart-Modus koennen zusaetzlich LLM-Vorschlaege geliefert werden; ohne Provider-Konfiguration, API-Key oder bei Fehlern bleibt die Kernfunktion erhalten. Bestehende OpenAI-Konfiguration bleibt kompatibel, neue Assistant-Arbeiten sollen jedoch provider-neutral geplant werden.
+`App.tsx` komponiert die Shell. Dokument-/Taboperationen liegen in
+`workspace/useNoteDocuments.ts`, reine Draft-Uebergaenge in `documentState.ts`.
+Jeder Tab besitzt Inhalt, eigene gespeicherte Revision und Dirty-Zustand.
+Speichern laesst zwischenzeitliche Eingaben stehen; externe Aenderungen
+aktualisieren saubere Tabs und markieren Konflikte bei Dirty-Tabs.
 
-## Assistant-Zielerweiterung
+`app/apiClient.ts` zentralisiert Token, Timeouts, Abbruch und Sessionwechsel.
+Verspaetete Antworten einer alten NoteBase werden verworfen. OpenAPI/Pydantic
+erzeugen TypeScript-Transporttypen; `contracts:check` erkennt Drift. Graph,
+Einstellungen und der vollstaendige Iconkatalog werden verzoegert geladen.
+Vorhandene CSS-Tokens und Themes sind die gestalterische Grundlage.
 
-NickNotes soll einen Chat-Assistenten fuer die geoeffnete NoteBase erhalten. Das Zielbild steht in `doc/assistant-feature-plan.md`. Der Assistant ist ein rechter, breitenverstellbarer Chat-Arbeitsbereich neben Editor, Dashboards und Graph, wird nur bei aktivierter und providerkonfigurierter Assistant-Funktion ueber die Activity-Rail eingeblendet und bleibt oberhalb von Quick Capture. Er liefert Markdown-Antworten, eingebettete Quellenlinks, Spracheingabe und pruefbare ChangeSet-Vorschlaege fuer Notizen, Tasks, Verschiebungen, Tags, Links und Ordnung. Schreibaktionen werden wie normale Chatnachrichten aus dem Composer gesendet, koennen mit Slash-Aktionen und `@`-Referenzen konkretisiert werden und muessen conversational per Ja/Nein-Aktion oder Chatantwort bestaetigt werden; direkte LLM-Dateischreibzugriffe bleiben ausgeschlossen.
+## Entwicklung und Auslieferung
 
-Verbindliche Regeln fuer diese Erweiterung:
+- Stack: Electron, React 19, TypeScript, Vite, CodeMirror 6, Cytoscape,
+  Python 3.13, FastAPI/Uvicorn, SQLite FTS5, offizielles MCP-Python-SDK.
+- `npm ci`, `.venv/Scripts/python -m pip install -r requirements-dev.txt`.
+- `npm run dev`; Pruefung: `npm run check`, `contracts:check`, `icons:check`.
+- Runtime-, Dev- und Build-Locks sind getrennt; nur Buildlaufzeit wird gepackt.
+- `npm run package:win`: PyInstaller onedir + Electron/NSIS x64, offline,
+  pro Benutzer. Auf dem Zielgeraet sind Node/Python nicht erforderlich.
+- Ressourcen ueber `process.resourcesPath`, keine Abhaengigkeit vom Arbeitsordner.
+  Profil standardmaessig `%APPDATA%/NickNotes`, NoteBase separat gewaehlt.
+- `verify:package`, `smoke:desktop`, `release:checksums` pruefen den Kandidaten.
+- Windows-CI ist vorbereitet; oeffentliche Signatur, Lizenzentscheidung und
+  saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
 
-- Markdown bleibt die fachliche Quelle; Chatverlauf, Embeddings und LLM-Kontext sind keine fachliche Wahrheit.
-- LLM-Provider werden ueber eine provider-neutrale Backend-Schicht angebunden, damit GPT, Claude, Gemini und OpenAI-kompatible lokale Endpunkte moeglich bleiben.
-- API Keys, Tokens und Passwoerter duerfen nicht im Frontend liegen, nicht in `.system/config.json` als Klartext gespeichert werden und nicht in Logs oder Fehlerantworten erscheinen.
-- Externe Inhaltsuebertragung an Provider muss pro NoteBase explizit aktivierbar sein; der Standard bleibt sicher und datenminimal.
-- Assistant-Tools duerfen nur Vault-gebundene Operationen verwenden. Freie Host-Pfade, Shell-Kommandos oder direkte LLM-Dateischreibzugriffe sind nicht erlaubt.
-- Spracheingabe startet bevorzugt als lokales Browser-Diktat mit kontrollierter Uebernahme in Chat-Eingabe oder Quick Capture. Providerbasierte Transkription ist nur nach denselben Assistant-Freigabe-, Provider- und Secret-Regeln sichtbar und nutzbar; Audiodaten werden erst nach Nutzeraktion gesendet.
-- Schreibende Aktionen laufen ueber ChangeSets mit Diff, Content-Hash, Konfliktpruefung und Nutzerfreigabe. Sie brauchen zusaetzlich die NoteBase-Freigabe `allow_write_actions`; erst danach werden bestehende Vault-, Tag-, Task-, Reindex-, Link-Rewrite- und Graph-Pfade verwendet.
-- Optionale Embeddings sind nach `ASST-009` bewusst zurueckgestellt. `/assistant/embeddings/status` dokumentiert FTS-/Tag-/Graph-Vergleich, vorgeschlagene `.system`-Artefakte, Rebuild-/Quarantaeneregeln und externe Provider-Freigaben, ohne Inhalte zu uebertragen oder Embedding-Dateien zu erzeugen.
+Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
+generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur
+synthetische Bestaende. Linux/macOS, Auto-Updates und eigene Synchronisation
+benoetigen spaeter eigene Abnahme; sie sind kein Teil dieses Windows-Kandidaten.
 
-## Tasks Und To-dos
+## Leitlinien fuer weitere Aenderungen
 
-NickNotes unterscheidet zwei Arbeitsformen:
-
-| Typ | Quelle | Verhalten |
-| --- | --- | --- |
-| Task | Markdown-Datei mit `type: task` | Eigenstaendiges Arbeitselement mit Status, Prioritaet, Faelligkeit, Schaetzung, Blockern und Follow-up |
-| To-do | Checkbox-Zeile `- [ ] ...` in einer Markdown-Notiz | Leichtgewichtiger Eintrag, der direkt in der Ursprungsnotiz umgeschaltet und bei Bedarf zu einem Task hochgestuft wird |
-
-Tasks koennen unter eigenen Ordnern liegen. Statusbezogene Dateien unter `tasks/` dienen teilweise als erzeugte Navigationsverknuepfungen. Checkbox-To-dos werden aus Markdown extrahiert; SQLite speichert nur die Projektion fuer Listen und Dashboards.
-
-Quick Capture schreibt Inhalte in die heutige Tagesnotiz. Das Frontend bietet zusaetzlich Fokus-, Task-, To-do- und Review-Dashboards. Der Fokusbereich verwaltet MITs, offene Arbeit, Blocker, Wartezustaende und Kennzahlen.
-
-## Backend
-
-`src/backend/api.py` stellt die lokale REST-API bereit. Neue und refaktorierte Endpunkte sollen ihre
-fachliche Arbeit ueber `BackendApiService`, `use_cases.py`, geteilte Contracts und Domain-Fehler
-orchestrieren, statt Pfad-, IO- oder Fehlerlogik direkt im Routing zu duplizieren. Lesende und
-OS-oeffnende Notiz-Dateizugriffe muessen immer an die geladene NoteBase gebunden bleiben.
-Der aktuelle Entkopplungsstand nach `ARCH-022`: Die produktiven API-Use-Cases liegen im
-`BackendApiService`; `api.py` bleibt fuer diese Pfade Route, Request-/Response-Mapping und
-Kompatibilitaetswrapper.
-Python-/TypeScript-Vertraege werden ueber `CONTRACT_SYNC_MODEL_MAP` in `src/backend/contracts.py`,
-`CONTRACT_SYNC_TYPES` in `src/frontend/src/contracts/apiContracts.ts` und den Contract-Sync-Test
-`src/backend/tests/test_contract_sync.py` abgeglichen. Zusaetzliche Response-Felder bleiben bewusst
-forward-kompatibel erlaubt; stabile Top-Level-Felder kritischer Responses duerfen nicht still auseinanderlaufen.
-
-Die Endpunkte decken insbesondere folgende Bereiche ab:
-
-- NoteBase oeffnen, erstellen, umbenennen, loeschen und reindexieren
-- Notizen laden, speichern, verschieben, umbenennen, loeschen und mit Medien versehen
-- Ordner verwalten und favorisieren
-- Quick Capture, Tagesnotizen und Fokusdaten
-- Tasks, Checkbox-To-dos und Promotion von To-do zu Task
-- Tag-Gruppen, Tags und gefuehrte Tag-Matches
-- Suche, Explorer, Review und Graph
-- Lokaler OneNote-`.onepkg`-Import
-- Persistente UI-Einstellungen
-- Provider-neutraler Assistant-Chat mit read-only Retrieval ueber FTS plus Graph-Nachbarn, Vault-relativen Quellen, kompakten Tool-Vorschlaegen, NDJSON-Streaming, OpenAI-SSE-Deltas plus Sync-Fallback fuer andere Provider, OpenAI-/Claude-/Gemini-Chat-Adaptern, sicherem Provider-Verbindungstest, app-interner Key-Verwaltung, gesichertem Voice-Provider-Status und optionaler providerbasierter Audio-Transkription ueber dieselben Freigaben
-- Assistant-Settings fuer Provider, Modell-Dropdown, Reasoning-Optionen, Endpoint, Kontextlimits, externe Inhaltsfreigabe und Schreibfreigabe; die API liefert nur NickNotes-Key-Status und Slot-Namen, nie API-Key-Werte
-- Assistant-ChangeSet-Vorschau und Apply fuer freigegebene Notizverbesserungen mit Diff, Hash-Konfliktpruefung und bestehendem Save-/Reindex-/Graph-Pfad
-- Assistant-Organisationsvorschau fuer registrierte Aktionen wie neue Markdown-Notizen, neue Markdown-Tasks, Task-/To-do-Erledigung, Verschieben, Tags, Related-Links, WikiLinks und gestagte Bildanhaenge ueber bestehende Save-/Move-/Todo-/Task-/Medien-/Reindex-/Graph-Pfade
-- Assistant-Embedding-Status fuer die evaluierte, aktuell deaktivierte Embedding-Projektion mit Contract-Sync und ohne Embedding-Provider-Probe
-- Graph-gestuetzte Assistant-Quellenerweiterung aus `.system/graph-index.json`, ohne Vollscan der Markdown-Dateien und ohne neue fachliche Quelle
-- Assistant-Retrieval-Evaluation ueber `.system/assistant-retrieval-evaluation.json`, die lokale FTS-/Tag-/Graph-Treffer gegen erwartete Quellen misst, ohne Provider oder Embeddings aufzurufen
-
-`VaultManager` besitzt die Dateisystemlogik. Mutierende Windows-Dateioperationen laufen ueber
-kontrollierte Rename-/Delete-Helfer mit bounded Retry, damit kurzlebige Datei- und Scanner-Locks nicht
-zu inkonsistenten Mutationen fuehren. `VaultIndexer` baut daraus `.system/index.db` mit `notes`,
-`notes_fts`, `tags`, `note_tags`, `tasks` und `todos`. Ein Reindex muss die wesentlichen Projektionen
-aus Markdown wiederherstellen koennen; stabile Todo-Zeitfelder werden bei Einzeldatei-Reindexen aus der
-bisherigen Projektion uebernommen.
-
-Der Graph wird ebenfalls aus Markdown abgeleitet. Er umfasst Datei- und Tag-Knoten sowie Link-, Tag-Nutzungs- und Shared-Tag-Kanten. Die Projektion `.system/graph-index.json` wird beim Oeffnen, Reindex, Speichern sowie bei Datei-, Ordner- und Tag-Aenderungen aus Markdown aktualisiert; die sichtbare Graph-Canvas kann davon unabhaengig eine aeltere geladene Kopie halten. Details stehen in `doc/graph-feature.md`.
-
-## Frontend Und Desktop
-
-Electron kapselt die App, startet und stoppt das Backend und bietet eine kleine IPC-Bridge fuer Ordnerauswahl, Importdateien, externe Links, Theme und den Dialog bei ungespeicherten Aenderungen.
-
-Das React-Frontend bietet:
-
-- Explorer fuer Ordner, Notizen, Tasks und Tags
-- Assistant-Chat fuer read-only Fragen zur NoteBase und offene Task-/To-do-Listen mit Markdown-Rendering, direkt eingebetteten Quellenlinks, Graph-Quellenmarkierung, Diktat-Review, Quick-Capture-Uebergabe, Slash-/At-Composer, natuerlicher Aktionserkennung, kompakten Chat-Aktionsvorschlaegen und conversationaler ChangeSet-Freigabe im Chatverlauf mit optionalem Diff
-- CodeMirror-Markdown-Editor mit Tabs und Split-Ansicht
-- Eigenschaften fuer Metadaten, Tags und Beziehungen
-- Quick Capture
-- Task-, To-do-, Fokus-, Review- und Graph-Dashboards
-- Light/Dark Theme, eigene Themes und persistente Layout-Einstellungen
-
-Farben werden im Frontend ueber zentrale CSS-Tokens wie `--text`, `--surface`, `--accent`, Statusfarben,
-Highlight-Farbe und Graph-Farben gesteuert. Die eingebauten Themes `light` und `dark` bilden den aktuellen
-Standard-Look ab. Benutzerdefinierte Themes liegen in `.system/ui_settings.json` unter `app.themes`;
-`app.activeThemeId` speichert das zuletzt gewaehlte Theme. Das Backend normalisiert diese UI-Einstellungen
-beim Schreiben, fachliche Daten bleiben davon unberuehrt.
-
-`App.tsx` bleibt die oberste Shell-Komposition, soll aber keine neuen Zustandsmaschinen aufnehmen.
-Cross-Cutting UI-Zustaende wie Operator-Meldungen liegen in `src/frontend/src/app/operatorNotifications.ts`;
-Assistant-Zustaende wie der Tag-Match-Flow liegen in dedizierten Hooks wie
-`src/frontend/src/app/tagMatchAssistantState.ts`; der Chat-Assistant inklusive ChangeSet-Review liegt als Feature-Modul in
-`src/frontend/src/assistant`. Neue Frontend-Funktionen sollten vorhandene
-Bereichsmodule, Hooks und Services nutzen und `App.tsx` nicht unnoetig weiter aufblaehen.
-Der Chat-Assistant darf nicht als neue Zustandsmaschine in `App.tsx` wachsen.
-
-## Konfiguration Und Betrieb
-
-- Projektabhaengigkeiten: `package.json`, `package-lock.json`, `requirements.txt`
-- TypeScript/Vite: `tsconfig*.json`, `vite.config.ts`
-- Linting: `eslint.config.js`
-- Dokumentation: `PROJECT_ARCHITECTURE.md` als Leitplanke, weitere Dokumentation in `doc/`
-- NoteBase-Konfiguration: `<NoteBase>/.system/config.json`
-- Optionale LLM-Nutzung: Smart-Modus bleibt kompatibel, der Assistant nutzt app-interne NickNotes-Key-Slots wie `NICKNOTES_OPENAI_API_KEY`, `NICKNOTES_ANTHROPIC_API_KEY` und `NICKNOTES_GEMINI_API_KEY`. Klartext-Keys gehoeren nicht in `.system/config.json`, Frontend-State, Logs oder Fehlerantworten. Der Settings-Dialog verwaltet Assistant-Keys ueber Hinterlegen, Ersetzen und Loeschen statt ueber Environment-Variablen.
-- Entwicklungsstart: `npm run dev`
-- Build: `npm run build`
-- Backend separat: `npm run dev:backend`
-- Windows-Komfortstart: `Start-NickNotes.ps1`
-
-Lokale NoteBases, importierte Testdaten, `.tmp/`, `.venv/`, `node_modules/`, `dist/` und erzeugte Projektionen gehoeren nicht in das Repository. Ein frischer Checkout muss mit den getrackten Quellen, `package-lock.json`, `requirements.txt` und der Dokumentation weiterentwickelbar sein.
-
-## Aenderungsleitlinien
-
-1. Markdown bleibt die fachliche Quelle; Projektionen muessen ableitbar bleiben.
-2. Eine Funktion soll genau einen klaren Weg haben. Abgeloesten Legacy-Code entfernen, statt eine weitere Variante daneben zu stellen.
-3. Bei Dateipfad-Aenderungen Link-Rewrite, Medien, Index und Graph gemeinsam betrachten.
-4. Bei Tag-Aenderungen Definitionen, Markdown-Referenzen, Tag-Uebersichten, Index und Graph gemeinsam betrachten.
-5. Bei Task-Aenderungen Task-Markdown, Statusverknuepfungen, To-do-Promotion, Index und Dashboards gemeinsam betrachten.
-6. UI-Aenderungen auf Verstaendlichkeit, direktes Feedback und moeglichst wenige Bedien-Schritte pruefen.
-7. Dateizugriffe auf Notizen nicht mit freien Host-Pfaden implementieren; immer die gemeinsame Vault-Pfadauflösung verwenden.
+1. Zweck, Quelle, Seiteneffekte und Zusammenspiel vor Implementierung klaeren.
+2. Markdown-first und zentrale Tagdefinition respektieren.
+3. Vorhandene Pfade erweitern, ersetzten Code entfernen; keine Parallelvarianten.
+4. Bei Markdown/Task/Tag/Pfadaenderungen Reindex, Links, Graph und Altbestaende pruefen.
+5. UI aus Nutzersicht pruefen: klare Begriffe, sichtbares Feedback, sichere Drafts.
+6. Keine zusaetzlichen Frameworks oder abstrakten Schichten ohne konkreten Nutzen.
+7. Dieses Dokument bei relevanten Architektur-/Format-/Funktionsaenderungen anpassen.
