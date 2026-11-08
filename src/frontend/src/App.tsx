@@ -1,5 +1,11 @@
 import {useNoteDocuments} from './workspace/useNoteDocuments';
 import {useExternalChanges} from './app/useExternalChanges';
+import {useCaptureDraft} from './app/useCaptureDraft';
+import {COMMANDS, commandTitle, type AppCommand, type CommandId} from './app/commands';
+import {useAppCommands} from './app/useAppCommands';
+import {AppMenuBar} from './layout/AppMenuBar';
+import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
+import {flushSync} from 'react-dom';
 
 
 import {lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef, useState } from 'react';
@@ -71,7 +77,7 @@ function App() {
     const workspaceGridRef = useRef<HTMLDivElement | null>(null);
     const capturePreviewRequestSeqRef = useRef(0);
     const capturePreviewLastTextRef = useRef('');
-    const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL);
+    const [backendUrl, setBackendUrl] = useState(window.nicknotes?.getBackendUrl?'':DEFAULT_BACKEND_URL);
     const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme);
     const [activeColorProfileId, setActiveColorProfileId] = useState<string>(getPreferredTheme());
     const [colorProfiles, setColorProfiles] = useState<ColorProfile[]>([
@@ -83,7 +89,6 @@ function App() {
     const [vaultLoaded, setVaultLoaded] = useState(false);
     const [noteBaseOpenStatus, setNoteBaseOpenStatus] = useState<NoteBaseOpenStatus | null>(null);
     const [counts, setCounts] = useState<VaultCounts>({ notes: 0, openTasks: 0, doneTasks: 0 });
-    const [captureText, setCaptureText] = useState('');
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [selectedTagKeys, setSelectedTagKeys] = useState<string[]>([]);
     const [ignoredCaptureTagKeys, setIgnoredCaptureTagKeys] = useState<string[]>([]);
@@ -147,6 +152,8 @@ function App() {
     const [graphUpdateToken, setGraphUpdateToken] = useState(0);
     const [latestGraphStatus, setLatestGraphStatus] = useState<GraphIndexStatus | null>(null);
     const [openTabs, setOpenTabs] = useState<NoteTab[]>([]);
+    const [quickOpen, setQuickOpen] = useState(false);
+    const [shortcutHelp, setShortcutHelp] = useState(false);
     const openTabsRef = useRef<NoteTab[]>([]);
     const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState);
     const workspaceStateRef = useRef(workspaceState);
@@ -167,6 +174,9 @@ function App() {
     const rightEditorRef = useRef<MarkdownEditorApi | null>(null);
     const captureEditorRef = useRef<MarkdownEditorApi | null>(null);
     const { latestOperatorNotification, launchOperatorNotifications, setMessage, setWarnMessage, setError, setCriticalMessage, } = useOperatorNotifications();
+    const [captureText,setCaptureText]=useCaptureDraft(setError);
+    const [workspaceReady,setWorkspaceReady]=useState(false);
+    const initialCaptureActivated=useRef(false);
     useEffect(() => {
         explorerViewStateRef.current = explorerViewState;
     }, [explorerViewState]);
@@ -250,6 +260,7 @@ function App() {
     }, [tagActionDialog]);
     useEffect(() => {
         document.title = '';
+        window.dispatchEvent(new Event('nicknotes:app-mounted'));
     }, []);
     useEffect(() => {
         let active = true;
@@ -362,7 +373,7 @@ function App() {
         };
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
-    const activeTab = paneActiveTabs[activePaneId] ?? paneActiveTabs.left ?? paneActiveTabs.right ?? null;
+    const activeTab = paneActiveTabs[activePaneId] ?? null;
     const backendDataService = useMemo(() => new BackendDataService({
         getBackendUrl: () => backendUrl,
         isVaultLoaded: () => vaultLoaded,
@@ -662,6 +673,8 @@ function App() {
             setExplorerFilterQuery,
             setUiSettingsReady: (ready) => {
                 uiSettingsReadyRef.current = ready;
+                setWorkspaceReady(ready);
+                if(ready)window.nicknotes?.startupMark?.('workspace-ready');
             },
             setVaultLoaded,
             setNoteBaseOpenStatus,
@@ -854,6 +867,7 @@ function App() {
     const openSettingsDialog = appSettingsService.openSettingsDialog;
     const closeSettingsDialog = appSettingsService.closeSettingsDialog;
     const toggleThemeMode = appSettingsService.toggleThemeMode;
+  const persistLayout = useEffectEvent(() => saveUiSettingsPatch({ app: buildLayoutUiSettings() }));
   useEffect(() => {
     if (!vaultLoaded || !uiSettingsReadyRef.current) {
       return
@@ -862,7 +876,7 @@ function App() {
       window.clearTimeout(appLayoutSaveTimerRef.current)
     }
     appLayoutSaveTimerRef.current = window.setTimeout(() => {
-      void saveUiSettingsPatch({ app: buildLayoutUiSettings() }).catch(() => {
+      void persistLayout().catch(() => {
         // Best effort.
       })
     }, 250)
@@ -873,8 +887,8 @@ function App() {
       }
     }
   }, [
-    saveUiSettingsPatch,
-    buildLayoutUiSettings,
+    backendUrl,
+    vaultPath,
     capturePanelOpen,
     capturePinned,
     editorPanelOpen,
@@ -886,7 +900,16 @@ function App() {
   ])
 
     const bootstrapConnection = useEffectEvent(() => {void loadState()});
-    useEffect(() => {bootstrapConnection()}, [backendUrl]);
+    useEffect(() => {if(backendUrl)bootstrapConnection()}, [backendUrl]);
+    const activateStartupCapture=useEffectEvent(()=>{
+        if(initialCaptureActivated.current||!vaultLoaded||!workspaceReady)return;
+        initialCaptureActivated.current=true;
+        if(captureText){setCapturePanelOpen(true);setCapturePinned(true);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>captureEditorRef.current?.focus()))}
+    });
+    useEffect(()=>{
+        const frame=window.requestAnimationFrame(()=>activateStartupCapture());
+        return()=>window.cancelAnimationFrame(frame);
+    },[vaultLoaded,workspaceReady]);
     useEffect(() => {
         if (!tabContextMenu) {
             return;
@@ -1537,6 +1560,7 @@ function App() {
         await closeEditorTabs([tabId]);
     };
     const closeEditorTabs = async (tabIds: string[]): Promise<boolean> => {
+        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
         if (tabIds.length === 0) {
             return true;
         }
@@ -2501,25 +2525,6 @@ function App() {
         setSidebarView(view);
         setSidebarOpen(true);
     };
-    useEffect(() => {
-        const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
-            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-                event.preventDefault();
-                if (settingsDialogOpen) {
-                    void saveSettings();
-                    return;
-                }
-                if (!activeTab || activeTab.kind !== 'note') {
-                    return;
-                }
-                void saveTab(activeTab.path);
-            }
-        };
-        window.addEventListener('keydown', onGlobalKeyDown);
-        return () => {
-            window.removeEventListener('keydown', onGlobalKeyDown);
-        };
-    }, [activeTab, saveTab, saveSettings, settingsDialogOpen]);
     const renderWorkspacePaneContent = (paneId: PaneId, paneTab: NoteTab | null) => {
         if (!paneTab) {
             return null;
@@ -2624,12 +2629,6 @@ function App() {
     const workspaceGridStyle = {
         ...(showCaptureInline ? { '--capture-inline-height': `${captureInlineHeight}px` } : {}),
     } as CSSProperties;
-    const windowTitlebar = (<div className="window-titlebar">
-      <div className="window-titlebar-brand" aria-label="NickNotes">
-        <span className="window-titlebar-logo">NN</span>
-        <span className="window-titlebar-title">NickNotes</span>
-      </div>
-    </div>);
     const createNoteBaseDialog = createNoteBaseDialogOpen ? (<div className="modal-overlay" onClick={() => {
             closeCreateNoteBaseDialog();
         }}>
@@ -2823,6 +2822,103 @@ function App() {
     const moveExplorerFiles = explorerMutationService.moveExplorerFiles;
     const moveExplorerFile = explorerMutationService.moveExplorerFile;
     const deleteExplorerFile = explorerMutationService.deleteExplorerFile;
+    const [editorFocusRequest,setEditorFocusRequest]=useState<{pane:PaneId}|null>(null);
+    const focusEditorSoon = (pane:PaneId=workspaceStateRef.current.lastFocusedPane) => setEditorFocusRequest({pane});
+    useEffect(()=>{
+        if(!editorFocusRequest||!editorPanelOpen)return;
+        const {pane}=editorFocusRequest,tab=paneActiveTabs[pane];
+        if(tab?.loading)return;
+        const frame=window.requestAnimationFrame(()=>{
+            const editor=pane==='left'?leftEditorRef.current:rightEditorRef.current;
+            if(editor)editor.focus();else document.querySelector<HTMLElement>(`[data-pane-id="${pane}"]`)?.focus();
+            setEditorFocusRequest(current=>current===editorFocusRequest?null:current);
+        });
+        return()=>window.cancelAnimationFrame(frame);
+    },[editorFocusRequest,editorPanelOpen,paneActiveTabs]);
+    const focusPane = (paneId:PaneId) => {
+        setEditorPanelOpen(true);
+        if (paneId==='right' && workspaceStateRef.current.layoutMode!=='split') dispatchWorkspace({type:'TOGGLE_SPLIT_MODE',enabled:true});
+        dispatchWorkspace({type:'SET_LAST_FOCUSED_PANE',paneId,tabId:workspaceStateRef.current.panes[paneId].activeTabId});
+        focusEditorSoon(paneId);
+    };
+    const focusedEditor = () => document.activeElement?.closest('.capture-markdown-editor') ? captureEditorRef.current : (activePaneId==='left'?leftEditorRef.current:rightEditorRef.current) ?? captureEditorRef.current;
+    const editText = async (action:'undo'|'redo'|'cut'|'copy'|'paste'|'selectAll') => {
+        if(document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) {
+            await window.nicknotes?.editText?.(action);
+        } else await focusedEditor()?.edit(action);
+    };
+    const createDocument = async (kind:'note'|'task') => {
+        const relative=activeTab?.kind==='note'?getRelativeVaultPath(activeTab.path,vaultPath):'';
+        const folder=relative.includes('/')?relative.slice(0,relative.lastIndexOf('/')):'';
+        const group=noteGroupsByKey.get(folder)?.canCreateNotes===false?'':folder;
+        const base=kind==='note'?'Neue Notiz':'Neuer Task';
+        const titles=new Set(explorerRows.map(row=>row.title.toLocaleLowerCase()));
+        let title=base;let number=2;
+        while(titles.has(title.toLocaleLowerCase()))title=`${base} ${number++}`;
+        setEditorPanelOpen(true);
+        await (kind==='note'?createExplorerFile:createExplorerTask)(group,title);
+        focusEditorSoon();
+    };
+    const saveAllDocuments = async () => {
+        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
+        if(settingsDirtyRef.current && !await saveSettings())return;
+        for(const tab of openTabsRef.current.filter(tab=>tab.kind==='note'&&tab.dirty&&!tab.readOnly)) {
+            if(!await saveTab(tab.path))return; // A conflict must leave all remaining drafts intact.
+        }
+    };
+    const deleteCurrentDocument = async () => {
+        const tab=activeTab;
+        if(!tab||tab.kind!=='note'||tab.readOnly)return;
+        const choice=await askTagChoice('Datei löschen',`„${tab.title}“ wirklich löschen?${tab.dirty?' Auch die ungespeicherten Änderungen werden verworfen.':''}`, [{id:'delete',label:'Datei löschen',tone:'danger'}]);
+        if(choice==='delete')await deleteExplorerFile(tab.path);
+    };
+    const selectAdjacentTab = (direction:number) => {
+        const pane=workspaceStateRef.current.lastFocusedPane;
+        const state=workspaceStateRef.current.panes[pane];
+        const index=state.tabIds.indexOf(state.activeTabId??'');
+        const next=state.tabIds[(index+direction+state.tabIds.length)%state.tabIds.length];
+        if(next)dispatchWorkspace({type:'ACTIVATE_TAB',paneId:pane,tabId:next});
+        focusEditorSoon(pane);
+    };
+    const showSidebar = (view:SidebarView) => {setSidebarView(view);setSidebarOpen(true)};
+    const focusCapture = () => {setCapturePinned(true);setCapturePanelOpen(true);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>captureEditorRef.current?.focus()))};
+    const commandHandlers:Record<CommandId,()=>unknown> = {
+        newNote:()=>createDocument('note'),newTask:()=>createDocument('task'),
+        openNote:()=>vaultLoaded?setQuickOpen(true):pickAndOpenVault(),openVault:pickAndOpenVault,newVault:createVault,daily:openOrCreateTodayDaily,
+        save:()=>settingsDialogOpen?saveSettings():activeTab?saveTab(activeTab.path):undefined,saveAll:saveAllDocuments,deleteNote:deleteCurrentDocument,
+        closeTab:()=>activeTab?closeEditorTab(activeTab.id):undefined,settings:openSettingsDialog,
+        quit:()=>{flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});window.nicknotes?.setUnsavedChanges?.(settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.dirty));return window.nicknotes?.windowAction?.('close')},
+        undo:()=>editText('undo'),redo:()=>editText('redo'),cut:()=>editText('cut'),copy:()=>editText('copy'),paste:()=>editText('paste'),selectAll:()=>editText('selectAll'),
+        find:()=>focusedEditor()?.find(),format:()=>focusedEditor()?.openCommandPalette(),
+        search:()=>{showSidebar('notes');window.requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('.explorer-toolbar-search input')?.focus())},
+        closeOthers:()=>activeTab?closeOtherEditorTabs(activeTab.id):undefined,closeAll:closeAllEditorTabs,
+        split:()=>{setEditorPanelOpen(true);toggleSplitView()},leftPane:()=>focusPane('left'),rightPane:()=>focusPane('right'),switchPane:()=>focusPane(activePaneId==='left'?'right':'left'),
+        nextTab:()=>selectAdjacentTab(1),previousTab:()=>selectAdjacentTab(-1),sidebar:()=>setSidebarOpen(value=>!value),editor:toggleEditorPanel,
+        capture:()=>{setCapturePinned(true);setCapturePanelOpen(value=>!value)},focusCapture,
+        notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
+        focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
+        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),
+    };
+    const appCommands:AppCommand[]=COMMANDS.map(spec=>{
+        let enabled=vaultLoaded;
+        if(['openNote','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
+        if(['quit','fullscreen','help'].includes(spec.id))enabled=true;
+        if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
+        if(spec.id==='closeAll')enabled=openTabs.length>0;
+        if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
+        if(spec.id==='save')enabled=settingsDialogOpen||Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
+        if(spec.id==='saveAll')enabled=settingsDirtyRef.current||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
+        if(spec.id==='deleteNote')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
+        if(['find','format'].includes(spec.id))enabled=Boolean(activeTab?.kind==='note'&&editorPanelOpen)||capturePanelOpen&&vaultLoaded;
+        const checked=spec.id==='split'?workspaceState.layoutMode==='split':spec.id==='capture'?capturePanelOpen:spec.id==='sidebar'?sidebarOpen:spec.id==='editor'?editorPanelOpen:undefined;
+        return {...spec,enabled,checked,run:commandHandlers[spec.id]};
+    });
+    const executeCommand=useAppCommands(appCommands,setError,settingsDialogOpen);
+    const commandDialogs=<>{quickOpen&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultPath} onClose={()=>setQuickOpen(false)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}}/>}{shortcutHelp&&<ShortcutHelpDialog onClose={()=>setShortcutHelp(false)}/>}</>;
+    const windowTitlebar = (<div className="window-titlebar">
+      <div className="window-titlebar-brand" aria-label="NickNotes"><span className="window-titlebar-logo">NN</span><span className="window-titlebar-title">NickNotes</span></div>
+      <AppMenuBar commands={appCommands} execute={executeCommand}/>
+    </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;
     const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0;
     const noteBaseProgressPercent = noteBaseProgressTotal > 0 ? Math.min(100, Math.round((noteBaseProgressProcessed / noteBaseProgressTotal) * 100)) : 0;
@@ -2857,6 +2953,9 @@ function App() {
                   {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
                 </button>
               </div>
+              <label htmlFor="launch-capture-draft" className="field-label">Schnellerfassungsentwurf</label>
+              <textarea id="launch-capture-draft" data-launch-capture value={captureText} onChange={event=>setCaptureText(event.target.value)} rows={7} placeholder="Gedanken festhalten, während die NoteBase geladen wird …"/>
+              <small>Der Entwurf bleibt lokal erhalten. Nach dem Laden einer NoteBase kannst du ihn über Quick Capture absenden.</small>
 
               {noteBaseOpenStatus?.active || noteBaseOpenStatus?.done ? (<div className="launch-progress" role="status" aria-live="polite">
                   <div className="launch-progress-header">
@@ -2879,10 +2978,12 @@ function App() {
           </div>
         </div>
         {createNoteBaseDialog}
+        {commandDialogs}
       </div>);
     }
     return (<div className="window-frame">
       {windowTitlebar}
+      {commandDialogs}
       <div className="window-content">
         <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
         <div className="workbench-shell">
@@ -2980,7 +3081,7 @@ function App() {
               <div className="panel-header-row">
                 <h3>Quick Capture</h3>
                 <div className="panel-inline-actions">
-                  <button className="icon-button compact muted" onClick={closeCapturePanel} title="Quick Capture schliessen">
+                  <button className="icon-button compact muted" onClick={closeCapturePanel} title={commandTitle('capture','Quick Capture schließen')}>
                     <LucideNamedIcon name="X" size={14}/>
                   </button>
                 </div>
@@ -3003,7 +3104,7 @@ function App() {
             </section>) : null}
         </div>
         {!showCaptureInline ? (<div className="bottom-dock">
-            <button className="dock-tab" onClick={openCaptureFromDock}>
+            <button className="dock-tab" onClick={openCaptureFromDock} title={commandTitle('capture')}>
               Quick Capture
             </button>
           </div>) : null}

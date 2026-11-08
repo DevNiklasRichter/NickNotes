@@ -10,7 +10,7 @@
   user-select: none;
   display: flex;
   align-items: center;
-  padding: 0 var(--layout-titlebar-pad-x);
+  padding: 0 150px 0 var(--layout-titlebar-pad-x);
   background: var(--bg-layer-1);
   border-bottom: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
 }

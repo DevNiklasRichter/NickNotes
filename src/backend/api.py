@@ -167,7 +167,7 @@ async def lifespan(app):
         finally:
             state.dispose_session()
 
-app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.1", lifespan=lifespan)
+app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.3", lifespan=lifespan)
 app.mount('/mcp', mcp_gateway)
 app.add_middleware(LocalApiSecurity)
 allowed_origins = _build_allowed_cors_origins()
@@ -267,11 +267,11 @@ async def request_observability_middleware(request: Request, call_next):
         vault_id=_active_vault_id(),
     )
     started_at = time.perf_counter()
-    logger.info("Request start", extra=_request_log_payload(request))
+    logger.debug("Request start", extra=_request_log_payload(request))
     try:
         response = await call_next(request)
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-        logger.info(
+        logger.debug(
             "Request finished",
             extra=_request_log_payload(request, status_code=response.status_code, error_code="request.completed"),
         )

@@ -11,6 +11,19 @@ from src.backend.application_services import BackendApiService
 from src.backend.commands import VaultCreateRequest,NoteCreateRequest,VaultOpenRequest
 
 class RuntimeIntegrityTests(unittest.TestCase):
+    def test_view_preferences_do_not_invalidate_note_content(self):
+        from src.backend.commands import UiSettingsUpdateRequest
+        with tempfile.TemporaryDirectory() as directory:
+            service=BackendApiService()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Preferences'))
+                before=service.state.change_version
+                service.update_ui_settings(UiSettingsUpdateRequest(app={'capturePanelOpen':False}))
+                service.update_graph_state({'activeMode':'focus'})
+                self.assertEqual(service.state.change_version,before)
+                service.add_note(NoteCreateRequest(groupKey='',title='Actual content change'))
+                self.assertGreater(service.state.change_version,before)
+            finally:service.state.dispose_session()
     def test_watcher_retries_projection_failure_without_another_source_edit(self):
         from unittest.mock import patch
         from src.backend.nicknotes_backend.graph_watcher import graph_watcher_loop, graph_watcher_snapshot

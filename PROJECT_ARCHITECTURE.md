@@ -1,10 +1,12 @@
 # NickNotes Projektarchitektur
 
-Stand: 8. November 2026, Windows-Kandidat 2.1.0-rc.1. Der
+Stand: 8. November 2026, Windows-Kandidat 2.1.0-rc.3. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
 beschreiben Betrieb und Nachweise.
+Die nachfolgende Erweiterung fuer Menues, Tastaturbedienung und den reparierten
+Entwicklungsstart ist unter [Tasten und Menues](doc/keyboard-and-menus.md) beschrieben.
 
 ## Produkt und Datenhoheit
 
@@ -142,6 +144,49 @@ Verspaetete Antworten einer alten NoteBase werden verworfen. OpenAPI/Pydantic
 erzeugen TypeScript-Transporttypen; `contracts:check` erkennt Drift. Graph,
 Einstellungen und der vollstaendige Iconkatalog werden verzoegert geladen.
 Vorhandene CSS-Tokens und Themes sind die gestalterische Grundlage.
+
+`app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
+Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
+`layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.
+Fachaktionen verwenden die bestehenden Dokument-/Explorerfunktionen. Schliessen
+fragt Dirty-Drafts ab, Loeschen verlangt eine Bestaetigung. Vor Save und Close
+werden gepufferte Editor-Aenderungen synchron in den Dokumentzustand uebernommen.
+CodeMirror behaelt seine Textbearbeitung und Undo-Historie; native Eingabefelder
+nutzen ausschliesslich erlaubte Editierbefehle ueber die vertrauensgebundene IPC.
+
+Layout-Autosave reagiert auf geaenderte Layoutwerte statt auf neu erzeugte
+Servicefunktionen. UI-/Graph-Ansichtseinstellungen erzeugen keine fachliche
+Aenderungsversion. So loesen Einstellungen weder Dokumentrevalidierung noch eine
+Save-/Refresh-Rueckkopplung aus. Routine-Requestlogs haben DEBUG-Level; Fehler
+bleiben sichtbar. DevTools werden nur mit `NICKNOTES_DEVTOOLS=1` automatisch geoeffnet.
+
+Der Desktop registriert IPC und oeffnet sein Fenster vor der Backend-Bereitschaft.
+`index.html` und das abhaengigkeitsfreie `public/startup.js` stellen eine kleine
+Schnellerfassung bereit. Erst danach laedt `bootstrap.ts` React und die Editoren;
+`mountApp.tsx` meldet Renderfehler an die sichtbare Startansicht. Die eigentliche
+App erscheint nach Render- und Backend-Bereitschaft. Die Backend-URL wird vorher
+ermittelt, der Token wartet auf die Startfreigabe: keine vorzeitigen Anfragen an
+einen geratenen Standardport.
+Der Pythonprozess startet nach der ersten gezeichneten Eingabe; ein Fallback nach
+drei Sekunden verhindert einen dauerhaft blockierten Backendstart bei UI-Fehlern.
+
+Ein noch nicht abgesendeter Quick-Capture-Entwurf liegt als `capture-draft.md` im
+geraetelokalen Profil. `capture-draft-store.mjs` serialisiert atomare Ersetzungen
+mit einem Groessenlimit; `useCaptureDraft.ts` uebernimmt denselben Entwurf nach
+dem Start. Dies ist keine zweite NoteBase-Schreibschnittstelle: Erst **Senden**
+verwendet den vorhandenen Capture-Service, schreibt in die gewaehlte NoteBase
+und leert den Profilentwurf nach Erfolg. Dieser Entwurf wird nicht ueber die
+NoteBase synchronisiert. Das Theme liegt als reiner Fenster-Startcache in
+`window-state.json`.
+
+`scripts/dev.mjs` akzeptiert ausschliesslich die Bereitschaftsmeldung seines eigenen
+Vite-Prozesses. Rendererfehler erscheinen im Terminal. `smoke:startup` prueft den
+echten npm-Start mit frischem Vite-Cache, blockierter Hauptoberflaeche, absichtlichem
+Modulfehler und Entwurfsuebernahme bis ins Markdown.
+`NICKNOTES_STARTUP_DIAGNOSTICS=1` protokolliert Startmarken im Testprofil und
+aktiviert nur im Entwicklungsmodus einen zufaelligen lokalen Debug-Port.
+Details: [Startverhalten](doc/startup-and-recovery.md) und
+[GitHub-Pipeline erklaert](doc/github-pipeline.md).
 
 ## Entwicklung und Auslieferung
 

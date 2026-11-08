@@ -5,14 +5,23 @@ import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {CaptureDraftStore} from './capture-draft-store.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const BACKEND_PORT = Number(process.env.NICKNOTES_PORT || 8765)
 const API_TOKEN = randomBytes(32).toString('hex')
 const PROJECT_ROOT = path.resolve(__dirname, '../..')
+const startupStarted=performance.now()
+let startupMetricsWrite=Promise.resolve()
+const startupMark=event=>{
+  const line=JSON.stringify({event,elapsedMs:Math.round(performance.now()-startupStarted),wallTime:Date.now()})
+  console.log('[startup] '+line)
+  if(process.env.NICKNOTES_STARTUP_DIAGNOSTICS==='1')startupMetricsWrite=startupMetricsWrite.then(()=>fs.promises.appendFile(path.join(app.getPath('userData'),'startup-metrics.jsonl'),line+'\n')).catch(()=>{})
+}
 app.setName('NickNotes')
 if (process.env.NICKNOTES_USER_DATA) app.setPath('userData', process.env.NICKNOTES_USER_DATA)
+if (!app.isPackaged && process.env.NICKNOTES_STARTUP_DIAGNOSTICS === '1') app.commandLine.appendSwitch('remote-debugging-port', '0')
 protocol.registerSchemesAsPrivileged([{ scheme: 'nicknotes', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
 const isTrusted = (event) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return false
@@ -28,7 +37,13 @@ const listen = (channel, handler) => ipcMain.on(channel, (event, ...args) => {
 })
 
 
-let backendReady = false
+let backendStatus = {phase:'starting',message:'Der lokale Dienst wird gestartet …'}
+let resolveBackendReady, rejectBackendReady
+const backendReadyPromise=new Promise((resolve,reject)=>{resolveBackendReady=resolve;rejectBackendReady=reject})
+backendReadyPromise.catch(()=>{}) // The renderer receives the same failure through its authenticated connection.
+let draftStore
+let startupTheme='light'
+try {const saved=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'window-state.json'),'utf8'));if(saved.theme==='dark')startupTheme='dark'} catch { /* First launch uses a neutral light background. */ }
 let backendProcess = null
 let mainWindow = null
 let backendStopping = false
@@ -162,11 +177,13 @@ function resolvePythonBinary() {
 async function startBackend() {
   const packaged = path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'nicknotes-backend.exe' : 'nicknotes-backend')
   backendStopping = false
+  startupMark('backend-spawn-start')
   backendProcess = spawn(app.isPackaged ? packaged : resolvePythonBinary(), app.isPackaged ? [] : ['-m', 'src.backend.server'], {
     cwd: app.isPackaged ? app.getPath('userData') : PROJECT_ROOT,
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     env: { ...process.env, NICKNOTES_DESKTOP_BOOT: '1', PYTHONUNBUFFERED: '1' },
   })
+  startupMark('backend-spawned')
   backendProcess.stdin.on('error', () => {}) // Process exit is reported by the readiness handler.
   backendProcess.stdin.write(JSON.stringify({ token: API_TOKEN, port: BACKEND_PORT, parent_pid: process.pid, user_data: app.getPath('userData') }) + '\n')
   backendProcess.stderr.on('data', data => process.stderr.write(data))
@@ -211,17 +228,27 @@ function createWindow() {
       symbolColor: '#6a727f',
       height: 34,
     },
-    backgroundColor: '#1f252f',
+    backgroundColor: startupTheme==='dark'?'#1f252f':'#f3f4f6',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false,
+      additionalArguments:[`--nicknotes-theme=${startupTheme}`],
     },
   })
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('console-message', details => {
+    if (details.level === 'error') console.error(`[renderer] ${details.message} (${details.sourceId}:${details.lineNumber})`)
+  })
+  win.webContents.on('render-process-gone', (_event, details) => console.error('[renderer] Prozess beendet:', details.reason))
+  win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame && code !== -3) console.error(`[renderer] Laden fehlgeschlagen: ${description} (${url})`)
+  })
   win.webContents.on('will-navigate', (event, url) => { if (url !== win.webContents.getURL()) event.preventDefault() })
   win.setMenuBarVisibility(false)
-  applyWindowTheme(win, 'dark')
+  applyWindowTheme(win, startupTheme)
   mainWindow = win
+  startupMark('window-created')
+  win.webContents.once('dom-ready',()=>startupMark('html-ready'))
   const webContentsId = win.webContents.id
   unsavedByWebContentsId.set(webContentsId, false)
 
@@ -272,11 +299,11 @@ function createWindow() {
 
   if (!app.isPackaged) {
     win.loadURL('http://localhost:5173')
-    win.webContents.openDevTools()
+    if (process.env.NICKNOTES_DEVTOOLS === '1') win.webContents.openDevTools()
     return
   }
 
-  win.loadURL(backendReady ? 'nicknotes://app/index.html' : 'nicknotes://app/startup.html')
+  win.loadURL('nicknotes://app/index.html')
 }
 
 const hasInstanceLock = app.requestSingleInstanceLock()
@@ -286,22 +313,29 @@ app.on('second-instance', () => { if (mainWindow) { mainWindow.restore(); mainWi
 app.whenReady().then(async () => {
   if (!hasInstanceLock) return
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  draftStore=new CaptureDraftStore(app.getPath('userData'))
+  const draftLoaded=draftStore.load()
+  draftLoaded.catch(error=>console.error('[capture-draft] Entwurf konnte nicht gelesen werden:',String(error)))
   protocol.handle('nicknotes', async request => {
     const url = new URL(request.url)
     const root = path.join(app.getAppPath(), 'frontend')
     const target = path.resolve(root, '.' + decodeURIComponent(url.pathname))
     if (url.hostname !== 'app' || !target.startsWith(root + path.sep)) return new Response('Forbidden', { status: 403 })
+    const measuredResource=process.env.NICKNOTES_STARTUP_DIAGNOSTICS==='1'&&['/index.html','/startup.js'].includes(url.pathname)
+    if(measuredResource)startupMark('resource-request:'+url.pathname)
     const response = await net.fetch(pathToFileURL(target).toString())
+    if(measuredResource)startupMark('resource-headers:'+url.pathname)
     const headers = new Headers(response.headers)
     headers.set('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src http://127.0.0.1:${BACKEND_PORT}; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'`)
-    return new Response(response.body, { status: response.status, headers })
+    return new Response(response.body, {status:response.status,headers})
   })
   Menu.setApplicationMenu(null)
-  if (app.isPackaged) createWindow()
-  try { await startBackend(); backendReady = true } catch (error) {
-    dialog.showErrorBox('NickNotes konnte nicht starten', String(error.message || error))
-    await stopBackend(); app.quit(); return
-  }
+  let releaseFirstPaint
+  const firstPaint=new Promise(resolve=>releaseFirstPaint=resolve)
+  listen('startup:mark',(_event,name)=>{
+    if(['quick-entry-ready','ui-rendered','workspace-ready'].includes(name))startupMark(name)
+    if(name==='quick-entry-ready')releaseFirstPaint()
+  })
 
   listen('app:set-unsaved', (event, payload) => {
     unsavedByWebContentsId.set(event.sender.id, Boolean(payload))
@@ -355,7 +389,19 @@ app.whenReady().then(async () => {
     return result.filePaths
   })
 
-  handle('backend:token', async () => API_TOKEN)
+  handle('backend:token', async () => {await backendReadyPromise;return API_TOKEN})
+  handle('backend:status', () => backendStatus)
+  handle('capture:draft-read', async () => {await draftLoaded;return draftStore.current})
+  handle('capture:draft-write', async (_event,text) => {await draftLoaded;await draftStore.set(text)})
+
+  handle('window:action', (_event, action) => {
+    if (!mainWindow) return
+    if (action === 'close') mainWindow.close()
+    else if (action === 'fullscreen') mainWindow.setFullScreen(!mainWindow.isFullScreen())
+  })
+  handle('editor:action', (_event, action) => {
+    if (['undo','redo','cut','copy','paste','selectAll'].includes(action)) mainWindow?.webContents[action]()
+  })
 
   handle('backend:url', async () => {
     return `http://127.0.0.1:${BACKEND_PORT}`
@@ -399,11 +445,26 @@ app.whenReady().then(async () => {
       return { ok: false }
     }
     applyWindowTheme(mainWindow, theme === 'light' ? 'light' : 'dark')
+    startupTheme=theme==='dark'?'dark':'light'
+    fs.promises.writeFile(path.join(app.getPath('userData'),'window-state.json'),JSON.stringify({theme:startupTheme})).catch(()=>{})
     return { ok: true }
   })
 
-  if (mainWindow) mainWindow.loadURL('nicknotes://app/index.html')
-  else createWindow()
+  createWindow()
+  // Windows process creation and cold Python imports must not compete with the first entry paint.
+  // A broken/missing renderer must not leave backend startup waiting indefinitely.
+  const paintTimeout=setTimeout(releaseFirstPaint,3000)
+  void firstPaint.then(()=>{clearTimeout(paintTimeout);if(mainWindow)return startBackend();throw new Error('Fenster wurde geschlossen.')}).then(()=>{
+    backendStatus={phase:'ready',message:'Lokaler Dienst bereit.'};resolveBackendReady()
+    startupMark('backend-ready')
+    mainWindow?.webContents.send('backend:status-changed',backendStatus)
+  }).catch(async error=>{
+    const message=String(error.message||error)
+    backendStatus={phase:'error',message};rejectBackendReady(new Error(message))
+    console.error('[backend] Start fehlgeschlagen:',message)
+    mainWindow?.webContents.send('backend:status-changed',backendStatus)
+    await stopBackend()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -415,9 +476,9 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { app.quit() })
 let quitting = false
 app.on('will-quit', event => {
-  if (quitting || !backendProcess) return
+  if (quitting || (!backendProcess&&!draftStore)) return
   event.preventDefault(); quitting = true
-  void stopBackend().finally(() => app.quit())
+  void Promise.allSettled([stopBackend(),draftStore?.flush()]).finally(() => app.quit())
 })
 process.once('SIGINT', () => { void stopBackend().finally(() => app.quit()) })
 process.once('SIGTERM', () => { void stopBackend().finally(() => app.quit()) })

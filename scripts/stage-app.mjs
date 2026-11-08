@@ -28,5 +28,3 @@ for (const [relative, entry] of Object.entries(lock.packages)) {
 }
 notices.push(fs.readFileSync(path.join(root,'dist/PYTHON_NOTICES.txt'),'utf8'))
 fs.writeFileSync(path.join(target,'THIRD_PARTY_NOTICES.txt'), notices.join('\n'))
-
-fs.writeFileSync(path.join(target,'frontend/startup.html'), `<!doctype html><html lang="de"><meta charset="utf-8"><title>NickNotes</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#1f252f;color:#e8edf3;font:16px Segoe UI,sans-serif}main{text-align:center}p{color:#b7c2d0}</style><main><h1>NickNotes</h1><p role="status">Deine lokale Wissensbasis wird gestartet …</p></main></html>`)
