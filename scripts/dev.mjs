@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process'
 import path from 'node:path'
 import electron from 'electron'
+import {isViteReady} from './vite-readiness.mjs'
 const root=path.resolve(import.meta.dirname,'..')
 const children=new Set()
 let stopping=false
@@ -24,8 +25,8 @@ try {
   let output=''
   vite.stdout.on('data',data=>{
    process.stdout.write(data)
-   output=(output+data.toString()).replace(/\u001b\[[0-9;]*m/g,'').slice(-8000)
-   if(output.includes('Local:')&&output.includes('http://localhost:5173/')){clearTimeout(timer);resolve()}
+   output=(output+data.toString()).slice(-8000)
+   if(isViteReady(output)){clearTimeout(timer);resolve()}
   })
   vite.stderr.on('data',data=>process.stderr.write(data))
   vite.once('error',error=>{clearTimeout(timer);reject(error)})

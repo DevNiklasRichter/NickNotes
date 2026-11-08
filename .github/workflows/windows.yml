@@ -37,6 +37,8 @@ jobs:
       - name: Test, lint and build
         run: npm run check
       - name: Verify development startup, menus and keyboard commands
+        env:
+          FORCE_COLOR: '1'
         run: npm run smoke:commands
       - name: Verify real npm cold start, early capture and startup recovery
         run: npm run smoke:startup
