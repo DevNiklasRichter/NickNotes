@@ -101,7 +101,8 @@ class BackendApiServiceTests(unittest.TestCase):
             result = self.service.rename_notebase(request)
 
             renamed_path = parent / "RenamedBase"
-            self.assertEqual(result["vaultPath"], str(renamed_path))
+            # Windows TEMP may use an 8.3 alias; the API returns resolved paths.
+            self.assertEqual(result["vaultPath"], str(renamed_path.resolve()))
             self.assertFalse(vault_path.exists())
             self.assertTrue(renamed_path.exists())
             self.assertFalse(backend_api.state.vault)
