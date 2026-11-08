@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import {isViteReady} from './vite-readiness.mjs'
 
 const root=path.resolve(import.meta.dirname,'..')
 const scratch=fs.mkdtempSync(path.join(root,'.tmp','commands-smoke-'))
@@ -35,7 +36,7 @@ async function bodyEditor(){const editor=page.locator('.note-body-editor .cm-con
 try{
   for(let attempt=0;attempt<100;attempt++){
     if(vite.exitCode!==null)throw new Error('Owned Vite process failed: '+viteLog)
-    if(viteLog.includes('Local:'))break
+    if(isViteReady(viteLog))break
     await new Promise(resolve=>setTimeout(resolve,150))
     if(attempt===99)throw new Error('Vite startup timed out: '+viteLog)
   }
