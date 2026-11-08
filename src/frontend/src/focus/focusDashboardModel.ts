@@ -1,3 +1,4 @@
+import {localCalendarDay} from '../shared/dates'
 import {
   normalizeFilePathKey,
   normalizeRelatedCandidate,
@@ -530,15 +531,11 @@ function toIsoDate(date: Date): string {
 }
 
 function toUpdatedDay(value: string): string {
-  return value.slice(0, 10)
+  return localCalendarDay(value)
 }
 
 function toCompletedDay(value: string | null | undefined): string {
-  const clean = String(value || '').trim()
-  if (!clean) {
-    return ''
-  }
-  return clean.slice(0, 10)
+  return localCalendarDay(value)
 }
 
 function isValidIsoDate(isoDate: string): boolean {
@@ -1121,13 +1118,13 @@ function withMitFlags(item: FocusPrimaryItem, mitKeySet: Set<string>, mitCount: 
   }
 }
 
-function buildContextBadgeMap(items: FocusPrimaryItem[], notes: SearchRow[], todayIso: string): Map<string, typeof EMPTY_CONTEXT_BADGES> {
+function buildContextBadgeMap(items: FocusPrimaryItem[], notes: SearchRow[]): Map<string, typeof EMPTY_CONTEXT_BADGES> {
   const map = new Map<string, typeof EMPTY_CONTEXT_BADGES>()
   for (const item of items) {
     if (map.has(item.key)) {
       continue
     }
-    const hits = buildFocusContextHits(item, notes, todayIso)
+    const hits = buildFocusContextHits(item, notes)
     const reasonSet = new Set(hits.flatMap((hit) => hit.reasons))
     map.set(item.key, {
       contextBadgeCount: hits.length,
@@ -1656,7 +1653,7 @@ function buildSuggestedMitItems(args: {
   const scored: Array<{ item: FocusPrimaryItem; score: number; reasons: string[] }> = []
   const push = (items: FocusPrimaryItem[], origin: FocusCandidateOrigin) => {
     for (const item of items) {
-      if (seen.has(item.key) || item.isDone) {
+      if (seen.has(item.key) || item.isDone || item.isBlocked || isWaitingWithoutFollowUpDueNow(item, todayIso)) {
         continue
       }
       seen.add(item.key)
@@ -1838,8 +1835,7 @@ export function buildFocusDashboardData(args: {
 
   const contextBadgeMap = buildContextBadgeMap(
     [...mitItemsRaw, ...overdueItemsRaw, ...blockingPoolRaw, ...rankedPoolRaw],
-    notes,
-    todayIso
+    notes
   )
   const applyItemDecorators = (item: FocusPrimaryItem): FocusPrimaryItem => withMitFlags(withContextBadges(item, contextBadgeMap), mitKeySet, normalizedMitIds.length)
 
@@ -1963,22 +1959,20 @@ export function buildFocusDashboardData(args: {
     .sort((left, right) => sortByRecency({ updatedAt: left.updated_at, title: left.title }, { updatedAt: right.updated_at, title: right.title }))
     .slice(0, Math.max(maxItems, 8))
 
-  // `completed_at` is the canonical source; `updated_at` is a transitional fallback for legacy rows.
+  // Unknown completion history stays unknown; an edit is not a completion event.
   const doneTodayTasks = tasks.filter((task) => {
     if (normalizeTaskStatusValue(task.status) !== 'done') {
       return false
     }
     const completedDay = toCompletedDay(task.completed_at || null)
-    const fallbackDay = toUpdatedDay(task.updated_at)
-    return (completedDay || fallbackDay) === todayIso
+    return completedDay === todayIso
   }).length
   const doneTodayTodos = todos.filter((todo) => {
     if (!todo.checked) {
       return false
     }
     const completedDay = toCompletedDay(todo.completed_at || null)
-    const fallbackDay = toUpdatedDay(todo.updated_at)
-    return (completedDay || fallbackDay) === todayIso
+    return completedDay === todayIso
   }).length
   const effectiveDoneTodayTasks = focusStats?.doneTodayTasks ?? doneTodayTasks
   const effectiveDoneTodayTodos = focusStats?.doneTodayTodos ?? doneTodayTodos
@@ -2040,7 +2034,7 @@ function toReferenceLinks(item: FocusPrimaryItem): string[] {
   return Array.from(new Set([...item.related, ...item.links].map((entry) => normalizeRelatedCandidate(entry)).filter(Boolean)))
 }
 
-export function buildFocusContextHits(item: FocusPrimaryItem, notes: SearchRow[], _todayIso: string): FocusContextHit[] {
+export function buildFocusContextHits(item: FocusPrimaryItem, notes: SearchRow[]): FocusContextHit[] {
   const referenceWords = toReferenceWords(item)
   const referenceLinks = toReferenceLinks(item)
   const linkSet = new Set(referenceLinks.map((entry) => entry.toLowerCase()))

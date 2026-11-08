@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from src.backend.nicknotes_backend.graph_index import build_graph_index, update_graph_index_for_file
+from src.backend.nicknotes_backend.graph_index import build_graph_index, update_graph_index_for_file, related_files
 from src.backend.nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from src.backend.nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from src.backend.nicknotes_backend.indexer import VaultIndexer
@@ -111,7 +111,7 @@ class GraphIndexTests(unittest.TestCase):
         index = build_graph_index(self.vault_path, self.vault.read_tag_groups())
         payload = index.to_dict()
 
-        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["version"], 2)
         self.assertIn("notes/first.md", payload["files"])
         self.assertIn("notes/second.md", payload["files"])
         self.assertIn("tasks/open/task.md", payload["files"])
@@ -156,11 +156,11 @@ class GraphIndexTests(unittest.TestCase):
         write_graph_index(self.vault.graph_index_path, index)
         loaded = read_graph_index(self.vault.graph_index_path).to_dict()
         self.assertIn("notes/roundtrip.md", loaded["files"])
-        self.assertEqual(loaded["version"], 1)
+        self.assertEqual(loaded["version"], 2)
 
         self.vault.graph_index_path.write_text("{not json", encoding="utf-8")
         fallback = read_graph_index(self.vault.graph_index_path).to_dict()
-        self.assertEqual(fallback["version"], 1)
+        self.assertEqual(fallback["version"], 2)
         self.assertEqual(fallback["nodes"], [])
         self.assertTrue(any(item["type"] == "graphIndexReadFailed" for item in fallback["diagnostics"]))
         backups = list(self.vault.system_path.glob("graph-index.json.*.corrupt.*.bak"))
@@ -174,7 +174,7 @@ class GraphIndexTests(unittest.TestCase):
 
     def test_legacy_backlink_edges_are_ignored_when_loading_index(self) -> None:
         payload = {
-            "version": 1,
+            "version": 2,
             "updated_at": "2026-01-01T00:00:00",
             "source": {},
             "files": {},
@@ -451,12 +451,11 @@ class GraphIndexTests(unittest.TestCase):
         self.assertFalse(any(edge["type"] == "backlink" for edge in edges))
 
         shared_edges = [edge for edge in edges if edge["type"] == "sharedTag"]
-        self.assertEqual(len(shared_edges), 1)
-        shared = shared_edges[0]
-        self.assertEqual({shared["source"], shared["target"]}, {"file:note_first", "file:note_second"})
-        self.assertEqual(shared["weight"], 6)
-        self.assertIn("Shared tag project:alpha", shared["reasons"])
-        self.assertIn("Shared tag person:max", shared["reasons"])
+        self.assertEqual(shared_edges, [])
+        neighbours = related_files(build_graph_index(self.vault_path, self.vault.read_tag_groups()), 'file:note_first')
+        match = next(item for item in neighbours['items'] if item['id'] == 'file:note_second')
+        self.assertEqual(match['sharedTags'], ['person:max', 'project:alpha'])
+        self.assertEqual(match['weight'], 10)  # Five for tags, five for the explicit link.
 
         edge_ids = [edge["id"] for edge in edges]
         self.assertEqual(len(edge_ids), len(set(edge_ids)))
@@ -540,8 +539,12 @@ class GraphIndexTests(unittest.TestCase):
 
         payload = build_graph_index(self.vault_path, self.vault.read_tag_groups()).to_dict()
         shared_edges = [edge for edge in payload["edges"] if edge["type"] == "sharedTag"]
-        self.assertEqual(len(shared_edges), 990)
-        self.assertTrue(all(edge["weight"] >= 3 for edge in shared_edges))
+        self.assertEqual(shared_edges, [])
+        index = build_graph_index(self.vault_path, self.vault.read_tag_groups())
+        neighbours = related_files(index, 'file:alpha_0', limit=10)
+        self.assertEqual(len(neighbours['items']), 10)
+        self.assertTrue(neighbours['truncated'])
+        self.assertEqual(neighbours['total'], 44)
 
     def test_graph_state_roundtrip_and_corrupt_fallback(self) -> None:
         saved = write_graph_state(

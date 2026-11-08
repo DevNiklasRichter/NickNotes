@@ -1,5 +1,10 @@
 from __future__ import annotations
+from .dates import calendar_day
+from .inventory import markdown_sources, is_source
+from .graph_index import _extract_tags
 
+from contextlib import contextmanager
+from functools import wraps
 import hashlib
 import json
 import re
@@ -9,7 +14,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from .markdown_io import parse_markdown
+from .markdown_io import parse_markdown, snapshot_operation, prefetch_markdown
 from .projection_registry import INDEXER_SCHEMA_VERSION
 from .models import ParsedTask, TagRef
 from .parser import slugify
@@ -50,15 +55,54 @@ def _count_from_cursor(cur: sqlite3.Cursor) -> int:
         return 0
 
 
+def batch_projection(function):
+    @wraps(function)
+    @snapshot_operation
+    def run(self, *args, **kwargs):
+        with self.batch():
+            return function(self, *args, **kwargs)
+    return run
+
+
 class VaultIndexer:
     def __init__(self, db_path: Path):
+        self._batch_depth = 0
         self.db_path = db_path
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self._configure_connection()
-        self._init_schema()
-        self._ensure_schema_version()
+        self.conn.create_function("local_day",1,calendar_day)
+        try:
+            self._configure_connection()
+            self._init_schema()
+            self.conn.execute("CREATE TABLE IF NOT EXISTS indexed_files(path TEXT PRIMARY KEY, mtime_ns INTEGER NOT NULL, size INTEGER NOT NULL);")
+            self.conn.commit()
+            self._ensure_schema_version()
+        except Exception:
+            self.conn.close()
+            raise
+
+    def _commit(self):
+        if not self._batch_depth:
+            self.conn.commit()
+
+    @contextmanager
+    def batch(self):
+        with self._lock:
+            outermost = self._batch_depth == 0
+            if outermost:
+                self.conn.execute('BEGIN;')
+            self._batch_depth += 1
+            try:
+                yield
+                if outermost:
+                    self.conn.commit()
+            except Exception:
+                if outermost:
+                    self.conn.rollback()
+                raise
+            finally:
+                self._batch_depth -= 1
 
     def close(self) -> None:
         with self._lock:
@@ -66,8 +110,8 @@ class VaultIndexer:
 
     def _configure_connection(self) -> None:
         with self._lock:
-            # MEMORY journal is more robust in restricted/sandboxed filesystems.
-            self.conn.execute("PRAGMA journal_mode=MEMORY;")
+            # Rebuildable local projection; WAL keeps bulk rebuilds atomic for readers.
+            self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA temp_store=MEMORY;")
             self.conn.execute("PRAGMA synchronous=NORMAL;")
             self.conn.execute("PRAGMA foreign_keys=ON;")
@@ -168,7 +212,7 @@ class VaultIndexer:
             )
             self._ensure_tasks_schema(cur)
             self._ensure_todos_schema(cur)
-            self.conn.commit()
+            self._commit()
 
     def _ensure_schema_version(self) -> None:
         with self._lock:
@@ -183,7 +227,7 @@ class VaultIndexer:
                 )
             self._init_schema()
             cur.execute(f"PRAGMA user_version={INDEXER_SCHEMA_VERSION};")
-            self.conn.commit()
+            self._commit()
 
     def _ensure_tasks_schema(self, cur: sqlite3.Cursor) -> None:
         cur.execute("PRAGMA table_info(tasks);")
@@ -230,7 +274,8 @@ class VaultIndexer:
             cur.execute("DELETE FROM tags;")
             cur.execute("DELETE FROM notes;")
             cur.execute("DELETE FROM notes_fts;")
-            self.conn.commit()
+            cur.execute("DELETE FROM indexed_files;")
+            self._commit()
 
     def upsert_note(
         self,
@@ -244,6 +289,9 @@ class VaultIndexer:
     ) -> None:
         with self._lock:
             cur = self.conn.cursor()
+            previous = cur.execute('SELECT path FROM notes WHERE id=?', (note_id,)).fetchone()
+            if previous and Path(previous['path']).resolve() != Path(path).resolve() and Path(previous['path']).exists():
+                raise ValueError(f'Doppelte Markdown-ID {note_id}: {previous["path"]} und {path}')
             cur.execute(
                 """
                 INSERT INTO notes(id, path, title, body, note_type, created_at, updated_at)
@@ -263,7 +311,7 @@ class VaultIndexer:
                 "INSERT INTO notes_fts(note_id, title, body) VALUES (?, ?, ?);",
                 (note_id, title, body),
             )
-            self.conn.commit()
+            self._commit()
 
     def _ensure_tag(self, ref: TagRef) -> int:
         with self._lock:
@@ -313,7 +361,7 @@ class VaultIndexer:
                     ),
                 )
             self._prune_orphan_tags(cur)
-            self.conn.commit()
+            self._commit()
 
     def add_or_update_task(
         self,
@@ -371,12 +419,12 @@ class VaultIndexer:
                     updated_at,
                 ),
             )
-            self.conn.commit()
+            self._commit()
 
     def clear_note_todos(self, note_id: str) -> None:
         with self._lock:
             self.conn.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
-            self.conn.commit()
+            self._commit()
 
     def _todo_rows_for_path(self, note_path: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -414,14 +462,8 @@ class VaultIndexer:
             existing_by_id: dict[str, dict[str, Any]] = {str(row.get("id")): row for row in preserved_rows if row.get("id")}
             cur.execute("DELETE FROM todos WHERE note_id = ?;", (note_id,))
             for todo in todos:
-                previous_row = existing_by_id.get(todo.id) or {}
-                previous_created_at = _normalize_iso_timestamp(previous_row.get("created_at"))
-                previous_completed_at = _normalize_iso_timestamp(previous_row.get("completed_at"))
-                created_at = previous_created_at or _normalize_iso_timestamp(updated_at) or datetime.now().isoformat(timespec="seconds")
-                if todo.checked:
-                    completed_at = previous_completed_at or (updated_at or datetime.now().isoformat(timespec="seconds"))
-                else:
-                    completed_at = None
+                created_at = _normalize_iso_timestamp(todo.created_at) or ''
+                completed_at = _normalize_iso_timestamp(todo.completed_at) if todo.checked else None
                 cur.execute(
                     """
                     INSERT INTO todos(
@@ -449,7 +491,7 @@ class VaultIndexer:
                         updated_at,
                     ),
                 )
-            self.conn.commit()
+            self._commit()
 
     def list_todos(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -520,30 +562,50 @@ class VaultIndexer:
             if note_ids:
                 cur.executemany("DELETE FROM notes WHERE id = ?;", [(note_id,) for note_id in note_ids])
             cur.execute("DELETE FROM tasks WHERE path = ?;", (path,))
+            cur.execute("DELETE FROM indexed_files WHERE path = ?;", (path,))
             self._prune_orphan_tags(cur)
-            self.conn.commit()
+            self._commit()
 
+    @batch_projection
     def reindex_markdown_file(self, vault_path: Path, file_path: Path) -> dict[str, int]:
         resolved = file_path.resolve()
         preserved_todo_rows = self._todo_rows_for_path(str(resolved))
+        if not resolved.is_file() or not is_source(vault_path, resolved):
+            self.remove_projection_for_path(str(resolved))
+            return {"notes": 0, "tasks": 0}
+        meta, _ = parse_markdown(resolved)
+        kind = str(meta.get('type', 'note')).lower().replace('-', '_')
+        if kind in {'tag_index', 'task_link'}:
+            self.remove_projection_for_path(str(resolved))
+            self._record_file(resolved)
+            return {"notes": 0, "tasks": 0}
         self.remove_projection_for_path(str(resolved))
+        count = self._index_note_markdown(resolved, preserved_todo_rows=preserved_todo_rows)
+        self._record_file(resolved)
+        return {"notes": count, "tasks": int(kind == 'task')}
 
-        if not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
-            return {"notes": 0, "tasks": 0}
+    def _record_file(self, path):
+        stat=path.stat()
+        self.conn.execute('INSERT INTO indexed_files(path,mtime_ns,size) VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET mtime_ns=excluded.mtime_ns,size=excluded.size',(str(path),stat.st_mtime_ns,stat.st_size))
+        self._commit()
 
-        try:
-            relative = resolved.relative_to(vault_path.resolve()).as_posix()
-        except ValueError:
-            return {"notes": 0, "tasks": 0}
-
-        top = relative.split("/", 1)[0].lower()
-        hidden_roots = {".system", "system", "99_system", ".media", "02_entities", "tags", "02_tags"}
-        if top in hidden_roots:
-            return {"notes": 0, "tasks": 0}
-        if top in {"tasks", "03_tasks"}:
-            return {"notes": 0, "tasks": self._index_task_markdown(resolved)}
-
-        return {"notes": self._index_note_markdown(resolved, preserved_todo_rows=preserved_todo_rows), "tasks": 0}
+    @batch_projection
+    def reconcile_vault(self, vault_path: Path, progress_callback=None):
+        sources=markdown_sources(vault_path)
+        stored={str(row['path']):(row['mtime_ns'],row['size']) for row in self.conn.execute('SELECT * FROM indexed_files')}
+        current={str(path) for path in sources}
+        deleted=[path for path in stored if path not in current]
+        for path in deleted:
+            self.remove_projection_for_path(path)
+        changed=[]
+        for processed,path in enumerate(sources,1):
+            stat=path.stat()
+            if stored.get(str(path))!=(stat.st_mtime_ns,stat.st_size):
+                self.reindex_markdown_file(vault_path,path)
+                changed.append(str(path))
+            if progress_callback:
+                progress_callback('Quellen werden abgeglichen ...',processed,len(sources),str(path))
+        return {'notes':self.conn.execute('SELECT COUNT(*) FROM notes').fetchone()[0], 'tasks':self.conn.execute('SELECT COUNT(*) FROM tasks').fetchone()[0], 'changed':len(changed), 'deleted':len(deleted)}
 
     def _prune_orphan_tags(self, cur: sqlite3.Cursor) -> None:
         cur.execute(
@@ -561,52 +623,43 @@ class VaultIndexer:
             )
             return [dict(row) for row in cur.fetchall()]
 
-    def search_notes(self, query: str, limit: int = 100) -> list[dict[str, Any]]:
+    def catalog_notes(self, limit: int = 100, offset: int = 0, tag: str | None = None, note_type: str | None = None) -> list[dict[str, Any]]:
+        return self.search_notes('', limit=limit, offset=offset, tag=tag, note_type=note_type)
+
+    def search_notes(self, query: str, limit: int = 100, offset: int = 0, tag: str | None = None, note_type: str | None = None) -> list[dict[str, Any]]:
+        cleaned = query.strip()
+        if len(cleaned) > 2000:
+            raise ValueError('Suchanfrage ist zu lang.')
+        limit, offset = max(1, min(int(limit), 1000)), max(0, min(int(offset), 100000))
+        conditions, parameters = [], []
+        if tag:
+            parsed = _split_tag(tag)
+            if not parsed:
+                return []
+            conditions.append('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.note_id=n.id AND t.category=? AND t.slug=?)')
+            parameters.extend(parsed)
+        if note_type:
+            conditions.append('n.note_type=?')
+            parameters.append(note_type)
+        selection = 'n.id, n.title, n.path, n.note_type, n.created_at, n.updated_at, substr(n.body,1,240) AS excerpt'
+        extra = (' AND ' + ' AND '.join(conditions)) if conditions else ''
         with self._lock:
-            cur = self.conn.cursor()
-            cleaned = query.strip()
-            if not cleaned:
-                cur.execute(
-                    """
-                    SELECT id, title, path, note_type, created_at, updated_at
-                    FROM notes
-                    ORDER BY updated_at DESC
-                    LIMIT ?;
-                    """,
-                    (limit,),
-                )
-                return [dict(row) for row in cur.fetchall()]
-
-            try:
-                cur.execute(
-                    """
-                    SELECT n.id, n.title, n.path, n.note_type, n.created_at, n.updated_at
-                    FROM notes_fts f
-                    JOIN notes n ON n.id = f.note_id
-                    WHERE notes_fts MATCH ?
-                    ORDER BY n.updated_at DESC
-                    LIMIT ?;
-                    """,
-                    (cleaned, limit),
-                )
-                rows = cur.fetchall()
-                if rows:
-                    return [dict(row) for row in rows]
-            except sqlite3.OperationalError:
-                pass
-
-            like = f"%{cleaned}%"
-            cur.execute(
-                """
-                SELECT id, title, path, note_type, created_at, updated_at
-                FROM notes
-                WHERE title LIKE ? OR body LIKE ?
-                ORDER BY updated_at DESC
-                LIMIT ?;
-                """,
-                (like, like, limit),
-            )
-            return [dict(row) for row in cur.fetchall()]
+            if cleaned:
+                try:
+                    rows = self.conn.execute(f'SELECT {selection} FROM notes_fts JOIN notes n ON n.id=notes_fts.note_id WHERE notes_fts MATCH ?{extra} ORDER BY bm25(notes_fts), n.updated_at DESC, n.id LIMIT ? OFFSET ?', [cleaned, *parameters, limit, offset]).fetchall()
+                    if rows:
+                        return [dict(row) for row in rows]
+                except sqlite3.OperationalError:
+                    # Invalid FTS syntax has an explicit, bounded literal substring fallback.
+                    pass
+                literal = '%' + cleaned.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+                where = "(n.title LIKE ? ESCAPE '\\' OR n.body LIKE ? ESCAPE '\\')" + extra
+                values = [literal, literal, *parameters, limit, offset]
+            else:
+                where = '1=1' + extra
+                values = [*parameters, limit, offset]
+            rows = self.conn.execute(f'SELECT {selection} FROM notes n WHERE {where} ORDER BY n.updated_at DESC, n.id LIMIT ? OFFSET ?', values).fetchall()
+            return [dict(row) for row in rows]
 
     def list_tasks(self, include_done: bool = False) -> list[dict[str, Any]]:
         with self._lock:
@@ -732,7 +785,7 @@ class VaultIndexer:
         with self._lock:
             cur = self.conn.cursor()
             cur.execute(
-                "SELECT COUNT(*) AS cnt FROM notes WHERE substr(created_at, 1, 10) = ?;",
+                "SELECT COUNT(*) AS cnt FROM notes WHERE local_day(created_at) = ?;",
                 (day_str,),
             )
             notes_count = _count_from_cursor(cur)
@@ -749,7 +802,7 @@ class VaultIndexer:
                 """
                 SELECT COUNT(*) AS cnt
                 FROM tasks
-                WHERE status = 'done' AND substr(COALESCE(completed_at, updated_at), 1, 10) = ?;
+                WHERE status = 'done' AND local_day(completed_at) = ?;
                 """,
                 (day_str,),
             )
@@ -769,7 +822,7 @@ class VaultIndexer:
                 """
                 SELECT COUNT(*) AS cnt
                 FROM notes
-                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?;
+                WHERE local_day(created_at) BETWEEN ? AND ?;
                 """,
                 (start.isoformat(), end_day.isoformat()),
             )
@@ -787,7 +840,7 @@ class VaultIndexer:
                 SELECT COUNT(*) AS cnt
                 FROM tasks
                 WHERE status = 'done'
-                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?;
+                  AND local_day(completed_at) BETWEEN ? AND ?;
                 """,
                 (start.isoformat(), end_day.isoformat()),
             )
@@ -847,9 +900,9 @@ class VaultIndexer:
             notes_by_day = _to_daily_count_map(
                 cur,
                 """
-                SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt
+                SELECT local_day(created_at) AS day, COUNT(*) AS cnt
                 FROM notes
-                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
+                WHERE local_day(created_at) BETWEEN ? AND ?
                 GROUP BY day;
                 """,
                 (start_iso, end_iso),
@@ -857,9 +910,9 @@ class VaultIndexer:
             tasks_created_by_day = _to_daily_count_map(
                 cur,
                 """
-                SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt
+                SELECT local_day(created_at) AS day, COUNT(*) AS cnt
                 FROM tasks
-                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
+                WHERE local_day(created_at) BETWEEN ? AND ?
                 GROUP BY day;
                 """,
                 (start_iso, end_iso),
@@ -867,10 +920,10 @@ class VaultIndexer:
             tasks_done_by_day = _to_daily_count_map(
                 cur,
                 """
-                SELECT substr(COALESCE(completed_at, updated_at), 1, 10) AS day, COUNT(*) AS cnt
+                SELECT local_day(completed_at) AS day, COUNT(*) AS cnt
                 FROM tasks
                 WHERE status = 'done'
-                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?
+                  AND local_day(completed_at) BETWEEN ? AND ?
                 GROUP BY day;
                 """,
                 (start_iso, end_iso),
@@ -888,10 +941,10 @@ class VaultIndexer:
             todos_done_by_day = _to_daily_count_map(
                 cur,
                 """
-                SELECT substr(COALESCE(completed_at, updated_at), 1, 10) AS day, COUNT(*) AS cnt
+                SELECT local_day(completed_at) AS day, COUNT(*) AS cnt
                 FROM todos
                 WHERE checked = 1
-                  AND substr(COALESCE(completed_at, updated_at), 1, 10) BETWEEN ? AND ?
+                  AND local_day(completed_at) BETWEEN ? AND ?
                 GROUP BY day;
                 """,
                 (start_iso, end_iso),
@@ -901,7 +954,7 @@ class VaultIndexer:
                 """
                 SELECT COUNT(*) AS cnt
                 FROM notes
-                WHERE substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                WHERE local_day(updated_at) BETWEEN ? AND ?;
                 """,
                 (start_iso, end_iso),
             )
@@ -993,11 +1046,11 @@ class VaultIndexer:
                   title,
                   note_type,
                   updated_at,
-                  CASE WHEN substr(created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END AS created_hit,
-                  CASE WHEN substr(updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END AS updated_hit
+                  CASE WHEN local_day(created_at) BETWEEN ? AND ? THEN 1 ELSE 0 END AS created_hit,
+                  CASE WHEN local_day(updated_at) BETWEEN ? AND ? THEN 1 ELSE 0 END AS updated_hit
                 FROM notes
-                WHERE substr(created_at, 1, 10) BETWEEN ? AND ?
-                   OR substr(updated_at, 1, 10) BETWEEN ? AND ?;
+                WHERE local_day(created_at) BETWEEN ? AND ?
+                   OR local_day(updated_at) BETWEEN ? AND ?;
                 """,
                 (start_iso, end_iso, start_iso, end_iso, start_iso, end_iso, start_iso, end_iso),
             )
@@ -1032,9 +1085,9 @@ class VaultIndexer:
                   t.path,
                   COALESCE(MAX(n.title), MAX(t.title), '') AS title,
                   MAX(t.updated_at) AS last_updated,
-                  SUM(CASE WHEN substr(t.created_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
-                  SUM(CASE WHEN t.status = 'done' AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
-                  SUM(CASE WHEN substr(t.updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                  SUM(CASE WHEN local_day(t.created_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
+                  SUM(CASE WHEN t.status = 'done' AND local_day(t.completed_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN local_day(t.updated_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
                 FROM tasks t
                 LEFT JOIN notes n ON lower(replace(n.path, '\\', '/')) = lower(replace(t.path, '\\', '/'))
                 WHERE t.path IS NOT NULL AND t.path <> ''
@@ -1070,8 +1123,8 @@ class VaultIndexer:
                   MAX(COALESCE(n.title, '')) AS note_title,
                   MAX(COALESCE(n.note_type, 'note')) AS note_type,
                   SUM(CASE WHEN substr(COALESCE(t.created_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS created_hits,
-                  SUM(CASE WHEN t.checked = 1 AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
-                  SUM(CASE WHEN substr(t.updated_at, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
+                  SUM(CASE WHEN t.checked = 1 AND local_day(t.completed_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS done_hits,
+                  SUM(CASE WHEN local_day(t.updated_at) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS updated_hits
                 FROM todos t
                 LEFT JOIN notes n ON n.id = t.note_id
                 GROUP BY t.note_path;
@@ -1113,13 +1166,13 @@ class VaultIndexer:
                 SELECT
                   t.path,
                   COALESCE(n.title, t.title, '') AS title,
-                  COALESCE(t.completed_at, t.updated_at) AS completed_at,
+                  t.completed_at AS completed_at,
                   COALESCE(n.note_type, 'task') AS note_type
                 FROM tasks t
                 LEFT JOIN notes n ON lower(replace(n.path, '\\', '/')) = lower(replace(t.path, '\\', '/'))
                 WHERE t.status = 'done'
-                  AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ?
-                ORDER BY COALESCE(t.completed_at, t.updated_at) DESC
+                  AND local_day(t.completed_at) BETWEEN ? AND ?
+                ORDER BY t.completed_at DESC
                 LIMIT ?;
                 """,
                 (start_iso, end_iso, completed_limit),
@@ -1133,12 +1186,12 @@ class VaultIndexer:
                   COALESCE(n.title, '') AS note_title,
                   COALESCE(n.note_type, 'note') AS note_type,
                   t.raw_text,
-                  COALESCE(t.completed_at, t.updated_at) AS completed_at
+                  t.completed_at AS completed_at
                 FROM todos t
                 LEFT JOIN notes n ON n.id = t.note_id
                 WHERE t.checked = 1
-                  AND substr(COALESCE(t.completed_at, t.updated_at), 1, 10) BETWEEN ? AND ?
-                ORDER BY COALESCE(t.completed_at, t.updated_at) DESC
+                  AND local_day(t.completed_at) BETWEEN ? AND ?
+                ORDER BY t.completed_at DESC
                 LIMIT ?;
                 """,
                 (start_iso, end_iso, completed_limit * 2),
@@ -1152,7 +1205,7 @@ class VaultIndexer:
             status = str(row.get("status", "")).strip().lower().replace("-", "_")
             if status != "done":
                 return True
-            done_day = _to_iso_day_value(row.get("completed_at")) or _to_iso_day_value(row.get("updated_at"))
+            done_day = _to_iso_day_value(row.get("completed_at"))
             if not done_day:
                 return False
             return day_iso < done_day
@@ -1164,7 +1217,7 @@ class VaultIndexer:
             checked = bool(row.get("checked"))
             if not checked:
                 return True
-            done_day = _to_iso_day_value(row.get("completed_at")) or _to_iso_day_value(row.get("updated_at"))
+            done_day = _to_iso_day_value(row.get("completed_at"))
             if not done_day:
                 return False
             return day_iso < done_day
@@ -1340,57 +1393,36 @@ class VaultIndexer:
             "completed_items": completed_items,
         }
 
+    @batch_projection
     def reindex_vault(
         self,
         vault_path: Path,
         progress_callback: Callable[[str, int, int, str | None], None] | None = None,
     ) -> dict[str, int]:
-        self.clear_all()
-        notes_indexed = 0
-        tasks_indexed = 0
-        processed = 0
-
-        excluded_note_roots = {"00_inbox", "tasks", "03_tasks", ".system", "system", "99_system", "02_entities"}
-        if (vault_path / "daily").is_dir():
-            excluded_note_roots.add("01_daily")
-        if (vault_path / "tags").is_dir():
-            excluded_note_roots.add("02_tags")
-        if (vault_path / "tasks").is_dir():
-            excluded_note_roots.add("03_tasks")
-        if (vault_path / "system").is_dir():
-            excluded_note_roots.add("99_system")
-        if progress_callback:
-            progress_callback("Dateien werden gesucht ...", 0, 0, None)
-        note_files: list[Path] = []
-        for child in vault_path.iterdir():
-            if not child.is_dir() or child.name in excluded_note_roots:
+        sources = markdown_sources(vault_path)
+        prefetch_markdown(sources)
+        parsed = []
+        ids = {}
+        # Validate the complete source set before replacing the previous projection.
+        for path in sources:
+            meta, _ = parse_markdown(path)
+            kind = str(meta.get('type', 'note')).lower().replace('-', '_')
+            if kind in {'task_link', 'tag_index'}:
                 continue
-            note_files.extend(child.rglob("*.md"))
-
-        task_root = vault_path / "tasks"
-        if not task_root.is_dir():
-            task_root = vault_path / "03_tasks"
-        task_files: list[Path] = []
-        if task_root.is_dir():
-            task_files.extend(task_root.rglob("*.md"))
-
-        total = len(note_files) + len(task_files)
-        if progress_callback:
-            progress_callback("Notizen werden indexiert ...", processed, total, None)
-        for md in note_files:
-            notes_indexed += self._index_note_markdown(md)
-            processed += 1
+            identity = str(meta.get('id', '')).strip()
+            if identity and identity in ids:
+                raise ValueError(f'Doppelte Markdown-ID {identity}: {ids[identity]} und {path}')
+            if identity:
+                ids[identity] = path
+            parsed.append((path, kind))
+        self.clear_all()
+        notes_indexed = tasks_indexed = 0
+        for processed, (path, kind) in enumerate(parsed, 1):
+            notes_indexed += self._index_note_markdown(path)
+            self._record_file(path)
+            tasks_indexed += int(kind == 'task')
             if progress_callback:
-                progress_callback("Notizen werden indexiert ...", processed, total, str(md))
-
-        if progress_callback:
-            progress_callback("Tasks werden indexiert ...", processed, total, None)
-        for md in task_files:
-            tasks_indexed += self._index_task_markdown(md)
-            processed += 1
-            if progress_callback:
-                progress_callback("Tasks werden indexiert ...", processed, total, str(md))
-
+                progress_callback('Markdown wird indexiert ...', processed, len(parsed), str(path))
         return {"notes": notes_indexed, "tasks": tasks_indexed}
 
     def _index_note_markdown(self, file_path: Path, preserved_todo_rows: list[dict[str, Any]] | None = None) -> int:
@@ -1426,11 +1458,7 @@ class VaultIndexer:
             updated_at=updated_at,
         )
 
-        raw_tags = meta.get("tags", [])
-        if isinstance(raw_tags, str):
-            raw_tags = [raw_tags]
-        if not isinstance(raw_tags, list):
-            raw_tags = []
+        raw_tags = _extract_tags(meta, body)
 
         tags = []
         for item in raw_tags:
@@ -1487,51 +1515,6 @@ class VaultIndexer:
             )
         return 1
 
-    def _index_task_markdown(self, file_path: Path) -> int:
-        meta, body = parse_markdown(file_path)
-        if str(meta.get("type", "")).strip().lower().replace("-", "_") == "task_link":
-            return 0
-        task_id = str(meta.get("id", "")).strip()
-        if not task_id:
-            digest = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]
-            task_id = f"task_{digest}"
-
-        stat = file_path.stat()
-        fallback_created = datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds")
-        fallback_updated = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
-
-        title = str(meta.get("title", "")).strip()
-        if not title:
-            title = body.splitlines()[0].strip() if body.strip() else str(file_path.stem or task_id)
-        inferred_status = "done" if "done" in {part.lower() for part in file_path.parts} else "open"
-        parsed = ParsedTask(
-            title=title,
-            due_date=str(meta.get("due_date", "") or "") or None,
-            priority=str(meta.get("priority", "M")).upper()[:1] or "M",
-            status=str(meta.get("status", inferred_status)).lower().replace("-", "_"),
-            project_tag=str(meta.get("project_tag", "") or "") or None,
-            estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
-            completed_at=_normalize_iso_timestamp(meta.get("completed_at")),
-            blocked_by_ids=_normalize_task_id_list(meta.get("blocked_by_ids"), exclude_id=task_id),
-            waiting_for=_normalize_free_text(meta.get("waiting_for")),
-            follow_up_date=_normalize_iso_date(meta.get("follow_up_date")),
-            blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
-            next_action_hint=_normalize_free_text(meta.get("next_action_hint")),
-        )
-        created_at = str(meta.get("created_at", fallback_created))
-        updated_at = str(meta.get("updated_at", fallback_updated))
-        note_id = str(meta.get("note_id", "") or "") or None
-
-        self.add_or_update_task(
-            task_id=task_id,
-            note_id=note_id,
-            path=str(file_path),
-            parsed=parsed,
-            created_at=created_at,
-            updated_at=updated_at,
-        )
-        return 1
-
 
 def _split_tag(raw: str) -> tuple[str, str] | None:
     if ":" not in raw:
@@ -1584,13 +1567,7 @@ def _normalize_related_value(raw: str) -> str:
 
 
 def _to_iso_day_value(raw: Any) -> str:
-    timestamp = _normalize_iso_timestamp(raw)
-    if timestamp:
-        return timestamp[:10]
-    clean = str(raw or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", clean):
-        return clean
-    return ""
+    return calendar_day(raw)
 
 
 def _normalize_iso_date(raw: Any) -> str | None:
@@ -1675,7 +1652,8 @@ def _normalize_task_id_list(raw: Any, exclude_id: str = "") -> list[str]:
 
 def _extract_body_auto_tags(body: str) -> list[str]:
     found: set[str] = set()
-    text = body or ""
+    from .markdown_syntax import prose_text
+    text = prose_text(body or "")
 
     for match in INLINE_TITLE_TAG_PATTERN.finditer(text):
         found.add(f"{match.group(1)}:{match.group(2)}")

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import {useSyncedDraft} from './useSyncedDraft'
+import { useEffect, useRef } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
 
@@ -97,42 +98,14 @@ export function NotePropertiesPanel({
   onCommitRelatedInput,
   onCloseRelatedInput,
 }: NotePropertiesPanelProps) {
-  const [titleDraft, setTitleDraft] = useState(document.frontmatter.title)
-  const [estimateDraft, setEstimateDraft] = useState(document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
-  const [blockedByIdsDraft, setBlockedByIdsDraft] = useState(document.frontmatter.blocked_by_ids.join(', '))
-  const [waitingForDraft, setWaitingForDraft] = useState(document.frontmatter.waiting_for)
-  const [followUpDateDraft, setFollowUpDateDraft] = useState(document.frontmatter.follow_up_date)
-  const [blockedReasonDraft, setBlockedReasonDraft] = useState(document.frontmatter.blocked_reason)
-  const [nextActionHintDraft, setNextActionHintDraft] = useState(document.frontmatter.next_action_hint)
+  const [titleDraft, setTitleDraft] = useSyncedDraft(tabPath, document.frontmatter.title)
+  const [estimateDraft, setEstimateDraft] = useSyncedDraft(tabPath, document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
+  const [blockedByIdsDraft, setBlockedByIdsDraft] = useSyncedDraft(tabPath, document.frontmatter.blocked_by_ids.join(', '))
+  const [waitingForDraft, setWaitingForDraft] = useSyncedDraft(tabPath, document.frontmatter.waiting_for)
+  const [followUpDateDraft, setFollowUpDateDraft] = useSyncedDraft(tabPath, document.frontmatter.follow_up_date)
+  const [blockedReasonDraft, setBlockedReasonDraft] = useSyncedDraft(tabPath, document.frontmatter.blocked_reason)
+  const [nextActionHintDraft, setNextActionHintDraft] = useSyncedDraft(tabPath, document.frontmatter.next_action_hint)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
-
-  useEffect(() => {
-    setTitleDraft(document.frontmatter.title)
-  }, [tabPath, document.frontmatter.title])
-
-  useEffect(() => {
-    setEstimateDraft(document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
-  }, [document.frontmatter.estimate_minutes, tabPath])
-
-  useEffect(() => {
-    setBlockedByIdsDraft(document.frontmatter.blocked_by_ids.join(', '))
-  }, [document.frontmatter.blocked_by_ids, tabPath])
-
-  useEffect(() => {
-    setWaitingForDraft(document.frontmatter.waiting_for)
-  }, [document.frontmatter.waiting_for, tabPath])
-
-  useEffect(() => {
-    setFollowUpDateDraft(document.frontmatter.follow_up_date)
-  }, [document.frontmatter.follow_up_date, tabPath])
-
-  useEffect(() => {
-    setBlockedReasonDraft(document.frontmatter.blocked_reason)
-  }, [document.frontmatter.blocked_reason, tabPath])
-
-  useEffect(() => {
-    setNextActionHintDraft(document.frontmatter.next_action_hint)
-  }, [document.frontmatter.next_action_hint, tabPath])
 
   useEffect(() => {
     const titleInput = titleInputRef.current

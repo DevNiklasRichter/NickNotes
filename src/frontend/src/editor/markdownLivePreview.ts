@@ -1,4 +1,5 @@
-﻿import { syntaxTree } from '@codemirror/language'
+import { authenticatedFetch } from '../app/apiClient'
+import { syntaxTree } from '@codemirror/language'
 import { Facet, type EditorState, type Extension, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
 import { DEFAULT_TAG_GROUP_COLOR } from '../tags/tagColorPalette'
@@ -231,7 +232,14 @@ class InlineImageWidget extends WidgetType {
       source: this.source,
     })
     const cleanBackendUrl = this.backendUrl.replace(/\/+$/, '')
-    image.src = `${cleanBackendUrl}/notes/media/content?${params.toString()}`
+    void authenticatedFetch(`${cleanBackendUrl}/notes/media/content?${params.toString()}`).then(response => response.blob()).then(blob => {
+      if (!image.isConnected) return
+      const objectUrl = URL.createObjectURL(blob)
+      const release = () => URL.revokeObjectURL(objectUrl)
+      image.addEventListener('load', release, {once: true})
+      image.addEventListener('error', release, {once: true})
+      image.src = objectUrl
+    }).catch(() => { image.alt = 'Bild konnte nicht geladen werden.' })
     if (this.width) {
       image.style.width = `${this.width}px`
     }
@@ -1572,6 +1580,12 @@ function decorateTaskLines(
           const markerFrom = line.from + match[1].length
           const markerTo = markerFrom + 3
           const checked = match[2].toLowerCase() === 'x'
+          const metadata = /\s+<!-- nn:todo created=[^ ]* completed=[^ ]* -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/.exec(line.text)
+          if (metadata) {
+            const from = line.from + metadata.index
+            addSyntaxVisibilityRange(entries, from, line.to, intersectsSelection(from, line.to, selections))
+          }
+
           const markerIsActive = intersectsSelection(Math.max(line.from, markerFrom - 1), Math.min(line.to, markerTo + 1), selections)
 
           addLineClass(entries, line.from, `cm-md-task-line ${checked ? 'cm-md-task-checked' : 'cm-md-task-open'}`, lineClassSeen)

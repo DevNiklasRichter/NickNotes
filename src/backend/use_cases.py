@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import sqlite3
 import traceback
 from datetime import date, datetime
@@ -8,8 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .config import FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT
+from .nicknotes_backend.dates import calendar_day
+from .nicknotes_backend.markdown_io import parse_markdown_text, MarkdownFormatError
 from .nicknotes_backend.indexer import VaultIndexer
-from .nicknotes_backend.ai_client import OpenAIConfig, OpenAISuggester
 from .nicknotes_backend.onenote_importer import (
     OneNoteImportError,
     OneNoteLocalImporter,
@@ -53,23 +55,20 @@ class OpenVaultUseCase:
         indexer = None
         try:
             vault = VaultManager(vault_path)
+            from .nicknotes_backend.source_journal import pending_recovery
+            if pending_recovery(vault):
+                vault.validate_roots()
+                indexer = self._open_indexer(vault)
+                service.state.start_session(vault=vault, indexer=indexer)
+                return {'vaultPath':str(vault_path),'noteBasePath':str(vault_path),'indexed':{},'mode':'core','tagGroups':vault.read_tag_groups(),'counts':service.counts(indexer),'graphStatus':service.graph_index_status(vault),'recoveryRequired':True}
             vault.ensure_structure()
             indexer = self._open_indexer(vault)
 
-            cfg = vault.read_config()
-            openai_cfg = cfg.get("openai", {})
-            smart_enabled = cfg.get("mode", "core") == "smart" and bool(openai_cfg.get("enabled"))
-            openai = OpenAISuggester(
-                OpenAIConfig(
-                    enabled=smart_enabled,
-                    model=str(openai_cfg.get("model", "gpt-4.1-mini")),
-                    api_key_env=str(openai_cfg.get("api_key_env", "OPENAI_API_KEY")),
-                )
-            )
-
             if progress_callback:
                 progress_callback("Index wird vorbereitet ...", 0, 0, None)
-            indexed = indexer.reindex_vault(vault_path, progress_callback=progress_callback)
+            from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
+            baseline = graph_watcher_snapshot(vault_path)
+            indexed = indexer.reconcile_vault(vault_path, progress_callback=progress_callback)
             if progress_callback:
                 progress_callback(
                     "Aufgabenstatus wird aktualisiert ...",
@@ -90,10 +89,17 @@ class OpenVaultUseCase:
                     None,
                 )
             tag_groups = vault.sync_tag_groups_with_index(indexer)
-            graph_status = service.rebuild_graph_projection(vault)
+            from .nicknotes_backend.graph_index import _stable_json_hash
+            from .nicknotes_backend.graph_storage import read_graph_index
+            existing_graph = read_graph_index(vault.graph_index_path)
+            if indexed['changed'] or indexed['deleted'] or service.graph_index_needs_rebuild(existing_graph) or existing_graph.source.get('tag_groups_hash') != _stable_json_hash(tag_groups):
+                graph_status = service.rebuild_graph_projection(vault)
+            else:
+                graph_status = service.graph_index_status(vault, existing_graph)
+            (vault.system_path/'projection-dirty.json').unlink(missing_ok=True)
             try:
-                service.state.start_session(vault=vault, indexer=indexer, openai=openai)
-                service.state.start_graph_watcher()
+                service.state.start_session(vault=vault, indexer=indexer)
+                service.state.start_graph_watcher(baseline)
             except Exception as exc:
                 service.state.graph_status.last_error = f"Graph watcher could not be started: {exc}"
                 logger.exception("Graph watcher could not be started.")
@@ -116,6 +122,11 @@ class OpenVaultUseCase:
                 vault_id=str(vault_path),
                 internal_message=str(exc),
             ) from exc
+        except ValueError as exc:
+            if indexer:
+                indexer.close()
+            service.state.dispose_session()
+            raise ValidationDomainError(str(exc), operation='open_vault', vault_id=str(vault_path)) from exc
         except Exception as exc:
             if indexer:
                 indexer.close()
@@ -132,7 +143,7 @@ class OpenVaultUseCase:
             "vaultPath": str(vault_path),
             "noteBasePath": str(vault_path),
             "indexed": indexed,
-            "mode": "smart" if smart_enabled else "core",
+            "mode": "core",
             "tagGroups": tag_groups,
             "counts": service.counts(indexer),
             "graphStatus": graph_status,
@@ -163,15 +174,7 @@ class GetFocusDashboardUseCase:
 
     @staticmethod
     def _to_iso_day(value: Any) -> str:
-        clean = str(value or "").strip()
-        if not clean:
-            return ""
-        candidate = clean[:10]
-        try:
-            datetime.fromisoformat(candidate)
-        except ValueError:
-            return ""
-        return candidate
+        return calendar_day(value)
 
     @staticmethod
     def _to_blocked_by_ids(raw: Any) -> list[str]:
@@ -233,10 +236,7 @@ class GetFocusDashboardUseCase:
             if status != "done":
                 continue
             completed_day = GetFocusDashboardUseCase._to_iso_day(task.get("completed_at"))
-            updated_day = GetFocusDashboardUseCase._to_iso_day(task.get("updated_at"))
-            # Transitional fallback for legacy items without completed_at.
-            effective_day = completed_day or updated_day
-            if effective_day == day_iso:
+            if completed_day == day_iso:
                 done_tasks += 1
 
         done_todos = 0
@@ -244,10 +244,7 @@ class GetFocusDashboardUseCase:
             if not bool(todo.get("checked")):
                 continue
             completed_day = GetFocusDashboardUseCase._to_iso_day(todo.get("completed_at"))
-            updated_day = GetFocusDashboardUseCase._to_iso_day(todo.get("updated_at"))
-            # Transitional fallback for legacy items without completed_at.
-            effective_day = completed_day or updated_day
-            if effective_day == day_iso:
+            if completed_day == day_iso:
                 done_todos += 1
 
         return done_tasks, done_todos
@@ -330,6 +327,25 @@ class SaveNoteContentUseCase:
         vault, indexer = service.require_loaded()
         vault_root = vault.vault_path.resolve()
         normalized_path = service._resolve_note_request_path(vault=vault, raw_path=req.path, allow_missing=True)
+        actual = hashlib.sha256(normalized_path.read_bytes()).hexdigest() if normalized_path.exists() else None
+        if actual != req.expected_revision:
+            raise ConflictDomainError('Die Notiz wurde zwischenzeitlich geaendert. Bitte neu laden; dein Entwurf bleibt erhalten.')
+        try:
+            if len(req.content.encode('utf-8'))>5*1024*1024:
+                raise MarkdownFormatError('Eine Notiz darf maximal 5 MB gross sein.')
+            incoming, _ = parse_markdown_text(req.content)
+            existing, _ = parse_markdown_text(normalized_path.read_text(encoding='utf-8'))
+            for identity in ('id','node_id'):
+                if existing.get(identity) and incoming.get(identity) != existing[identity]:
+                    raise MarkdownFormatError('Die stabile Notiz-ID darf beim Speichern nicht geaendert oder entfernt werden.')
+            if incoming.get('due_date'):
+                date.fromisoformat(str(incoming['due_date']))
+            if 'status' in incoming and str(incoming['status']).lower().replace('-','_').replace(' ','_') not in {'new_topic','open','in_progress','on_hold','done'}:
+                raise MarkdownFormatError('Unbekannter Task-Status.')
+            if 'priority' in incoming and str(incoming['priority']).lower() not in {'l','m','h','low','medium','high'}:
+                raise MarkdownFormatError('Unbekannte Prioritaet.')
+        except (MarkdownFormatError,ValueError) as exc:
+            raise ValidationDomainError(str(exc)) from exc
         pre_state = {
             "path": str(normalized_path),
             "exists": normalized_path.exists(),
@@ -353,7 +369,7 @@ class SaveNoteContentUseCase:
             else:
                 if result_path.exists():
                     result_path.unlink(missing_ok=True)
-            vault._cleanup_orphan_media_assets()
+            # Uncommitted media may still belong to another editor draft.
 
         def _sync_tags(context: dict[str, Any]) -> list[dict[str, Any]] | None:
             result = context["save_note_document"]
@@ -382,6 +398,8 @@ class SaveNoteContentUseCase:
             build_response=lambda context: {
                 "saved": True,
                 "path": str(context["save_note_document"]["path"]),
+                "revision": hashlib.sha256(service._resolve_note_request_path(vault=vault, raw_path=context["save_note_document"]["path"]).read_bytes()).hexdigest(),
+                "content": service._resolve_note_request_path(vault=vault, raw_path=context["save_note_document"]["path"]).read_bytes().decode('utf-8'),
                 "title": str(context["save_note_document"]["title"]),
                 "counts": service.counts(indexer),
                 "tagGroups": context.get("sync_tag_groups"),

@@ -1,6 +1,6 @@
 import type { GraphFilters } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
-import { useGraphWorkspace } from './GraphWorkspaceContext'
+import { useGraphWorkspace } from './useGraphWorkspace'
 
 export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vaultLoaded: boolean; onOpenGraphDashboard: () => void }) {
   const graph = useGraphWorkspace()
@@ -134,12 +134,12 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             <div className="focus-sidebar-check-grid">
               {renderCheckbox('showLinkEdges', 'Links', 'Direkte WikiLinks von einer Datei zu einer anderen Datei.')}
               {renderCheckbox('showTagUsageEdges', 'Tag-Nutzung', 'Verbindung von einer Datei zu einem Tag, den sie verwendet.')}
-              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Similarity-Kanten zwischen Dateien mit gemeinsamen Tags. Kann bei grossen NoteBases viele Kanten erzeugen.')}
+              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Gemeinsame Tags der ausgewaehlten Notiz mit maximal 50 Nachbarn. Waehle zuerst einen Notizknoten.')}
             </div>
           </div>
         </div>
         <p className="task-sidebar-summary">
-          Sichtbar: {graph.filtered.nodes.length} Nodes, {graph.filtered.edges.length} Edges
+          Sichtbar: {graph.filtered.nodes.length} Knoten, {graph.filtered.edges.length} Verbindungen. Insgesamt {graph.index?.nodes.length ?? 0} Knoten.
         </p>
       </section>
     </div>

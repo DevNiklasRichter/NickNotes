@@ -1,3 +1,4 @@
+import { test } from 'vitest'
 import type { FocusDashboardFilters, SearchRow, TaskRow, TodoRow } from '../app/AppShared'
 import { buildFocusContextHits, buildFocusDashboardData } from './focusDashboardModel'
 
@@ -140,7 +141,7 @@ export function runPhaseFFocusModelAssertions(): void {
     },
   })
 
-  assert(data.capacityStatus === 'balanced' || data.capacityStatus === 'heavy' || data.capacityStatus === 'overloaded', { name: 'capacity' }, 'capacity status should consider estimates and uncertainty')
+  assert(data.capacityStatus === 'light', { name: 'capacity' }, '40 executable estimated minutes plus uncertainty remain below the 150 minute light threshold')
   assert(data.nextActionItems.length > 0, { name: 'next-action' }, 'next action list should not be empty')
   assert(data.nextActionItems[0]?.item.key === 'task:tk_mit', { name: 'next-action' }, 'MIT task with clear next action should be ranked first')
   assert(
@@ -236,7 +237,7 @@ export function runPhaseFFocusModelAssertions(): void {
   const contextItem = contextData.focusItems[0]
   assert(Boolean(contextItem), { name: 'context-stopwords' }, 'context test item should exist')
   if (contextItem) {
-    const contextHits = buildFocusContextHits(contextItem, contextNotes, todayIso)
+    const contextHits = buildFocusContextHits(contextItem, contextNotes)
     assert(
       contextHits.some((hit) => hit.path.endsWith('/integration-plan.md')),
       { name: 'context-stopwords' },
@@ -249,3 +250,5 @@ export function runPhaseFFocusModelAssertions(): void {
     )
   }
 }
+
+test('focus planning and execution', runPhaseFFocusModelAssertions)

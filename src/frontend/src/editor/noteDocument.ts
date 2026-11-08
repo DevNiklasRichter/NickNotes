@@ -1,3 +1,4 @@
+import { parseDocument, stringify } from 'yaml'
 import { normalizeTagCandidate } from '../tags/tagTypes'
 import type { TaskPriority, TaskStatus } from '../shared/taskDomain'
 export type { TaskPriority, TaskStatus } from '../shared/taskDomain'
@@ -78,7 +79,7 @@ function ensureListOfStrings(value: unknown): string[] {
 }
 
 function nowIso(): string {
-  return new Date().toISOString().slice(0, 19)
+  return new Date().toISOString()
 }
 
 function createNodeId(noteType: NoteType): string {
@@ -114,7 +115,7 @@ function normalizeIsoTimestamp(raw: unknown): string {
   if (Number.isNaN(parsed.getTime())) {
     return ''
   }
-  return parsed.toISOString().slice(0, 19)
+  return parsed.toISOString()
 }
 
 function normalizeEstimateMinutes(raw: unknown): number | null {
@@ -227,71 +228,22 @@ export function extractRelatedLinks(body: string): string[] {
 }
 
 function parseFrontmatter(text: string): { frontmatter: Record<string, unknown>; body: string; hadFrontmatter: boolean } {
-  const normalizedText = text.replace(/^\uFEFF/, '')
-  if (!normalizedText.startsWith('---\n')) {
-    return { frontmatter: {}, body: normalizedText, hadFrontmatter: false }
-  }
+  const normalizedText = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+  if (!normalizedText.startsWith('---\n')) return { frontmatter: {}, body: normalizedText, hadFrontmatter: false }
   const lines = normalizedText.split('\n')
-  const frontmatter: Record<string, unknown> = {}
-  let currentListKey: string | null = null
-  let endIndex = -1
-
-  for (let index = 1; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
-    if (line.trim() === '---') {
-      endIndex = index
-      break
-    }
-    if (line.startsWith('  - ') && currentListKey) {
-      const current = frontmatter[currentListKey]
-      if (Array.isArray(current)) {
-        current.push(line.slice(4).trim())
-      } else {
-        frontmatter[currentListKey] = [line.slice(4).trim()]
-      }
-      continue
-    }
-    const separatorIndex = line.indexOf(':')
-    if (separatorIndex < 0) {
-      continue
-    }
-    const key = line.slice(0, separatorIndex).trim()
-    const value = line.slice(separatorIndex + 1).trim()
-    if (!key) {
-      continue
-    }
-    if (!value) {
-      frontmatter[key] = []
-      currentListKey = key
-    } else {
-      frontmatter[key] = value
-      currentListKey = null
-    }
-  }
-
-  if (endIndex < 0) {
-    return { frontmatter: {}, body: normalizedText, hadFrontmatter: false }
-  }
-
-  const body = lines.slice(endIndex + 1).join('\n').replace(/^\n+/, '')
-  return { frontmatter, body, hadFrontmatter: true }
+  const end = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  if (end < 0) throw new Error('Frontmatter-Abschluss fehlt.')
+  const header = lines.slice(1, end).join('\n')
+  if (header.length > 65536) throw new Error('Frontmatter ist zu gross.')
+  const document = parseDocument(header, { uniqueKeys: true })
+  if (document.errors.length) throw new Error('Ungueltiges YAML-Frontmatter: ' + document.errors[0].message)
+  const value: unknown = document.toJS({ maxAliasCount: 32 })
+  if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Frontmatter muss ein Objekt sein.')
+  return { frontmatter: (value ?? {}) as Record<string, unknown>, body: lines.slice(end + 1).join('\n').replace(/^\n+/, ''), hadFrontmatter: true }
 }
 
 function toFrontmatterLines(frontmatter: Record<string, unknown>): string[] {
-  const lines: string[] = ['---']
-  for (const [key, rawValue] of Object.entries(frontmatter)) {
-    if (Array.isArray(rawValue)) {
-      lines.push(`${key}:`)
-      for (const item of rawValue) {
-        lines.push(`  - ${String(item ?? '').trim()}`)
-      }
-      continue
-    }
-    lines.push(`${key}: ${String(rawValue ?? '').trim()}`)
-  }
-  lines.push('---')
-  lines.push('')
-  return lines
+  return ['---', ...stringify(frontmatter, { lineWidth: 120 }).trimEnd().split('\n'), '---', '']
 }
 
 export function parseNoteDocument(text: string, fallbackTitle: string): ParsedNoteDocument {

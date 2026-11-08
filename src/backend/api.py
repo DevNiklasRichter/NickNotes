@@ -24,16 +24,6 @@ from pydantic import BaseModel, Field
 
 from .contracts import (
     API_CONTRACT_VERSION,
-    AssistantChangeSetApplyResponse,
-    AssistantChangeSetPreviewResponse,
-    AssistantChatResponse,
-    AssistantEmbeddingStatusResponse,
-    AssistantMediaStageResponse,
-    AssistantProviderProbeResponse,
-    AssistantRetrievalEvaluationResponse,
-    AssistantSettingsResponse,
-    AssistantTranscriptionResponse,
-    AssistantVoiceStatusResponse,
     BackendStateResponse,
     CapturePreviewResponse,
     DailyOpenResponse,
@@ -47,6 +37,7 @@ from .contracts import (
     NoteAddResponse,
     NoteBaseOpenStartResponse,
     NoteContentResponse,
+    NoteSaveResponse,
     NoteFavoritesResponse,
     NoteGroupAddResponse,
     NoteGroupDeleteResponse,
@@ -96,29 +87,11 @@ from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
-from .nicknotes_backend.ai_client import OpenAISuggester
 from .application_services import BackendApiService
 from .use_cases import GetFocusDashboardUseCase
 from .nicknotes_backend.parser import CaptureParser
 from .nicknotes_backend.vault import VaultManager
-from .nicknotes_backend.assistant_limits import (
-    ASSISTANT_DEFAULT_CONTEXT_CHARS,
-    ASSISTANT_DEFAULT_CONTEXT_NOTES,
-    ASSISTANT_MAX_CHAT_MESSAGE_CHARS,
-    ASSISTANT_DEFAULT_PROVIDER_RETRIES,
-    ASSISTANT_DEFAULT_REQUEST_CHARS,
-    ASSISTANT_DEFAULT_RESPONSE_CHARS,
-    ASSISTANT_MAX_CONTEXT_CHARS,
-    ASSISTANT_MAX_CONTEXT_NOTES,
-    ASSISTANT_MAX_PROVIDER_RETRIES,
-    ASSISTANT_MAX_RESPONSE_CHARS,
-    ASSISTANT_MAX_REQUEST_CHARS,
-    ASSISTANT_MIN_CONTEXT_CHARS,
-    ASSISTANT_MIN_CONTEXT_NOTES,
-    ASSISTANT_MIN_PROVIDER_RETRIES,
-    ASSISTANT_MIN_RESPONSE_CHARS,
-    ASSISTANT_MIN_REQUEST_CHARS,
-)
+from .security import LocalApiSecurity
 from .errors import DomainError
 from .operation_context import clear_operation_context, get_operation_context, set_operation_context
 
@@ -161,403 +134,42 @@ def _build_cors_origin_regex() -> str | None:
     return raw_regex or None
 
 
-@dataclass
-class GraphRuntimeStatus:
-    is_updating: bool = False
-    last_error: str | None = None
-    watcher_enabled: bool = False
-    last_external_update: str | None = None
-
-
-@dataclass
-class NoteBaseLoadStatus:
-    active: bool = False
-    done: bool = False
-    error: str | None = None
-    error_code: str | None = None
-    error_details: dict[str, Any] | None = None
-    phase: str = ""
-    processed: int = 0
-    total: int = 0
-    current_path: str | None = None
-    result: dict[str, Any] | None = None
-    started_at: float = 0.0
-    finished_at: float | None = None
-
-
-@dataclass
-class RuntimeState:
-    pass
-
-
-@dataclass
-class VaultSession:
-    vault: VaultManager | None = None
-    indexer: VaultIndexer | None = None
-    parser: CaptureParser = field(default_factory=CaptureParser)
-    openai: OpenAISuggester | None = None
-    projection_lock: threading.RLock = field(default_factory=threading.RLock)
-    graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
-    watcher_stop: threading.Event | None = None
-    watcher_thread: threading.Thread | None = None
-    load_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
-    load_lock: threading.Lock = field(default_factory=threading.Lock)
-    import_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
-    import_lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def dispose(self) -> None:
-        self.stop_graph_watcher()
-        if self.indexer:
-            self.indexer.close()
-            self.indexer = None
-        self.vault = None
-        self.openai = None
-        with self.load_lock:
-            self.load_status = NoteBaseLoadStatus()
-        with self.import_lock:
-            self.import_status = NoteBaseLoadStatus()
-        self.graph_status = GraphRuntimeStatus()
-
-    def start_graph_watcher(self, runtime: "RuntimeState") -> None:
-        if not self.vault or not self.indexer or self.watcher_thread:
-            return
-        stop_event = threading.Event()
-        self.watcher_stop = stop_event
-        self.graph_status.watcher_enabled = True
-        self.watcher_thread = threading.Thread(
-            target=_graph_watcher_loop,
-            args=(runtime, self.vault, self.indexer, stop_event),
-            name="nicknotes-graph-watcher",
-            daemon=True,
-        )
-        self.watcher_thread.start()
-
-    def stop_graph_watcher(self) -> None:
-        if self.watcher_stop:
-            self.watcher_stop.set()
-        if self.watcher_thread and self.watcher_thread.is_alive():
-            self.watcher_thread.join(timeout=2)
-        self.watcher_stop = None
-        self.watcher_thread = None
-        self.graph_status.watcher_enabled = False
-
-    def reset_load_status(self, phase: str) -> None:
-        with self.load_lock:
-            self.load_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
-
-    def update_load_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        with self.load_lock:
-            status = self.load_status
-            if phase is not None:
-                status.phase = phase
-            if processed is not None:
-                status.processed = processed
-            if total is not None:
-                status.total = total
-            if current_path is not None:
-                status.current_path = current_path
-            if error is not None:
-                status.error = error
-            if error_code is not None:
-                status.error_code = error_code
-            if error_details is not None:
-                status.error_details = error_details
-            if result is not None:
-                status.result = result
-            if done is not None:
-                status.done = done
-                status.active = not done
-                if done:
-                    status.finished_at = time.time()
-
-    def get_load_status(self) -> dict[str, Any]:
-        with self.load_lock:
-            status = self.load_status
-            return {
-                "active": status.active,
-                "done": status.done,
-                "error": status.error,
-                "errorCode": status.error_code,
-                "errorDetails": status.error_details,
-                "phase": status.phase,
-                "processed": status.processed,
-                "total": status.total,
-                "currentPath": status.current_path,
-                "result": status.result,
-                "startedAt": status.started_at,
-                "finishedAt": status.finished_at,
-            }
-
-    def reset_import_status(self, phase: str) -> None:
-        with self.import_lock:
-            self.import_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
-
-    def update_import_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        with self.import_lock:
-            status = self.import_status
-            if phase is not None:
-                status.phase = phase
-            if processed is not None:
-                status.processed = processed
-            if total is not None:
-                status.total = total
-            if current_path is not None:
-                status.current_path = current_path
-            if error is not None:
-                status.error = error
-            if error_code is not None:
-                status.error_code = error_code
-            if error_details is not None:
-                status.error_details = error_details
-            if result is not None:
-                status.result = result
-            if done is not None:
-                status.done = done
-                status.active = not done
-                if done:
-                    status.finished_at = time.time()
-
-    def get_import_status(self) -> dict[str, Any]:
-        with self.import_lock:
-            status = self.import_status
-            return {
-                "active": status.active,
-                "done": status.done,
-                "error": status.error,
-                "errorCode": status.error_code,
-                "errorDetails": status.error_details,
-                "phase": status.phase,
-                "processed": status.processed,
-                "total": status.total,
-                "currentPath": status.current_path,
-                "result": status.result,
-                "startedAt": status.started_at,
-                "finishedAt": status.finished_at,
-            }
-
-
-@dataclass
-class RuntimeState:
-    _session: VaultSession = field(default_factory=VaultSession)
-    session_lock: threading.Lock = field(default_factory=threading.Lock)
-
-    @property
-    def vault(self) -> VaultManager | None:
-        return self._session.vault
-
-    @vault.setter
-    def vault(self, value: VaultManager | None) -> None:
-        self._session.vault = value
-
-    @property
-    def indexer(self) -> VaultIndexer | None:
-        return self._session.indexer
-
-    @indexer.setter
-    def indexer(self, value: VaultIndexer | None) -> None:
-        self._session.indexer = value
-
-    @property
-    def parser(self) -> CaptureParser:
-        return self._session.parser
-
-    @parser.setter
-    def parser(self, value: CaptureParser) -> None:
-        self._session.parser = value
-
-    @property
-    def openai(self) -> OpenAISuggester | None:
-        return self._session.openai
-
-    @openai.setter
-    def openai(self, value: OpenAISuggester | None) -> None:
-        self._session.openai = value
-
-    @property
-    def graph_status(self) -> GraphRuntimeStatus:
-        return self._session.graph_status
-
-    @graph_status.setter
-    def graph_status(self, value: GraphRuntimeStatus) -> None:
-        self._session.graph_status = value
-
-    @property
-    def projection_lock(self) -> threading.RLock:
-        return self._session.projection_lock
-
-    @property
-    def watcher_stop(self) -> threading.Event | None:
-        return self._session.watcher_stop
-
-    @watcher_stop.setter
-    def watcher_stop(self, value: threading.Event | None) -> None:
-        self._session.watcher_stop = value
-
-    @property
-    def watcher_thread(self) -> threading.Thread | None:
-        return self._session.watcher_thread
-
-    @watcher_thread.setter
-    def watcher_thread(self, value: threading.Thread | None) -> None:
-        self._session.watcher_thread = value
-
-    @property
-    def load_status(self) -> NoteBaseLoadStatus:
-        return self._session.load_status
-
-    @load_status.setter
-    def load_status(self, value: NoteBaseLoadStatus) -> None:
-        self._session.load_status = value
-
-    @property
-    def load_lock(self) -> threading.Lock:
-        return self._session.load_lock
-
-    @property
-    def import_status(self) -> NoteBaseLoadStatus:
-        return self._session.import_status
-
-    @import_status.setter
-    def import_status(self, value: NoteBaseLoadStatus) -> None:
-        self._session.import_status = value
-
-    @property
-    def import_lock(self) -> threading.Lock:
-        return self._session.import_lock
-
-    @property
-    def session(self) -> VaultSession:
-        return self._session
-
-    def start_session(
-        self,
-        *,
-        vault: VaultManager | None,
-        indexer: VaultIndexer | None,
-        openai: OpenAISuggester | None = None,
-        parser: CaptureParser | None = None,
-    ) -> None:
-        with self.session_lock:
-            self._session.dispose()
-            self._session.vault = vault
-            self._session.indexer = indexer
-            self._session.openai = openai
-            if parser is not None:
-                self._session.parser = parser
-
-    def stop_session(self) -> None:
-        with self.session_lock:
-            self._session.stop_graph_watcher()
-            if self._session.indexer:
-                self._session.indexer.close()
-
-    def dispose_session(self) -> None:
-        with self.session_lock:
-            self._session.dispose()
-
-    def close(self) -> None:
-        with self.session_lock:
-            self._session.dispose()
-
-    def start_graph_watcher(self) -> None:
-        with self.session_lock:
-            self._session.start_graph_watcher(self)
-
-    def stop_graph_watcher(self) -> None:
-        with self.session_lock:
-            self._session.stop_graph_watcher()
-
-    def reset_load_status(self, phase: str) -> None:
-        self._session.reset_load_status(phase)
-
-    def update_load_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        self._session.update_load_status(
-            phase=phase,
-            processed=processed,
-            total=total,
-            current_path=current_path,
-            done=done,
-            error=error,
-            error_code=error_code,
-            error_details=error_details,
-            result=result,
-        )
-
-    def get_load_status(self) -> dict[str, Any]:
-        return self._session.get_load_status()
-
-    def reset_import_status(self, phase: str) -> None:
-        self._session.reset_import_status(phase)
-
-    def update_import_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        self._session.update_import_status(
-            phase=phase,
-            processed=processed,
-            total=total,
-            current_path=current_path,
-            done=done,
-            error=error,
-            error_code=error_code,
-            error_details=error_details,
-            result=result,
-        )
-
-    def get_import_status(self) -> dict[str, Any]:
-        return self._session.get_import_status()
-
+from .session import RuntimeState, expected_session
 
 state = RuntimeState()
 backend_api_service = BackendApiService(runtime=state, capabilities=BACKEND_CAPABILITIES)
 
-app = FastAPI(title="NickNotes Backend", version="2.0.0")
+from contextlib import asynccontextmanager
+from .mcp_grants import GrantStore
+from .mcp_server import create_mcp, MCPAuthorization
+
+grant_store = GrantStore()
+
+class MCPGateway:
+    def __init__(self):
+        self.app = None
+
+    async def __call__(self, scope, receive, send):
+        if self.app is None:
+            return await JSONResponse({'error':'Server is starting.'},status_code=503)(scope,receive,send)
+        await self.app(scope, receive, send)
+
+mcp_gateway = MCPGateway()
+
+@asynccontextmanager
+async def lifespan(app):
+    # Each application lifespan owns a fresh SDK manager (also supports test restarts).
+    server = create_mcp(backend_api_service, grant_store)
+    mcp_gateway.app = MCPAuthorization(server.streamable_http_app(), grant_store)
+    async with server.session_manager.run():
+        try:
+            yield
+        finally:
+            state.dispose_session()
+
+app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.1", lifespan=lifespan)
+app.mount('/mcp', mcp_gateway)
+app.add_middleware(LocalApiSecurity)
 allowed_origins = _build_allowed_cors_origins()
 allowed_origin_regex = _build_cors_origin_regex()
 logger.info(
@@ -574,6 +186,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     allow_origin_regex=allowed_origin_regex,
+    expose_headers=['X-NoteBase-Session', 'X-Operation-Id'],
 )
 
 
@@ -645,6 +258,7 @@ def _request_log_payload(request: Request, *, status_code: int | None = None, er
 
 @app.middleware("http")
 async def request_observability_middleware(request: Request, call_next):
+    session_token = expected_session.set(request.headers.get('X-NoteBase-Session'))
     operation_id = request.headers.get("X-Operation-Id") or str(uuid.uuid4())
     trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())
     tokens = set_operation_context(
@@ -664,8 +278,10 @@ async def request_observability_middleware(request: Request, call_next):
         response.headers["X-Operation-Id"] = operation_id
         response.headers["X-Trace-Id"] = trace_id
         response.headers["X-Request-Duration-Ms"] = str(duration_ms)
+        response.headers['X-NoteBase-Session'] = state.generation
         return response
     finally:
+        expected_session.reset(session_token)
         clear_operation_context(tokens)
 
 
@@ -726,274 +342,46 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 
 
 
-class VaultOpenRequest(BaseModel):
-    path: str
-
-
-class VaultCreateRequest(BaseModel):
-    parent_path: str = Field(alias="parentPath")
-    name: str
-
-
-class NoteBaseRenameRequest(BaseModel):
-    new_name: str = Field(alias="newName")
-    path: str | None = None
-
-
-class NoteBaseDeleteRequest(BaseModel):
-    confirm_delete: bool = Field(default=False, alias="confirmDelete")
-    path: str | None = None
-
-
-class CapturePreviewRequest(BaseModel):
-    text: str
-
-
-class CaptureSaveRequest(BaseModel):
-    text: str
-    selected_tag_keys: list[str] = Field(default_factory=list, alias="selectedTagKeys")
-
-
-class AssistantChatRequest(BaseModel):
-    message: str = Field(max_length=ASSISTANT_MAX_CHAT_MESSAGE_CHARS)
-    max_sources: int | None = Field(
-        default=None,
-        alias="maxSources",
-        ge=1,
-        le=ASSISTANT_MAX_CONTEXT_NOTES,
-    )
-
-
-class AssistantChangeSetPreviewRequest(BaseModel):
-    path: str
-    instruction: str
-
-
-class AssistantChangeSetApplyRequest(BaseModel):
-    change_set: dict[str, Any] = Field(alias="changeSet")
-    confirmed: bool = False
-
-
-class AssistantOrganizePreviewRequest(BaseModel):
-    instruction: str = ""
-    action_type: str = Field(default="", alias="actionType")
-    title: str = ""
-    body: str = ""
-    source_path: str = Field(default="", alias="sourcePath")
-    target_group_key: str = Field(default="", alias="targetGroupKey")
-    task_id: str = Field(default="", alias="taskId")
-    todo_id: str = Field(default="", alias="todoId")
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
-    actions: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class AssistantMediaStageRequest(BaseModel):
-    file_name: str = Field(alias="fileName")
-    content_type: str = Field(default="", alias="contentType")
-    data_base64: str = Field(alias="dataBase64")
-
-
-class AssistantTranscriptionRequest(BaseModel):
-    file_name: str = Field(default="assistant-audio.webm", alias="fileName")
-    content_type: str = Field(default="audio/webm", alias="contentType")
-    data_base64: str = Field(alias="dataBase64")
-    language: str = ""
-
-
-class AssistantSettingsUpdateRequest(BaseModel):
-    enabled: bool = False
-    provider: str = "openai"
-    model: str = ""
-    base_url: str = Field(default="", alias="baseUrl")
-    reasoning_effort: str = Field(default="", alias="reasoningEffort")
-    allow_external_note_content: bool = Field(default=False, alias="allowExternalNoteContent")
-    allow_write_actions: bool = Field(default=False, alias="allowWriteActions")
-    max_context_notes: int = Field(
-        default=ASSISTANT_DEFAULT_CONTEXT_NOTES,
-        ge=ASSISTANT_MIN_CONTEXT_NOTES,
-        le=ASSISTANT_MAX_CONTEXT_NOTES,
-        alias="maxContextNotes",
-    )
-    max_context_chars: int = Field(
-        default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
-        ge=ASSISTANT_MIN_CONTEXT_CHARS,
-        le=ASSISTANT_MAX_CONTEXT_CHARS,
-        alias="maxContextChars",
-    )
-    provider_retries: int = Field(
-        default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
-        ge=ASSISTANT_MIN_PROVIDER_RETRIES,
-        le=ASSISTANT_MAX_PROVIDER_RETRIES,
-        alias="providerRetries",
-    )
-    max_request_chars: int = Field(
-        default=ASSISTANT_DEFAULT_REQUEST_CHARS,
-        ge=ASSISTANT_MIN_REQUEST_CHARS,
-        le=ASSISTANT_MAX_REQUEST_CHARS,
-        alias="maxRequestChars",
-    )
-    max_response_chars: int = Field(
-        default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
-        ge=ASSISTANT_MIN_RESPONSE_CHARS,
-        le=ASSISTANT_MAX_RESPONSE_CHARS,
-        alias="maxResponseChars",
-    )
-
-
-class AssistantProviderSecretSaveRequest(BaseModel):
-    provider: str = "openai"
-    api_key: str = Field(alias="apiKey")
-
-
-class FocusMitUpdateRequest(BaseModel):
-    date: str | None = None
-    mit_ids: list[str] = Field(default_factory=list, alias="mitIds")
-
-
-class FocusQuickCaptureRequest(BaseModel):
-    text: str
-    date: str | None = None
-
-
-class NoteOpenRequest(BaseModel):
-    path: str
-
-
-class NoteSaveRequest(BaseModel):
-    path: str
-    content: str
-
-
-class NoteMediaAddRequest(BaseModel):
-    path: str
-    file_name: str = Field(alias="fileName")
-    content_type: str = Field(default="", alias="contentType")
-    data_base64: str = Field(alias="dataBase64")
-
-
-class TagGroupRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    display_name: str = Field(default="", alias="displayName")
-    color: str = Field(default=TAG_GROUP_DEFAULT_COLOR)
-
-
-class TagCreateRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    tag_id: str = Field(alias="tagId")
-    display_name: str = Field(default="", alias="displayName")
-
-
-class TagRenameRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    tag_id: str = Field(alias="tagId")
-    new_tag_id: str = Field(alias="newTagId")
-    new_display_name: str = Field(default="", alias="newDisplayName")
-    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
-
-
-class TagGroupRenameRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    new_group_id: str = Field(alias="newGroupId")
-    new_display_name: str = Field(default="", alias="newDisplayName")
-    new_color: str = Field(default=TAG_GROUP_DEFAULT_COLOR, alias="newColor")
-    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
-
-
-class TagGroupDeleteRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
-
-
-class TagMoveRequest(BaseModel):
-    from_group: str = Field(alias="fromGroup")
-    tag_id: str = Field(alias="tagId")
-    to_group: str = Field(alias="toGroup")
-    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
-
-
-class TagDeleteRequest(BaseModel):
-    group_id: str = Field(alias="groupId")
-    tag_id: str = Field(alias="tagId")
-    remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
-
-
-class TagMatchApplyRequest(BaseModel):
-    matches: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class NoteGroupCreateRequest(BaseModel):
-    group_name: str = Field(alias="groupName")
-    parent_key: str = Field(default="", alias="parentKey")
-
-
-class NoteCreateRequest(BaseModel):
-    group_key: str = Field(alias="groupKey")
-    title: str = ""
-    note_type: str = Field(default="note", alias="noteType")
-    status: str = "open"
-
-
-class NoteGroupRenameRequest(BaseModel):
-    group_key: str = Field(alias="groupKey")
-    new_name: str = Field(alias="newName")
-
-
-class NoteGroupDeleteRequest(BaseModel):
-    group_key: str = Field(alias="groupKey")
-
-
-class NoteGroupMoveRequest(BaseModel):
-    group_key: str = Field(alias="groupKey")
-    target_parent_key: str = Field(alias="targetParentKey")
-
-
-class NoteFileRenameRequest(BaseModel):
-    path: str
-    new_name: str = Field(alias="newName")
-
-
-class NoteFileDeleteRequest(BaseModel):
-    path: str
-
-
-class NoteFileMoveRequest(BaseModel):
-    path: str
-    target_group_key: str = Field(alias="targetGroupKey")
-
-
-class NoteFileMoveBatchRequest(BaseModel):
-    paths: list[str] = Field(default_factory=list)
-    target_group_key: str = Field(alias="targetGroupKey")
-
-
-class FavoriteFolderRequest(BaseModel):
-    group_key: str = Field(alias="groupKey")
-
-
-class UiSettingsUpdateRequest(BaseModel):
-    app: dict[str, Any] | None = None
-    explorer: dict[str, Any] | None = None
-
-
-class OneNoteImportPreviewRequest(BaseModel):
-    source_paths: list[str] = Field(default_factory=list, alias="sourcePaths")
-
-
-class OneNoteImportRequest(BaseModel):
-    source_paths: list[str] = Field(default_factory=list, alias="sourcePaths")
-    target_folder: str = Field(default="", alias="targetFolder")
-
-
-class TodoToggleRequest(BaseModel):
-    checked: bool | None = None
-
+from .commands import (
+    VaultOpenRequest,
+    VaultCreateRequest,
+    NoteBaseRenameRequest,
+    NoteBaseDeleteRequest,
+    CapturePreviewRequest,
+    CaptureSaveRequest,
+    FocusMitUpdateRequest,
+    FocusQuickCaptureRequest,
+    NoteOpenRequest,
+    NoteSaveRequest,
+    NoteMediaAddRequest,
+    TagGroupRequest,
+    TagCreateRequest,
+    TagRenameRequest,
+    TagGroupRenameRequest,
+    TagGroupDeleteRequest,
+    TagMoveRequest,
+    TagDeleteRequest,
+    TagMatchApplyRequest,
+    NoteGroupCreateRequest,
+    NoteCreateRequest,
+    NoteGroupRenameRequest,
+    NoteGroupDeleteRequest,
+    NoteGroupMoveRequest,
+    NoteFileRenameRequest,
+    NoteFileDeleteRequest,
+    NoteFileMoveRequest,
+    NoteFileMoveBatchRequest,
+    FavoriteFolderRequest,
+    UiSettingsUpdateRequest,
+    OneNoteImportPreviewRequest,
+    OneNoteImportRequest,
+    TodoToggleRequest
+)
 
 @app.get("/health", response_model=BackendStateResponse)
 def health()-> dict[str, Any]:
     return backend_api_service.health()
 
-def health_impl()-> dict[str, Any]:
-    return {"ok": True, "vaultLoaded": state.vault is not None, "capabilities": BACKEND_CAPABILITIES}
 
 
 
@@ -1001,8 +389,6 @@ def health_impl()-> dict[str, Any]:
 def get_state()-> dict[str, Any]:
     return backend_api_service.get_state()
 
-def get_state_impl()-> dict[str, Any]:
-    return backend_api_service.get_state()
 
 
 
@@ -1010,16 +396,12 @@ def get_state_impl()-> dict[str, Any]:
 def open_vault(req: VaultOpenRequest)-> dict[str, Any]:
     return backend_api_service.open_vault(req)
 
-def open_vault_impl(req: VaultOpenRequest)-> dict[str, Any]:
-    return backend_api_service.open_vault(req)
 
 
 @app.post("/notebase/open/start", response_model=NoteBaseOpenStartResponse)
 def start_notebase_open(req: VaultOpenRequest)-> dict[str, Any]:
     return backend_api_service.start_notebase_open(req)
 
-def start_notebase_open_impl(req: VaultOpenRequest)-> dict[str, Any]:
-    return backend_api_service.start_notebase_open(req)
 
 
 
@@ -1029,8 +411,6 @@ def start_notebase_open_impl(req: VaultOpenRequest)-> dict[str, Any]:
 def get_notebase_open_status()-> dict[str, Any]:
     return backend_api_service.get_notebase_open_status()
 
-def get_notebase_open_status_impl()-> dict[str, Any]:
-    return backend_api_service.get_notebase_open_status()
 
 
 
@@ -1038,8 +418,6 @@ def get_notebase_open_status_impl()-> dict[str, Any]:
 def create_vault(req: VaultCreateRequest)-> dict[str, Any]:
     return backend_api_service.create_vault(req)
 
-def create_vault_impl(req: VaultCreateRequest)-> dict[str, Any]:
-    return backend_api_service.create_vault(req)
 
 
 
@@ -1047,8 +425,6 @@ def create_vault_impl(req: VaultCreateRequest)-> dict[str, Any]:
 def reindex_vault()-> dict[str, Any]:
     return backend_api_service.reindex_vault()
 
-def reindex_vault_impl()-> dict[str, Any]:
-    return backend_api_service.reindex_vault()
 
 
 
@@ -1056,8 +432,6 @@ def reindex_vault_impl()-> dict[str, Any]:
 def open_notebase(req: VaultOpenRequest)-> dict[str, Any]:
     return backend_api_service.open_notebase(req)
 
-def open_notebase_impl(req: VaultOpenRequest)-> dict[str, Any]:
-    return backend_api_service.open_notebase(req)
 
 
 
@@ -1065,8 +439,6 @@ def open_notebase_impl(req: VaultOpenRequest)-> dict[str, Any]:
 def create_notebase(req: VaultCreateRequest)-> dict[str, Any]:
     return backend_api_service.create_notebase(req)
 
-def create_notebase_impl(req: VaultCreateRequest)-> dict[str, Any]:
-    return backend_api_service.create_notebase(req)
 
 
 
@@ -1074,8 +446,6 @@ def create_notebase_impl(req: VaultCreateRequest)-> dict[str, Any]:
 def reindex_notebase()-> dict[str, Any]:
     return backend_api_service.reindex_notebase()
 
-def reindex_notebase_impl()-> dict[str, Any]:
-    return backend_api_service.reindex_notebase()
 
 
 
@@ -1083,8 +453,6 @@ def reindex_notebase_impl()-> dict[str, Any]:
 def preview_onenote_import(req: OneNoteImportPreviewRequest)-> dict[str, Any]:
     return backend_api_service.preview_onenote_import(req)
 
-def preview_onenote_import_impl(req: OneNoteImportPreviewRequest)-> dict[str, Any]:
-    return backend_api_service.preview_onenote_import(req)
 
 
 
@@ -1092,8 +460,6 @@ def preview_onenote_import_impl(req: OneNoteImportPreviewRequest)-> dict[str, An
 def start_onenote_import(req: OneNoteImportRequest)-> dict[str, Any]:
     return backend_api_service.start_onenote_import(req)
 
-def start_onenote_import_impl(req: OneNoteImportRequest)-> dict[str, Any]:
-    return backend_api_service.start_onenote_import(req)
 
 
 
@@ -1101,8 +467,6 @@ def start_onenote_import_impl(req: OneNoteImportRequest)-> dict[str, Any]:
 def get_onenote_import_status()-> dict[str, Any]:
     return backend_api_service.get_onenote_import_status()
 
-def get_onenote_import_status_impl()-> dict[str, Any]:
-    return backend_api_service.get_onenote_import_status()
 
 
 
@@ -1110,8 +474,6 @@ def get_onenote_import_status_impl()-> dict[str, Any]:
 def rename_notebase(req: NoteBaseRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_notebase(req)
 
-def rename_notebase_impl(req: NoteBaseRenameRequest)-> dict[str, Any]:
-    return backend_api_service.rename_notebase(req)
 
 
 
@@ -1119,8 +481,6 @@ def rename_notebase_impl(req: NoteBaseRenameRequest)-> dict[str, Any]:
 def delete_notebase(req: NoteBaseDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_notebase(req)
 
-def delete_notebase_impl(req: NoteBaseDeleteRequest)-> dict[str, Any]:
-    return backend_api_service.delete_notebase(req)
 
 
 
@@ -1128,8 +488,6 @@ def delete_notebase_impl(req: NoteBaseDeleteRequest)-> dict[str, Any]:
 def preview_capture(req: CapturePreviewRequest)-> dict[str, Any]:
     return backend_api_service.preview_capture(req)
 
-def preview_capture_impl(req: CapturePreviewRequest)-> dict[str, Any]:
-    return backend_api_service.preview_capture(req)
 
 
 
@@ -1137,8 +495,6 @@ def preview_capture_impl(req: CapturePreviewRequest)-> dict[str, Any]:
 def save_capture(req: CaptureSaveRequest)-> dict[str, Any]:
     return backend_api_service.save_capture(req)
 
-def save_capture_impl(req: CaptureSaveRequest)-> dict[str, Any]:
-    return backend_api_service.save_capture(req)
 
 
 
@@ -1146,8 +502,6 @@ def save_capture_impl(req: CaptureSaveRequest)-> dict[str, Any]:
 def get_focus_mit(date: str | None = None)-> dict[str, Any]:
     return backend_api_service.get_focus_mit(date)
 
-def get_focus_mit_impl(date: str | None = None)-> dict[str, Any]:
-    return backend_api_service.get_focus_mit(date)
 
 
 
@@ -1155,8 +509,6 @@ def get_focus_mit_impl(date: str | None = None)-> dict[str, Any]:
 def save_focus_mit(req: FocusMitUpdateRequest)-> dict[str, Any]:
     return backend_api_service.save_focus_mit(req)
 
-def save_focus_mit_impl(req: FocusMitUpdateRequest)-> dict[str, Any]:
-    return backend_api_service.save_focus_mit(req)
 
 
 
@@ -1164,8 +516,6 @@ def save_focus_mit_impl(req: FocusMitUpdateRequest)-> dict[str, Any]:
 def quick_capture_focus_todo(req: FocusQuickCaptureRequest)-> dict[str, Any]:
     return backend_api_service.quick_capture_focus_todo(req)
 
-def quick_capture_focus_todo_impl(req: FocusQuickCaptureRequest)-> dict[str, Any]:
-    return backend_api_service.quick_capture_focus_todo(req)
 
 
 
@@ -1173,8 +523,6 @@ def quick_capture_focus_todo_impl(req: FocusQuickCaptureRequest)-> dict[str, Any
 def open_or_create_daily(date: str | None = None)-> dict[str, Any]:
     return backend_api_service.open_or_create_daily(date)
 
-def open_or_create_daily_impl(date: str | None = None)-> dict[str, Any]:
-    return backend_api_service.open_or_create_daily(date)
 
 
 
@@ -1182,8 +530,6 @@ def open_or_create_daily_impl(date: str | None = None)-> dict[str, Any]:
 def get_focus_dashboard(date: str | None = None)-> dict[str, Any]:
     return backend_api_service.get_focus_dashboard(date)
 
-def get_focus_dashboard_impl(date: str | None = None)-> dict[str, Any]:
-    return GetFocusDashboardUseCase().execute(backend_api_service, date_param=date)
 
 
 
@@ -1191,8 +537,6 @@ def get_focus_dashboard_impl(date: str | None = None)-> dict[str, Any]:
 def list_tasks(include_done: bool = False)-> dict[str, Any]:
     return backend_api_service.list_tasks(include_done)
 
-def list_tasks_impl(include_done: bool = False)-> dict[str, Any]:
-    return backend_api_service.list_tasks(include_done)
 
 
 
@@ -1200,8 +544,6 @@ def list_tasks_impl(include_done: bool = False)-> dict[str, Any]:
 def list_todos()-> dict[str, Any]:
     return backend_api_service.list_todos()
 
-def list_todos_impl()-> dict[str, Any]:
-    return backend_api_service.list_todos()
 
 
 
@@ -1209,8 +551,6 @@ def list_todos_impl()-> dict[str, Any]:
 def toggle_todo(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
     return backend_api_service.toggle_todo(todo_id, req)
 
-def toggle_todo_impl(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
-    return backend_api_service.toggle_todo(todo_id, req)
 
 
 
@@ -1218,8 +558,6 @@ def toggle_todo_impl(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
 def promote_todo(todo_id: str)-> dict[str, Any]:
     return backend_api_service.promote_todo(todo_id)
 
-def promote_todo_impl(todo_id: str)-> dict[str, Any]:
-    return backend_api_service.promote_todo(todo_id)
 
 
 
@@ -1227,144 +565,62 @@ def promote_todo_impl(todo_id: str)-> dict[str, Any]:
 def mark_task_done(task_id: str)-> dict[str, Any]:
     return backend_api_service.mark_task_done(task_id)
 
-def mark_task_done_impl(task_id: str)-> dict[str, Any]:
-    return backend_api_service.mark_task_done(task_id)
 
 
 
 @app.get("/search", response_model=SearchResponse)
-def search_notes(query: str = "")-> dict[str, Any]:
-    return backend_api_service.search_notes(query)
-
-def search_notes_impl(query: str = "")-> dict[str, Any]:
-    return backend_api_service.search_notes(query)
+def search_notes(query: str = "", offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None)-> dict[str, Any]:
+    return backend_api_service.search_notes(query, offset=offset, limit=limit, tag=tag, note_type=note_type)
 
 
 
-@app.post("/assistant/chat", response_model=AssistantChatResponse)
-def assistant_chat(req: AssistantChatRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_chat(req)
-
-def assistant_chat_impl(req: AssistantChatRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_chat(req)
-
-
-@app.post("/assistant/chat/stream")
-def assistant_chat_stream(req: AssistantChatRequest)-> StreamingResponse:
-    return StreamingResponse(
-        backend_api_service.assistant_chat_stream(req),
-        media_type="application/x-ndjson",
-    )
-
-def assistant_chat_stream_impl(req: AssistantChatRequest)-> StreamingResponse:
-    return assistant_chat_stream(req)
 
 
 
-@app.get("/assistant/voice/status", response_model=AssistantVoiceStatusResponse)
-def assistant_voice_status()-> dict[str, Any]:
-    return backend_api_service.assistant_voice_status()
-
-def assistant_voice_status_impl()-> dict[str, Any]:
-    return backend_api_service.assistant_voice_status()
-
-
-@app.post("/assistant/voice/transcribe", response_model=AssistantTranscriptionResponse)
-def assistant_transcribe_audio(req: AssistantTranscriptionRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_transcribe_audio(req)
-
-def assistant_transcribe_audio_impl(req: AssistantTranscriptionRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_transcribe_audio(req)
-
-
-@app.get("/assistant/embeddings/status", response_model=AssistantEmbeddingStatusResponse)
-def assistant_embedding_status()-> dict[str, Any]:
-    return backend_api_service.assistant_embedding_status()
-
-def assistant_embedding_status_impl()-> dict[str, Any]:
-    return backend_api_service.assistant_embedding_status()
-
-
-@app.get("/assistant/retrieval/evaluation", response_model=AssistantRetrievalEvaluationResponse)
-def assistant_retrieval_evaluation()-> dict[str, Any]:
-    return backend_api_service.assistant_retrieval_evaluation()
-
-def assistant_retrieval_evaluation_impl()-> dict[str, Any]:
-    return backend_api_service.assistant_retrieval_evaluation()
-
-
-@app.get("/assistant/settings", response_model=AssistantSettingsResponse)
-def assistant_settings()-> dict[str, Any]:
-    return backend_api_service.assistant_settings()
-
-def assistant_settings_impl()-> dict[str, Any]:
-    return backend_api_service.assistant_settings()
-
-
-@app.put("/assistant/settings", response_model=AssistantSettingsResponse)
-def update_assistant_settings(req: AssistantSettingsUpdateRequest)-> dict[str, Any]:
-    return backend_api_service.update_assistant_settings(req)
-
-def update_assistant_settings_impl(req: AssistantSettingsUpdateRequest)-> dict[str, Any]:
-    return backend_api_service.update_assistant_settings(req)
-
-
-@app.put("/assistant/provider/secret", response_model=AssistantSettingsResponse)
-def save_assistant_provider_secret(req: AssistantProviderSecretSaveRequest)-> dict[str, Any]:
-    return backend_api_service.save_assistant_provider_secret(req)
-
-def save_assistant_provider_secret_impl(req: AssistantProviderSecretSaveRequest)-> dict[str, Any]:
-    return backend_api_service.save_assistant_provider_secret(req)
-
-
-@app.delete("/assistant/provider/secret/{provider}", response_model=AssistantSettingsResponse)
-def delete_assistant_provider_secret(provider: str)-> dict[str, Any]:
-    return backend_api_service.delete_assistant_provider_secret(provider)
-
-def delete_assistant_provider_secret_impl(provider: str)-> dict[str, Any]:
-    return backend_api_service.delete_assistant_provider_secret(provider)
-
-
-@app.post("/assistant/provider/probe", response_model=AssistantProviderProbeResponse)
-def assistant_provider_probe()-> dict[str, Any]:
-    return backend_api_service.assistant_provider_probe()
-
-def assistant_provider_probe_impl()-> dict[str, Any]:
-    return backend_api_service.assistant_provider_probe()
-
-
-@app.post("/assistant/media/stage", response_model=AssistantMediaStageResponse)
-def assistant_media_stage(req: AssistantMediaStageRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_media_stage(req)
-
-def assistant_media_stage_impl(req: AssistantMediaStageRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_media_stage(req)
 
 
 
-@app.post("/assistant/changeset/preview", response_model=AssistantChangeSetPreviewResponse)
-def assistant_changeset_preview(req: AssistantChangeSetPreviewRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_changeset_preview(req)
-
-def assistant_changeset_preview_impl(req: AssistantChangeSetPreviewRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_changeset_preview(req)
 
 
 
-@app.post("/assistant/changeset/apply", response_model=AssistantChangeSetApplyResponse)
-def assistant_changeset_apply(req: AssistantChangeSetApplyRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_changeset_apply(req)
-
-def assistant_changeset_apply_impl(req: AssistantChangeSetApplyRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_changeset_apply(req)
 
 
-@app.post("/assistant/organize/preview", response_model=AssistantChangeSetPreviewResponse)
-def assistant_organize_preview(req: AssistantOrganizePreviewRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_organize_preview(req)
 
-def assistant_organize_preview_impl(req: AssistantOrganizePreviewRequest)-> dict[str, Any]:
-    return backend_api_service.assistant_organize_preview(req)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1372,8 +628,6 @@ def assistant_organize_preview_impl(req: AssistantOrganizePreviewRequest)-> dict
 def explorer_files()-> dict[str, Any]:
     return backend_api_service.explorer_files()
 
-def explorer_files_impl()-> dict[str, Any]:
-    return backend_api_service.explorer_files()
 
 
 
@@ -1381,19 +635,13 @@ def explorer_files_impl()-> dict[str, Any]:
 def read_note_content(path: str)-> dict[str, Any]:
     return backend_api_service.read_note_content(path)
 
-def read_note_content_impl(path: str)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    file_path = backend_api_service._resolve_note_request_path(vault=vault, raw_path=path)
-    return {"path": str(file_path), "content": file_path.read_text(encoding="utf-8")}
 
 
 
-@app.post("/notes/save", response_model=NoteAddResponse)
+@app.post("/notes/save", response_model=NoteSaveResponse)
 def save_note_content(req: NoteSaveRequest)-> dict[str, Any]:
     return backend_api_service.save_note_content(req)
 
-def save_note_content_impl(req: NoteSaveRequest)-> dict[str, Any]:
-    return backend_api_service.save_note_content(req)
 
 
 
@@ -1401,8 +649,6 @@ def save_note_content_impl(req: NoteSaveRequest)-> dict[str, Any]:
 def add_note_media_asset(req: NoteMediaAddRequest)-> dict[str, Any]:
     return backend_api_service.add_note_media_asset(req)
 
-def add_note_media_asset_impl(req: NoteMediaAddRequest)-> dict[str, Any]:
-    return backend_api_service.add_note_media_asset(req)
 
 
 
@@ -1411,8 +657,6 @@ def get_note_media_content(path: str, source: str)-> FileResponse:
     asset = backend_api_service.get_note_media_content(path, source)
     return FileResponse(path=asset["path"], media_type=asset["mediaType"], filename=asset["fileName"])
 
-def get_note_media_content_impl(path: str, source: str)-> FileResponse:
-    return get_note_media_content(path, source)
 
 
 
@@ -1420,21 +664,6 @@ def get_note_media_content_impl(path: str, source: str)-> FileResponse:
 def open_note_file(req: NoteOpenRequest)-> dict[str, Any]:
     return backend_api_service.open_note_file(req)
 
-def open_note_file_impl(req: NoteOpenRequest)-> dict[str, Any]:
-    vault, _indexer = _require_loaded()
-    file_path = backend_api_service._resolve_note_request_path(vault=vault, raw_path=req.path)
-
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(str(file_path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.run(["open", str(file_path)], check=False)
-        else:
-            subprocess.run(["xdg-open", str(file_path)], check=False)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Could not open file: {exc}") from exc
-
-    return {"opened": True, "path": str(file_path)}
 
 
 
@@ -1442,8 +671,6 @@ def open_note_file_impl(req: NoteOpenRequest)-> dict[str, Any]:
 def get_review()-> dict[str, Any]:
     return backend_api_service.get_review()
 
-def get_review_impl()-> dict[str, Any]:
-    return backend_api_service.get_review()
 
 
 
@@ -1451,12 +678,6 @@ def get_review_impl()-> dict[str, Any]:
 def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES)-> dict[str, Any]:
     return backend_api_service.get_review_dashboard(days, day, top)
 
-def get_review_dashboard_impl(
-    days: int = REVIEW_DASHBOARD_DEFAULT_DAYS,
-    day: str | None = None,
-    top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
-) -> dict[str, Any]:
-    return backend_api_service.get_review_dashboard(days, day, top)
 
 
 
@@ -1464,8 +685,6 @@ def get_review_dashboard_impl(
 def get_ui_settings()-> dict[str, Any]:
     return backend_api_service.get_ui_settings()
 
-def get_ui_settings_impl()-> dict[str, Any]:
-    return backend_api_service.get_ui_settings()
 
 
 
@@ -1473,8 +692,6 @@ def get_ui_settings_impl()-> dict[str, Any]:
 def update_ui_settings(req: UiSettingsUpdateRequest)-> dict[str, Any]:
     return backend_api_service.update_ui_settings(req)
 
-def update_ui_settings_impl(req: UiSettingsUpdateRequest)-> dict[str, Any]:
-    return backend_api_service.update_ui_settings(req)
 
 
 
@@ -1482,8 +699,6 @@ def update_ui_settings_impl(req: UiSettingsUpdateRequest)-> dict[str, Any]:
 def get_tag_groups()-> dict[str, Any]:
     return backend_api_service.get_tag_groups()
 
-def get_tag_groups_impl()-> dict[str, Any]:
-    return backend_api_service.get_tag_groups()
 
 
 
@@ -1491,8 +706,6 @@ def get_tag_groups_impl()-> dict[str, Any]:
 def get_graph_index()-> dict[str, Any]:
     return backend_api_service.get_graph_index()
 
-def get_graph_index_impl()-> dict[str, Any]:
-    return backend_api_service.get_graph_index()
 
 
 
@@ -1500,8 +713,6 @@ def get_graph_index_impl()-> dict[str, Any]:
 def get_graph_index_status()-> dict[str, Any]:
     return backend_api_service.get_graph_index_status()
 
-def get_graph_index_status_impl()-> dict[str, Any]:
-    return backend_api_service.get_graph_index_status()
 
 
 
@@ -1509,8 +720,6 @@ def get_graph_index_status_impl()-> dict[str, Any]:
 def rebuild_graph_index()-> dict[str, Any]:
     return backend_api_service.rebuild_graph_index()
 
-def rebuild_graph_index_impl()-> dict[str, Any]:
-    return backend_api_service.rebuild_graph_index()
 
 
 
@@ -1541,43 +750,10 @@ def _graph_index_status(vault: VaultManager, index: GraphIndex | None = None) ->
     return backend_api_service.graph_index_status(vault, index)
 
 
-def _graph_watcher_loop(runtime: RuntimeState, vault: VaultManager, indexer: VaultIndexer, stop_event: threading.Event) -> None:
-    snapshot = graph_watcher_snapshot(vault.vault_path)
-    pending: dict[Path, float] = {}
-    while not stop_event.wait(2.0):
-        try:
-            current = graph_watcher_snapshot(vault.vault_path)
-            changed_paths = {path for path, stamp in current.items() if snapshot.get(path) != stamp}
-            deleted_paths = set(snapshot) - set(current)
-            now = time.monotonic()
-            for path in changed_paths | deleted_paths:
-                # Coordinate with mutating note operations to avoid interleaving graph/index updates.
-                pending[path] = now
-            ready = [path for path, first_seen in pending.items() if now - first_seen >= 1.2]
-            if not ready:
-                snapshot = current
-                continue
-            for path in sorted(ready, key=lambda item: item.as_posix().lower()):
-                pending.pop(path, None)
-                with runtime.projection_lock:
-                    if path.exists():
-                        indexer.reindex_markdown_file(vault.vault_path, path)
-                    else:
-                        indexer.remove_projection_for_path(str(path))
-                    _update_graph_after_note_save(vault=vault, saved_path=path, previous_path=path, tag_groups=None)
-                    runtime.graph_status.last_external_update = datetime.now().isoformat(timespec="seconds")
-            snapshot = current
-        except Exception as exc:
-            runtime.graph_status.last_error = str(exc)
-            logger.exception("Graph watcher update failed.")
-
-
 @app.get("/graph-state", response_model=GraphStateResponse)
 def get_graph_state()-> dict[str, Any]:
     return backend_api_service.get_graph_state()
 
-def get_graph_state_impl()-> dict[str, Any]:
-    return backend_api_service.get_graph_state()
 
 
 
@@ -1585,8 +761,6 @@ def get_graph_state_impl()-> dict[str, Any]:
 def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
     return backend_api_service.update_graph_state(state_payload)
 
-def update_graph_state_impl(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
-    return backend_api_service.update_graph_state(state_payload)
 
 
 
@@ -1594,8 +768,6 @@ def update_graph_state_impl(state_payload: dict[str, Any] = Body(default_factory
 def get_tag_overview(groupId: str, tagId: str)-> dict[str, Any]:
     return backend_api_service.get_tag_overview(groupId, tagId)
 
-def get_tag_overview_impl(groupId: str, tagId: str)-> dict[str, Any]:
-    return backend_api_service.get_tag_overview(groupId, tagId)
 
 
 
@@ -1603,8 +775,6 @@ def get_tag_overview_impl(groupId: str, tagId: str)-> dict[str, Any]:
 def add_tag_group(req: TagGroupRequest)-> dict[str, Any]:
     return backend_api_service.add_tag_group(req)
 
-def add_tag_group_impl(req: TagGroupRequest)-> dict[str, Any]:
-    return backend_api_service.add_tag_group(req)
 
 
 
@@ -1612,8 +782,6 @@ def add_tag_group_impl(req: TagGroupRequest)-> dict[str, Any]:
 def add_tag(req: TagCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_tag(req)
 
-def add_tag_impl(req: TagCreateRequest)-> dict[str, Any]:
-    return backend_api_service.add_tag(req)
 
 
 
@@ -1621,8 +789,6 @@ def add_tag_impl(req: TagCreateRequest)-> dict[str, Any]:
 def rename_tag_group(req: TagGroupRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_tag_group(req)
 
-def rename_tag_group_impl(req: TagGroupRenameRequest)-> dict[str, Any]:
-    return backend_api_service.rename_tag_group(req)
 
 
 
@@ -1630,8 +796,6 @@ def rename_tag_group_impl(req: TagGroupRenameRequest)-> dict[str, Any]:
 def delete_tag_group(req: TagGroupDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_tag_group(req)
 
-def delete_tag_group_impl(req: TagGroupDeleteRequest)-> dict[str, Any]:
-    return backend_api_service.delete_tag_group(req)
 
 
 
@@ -1639,8 +803,6 @@ def delete_tag_group_impl(req: TagGroupDeleteRequest)-> dict[str, Any]:
 def rename_tag(req: TagRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_tag(req)
 
-def rename_tag_impl(req: TagRenameRequest)-> dict[str, Any]:
-    return backend_api_service.rename_tag(req)
 
 
 
@@ -1648,8 +810,6 @@ def rename_tag_impl(req: TagRenameRequest)-> dict[str, Any]:
 def move_tag(req: TagMoveRequest)-> dict[str, Any]:
     return backend_api_service.move_tag(req)
 
-def move_tag_impl(req: TagMoveRequest)-> dict[str, Any]:
-    return backend_api_service.move_tag(req)
 
 
 
@@ -1657,8 +817,6 @@ def move_tag_impl(req: TagMoveRequest)-> dict[str, Any]:
 def delete_tag(req: TagDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_tag(req)
 
-def delete_tag_impl(req: TagDeleteRequest)-> dict[str, Any]:
-    return backend_api_service.delete_tag(req)
 
 
 
@@ -1666,8 +824,6 @@ def delete_tag_impl(req: TagDeleteRequest)-> dict[str, Any]:
 def scan_tag_match_candidates()-> dict[str, Any]:
     return backend_api_service.scan_tag_match_candidates()
 
-def scan_tag_match_candidates_impl()-> dict[str, Any]:
-    return backend_api_service.scan_tag_match_candidates()
 
 
 
@@ -1675,8 +831,6 @@ def scan_tag_match_candidates_impl()-> dict[str, Any]:
 def apply_tag_match_candidates(req: TagMatchApplyRequest)-> dict[str, Any]:
     return backend_api_service.apply_tag_match_candidates(req)
 
-def apply_tag_match_candidates_impl(req: TagMatchApplyRequest)-> dict[str, Any]:
-    return backend_api_service.apply_tag_match_candidates(req)
 
 
 
@@ -1684,8 +838,6 @@ def apply_tag_match_candidates_impl(req: TagMatchApplyRequest)-> dict[str, Any]:
 def get_note_groups()-> dict[str, Any]:
     return backend_api_service.get_note_groups()
 
-def get_note_groups_impl()-> dict[str, Any]:
-    return backend_api_service.get_note_groups()
 
 
 
@@ -1693,8 +845,6 @@ def get_note_groups_impl()-> dict[str, Any]:
 def add_note_group(req: NoteGroupCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_note_group(req)
 
-def add_note_group_impl(req: NoteGroupCreateRequest)-> dict[str, Any]:
-    return backend_api_service.add_note_group(req)
 
 
 
@@ -1702,8 +852,6 @@ def add_note_group_impl(req: NoteGroupCreateRequest)-> dict[str, Any]:
 def rename_note_group(req: NoteGroupRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_note_group(req)
 
-def rename_note_group_impl(req: NoteGroupRenameRequest)-> dict[str, Any]:
-    return backend_api_service.rename_note_group(req)
 
 
 
@@ -1711,8 +859,6 @@ def rename_note_group_impl(req: NoteGroupRenameRequest)-> dict[str, Any]:
 def delete_note_group(req: NoteGroupDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_note_group(req)
 
-def delete_note_group_impl(req: NoteGroupDeleteRequest)-> dict[str, Any]:
-    return backend_api_service.delete_note_group(req)
 
 
 
@@ -1720,8 +866,6 @@ def delete_note_group_impl(req: NoteGroupDeleteRequest)-> dict[str, Any]:
 def move_note_group(req: NoteGroupMoveRequest)-> dict[str, Any]:
     return backend_api_service.move_note_group(req)
 
-def move_note_group_impl(req: NoteGroupMoveRequest)-> dict[str, Any]:
-    return backend_api_service.move_note_group(req)
 
 
 
@@ -1729,8 +873,6 @@ def move_note_group_impl(req: NoteGroupMoveRequest)-> dict[str, Any]:
 def favorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
     return backend_api_service.favorite_note_group(req)
 
-def favorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
-    return backend_api_service.favorite_note_group(req)
 
 
 
@@ -1738,8 +880,6 @@ def favorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
 def unfavorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
     return backend_api_service.unfavorite_note_group(req)
 
-def unfavorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
-    return backend_api_service.unfavorite_note_group(req)
 
 
 
@@ -1747,8 +887,6 @@ def unfavorite_note_group_impl(req: FavoriteFolderRequest)-> dict[str, Any]:
 def add_note(req: NoteCreateRequest)-> dict[str, Any]:
     return backend_api_service.add_note(req)
 
-def add_note_impl(req: NoteCreateRequest)-> dict[str, Any]:
-    return backend_api_service.add_note(req)
 
 
 
@@ -1756,8 +894,6 @@ def add_note_impl(req: NoteCreateRequest)-> dict[str, Any]:
 def rename_note(req: NoteFileRenameRequest)-> dict[str, Any]:
     return backend_api_service.rename_note(req)
 
-def rename_note_impl(req: NoteFileRenameRequest)-> dict[str, Any]:
-    return backend_api_service.rename_note(req)
 
 
 
@@ -1765,8 +901,6 @@ def rename_note_impl(req: NoteFileRenameRequest)-> dict[str, Any]:
 def delete_note(req: NoteFileDeleteRequest)-> dict[str, Any]:
     return backend_api_service.delete_note(req)
 
-def delete_note_impl(req: NoteFileDeleteRequest)-> dict[str, Any]:
-    return backend_api_service.delete_note(req)
 
 
 
@@ -1774,8 +908,6 @@ def delete_note_impl(req: NoteFileDeleteRequest)-> dict[str, Any]:
 def move_note(req: NoteFileMoveRequest)-> dict[str, Any]:
     return backend_api_service.move_note(req)
 
-def move_note_impl(req: NoteFileMoveRequest)-> dict[str, Any]:
-    return backend_api_service.move_note(req)
 
 
 
@@ -1783,14 +915,9 @@ def move_note_impl(req: NoteFileMoveRequest)-> dict[str, Any]:
 def move_notes_batch(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
     return backend_api_service.move_notes_batch(req)
 
-def move_notes_batch_impl(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
-    return backend_api_service.move_notes_batch(req)
 
 
 
-@app.on_event("shutdown")
-def on_shutdown() -> None:
-    state.dispose_session()
 
 
 def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
@@ -1804,284 +931,28 @@ def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
     return state.vault, state.indexer
 
 
-def _tag_match_aliases(group: dict[str, Any], tag: dict[str, Any]) -> list[str]:
-    aliases: list[str] = []
-    for value in (
-        str(tag.get("displayName", "")).strip(),
-        str(tag.get("id", "")).strip().replace("-", " "),
-        str(tag.get("id", "")).strip(),
-    ):
-        clean = " ".join(value.split())
-        if len(clean) < 2:
-            continue
-        if clean.lower() in {alias.lower() for alias in aliases}:
-            continue
-        aliases.append(clean)
-    return aliases
 
 
-def _tag_match_excluded_ranges(markdown: str) -> list[tuple[int, int]]:
-    ranges = [(match.start(), match.end()) for match in re.finditer(r"\{tag:[^}\n]+\}", markdown)]
-    if markdown.startswith("---"):
-        end = markdown.find("\n---", 3)
-        if end >= 0:
-            ranges.append((0, min(len(markdown), end + 4)))
-    for match in re.finditer(r"(^|\n)```.*?(?:\n```|$)", markdown, flags=re.DOTALL):
-        ranges.append((match.start(), match.end()))
-    return sorted(ranges)
 
 
-def _tag_match_intersects(ranges: list[tuple[int, int]], start: int, end: int) -> bool:
-    return any(start < range_end and end > range_start for range_start, range_end in ranges)
 
 
-def _tag_match_context(markdown: str, start: int, end: int, radius: int = TAG_MATCH_CONTEXT_RADIUS) -> dict[str, Any]:
-    before_start = max(0, start - radius)
-    after_end = min(len(markdown), end + radius)
-    line_start = markdown.rfind("\n", 0, start) + 1
-    line_no = markdown.count("\n", 0, start) + 1
-    return {
-        "before": markdown[before_start:start],
-        "match": markdown[start:end],
-        "after": markdown[end:after_end],
-        "line": line_no,
-        "lineOffset": start - line_start,
-    }
 
 
-def _scan_tag_match_candidates(vault: VaultManager) -> list[dict[str, Any]]:
-    tag_rows: list[dict[str, Any]] = []
-    for group in vault.read_tag_groups():
-        group_id = str(group.get("id", "")).strip()
-        if not group_id:
-            continue
-        for tag in group.get("tags", []):
-            if not isinstance(tag, dict):
-                continue
-            tag_id = str(tag.get("id", "")).strip()
-            if not tag_id:
-                continue
-            for alias in _tag_match_aliases(group, tag):
-                tag_rows.append(
-                    {
-                        "groupId": group_id,
-                        "groupDisplayName": str(group.get("displayName", "")).strip() or group_id,
-                "groupColor": str(group.get("color", "")).strip() or TAG_GROUP_DEFAULT_COLOR,
-                        "tagId": tag_id,
-                        "tagDisplayName": str(tag.get("displayName", "")).strip() or tag_id,
-                        "alias": alias,
-                        "pattern": re.compile(rf"(?<![\w/:-]){re.escape(alias)}(?![\w/:-])", re.IGNORECASE),
-                    }
-                )
-
-    matches: list[dict[str, Any]] = []
-    for note_file in sorted(vault._iter_markdown_files_for_tag_updates(), key=lambda item: item.as_posix()):  # noqa: SLF001
-        try:
-            markdown = note_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        excluded_ranges = _tag_match_excluded_ranges(markdown)
-        relative_path = note_file.resolve().relative_to(vault.vault_path.resolve()).as_posix()
-        for row in tag_rows:
-            inline_ref = f"{{tag:{row['groupId']}/{row['tagId']}}}"
-            for match in row["pattern"].finditer(markdown):
-                start, end = match.span()
-                if _tag_match_intersects(excluded_ranges, start, end):
-                    continue
-                context = _tag_match_context(markdown, start, end)
-                match_id = f"{relative_path}:{start}:{end}:{row['groupId']}:{row['tagId']}"
-                matches.append(
-                    {
-                        "id": match_id,
-                        "path": str(note_file),
-                        "relativePath": relative_path,
-                        "start": start,
-                        "end": end,
-                        "line": context["line"],
-                        "lineOffset": context["lineOffset"],
-                        "matchedText": context["match"],
-                        "alias": row["alias"],
-                        "replacement": inline_ref,
-                        "groupId": row["groupId"],
-                        "groupDisplayName": row["groupDisplayName"],
-                        "groupColor": row["groupColor"],
-                        "tagId": row["tagId"],
-                        "tagDisplayName": row["tagDisplayName"],
-                        "before": context["before"],
-                        "after": context["after"],
-                    }
-                )
-
-    return matches
 
 
-def _apply_tag_match_candidates(vault: VaultManager, raw_matches: list[dict[str, Any]]) -> tuple[int, list[Path]]:
-    by_path: dict[Path, list[dict[str, Any]]] = {}
-    for item in raw_matches:
-        path = str(item.get("path", "")).strip()
-        replacement = str(item.get("replacement", "")).strip()
-        matched_text = str(item.get("matchedText", ""))
-        try:
-            start = int(item.get("start"))
-            end = int(item.get("end"))
-        except (TypeError, ValueError):
-            continue
-        if not path or not replacement or end <= start:
-            continue
-        try:
-            note_file = vault._resolve_note_file(path)  # noqa: SLF001
-        except ValueError:
-            continue
-        by_path.setdefault(note_file, []).append(
-            {
-                "start": start,
-                "end": end,
-                "matchedText": matched_text,
-                "replacement": replacement,
-            }
-        )
-
-    applied = 0
-    touched: list[Path] = []
-    for note_file, items in by_path.items():
-        try:
-            markdown = note_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        next_markdown = markdown
-        changed = False
-        occupied: list[tuple[int, int]] = []
-        for item in sorted(items, key=lambda entry: int(entry["start"]), reverse=True):
-            start = int(item["start"])
-            end = int(item["end"])
-            replacement = str(item["replacement"])
-            matched_text = str(item["matchedText"])
-            if start < 0 or end > len(next_markdown) or _tag_match_intersects(occupied, start, end):
-                continue
-            if next_markdown[start:end] != matched_text:
-                continue
-            next_markdown = f"{next_markdown[:start]}{replacement}{next_markdown[end:]}"
-            occupied.append((start, start + len(replacement)))
-            applied += 1
-            changed = True
-        if changed:
-            note_file.write_text(next_markdown, encoding="utf-8")
-            touched.append(note_file)
-    return applied, touched
 
 
-def _compute_capture(text: str, vault: VaultManager, indexer: VaultIndexer) -> list[TagSuggestion]:
-    clean_text = text.strip()
-    if not clean_text:
-        return []
-
-    known_tags = _known_tags_for_capture(vault, indexer)
-    parsed = state.parser.parse(clean_text, known_tags)
-    merged = parsed.merged_suggestions()
-
-    if state.openai and state.openai.cfg.enabled:
-        ai_suggestions = state.openai.suggest_tags(clean_text, known_tags)
-        merged = _merge_suggestions(merged, ai_suggestions)
-
-    return merged
 
 
-def _known_tags_for_capture(vault: VaultManager, indexer: VaultIndexer) -> list[dict[str, Any]]:
-    by_key: dict[str, dict[str, str]] = {}
-
-    def add_tag(category: str, slug: str, display_name: str) -> None:
-        clean_category = str(category or "").strip().lower()
-        clean_slug = str(slug or "").strip().lower()
-        clean_display = str(display_name or "").strip() or clean_slug
-        if not clean_category or not clean_slug:
-            return
-        key = f"{clean_category}:{clean_slug}"
-        if key not in by_key:
-            by_key[key] = {
-                "category": clean_category,
-                "slug": clean_slug,
-                "display_name": clean_display,
-            }
-            return
-        if clean_display:
-            by_key[key]["display_name"] = clean_display
-
-    for row in indexer.get_all_tags():
-        add_tag(
-            category=str(row.get("category", "")),
-            slug=str(row.get("slug", "")),
-            display_name=str(row.get("display_name", "")),
-        )
-
-    for group in vault.read_tag_groups():
-        group_id = str(group.get("id", "")).strip()
-        tags = group.get("tags", [])
-        if not isinstance(tags, list):
-            continue
-        for tag in tags:
-            if not isinstance(tag, dict):
-                continue
-            add_tag(
-                category=group_id,
-                slug=str(tag.get("id", "")).strip(),
-                display_name=str(tag.get("displayName", "")).strip() or str(tag.get("id", "")).strip(),
-            )
-
-    return sorted(by_key.values(), key=lambda item: (item["category"], item["display_name"], item["slug"]))
 
 
-def _merge_suggestions(base: list[TagSuggestion], extra: list[TagSuggestion]) -> list[TagSuggestion]:
-    by_key = {item.key: item for item in base}
-    for item in extra:
-        current = by_key.get(item.key)
-        if not current or item.confidence > current.confidence:
-            by_key[item.key] = item
-    return sorted(by_key.values(), key=lambda item: (-item.confidence, item.key))
 
 
-def _tag_payload(item: TagSuggestion) -> dict[str, Any]:
-    return {
-        "key": item.key,
-        "category": item.category,
-        "slug": item.slug,
-        "displayName": item.display_name,
-        "confidence": round(item.confidence, 4),
-        "source": item.source,
-        "autoApply": item.auto_apply,
-    }
 
 
-def _task_payload(item: ParsedTask) -> dict[str, Any]:
-    return {
-        "title": item.title,
-        "dueDate": item.due_date,
-        "priority": item.priority,
-        "status": item.status,
-        "projectTag": item.project_tag,
-        "tags": item.tags,
-        "estimateMinutes": item.estimate_minutes,
-        "completedAt": item.completed_at,
-        "blockedByIds": item.blocked_by_ids,
-        "waitingFor": item.waiting_for,
-        "followUpDate": item.follow_up_date,
-        "blockedReason": item.blocked_reason,
-        "nextActionHint": item.next_action_hint,
-    }
 
 
-def _counts(indexer: VaultIndexer) -> dict[str, int]:
-    cur = indexer.conn.cursor()
-    cur.execute("SELECT COUNT(*) AS cnt FROM notes;")
-    notes = int(cur.fetchone()["cnt"])
-    cur.execute("SELECT COUNT(*) AS cnt FROM tasks WHERE status <> 'done';")
-    open_tasks = int(cur.fetchone()["cnt"])
-    cur.execute("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done';")
-    done_tasks = int(cur.fetchone()["cnt"])
-    return {
-        "notes": notes,
-        "openTasks": open_tasks,
-        "doneTasks": done_tasks,
-    }
 
 
 def _normalize_iso_day_param(raw: str | None) -> str:
@@ -2116,3 +987,69 @@ def _build_focus_dashboard_payload(vault: VaultManager, indexer: VaultIndexer, d
     return GetFocusDashboardUseCase._build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
 
 
+
+
+class AgentGrantRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    write: bool = False
+
+@app.get('/agents')
+def list_agent_grants():
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        identity = vault.read_config()['vault_id']
+        return {'items': [item for item in grant_store.list() if item['vaultId'] == identity]}
+
+@app.post('/agents')
+def create_agent_grant(req: AgentGrantRequest):
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        return grant_store.create(req.name, vault, req.write)
+
+@app.delete('/agents/{identity}')
+def revoke_agent_grant(identity: str):
+    grant_store.revoke(identity)
+    return {'revoked': True}
+
+@app.get('/graph/related')
+def graph_related(path: str, limit: int = 50):
+    from .nicknotes_backend.graph_index import related_files
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        resolved = backend_api_service._resolve_note_request_path(vault, path)
+        index = read_graph_index(vault.graph_index_path)
+        entry = index.files.get(resolved.relative_to(vault.vault_path).as_posix())
+        return related_files(index, entry.id, limit) if entry else {'items': [], 'truncated': False}
+
+
+@app.get('/notes/catalog', response_model=SearchResponse)
+def note_catalog(offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None):
+    return backend_api_service.search_notes('', offset=offset, limit=limit, tag=tag, note_type=note_type)
+
+
+@app.get('/recovery')
+def recovery_status():
+    from .nicknotes_backend.recovery import list_recovery
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        return {'items':list_recovery(vault)}
+
+class RecoveryRequest(BaseModel):
+    action: str
+
+@app.post('/recovery/{identity}')
+def recovery_resolve(identity: str, req: RecoveryRequest):
+    from .nicknotes_backend.recovery import resolve_recovery
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        try:
+            result=resolve_recovery(vault,identity,req.action)
+        except (ValueError,OSError) as exc:
+            from .errors import ValidationDomainError
+            raise ValidationDomainError('Wiederherstellung konnte nicht abgeschlossen werden. Die Sicherheitskopien bleiben erhalten.') from exc
+        from .nicknotes_backend.source_journal import pending_recovery
+        if not pending_recovery(vault):
+            backend_api_service.reindex_vault()
+            state.start_graph_watcher()
+        state.change_version += 1
+        return result

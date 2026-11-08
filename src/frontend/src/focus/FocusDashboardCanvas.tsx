@@ -317,20 +317,7 @@ export function FocusDashboardCanvas({
     () => selectableItems.find((item) => item.key === selectedKey) || selectableItems[0] || null,
     [selectableItems, selectedKey]
   )
-  const contextHits = useMemo(() => (selectedItem ? buildFocusContextHits(selectedItem, notes, todayIso) : []), [notes, selectedItem, todayIso])
-
-  useEffect(() => {
-    if (!selectedItem) {
-      if (selectedKey) {
-        setSelectedKey('')
-      }
-      return
-    }
-    if (selectedKey && selectedItem.key === selectedKey) {
-      return
-    }
-    setSelectedKey(selectedItem.key)
-  }, [selectedItem, selectedKey])
+  const contextHits = useMemo(() => (selectedItem ? buildFocusContextHits(selectedItem, notes) : []), [notes, selectedItem])
 
   useEffect(() => {
     if (!captureSuccess) {

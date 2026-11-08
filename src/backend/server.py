@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import socket
 import os
 import sys
 import threading
@@ -19,7 +22,12 @@ def _process_exists(pid: int) -> bool:
 
         process_query_limited_information = 0x1000
         still_active = 259
-        kernel32 = ctypes.windll.kernel32
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
         if not handle:
             return False
@@ -59,8 +67,37 @@ def _start_parent_watchdog() -> None:
 
 
 def main() -> None:
+    desktop = os.environ.get("NICKNOTES_DESKTOP_BOOT") == "1"
+    if desktop:
+        boot = json.loads(sys.stdin.readline())
+        os.environ["NICKNOTES_API_TOKEN"] = boot["token"]
+        os.environ["NICKNOTES_PARENT_PID"] = str(boot["parent_pid"])
+        os.environ["NICKNOTES_USER_DATA"] = boot["user_data"]
+        port = int(boot["port"])
+    else:
+        port = int(os.environ.get("NICKNOTES_PORT", "8765"))
     _start_parent_watchdog()
-    uvicorn.run("src.backend.api:app", host="127.0.0.1", port=8765, reload=False)
+    from .api import app
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False))
+    if desktop:
+        def control():
+            for line in sys.stdin:
+                try:
+                    if json.loads(line).get("command") == "shutdown":
+                        server.should_exit = True
+                        return
+                except (ValueError, AttributeError):
+                    continue
+            server.should_exit = True
+        threading.Thread(target=control, name="nicknotes-control", daemon=True).start()
+    async def run():
+        task = asyncio.create_task(server.serve())
+        while not server.started and not task.done():
+            await asyncio.sleep(0.03)
+        if server.started:
+            print(json.dumps({"event": "ready", "port": port}), flush=True)
+        await task
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

@@ -6,22 +6,12 @@ import uuid
 from pathlib import Path
 from unittest import mock
 
-try:
-    from src.backend import api as backend_api
-    from src.backend.errors import DomainError
-    from src.backend.nicknotes_backend.indexer import VaultIndexer
-    from src.backend.nicknotes_backend.vault import VaultManager
-except Exception:  # pragma: no cover - optional dependency or backend import path issues in env
-    backend_api = None
-    DomainError = None
-    VaultIndexer = None
-    VaultManager = None
+from src.backend import api as backend_api
+from src.backend.errors import DomainError
+from src.backend.nicknotes_backend.indexer import VaultIndexer
+from src.backend.nicknotes_backend.vault import VaultManager
 
 
-@unittest.skipIf(
-    backend_api is None or DomainError is None or VaultIndexer is None or VaultManager is None,
-    "Backend-API ist in dieser Umgebung nicht verfuegbar.",
-)
 class VaultFilePolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         base_tmp = Path.cwd() / "src" / "backend" / "tests" / "_runtime"

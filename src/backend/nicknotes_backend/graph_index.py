@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .inventory import markdown_sources
 
 import hashlib
 import re
@@ -7,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .markdown_io import parse_markdown
+from .markdown_io import read_markdown_snapshot, snapshot_operation, prefetch_markdown
 from .parser import slugify
 from .projection_registry import GRAPH_INDEX_SCHEMA_VERSION
 
@@ -91,6 +92,7 @@ class GraphIndex:
         )
 
 
+@snapshot_operation
 def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> GraphIndex:
     vault_root = vault_path.resolve()
     known_tags = _known_tag_map(tag_groups)
@@ -100,11 +102,14 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
     diagnostics: list[GraphDiagnostic] = []
     file_records: list[dict[str, Any]] = []
 
-    for md_path in _iter_markdown_sources(vault_root):
+    sources = _iter_markdown_sources(vault_root)
+    prefetch_markdown(sources)
+    for md_path in sources:
         relative_path = md_path.relative_to(vault_root).as_posix()
         try:
-            meta, body = parse_markdown(md_path)
-        except OSError as exc:
+            snapshot = read_markdown_snapshot(md_path)
+            meta, body = snapshot.metadata, snapshot.body
+        except (OSError, ValueError) as exc:
             diagnostics.append(
                 GraphDiagnostic(
                     type="markdownReadFailed",
@@ -116,21 +121,22 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
             continue
 
         note_type = _note_type_for_path(vault_root, md_path, meta)
-        if note_type == "tag_index":
+        if note_type in {"tag_index", "task_link"}:
             continue
         title = _title_for_markdown(md_path, meta, body)
         file_id = _file_node_id(meta, relative_path)
-        content_hash = _file_hash(md_path)
-        stat = md_path.stat()
+        if file_id in nodes_by_id:
+            raise ValueError(f'Doppelte Graph-ID {file_id}: {nodes_by_id[file_id].path} und {relative_path}')
+        content_hash = snapshot.revision
         tags = _extract_tags(meta, body)
-        links = _extract_links(meta, body)
+        links = _extract_links(meta, body, relative_path)
 
         files[relative_path] = GraphFileEntry(
             id=file_id,
             type=note_type,
             title=title,
             hash=content_hash,
-            mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            mtime=datetime.fromtimestamp(snapshot.mtime_ns/1_000_000_000).isoformat(timespec="seconds"),
             tags=tags,
             links=[link["target"] for link in links],
         )
@@ -201,7 +207,6 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
                 reason=_link_reason(link),
             )
 
-    _add_derived_file_edges(edges_by_id, files)
 
     return GraphIndex(
         version=GRAPH_INDEX_VERSION,
@@ -217,6 +222,7 @@ def build_graph_index(vault_path: Path, tag_groups: list[dict[str, Any]]) -> Gra
     )
 
 
+@snapshot_operation
 def update_graph_index_for_file(
     *,
     vault_path: Path,
@@ -275,8 +281,9 @@ def update_graph_index_for_file(
         return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
 
     try:
-        meta, body = parse_markdown(resolved)
-    except OSError as exc:
+        snapshot = read_markdown_snapshot(resolved)
+        meta, body = snapshot.metadata, snapshot.body
+    except (OSError, ValueError) as exc:
         diagnostics.append(
             GraphDiagnostic(
                 type="markdownReadFailed",
@@ -288,22 +295,21 @@ def update_graph_index_for_file(
         return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
 
     note_type = _note_type_for_path(vault_root, resolved, meta)
-    if note_type == "tag_index":
+    if note_type in {"tag_index", "task_link"}:
         return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
 
     title = _title_for_markdown(resolved, meta, body)
     file_id = _file_node_id(meta, relative_path)
-    content_hash = _file_hash(resolved)
-    stat = resolved.stat()
+    content_hash = snapshot.revision
     tags = _extract_tags(meta, body)
-    links = _extract_links(meta, body)
+    links = _extract_links(meta, body, relative_path)
 
     files[relative_path] = GraphFileEntry(
         id=file_id,
         type=note_type,
         title=title,
         hash=content_hash,
-        mtime=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        mtime=datetime.fromtimestamp(snapshot.mtime_ns/1_000_000_000).isoformat(timespec="seconds"),
         tags=tags,
         links=[link["target"] for link in links],
     )
@@ -426,7 +432,7 @@ def graph_index_from_dict(payload: Any) -> GraphIndex:
                 reasons=_string_list(item.get("reasons")),
             )
             for item in payload.get("edges", [])
-            if isinstance(item, dict) and str(item.get("type", "")) != "backlink"
+            if isinstance(item, dict) and str(item.get("type", "")) not in {"backlink", "sharedTag"}
         ],
         diagnostics=[
             GraphDiagnostic(
@@ -444,20 +450,7 @@ def graph_index_from_dict(payload: Any) -> GraphIndex:
 
 
 def _iter_markdown_sources(vault_root: Path) -> list[Path]:
-    excluded_roots = {".system", "system", "99_system", ".media"}
-    sources: list[Path] = []
-    for path in vault_root.rglob("*.md"):
-        if not path.is_file():
-            continue
-        try:
-            relative = path.relative_to(vault_root).as_posix()
-        except ValueError:
-            continue
-        top = relative.split("/", 1)[0]
-        if top in excluded_roots:
-            continue
-        sources.append(path)
-    return sorted(sources, key=lambda item: item.relative_to(vault_root).as_posix().lower())
+    return markdown_sources(vault_root)
 
 
 def _relative_markdown_path(vault_root: Path, file_path: Path) -> str | None:
@@ -476,8 +469,18 @@ def _finalize_incremental_index(
     edges_by_id: dict[str, GraphEdge],
     diagnostics: list[GraphDiagnostic],
 ) -> GraphIndex:
-    edges_by_id = {edge_id: edge for edge_id, edge in edges_by_id.items() if edge.type != "sharedTag"}
-    _add_derived_file_edges(edges_by_id, files)
+    file_ids = {entry.id for entry in files.values()}
+    edges_by_id = {key: edge for key, edge in edges_by_id.items() if edge.type == 'tagUsage' and edge.source in file_ids}
+    records = [{"id": entry.id, "relative_path": path} for path, entry in files.items()]
+    lookup = _build_link_lookup(records)
+    diagnostics = [item for item in diagnostics if item.type != 'unresolvedLink']
+    for path, entry in files.items():
+        for target in entry.links:
+            resolved = _resolve_link_target(target, lookup)
+            if resolved:
+                _add_edge(edges_by_id, entry.id, str(resolved['id']), 'link', 5, f'Link {target}')
+            else:
+                diagnostics.append(GraphDiagnostic(type='unresolvedLink', severity='warning', message=f'Link could not be resolved: {target}', path=path, target=target))
     _prune_orphan_tag_nodes(nodes_by_id, edges_by_id)
     return GraphIndex(
         version=GRAPH_INDEX_VERSION,
@@ -501,43 +504,24 @@ def _prune_orphan_tag_nodes(nodes_by_id: dict[str, GraphNode], edges_by_id: dict
             nodes_by_id.pop(node_id, None)
 
 
-def _add_derived_file_edges(edges_by_id: dict[str, GraphEdge], files: dict[str, GraphFileEntry]) -> None:
-    shared_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
-    tag_to_files: dict[str, list[str]] = {}
-    for entry in files.values():
-        if not entry.id or entry.type not in {"note", "task"}:
+def related_files(index: GraphIndex, file_id: str, limit: int = 50) -> dict[str, Any]:
+    """Bounded neighbourhood; never materialise all pairs sharing a popular tag."""
+    limit = max(1, min(limit, 200))
+    source = next((entry for entry in index.files.values() if entry.id == file_id), None)
+    if source is None:
+        return {"items": [], "truncated": False, "limit": limit}
+    tags = set(source.tags)
+    direct = {edge.target if edge.source == file_id else edge.source for edge in index.edges if edge.type == 'link' and file_id in {edge.source, edge.target}}
+    candidates = []
+    for path, entry in index.files.items():
+        if entry.id == file_id:
             continue
-        for tag_key in entry.tags:
-            tag_to_files.setdefault(tag_key, []).append(entry.id)
-
-    for tag_key, ids in tag_to_files.items():
-        unique_ids = sorted(set(ids))
-        if len(unique_ids) < 2:
-            continue
-        tag_weight = _shared_tag_weight(tag_key)
-        for left_index, left_id in enumerate(unique_ids[:-1]):
-            for right_id in unique_ids[left_index + 1 :]:
-                pair = (left_id, right_id) if left_id < right_id else (right_id, left_id)
-                bucket = shared_by_pair.setdefault(pair, {"weight": 0, "reasons": []})
-                bucket["weight"] += tag_weight
-                bucket["reasons"].append(f"Shared tag {tag_key}")
-
-    for (source, target), payload in shared_by_pair.items():
-        weight = int(payload["weight"])
-        reasons = list(payload["reasons"])
-        if len(reasons) > 1:
-            weight += 1
-        if weight < 2:
-            continue
-        for reason in reasons:
-            _add_edge(
-                edges_by_id,
-                source=source,
-                target=target,
-                edge_type="sharedTag",
-                weight=weight,
-                reason=reason,
-            )
+        shared = sorted(tags.intersection(entry.tags))
+        weight = sum(_shared_tag_weight(tag) for tag in shared) + (5 if entry.id in direct else 0)
+        if weight:
+            candidates.append({"id": entry.id, "path": path, "title": entry.title, "weight": weight, "sharedTags": shared, "sharedWeight": sum(_shared_tag_weight(tag) for tag in shared), "linked": entry.id in direct})
+    candidates.sort(key=lambda item: (-item['weight'], item['path'].lower()))
+    return {"items": candidates[:limit], "truncated": len(candidates) > limit, "limit": limit, "total": len(candidates)}
 
 
 def _shared_tag_weight(tag_key: str) -> int:
@@ -574,16 +558,11 @@ def _known_tag_map(tag_groups: list[dict[str, Any]]) -> dict[str, dict[str, str]
 
 def _note_type_for_path(vault_root: Path, file_path: Path, meta: dict[str, Any]) -> str:
     raw_type = str(meta.get("type", "")).strip().lower().replace("-", "_").replace(" ", "_")
-    if raw_type == "tag_index":
-        return "tag_index"
+    if raw_type in {"tag_index", "task_link"}:
+        return raw_type
     if raw_type == "task":
         return "task"
-    try:
-        relative = file_path.relative_to(vault_root).as_posix()
-    except ValueError:
-        relative = ""
-    top = relative.split("/", 1)[0].lower()
-    return "task" if top in {"tasks", "03_tasks"} else "note"
+    return "note"
 
 
 def _title_for_markdown(file_path: Path, meta: dict[str, Any], body: str) -> str:
@@ -608,9 +587,6 @@ def _file_node_id(meta: dict[str, Any], relative_path: str) -> str:
     return f"file:{digest}"
 
 
-def _file_hash(file_path: Path) -> str:
-    return hashlib.sha256(file_path.read_bytes()).hexdigest()
-
 
 def _extract_tags(meta: dict[str, Any], body: str) -> list[str]:
     found: set[str] = set()
@@ -620,7 +596,8 @@ def _extract_tags(meta: dict[str, Any], body: str) -> list[str]:
             if tag_key:
                 found.add(tag_key)
 
-    for match in INLINE_TAG_PATTERN.finditer(body):
+    from .markdown_syntax import prose_text
+    for match in INLINE_TAG_PATTERN.finditer(prose_text(body)):
         tag_key = _normalize_tag_key(f"{match.group(1)}:{match.group(2)}")
         if tag_key:
             found.add(tag_key)
@@ -628,7 +605,7 @@ def _extract_tags(meta: dict[str, Any], body: str) -> list[str]:
     return sorted(found, key=lambda item: item.lower())
 
 
-def _extract_links(meta: dict[str, Any], body: str) -> list[dict[str, str]]:
+def _extract_links(meta: dict[str, Any], body: str, source_path: str = '') -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -646,8 +623,23 @@ def _extract_links(meta: dict[str, Any], body: str) -> list[dict[str, str]]:
         for item in _string_list(meta.get(key)):
             add(item, item, key)
 
-    for link in _extract_wikilinks(body):
+    from .markdown_syntax import prose_text, split_markdown_destination
+    import posixpath
+    from urllib.parse import unquote, urlsplit
+    prose = prose_text(body)
+    for link in _extract_wikilinks(prose):
         add(link["raw"], link["target"], "wikilink")
+    for match in re.finditer(r'(?<!!)\[[^]\n]*\]\(([^)\n]+)\)', prose):
+        parts = split_markdown_destination(match.group(1))
+        if parts is None:
+            continue
+        target = unquote(parts[0])
+        path = target.split('#', 1)[0]
+        if urlsplit(target).scheme or not path.lower().endswith('.md'):
+            continue
+        resolved = posixpath.normpath(path.lstrip('/') if path.startswith('/') else posixpath.join(posixpath.dirname(source_path), path))
+        if not resolved.startswith('../'):
+            add(target, resolved, 'markdown')
 
     return links
 

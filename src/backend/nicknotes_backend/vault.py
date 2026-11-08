@@ -3,18 +3,18 @@ from __future__ import annotations
 import gc
 import json
 import mimetypes
-import queue
 import re
 import shutil
-import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .assistant_security import normalize_assistant_config
 from .indexer import VaultIndexer
+from .file_io import atomic_write_text, atomic_write_bytes
+from .migrations import migrate_configuration, validate_configuration
+from .source_journal import active_journal
 from .markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .models import ParsedTask, TagSuggestion
 from .parser import make_note_id, make_task_id
@@ -62,14 +62,20 @@ def _with_windows_file_operation_retry(operation: Any) -> Any:
 
 
 def _rename_path_with_retry(source: Path, destination: Path) -> None:
+    if journal := active_journal.get():
+        journal.move(source, destination)
     _with_windows_file_operation_retry(lambda: source.rename(destination))
 
 
 def _unlink_path_with_retry(path: Path, *, missing_ok: bool = False) -> None:
+    if journal := active_journal.get():
+        journal.record(path)
     _with_windows_file_operation_retry(lambda: path.unlink(missing_ok=missing_ok))
 
 
 def _rmtree_with_retry(path: Path) -> None:
+    if journal := active_journal.get():
+        journal.tree(path)
     _with_windows_file_operation_retry(lambda: shutil.rmtree(path))
 
 
@@ -128,7 +134,6 @@ MEDIA_IMAGE_CONTENT_TYPES = {
     "image/avif": ".avif",
 }
 MEDIA_IMAGE_EXTENSIONS = set(MEDIA_IMAGE_CONTENT_TYPES.values())
-ASSISTANT_MEDIA_STAGE_TTL_SECONDS = 24 * 60 * 60
 ISO_DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def _normalize_tag_color(value: str) -> str:
@@ -377,8 +382,9 @@ def _strip_matching_title_heading(body: str, title: str) -> str:
 
 def _extract_auto_tags(body: str) -> list[str]:
     found: set[str] = set()
+    from .markdown_syntax import prose_text
 
-    for match in INLINE_TAG_PATTERN.finditer(body):
+    for match in INLINE_TAG_PATTERN.finditer(prose_text(body)):
         key = _normalize_tag_key(f"{match.group(1)}:{match.group(2)}")
         if key:
             found.add(key)
@@ -388,7 +394,8 @@ def _extract_auto_tags(body: str) -> list[str]:
 
 def _extract_related_links(body: str) -> list[str]:
     related: set[str] = set()
-    for match in WIKILINK_PATTERN.finditer(body):
+    from .markdown_syntax import prose_text
+    for match in WIKILINK_PATTERN.finditer(prose_text(body)):
         raw = match.group(1).strip()
         if not raw:
             continue
@@ -456,16 +463,37 @@ def _normalize_mit_ids(raw_value: Any, limit: int = VAULT_MAX_DAILY_MIT_ITEMS) -
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
-        self._media_queue: queue.Queue[Path] = queue.Queue()
-        self._media_worker_started = False
-        self._media_worker_lock = threading.Lock()
-        self._link_queue: queue.Queue[tuple[list[tuple[str, str]], VaultIndexer | None]] = queue.Queue()
-        self._link_worker_started = False
-        self._link_worker_lock = threading.Lock()
         self._last_link_rewrite_result: dict[str, Any] = {"updated": 0, "paths": []}
         self._configure_root_paths()
 
+    def validate_roots(self) -> None:
+        root = self.vault_path.resolve()
+        for path in (self.system_path, self.media_root_path, self.daily_root_path, self.tasks_root_path, self.tag_root_path):
+            if not path.resolve().is_relative_to(root):
+                raise ValueError("Ein interner NoteBase-Ordner verweist ausserhalb der NoteBase.")
+
     def ensure_structure(self) -> None:
+        from .source_journal import SourceJournal, active_journal
+        self.validate_roots()
+        validate_configuration(self)
+        if self.system_root_name != '.system':
+            # Rename the metadata directory before creating a journal inside it.
+            # This is one same-volume directory rename; source contents stay intact.
+            target=self.vault_path/'.system'
+            if target.exists():
+                raise ValueError('Das Ziel .system ist bereits belegt.')
+            previous=self.system_path
+            previous.rename(target)
+            self._configure_root_paths()
+            atomic_write_text(self.system_path/'migrations'/'system-root-v2.json',json.dumps({'from':previous.name,'to':'.system'}))
+        if active_journal.get() is not None:
+            return self._ensure_structure()
+        with SourceJournal(self, 'ensure-structure-migration'):
+            self._ensure_structure()
+
+    def _ensure_structure(self) -> None:
+        self.validate_roots()
+        migrate_configuration(self)
         self.daily_root_path = self._ensure_root_directory("daily", "01_daily")
         self.tag_root_path = self._ensure_root_directory("tags", "02_tags")
         self.tasks_root_path = self._ensure_root_directory("tasks", "03_tasks")
@@ -478,21 +506,7 @@ class VaultManager:
         self.system_path.mkdir(parents=True, exist_ok=True)
 
         if not self.config_path.exists():
-            self.config_path.write_text(
-                json.dumps(
-                    {
-                        "mode": "core",
-                        "openai": {
-                            "enabled": False,
-                            "model": "gpt-4.1-mini",
-                            "api_key_env": "OPENAI_API_KEY",
-                        },
-                        "assistant": normalize_assistant_config({}),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
+            atomic_write_text(self.config_path, json.dumps({'format_version': 2, 'vault_id': str(uuid.uuid4())}, indent=2), encoding='utf-8')
 
         if not self.read_tag_groups():
             # New NoteBases should start without pre-created tag groups.
@@ -502,18 +516,7 @@ class VaultManager:
             self._write_favorite_folders([self.daily_root_name, self.tag_root_name, self.tasks_root_name])
 
         if not self.ui_settings_path.exists():
-            self.ui_settings_path.write_text(
-                json.dumps(
-                    {
-                        "updated_at": datetime.now().isoformat(timespec="seconds"),
-                        "app": {},
-                        "explorer": {},
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+            atomic_write_text(self.ui_settings_path, json.dumps({'updated_at': datetime.now().astimezone().isoformat(timespec='seconds'), 'app': {}, 'explorer': {}}, indent=2, ensure_ascii=False), encoding='utf-8')
 
         self._migrate_legacy_daily_notes_folder()
         self._migrate_flat_daily_notes_to_months()
@@ -581,11 +584,11 @@ class VaultManager:
         links = {str(task_id): str(relative).replace("\\", "/").strip().strip("/") for task_id, relative in mapping.items()}
         payload = {
             "version": TASK_LINK_INDEX_SCHEMA_VERSION,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "links": links,
         }
         self.system_path.mkdir(parents=True, exist_ok=True)
-        self.task_status_links_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(self.task_status_links_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
     def _pick_root_name(self, preferred: str, legacy: str) -> str:
         if (self.vault_path / preferred).is_dir():
@@ -620,26 +623,9 @@ class VaultManager:
         return ".system"
 
     def _ensure_system_directory(self) -> Path:
-        preferred_path = self.vault_path / ".system"
-        modern_path = self.vault_path / "system"
-        legacy_path = self.vault_path / "99_system"
-
-        if preferred_path.exists():
-            preferred_path.mkdir(parents=True, exist_ok=True)
-            return preferred_path
-
-        for source_path in (modern_path, legacy_path):
-            if not source_path.exists():
-                continue
-            try:
-                shutil.move(str(source_path), str(preferred_path))
-                return preferred_path
-            except OSError:
-                source_path.mkdir(parents=True, exist_ok=True)
-                return source_path
-
-        preferred_path.mkdir(parents=True, exist_ok=True)
-        return preferred_path
+        path=self.vault_path/'.system'
+        path.mkdir(parents=True,exist_ok=True)
+        return path
 
     def list_note_groups(self) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
@@ -712,8 +698,8 @@ class VaultManager:
             note_type=kind,
             note_id=note_id,
             node_id=note_id,
-            created_at=now.isoformat(timespec="seconds"),
-            updated_at=now.isoformat(timespec="seconds"),
+            created_at=now.astimezone().isoformat(timespec="seconds"),
+            updated_at=now.astimezone().isoformat(timespec="seconds"),
             status=normalized_status,
             priority=normalized_priority,
             due_date="",
@@ -729,7 +715,7 @@ class VaultManager:
             auto_tags=[],
             auto_related=[],
         )
-        note_path.write_text(note_content, encoding="utf-8")
+        atomic_write_text(note_path, note_content, encoding='utf-8')
 
         indexer.reindex_markdown_file(self.vault_path, note_path)
         if kind == "task":
@@ -773,7 +759,6 @@ class VaultManager:
         self._remap_favorites(relative, self._to_group_key(destination))
         indexer.reindex_vault(self.vault_path)
         self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
-        self._enqueue_media_relocation_for_tree(destination)
         return self._group_payload(destination, set(self._read_favorite_folders()))
 
     def move_note_group(self, group_key: str, target_parent_key: str, indexer: VaultIndexer) -> dict[str, Any]:
@@ -808,7 +793,6 @@ class VaultManager:
         indexer.reindex_vault(self.vault_path)
         self.rebuild_task_status_links(indexer)
         self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
-        self._enqueue_media_relocation_for_tree(destination)
         return self._group_payload(destination, set(self._read_favorite_folders()))
 
     def delete_note_group(self, group_key: str, indexer: VaultIndexer) -> None:
@@ -860,7 +844,7 @@ class VaultManager:
             touch_updated=True,
         )
         if normalized != original:
-            destination.write_text(normalized, encoding="utf-8")
+            atomic_write_text(destination, normalized, encoding='utf-8')
 
         indexer.remove_projection_for_path(str(file_path))
         indexer.reindex_markdown_file(self.vault_path, destination)
@@ -887,7 +871,6 @@ class VaultManager:
             self._record_link_rewrite_result(
                 self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, destination)]), indexer)
             )
-            self.enqueue_media_relocation(destination)
         return destination
 
     def move_note_file(self, note_path: str, target_group_key: str, indexer: VaultIndexer) -> Path:
@@ -926,7 +909,6 @@ class VaultManager:
         self._record_link_rewrite_result(
             self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, destination)]), indexer)
         )
-        self.enqueue_media_relocation(destination)
         return destination
 
     def move_note_files(self, note_paths: list[str], target_group_key: str, indexer: VaultIndexer) -> list[dict[str, str]]:
@@ -1001,8 +983,6 @@ class VaultManager:
                             task_path=str(moved_file),
                             indexer=indexer,
                         )
-                    if from_path and from_path != moved_path:
-                        self.enqueue_media_relocation(moved_file)
             self._record_link_rewrite_result(self.rewrite_note_links_for_moved_paths(link_mappings, indexer))
         else:
             self._record_link_rewrite_result({"updated": 0, "paths": []})
@@ -1014,7 +994,7 @@ class VaultManager:
         task_payload = self._task_link_payload_from_file(file_path)
         deleted_targets = [self._note_link_key(file_path)]
         _unlink_path_with_retry(file_path, missing_ok=False)
-        self._cleanup_orphan_media_assets()
+        # Media may be referenced by unsaved drafts; only explicit maintenance may collect it.
         indexer.remove_projection_for_path(str(file_path))
         if task_payload:
             self.sync_task_status_link(
@@ -1047,7 +1027,7 @@ class VaultManager:
         while target_path.exists():
             target_path = target_dir / f"{safe_note_token}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}{suffix}"
 
-        target_path.write_bytes(payload)
+        atomic_write_bytes(target_path, payload)
         vault_relative = target_path.relative_to(self.vault_path).as_posix()
         markdown_path = f"/{vault_relative}"
         return {
@@ -1056,78 +1036,9 @@ class VaultManager:
             "file_name": target_path.name,
         }
 
-    def stage_assistant_media_asset(self, *, filename: str, content_type: str, data: bytes) -> dict[str, Any]:
-        payload, clean_content_type, suffix = self._validated_media_payload(
-            filename=filename,
-            content_type=content_type,
-            data=data,
-        )
-        self._cleanup_assistant_media_stage()
-        stage_id = f"asm_{uuid.uuid4().hex}"
-        stage_dir = self.assistant_media_stage_directory()
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        data_path = stage_dir / f"{stage_id}{suffix}"
-        meta_path = stage_dir / f"{stage_id}.json"
-        safe_name = Path(filename or f"assistant-media{suffix}").name or f"assistant-media{suffix}"
-        data_path.write_bytes(payload)
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "id": stage_id,
-                    "fileName": safe_name,
-                    "contentType": clean_content_type or "image/png",
-                    "sizeBytes": len(payload),
-                    "dataFile": data_path.name,
-                    "createdAt": datetime.now().isoformat(timespec="seconds"),
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        return {
-            "id": stage_id,
-            "fileName": safe_name,
-            "contentType": clean_content_type or "image/png",
-            "sizeBytes": len(payload),
-        }
 
-    def read_staged_assistant_media_asset(self, stage_id: str) -> dict[str, Any]:
-        clean_id = self._normalize_assistant_media_stage_id(stage_id)
-        stage_dir = self.assistant_media_stage_directory()
-        meta_path = stage_dir / f"{clean_id}.json"
-        if not meta_path.exists():
-            raise ValueError("Assistant media attachment is no longer available.")
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError("Assistant media attachment metadata is invalid.") from exc
-        data_file = str(meta.get("dataFile") or "")
-        if not data_file or Path(data_file).name != data_file:
-            raise ValueError("Assistant media attachment path is invalid.")
-        data_path = stage_dir / data_file
-        if not data_path.exists() or not data_path.is_file():
-            raise ValueError("Assistant media attachment is missing.")
-        payload = data_path.read_bytes()
-        return {
-            "id": clean_id,
-            "fileName": str(meta.get("fileName") or data_path.name),
-            "contentType": str(meta.get("contentType") or ""),
-            "sizeBytes": int(meta.get("sizeBytes") or len(payload)),
-            "data": payload,
-            "dataPath": data_path,
-            "metaPath": meta_path,
-        }
 
-    def remove_staged_assistant_media_asset(self, stage_id: str) -> None:
-        clean_id = self._normalize_assistant_media_stage_id(stage_id)
-        stage_dir = self.assistant_media_stage_directory()
-        for path in stage_dir.glob(f"{clean_id}.*"):
-            if path.is_file():
-                _unlink_path_with_retry(path, missing_ok=True)
 
-    def assistant_media_stage_directory(self) -> Path:
-        return self.system_path / "assistant_media_stage"
 
     def _validated_media_payload(self, *, filename: str, content_type: str, data: bytes) -> tuple[bytes, str, str]:
         payload = bytes(data)
@@ -1153,23 +1064,7 @@ class VaultManager:
                 suffix = guessed if guessed in MEDIA_IMAGE_EXTENSIONS else ".png"
         return payload, clean_content_type, suffix
 
-    def _normalize_assistant_media_stage_id(self, stage_id: str) -> str:
-        clean = str(stage_id or "").strip()
-        if not re.fullmatch(r"asm_[a-f0-9]{32}", clean):
-            raise ValueError("Assistant media attachment id is invalid.")
-        return clean
 
-    def _cleanup_assistant_media_stage(self) -> None:
-        stage_dir = self.assistant_media_stage_directory()
-        if not stage_dir.exists() or not stage_dir.is_dir():
-            return
-        cutoff = time.time() - ASSISTANT_MEDIA_STAGE_TTL_SECONDS
-        for path in stage_dir.glob("*"):
-            try:
-                if path.is_file() and path.stat().st_mtime < cutoff:
-                    _unlink_path_with_retry(path, missing_ok=True)
-            except OSError:
-                continue
 
     def note_media_directory(self, note_file: Path) -> Path:
         try:
@@ -1178,153 +1073,13 @@ class VaultManager:
             relative_note = Path(note_file.name)
         return self.media_root_path / relative_note.with_suffix("")
 
-    def enqueue_media_relocation(self, note_file: Path) -> None:
-        try:
-            resolved = note_file.resolve()
-            resolved.relative_to(self.vault_path.resolve())
-        except (OSError, ValueError):
-            return
-        if resolved.suffix.lower() != ".md" or self._is_system_path(resolved.parent):
-            return
-        self._media_queue.put(resolved)
-        self._ensure_media_worker()
 
-    def _ensure_media_worker(self) -> None:
-        with self._media_worker_lock:
-            if self._media_worker_started:
-                return
-            worker = threading.Thread(
-                target=self._media_relocation_worker,
-                name="nicknotes-media-relocator",
-                daemon=True,
-            )
-            self._media_worker_started = True
-            worker.start()
 
-    def _media_relocation_worker(self) -> None:
-        while True:
-            try:
-                note_file = self._media_queue.get(timeout=15)
-            except queue.Empty:
-                with self._media_worker_lock:
-                    if self._media_queue.empty():
-                        self._media_worker_started = False
-                        return
-                continue
-            try:
-                self.relocate_note_media_assets(note_file)
-            except Exception:
-                pass
-            finally:
-                self._media_queue.task_done()
-            time.sleep(0.03)
 
-    def _enqueue_media_relocation_for_tree(self, root: Path) -> None:
-        if not root.exists():
-            return
-        if root.is_file():
-            self.enqueue_media_relocation(root)
-            return
-        for note_file in sorted(root.rglob("*.md"), key=lambda item: item.as_posix().lower()):
-            if self._is_system_path(note_file.parent):
-                continue
-            self.enqueue_media_relocation(note_file)
 
-    def relocate_note_media_assets(self, note_file: Path) -> dict[str, Any]:
-        try:
-            note_file = note_file.resolve()
-            note_file.relative_to(self.vault_path.resolve())
-        except (OSError, ValueError):
-            return {"moved": 0, "updated": False}
-        if not note_file.exists() or not note_file.is_file() or note_file.suffix.lower() != ".md":
-            return {"moved": 0, "updated": False}
 
-        try:
-            markdown = note_file.read_text(encoding="utf-8")
-        except OSError:
-            return {"moved": 0, "updated": False}
 
-        sources = self._parse_markdown_image_sources(markdown)
-        if not sources:
-            return {"moved": 0, "updated": False}
 
-        target_dir = self.note_media_directory(note_file)
-        replacements: dict[str, str] = {}
-        moved_by_source_path: dict[Path, Path] = {}
-        moved_count = 0
-
-        for source in sources:
-            if source in replacements:
-                continue
-            try:
-                current_path = self._resolve_media_source_path(note_file, source, allow_missing=False).resolve()
-            except ValueError:
-                continue
-
-            destination = moved_by_source_path.get(current_path)
-            if destination is None:
-                target_dir.mkdir(parents=True, exist_ok=True)
-                destination = target_dir / current_path.name
-                if destination.resolve() != current_path:
-                    destination = self._next_available_media_path(destination, current_path)
-                    try:
-                        _rename_path_with_retry(current_path, destination)
-                    except OSError:
-                        shutil.move(str(current_path), str(destination))
-                    moved_count += 1
-                moved_by_source_path[current_path] = destination
-
-            replacements[source] = f"/{destination.relative_to(self.vault_path).as_posix()}"
-
-        if not replacements:
-            return {"moved": moved_count, "updated": False}
-
-        updated = self._rewrite_markdown_image_sources(markdown, replacements)
-        did_update = updated != markdown
-        if did_update:
-            try:
-                note_file.write_text(updated, encoding="utf-8")
-            except OSError:
-                return {"moved": moved_count, "updated": False}
-
-        self._cleanup_empty_media_directories()
-        return {"moved": moved_count, "updated": did_update}
-
-    def _next_available_media_path(self, preferred: Path, source: Path) -> Path:
-        if not preferred.exists() or preferred.resolve() == source.resolve():
-            return preferred
-        suffix = preferred.suffix
-        stem = preferred.stem
-        counter = 2
-        candidate = preferred.with_name(f"{stem}_{counter}{suffix}")
-        while candidate.exists():
-            counter += 1
-            candidate = preferred.with_name(f"{stem}_{counter}{suffix}")
-        return candidate
-
-    def _rewrite_markdown_image_sources(self, markdown: str, replacements: dict[str, str]) -> str:
-        updated = markdown
-        for match in reversed(list(MARKDOWN_IMAGE_PATTERN.finditer(markdown))):
-            raw_target = match.group(1)
-            source = _extract_markdown_link_target(raw_target)
-            replacement = replacements.get(source)
-            if not replacement:
-                continue
-            next_target = self._replace_markdown_link_target(raw_target, source, replacement)
-            updated = f"{updated[: match.start(1)]}{next_target}{updated[match.end(1) :]}"
-        return updated
-
-    def _replace_markdown_link_target(self, raw_target: str, source: str, replacement: str) -> str:
-        stripped = raw_target.strip()
-        if stripped.startswith("<") and ">" in stripped:
-            start = raw_target.find("<")
-            end = raw_target.find(">", start + 1)
-            if raw_target[start + 1 : end].strip() == source:
-                return f"{raw_target[:start]}<{replacement}>{raw_target[end + 1:]}"
-        index = raw_target.find(source)
-        if index >= 0:
-            return f"{raw_target[:index]}{replacement}{raw_target[index + len(source):]}"
-        return replacement
 
     def _collect_note_path_mappings_for_tree_move(self, source: Path, destination: Path) -> list[tuple[str, str]]:
         pairs: list[tuple[Path, Path]] = []
@@ -1389,12 +1144,6 @@ class VaultManager:
             relative = relative[:-3]
         return relative.strip().strip("/")
 
-    def enqueue_link_rewrite(self, mappings: list[tuple[str, str]], indexer: VaultIndexer | None = None) -> None:
-        clean_mappings = self._normalize_link_mappings(mappings)
-        if not clean_mappings:
-            return
-        self._link_queue.put((clean_mappings, indexer))
-        self._ensure_link_worker()
 
     def consume_last_link_rewrite_result(self) -> dict[str, Any]:
         result = self._last_link_rewrite_result
@@ -1425,35 +1174,7 @@ class VaultManager:
             normalized.append((old_clean, new_clean))
         return normalized
 
-    def _ensure_link_worker(self) -> None:
-        with self._link_worker_lock:
-            if self._link_worker_started:
-                return
-            worker = threading.Thread(
-                target=self._link_rewrite_worker,
-                name="nicknotes-link-rewriter",
-                daemon=True,
-            )
-            self._link_worker_started = True
-            worker.start()
 
-    def _link_rewrite_worker(self) -> None:
-        while True:
-            try:
-                mappings, indexer = self._link_queue.get(timeout=15)
-            except queue.Empty:
-                with self._link_worker_lock:
-                    if self._link_queue.empty():
-                        self._link_worker_started = False
-                        return
-                continue
-            try:
-                self.rewrite_note_links_for_moved_paths(mappings, indexer)
-            except Exception:
-                pass
-            finally:
-                self._link_queue.task_done()
-            time.sleep(0.03)
 
     def rewrite_note_links_for_moved_paths(
         self,
@@ -1473,16 +1194,18 @@ class VaultManager:
             except OSError:
                 continue
 
-            updated_body = self._rewrite_wikilink_targets(body, mapping_by_key)
+            from .markdown_syntax import transform_prose, rewrite_markdown_links
+            updated_body = transform_prose(body, lambda text: self._rewrite_wikilink_targets(text, mapping_by_key))
+            updated_body = rewrite_markdown_links(updated_body, markdown_path.relative_to(self.vault_path).as_posix(), dict(clean_mappings))
             updated_meta, meta_changed = self._rewrite_related_frontmatter(meta, mapping_by_key)
             if updated_body == body and not meta_changed:
                 continue
 
             updated = dump_markdown(updated_meta, updated_body)
             try:
-                markdown_path.write_text(updated, encoding="utf-8")
+                atomic_write_text(markdown_path, updated, encoding='utf-8')
             except OSError:
-                continue
+                raise
             touched.append(markdown_path)
             if indexer is not None:
                 indexer.reindex_markdown_file(self.vault_path, markdown_path)
@@ -1507,16 +1230,18 @@ class VaultManager:
             except OSError:
                 continue
 
-            updated_body = self._rewrite_deleted_wikilinks(body, deleted_by_key)
+            from .markdown_syntax import transform_prose, rewrite_markdown_links
+            updated_body = transform_prose(body, lambda text: self._rewrite_deleted_wikilinks(text, deleted_by_key))
+            updated_body = rewrite_markdown_links(updated_body, markdown_path.relative_to(self.vault_path).as_posix(), {}, deleted_by_key)
             updated_meta, meta_changed = self._rewrite_deleted_related_frontmatter(meta, deleted_by_key)
             if updated_body == body and not meta_changed:
                 continue
 
             updated = dump_markdown(updated_meta, updated_body)
             try:
-                markdown_path.write_text(updated, encoding="utf-8")
+                atomic_write_text(markdown_path, updated, encoding='utf-8')
             except OSError:
-                continue
+                raise
             touched.append(markdown_path)
             if indexer is not None:
                 indexer.reindex_markdown_file(self.vault_path, markdown_path)
@@ -1765,6 +1490,7 @@ class VaultManager:
         path: Path,
         force_title: str = "",
         touch_updated: bool = True,
+        previous_status: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         frontmatter, raw_body = parse_markdown_text(text)
         nested_frontmatter, nested_body = parse_markdown_text(raw_body.lstrip("\ufeff"))
@@ -1776,7 +1502,7 @@ class VaultManager:
                 frontmatter = dict(nested_frontmatter)
                 raw_body = nested_body
 
-        now_iso = datetime.now().isoformat(timespec="seconds")
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
 
         try:
             stat = path.stat()
@@ -1836,7 +1562,7 @@ class VaultManager:
         next_action_hint = _normalize_optional_text(frontmatter.get("next_action_hint"))
         raw_completed_at = _normalize_iso_timestamp(frontmatter.get("completed_at"))
         if status == "done":
-            completed_at = raw_completed_at or (now_iso if touch_updated else "")
+            completed_at = raw_completed_at or (now_iso if touch_updated and previous_status != "done" else "")
         else:
             completed_at = ""
 
@@ -1922,17 +1648,21 @@ class VaultManager:
         touch_updated: bool = True,
         rename_by_title: bool = False,
         force_title: str = "",
+        previous_status: str | None = None,
     ) -> tuple[Path, dict[str, Any], bool]:
         original = note_path.read_text(encoding="utf-8")
+        if previous_status is None:
+            previous_status=str(parse_markdown_text(original)[0].get('status','open'))
         normalized, meta = self.normalize_note_markdown_text(
             text=original,
             path=note_path,
             force_title=force_title,
             touch_updated=touch_updated,
+            previous_status=previous_status,
         )
         changed = normalized != original
         if changed:
-            note_path.write_text(normalized, encoding="utf-8")
+            atomic_write_text(note_path, normalized, encoding='utf-8')
 
         destination = note_path
         if rename_by_title:
@@ -1953,7 +1683,7 @@ class VaultManager:
                 )
                 meta = resolved_meta
                 if resolved_text != current:
-                    destination.write_text(resolved_text, encoding="utf-8")
+                    atomic_write_text(destination, resolved_text, encoding='utf-8')
                     changed = True
 
         return destination, meta, changed
@@ -1975,18 +1705,27 @@ class VaultManager:
             touch_updated=False,
         )
 
-        file_path.write_text(content, encoding="utf-8")
+        from .todos import synchronize_todo_history
+        incoming, next_body=parse_markdown_text(content)
+        incoming['id']=str(incoming.get('id') or previous_meta['id'])
+        incoming['node_id']=str(incoming.get('node_id') or incoming['id'])
+        if _normalize_note_type(str(incoming.get('type','note'))) != 'task':
+            row=indexer.conn.execute('SELECT id FROM notes WHERE path=?',(str(file_path),)).fetchone()
+            old_anchor=str(raw_meta.get('id') or (row['id'] if row else incoming['id']))
+            next_body=synchronize_todo_history(_raw_body,next_body,old_anchor,incoming['id'])
+        content=dump_markdown(incoming,next_body)
+        atomic_write_text(file_path, content, encoding='utf-8')
         final_path, meta, _changed = self.normalize_note_file(
             note_path=file_path,
             touch_updated=True,
             rename_by_title=True,
+            previous_status=str(previous_meta.get("status","open")),
         )
         if final_path.resolve() != file_path.resolve():
             self._record_link_rewrite_result(
                 self.rewrite_note_links_for_moved_paths(self._note_path_mappings([(file_path, final_path)]), indexer)
             )
-            self.enqueue_media_relocation(final_path)
-        self._cleanup_orphan_media_assets()
+        # Media may be referenced by unsaved drafts; only explicit maintenance may collect it.
 
         indexer.remove_projection_for_path(previous_path)
         indexer.reindex_markdown_file(self.vault_path, final_path)
@@ -2142,7 +1881,7 @@ class VaultManager:
                 candidate = status_dir / f"{base_token}_{suffix}.md"
                 suffix += 1
 
-        now_iso = datetime.now().isoformat(timespec="seconds")
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         created_at = now_iso
         if candidate.exists():
             try:
@@ -2178,7 +1917,7 @@ class VaultManager:
             f"- Original Task: [{safe_title}]({target_posix})\n"
             f"- Status: `{status_token}`\n"
         )
-        candidate.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        atomic_write_text(candidate, dump_markdown(frontmatter, body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, candidate)
 
         if previous_path is not None and previous_path != candidate:
@@ -2272,8 +2011,8 @@ class VaultManager:
             raise ValueError("Todo entry could not be resolved in source note.")
 
         if next_body != body:
-            meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
-            note_file.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+            meta["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            atomic_write_text(note_file, dump_markdown(meta, next_body), encoding='utf-8')
 
         indexer.reindex_markdown_file(self.vault_path, note_file)
         refreshed = indexer.get_todo(todo_id)
@@ -2350,8 +2089,8 @@ class VaultManager:
         )
 
         try:
-            meta["updated_at"] = now.isoformat(timespec="seconds")
-            note_file.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+            meta["updated_at"] = now.astimezone().isoformat(timespec="seconds")
+            atomic_write_text(note_file, dump_markdown(meta, next_body), encoding='utf-8')
         except OSError as exc:
             try:
                 _unlink_path_with_retry(task_path, missing_ok=True)
@@ -2399,21 +2138,8 @@ class VaultManager:
             return {}
 
     def write_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(config) if isinstance(config, dict) else {}
-        if "mode" not in payload:
-            payload["mode"] = "core"
-        if not isinstance(payload.get("openai"), dict):
-            payload["openai"] = {
-                "enabled": False,
-                "model": "gpt-4.1-mini",
-                "api_key_env": "OPENAI_API_KEY",
-            }
-        payload["assistant"] = normalize_assistant_config(payload.get("assistant"))
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        payload = {k: v for k, v in config.items() if k not in {"assistant", "openai", "mode"}}
+        atomic_write_text(self.config_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
         return payload
 
     def read_ui_settings(self) -> dict[str, Any]:
@@ -2518,41 +2244,20 @@ class VaultManager:
                 next_explorer = {}
 
         payload = {
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "app": next_app,
             "explorer": next_explorer,
         }
-        self.ui_settings_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        atomic_write_text(self.ui_settings_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
         return payload
 
     def read_tag_groups(self) -> list[dict[str, Any]]:
-        config = self.read_config()
-        if isinstance(config, dict) and "tagGroups" in config:
-            return self._normalize_tag_groups(config.get("tagGroups"))
-
         if not self.tag_groups_path.exists():
             return []
+        payload = json.loads(self.tag_groups_path.read_text(encoding="utf-8"))
+        groups = payload.get("groups", payload.get("tagGroups", [])) if isinstance(payload, dict) else payload
+        return self._normalize_tag_groups(groups)
 
-        try:
-            payload = json.loads(self.tag_groups_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return []
-
-        if isinstance(payload, dict) and "tagGroups" in payload:
-            source = payload.get("tagGroups")
-        elif isinstance(payload, dict) and "groups" in payload:
-            source = payload.get("groups")
-        else:
-            source = payload
-
-        normalized = self._normalize_tag_groups(source)
-        if normalized:
-            # One-way migration: legacy tag_groups.json -> config.json.
-            self._write_tag_groups(normalized)
-        return normalized
 
     def sync_tag_groups_with_index(self, indexer: VaultIndexer) -> list[dict[str, Any]]:
         groups = self.read_tag_groups()
@@ -2857,7 +2562,7 @@ class VaultManager:
         indexer: VaultIndexer,
     ) -> dict[str, Any]:
         now = datetime.now()
-        created_at = now.isoformat(timespec="seconds")
+        created_at = now.astimezone().isoformat(timespec="seconds")
         day = f"{now:%Y-%m-%d}"
         clean_text = text.strip()
         if not clean_text:
@@ -2883,7 +2588,7 @@ class VaultManager:
             next_body = f"{next_body}\n\n{block}\n"
         else:
             next_body = f"{block}\n"
-        note_path.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+        atomic_write_text(note_path, dump_markdown(meta, next_body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, note_path)
 
         groups = self.read_tag_groups()
@@ -2914,7 +2619,7 @@ class VaultManager:
 
     def ensure_daily_note(self, day_iso: str | None, indexer: VaultIndexer) -> dict[str, Any]:
         day = _normalize_daily_day(day_iso)
-        now_iso = datetime.now().isoformat(timespec="seconds")
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         daily_path = self._daily_note_path(day)
         existed = daily_path.exists()
         daily_path = self._ensure_daily_note(day, now_iso)
@@ -2940,7 +2645,7 @@ class VaultManager:
 
     def set_daily_mit(self, day_iso: str | None, mit_ids: list[str], indexer: VaultIndexer) -> dict[str, Any]:
         day = _normalize_daily_day(day_iso)
-        now_iso = datetime.now().isoformat(timespec="seconds")
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         daily_path = self._ensure_daily_note(day, now_iso)
         meta, body = parse_markdown(daily_path)
 
@@ -2954,7 +2659,7 @@ class VaultManager:
         meta["mit"] = _normalize_mit_ids(mit_ids)
         meta["updated_at"] = now_iso
 
-        daily_path.write_text(dump_markdown(meta, body), encoding="utf-8")
+        atomic_write_text(daily_path, dump_markdown(meta, body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, daily_path)
 
         return {
@@ -2969,7 +2674,7 @@ class VaultManager:
             raise ValueError("Quick capture text is empty")
 
         day = _normalize_daily_day(day_iso)
-        now_iso = datetime.now().isoformat(timespec="seconds")
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         daily_path = self._ensure_daily_note(day, now_iso)
         meta, body = parse_markdown(daily_path)
 
@@ -2982,13 +2687,13 @@ class VaultManager:
         meta["tags"] = _ensure_string_list(meta.get("tags", []))
         meta["updated_at"] = now_iso
 
-        todo_line = f"- [ ] {clean_text}"
+        todo_line = f"- [ ] {clean_text} <!-- nn:todo created={now_iso} completed= --> ^todo-{uuid.uuid4().hex[:16]}"
         if body.strip():
             next_body = body.rstrip() + "\n" + todo_line + "\n"
         else:
             next_body = f"# {day}\n\n{todo_line}\n"
 
-        daily_path.write_text(dump_markdown(meta, next_body), encoding="utf-8")
+        atomic_write_text(daily_path, dump_markdown(meta, next_body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, daily_path)
 
         return {
@@ -3011,7 +2716,7 @@ class VaultManager:
         status = task.status.lower() if task.status else "open"
         folder = "done" if status == "done" else "open"
         task_path = self.tasks_root_path / folder / f"{task_id}.md"
-        ts = now.isoformat(timespec="seconds")
+        ts = now.astimezone().isoformat(timespec="seconds")
         related = _dedupe_sorted([item for item in (manual_related or []) if item.strip()])
         completed_at = _normalize_iso_timestamp(task.completed_at)
         if status == "done" and not completed_at:
@@ -3061,7 +2766,7 @@ class VaultManager:
                 if key not in frontmatter:
                     frontmatter[key] = value
         body_text = body if body is not None else task.title
-        task_path.write_text(dump_markdown(frontmatter, body_text), encoding="utf-8")
+        atomic_write_text(task_path, dump_markdown(frontmatter, body_text), encoding='utf-8')
 
         task_for_index = ParsedTask(
             title=task.title,
@@ -3111,7 +2816,7 @@ class VaultManager:
         line = f"- {created_at[11:19]} [{title}]({note_path.as_posix()}) (`{note_id}`){tags_hint}"
         if line not in existing:
             updated = existing.rstrip() + "\n" + line + "\n"
-            daily_path.write_text(updated, encoding="utf-8")
+            atomic_write_text(daily_path, updated, encoding='utf-8')
 
     def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
         daily_path = self._daily_note_path(day_iso)
@@ -3128,7 +2833,7 @@ class VaultManager:
             "tags": [],
         }
         body = f"# {day_iso}\n"
-        daily_path.write_text(dump_markdown(fm, body), encoding="utf-8")
+        atomic_write_text(daily_path, dump_markdown(fm, body), encoding='utf-8')
         return daily_path
 
     def _daily_note_path(self, day_iso: str) -> Path:
@@ -3185,8 +2890,8 @@ class VaultManager:
         tag_path = tag_dir / "overview.md"
 
         rows = indexer.notes_for_tag(group_slug, tag_slug)
-        open_tasks = self._open_tasks_for_tag(group_slug, tag_slug)
-        now = datetime.now().isoformat(timespec="seconds")
+        open_tasks = self._open_tasks_for_tag(group_slug, tag_slug, indexer)
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
 
         frontmatter = {
             "id": f"tag_{group_slug}_{tag_slug}",
@@ -3234,7 +2939,7 @@ class VaultManager:
                 body_lines.append(f"- [ ] ({priority}) {task['title']}{due} [{task['id']}]({task['path']})")
 
         body = "\n".join(body_lines) + "\n"
-        tag_path.write_text(dump_markdown(frontmatter, body), encoding="utf-8")
+        atomic_write_text(tag_path, dump_markdown(frontmatter, body), encoding='utf-8')
         return tag_path
 
     def resolve_tag_overview_note(self, group_id: str, tag_id: str, indexer: VaultIndexer) -> dict[str, Any]:
@@ -3281,31 +2986,9 @@ class VaultManager:
             "title": f"{group_display_name} / {tag_display_name}",
         }
 
-    def _open_tasks_for_tag(self, group_slug: str, tag_slug: str) -> list[dict[str, str]]:
-        result: list[dict[str, str]] = []
-        tag_key = f"{group_slug}:{tag_slug}"
-        for task_file in (self.tasks_root_path / "open").rglob("*.md"):
-            meta, body = parse_markdown(task_file)
-            raw_tags = meta.get("tags", [])
-            if isinstance(raw_tags, str):
-                raw_tags = [raw_tags]
-            tags = [_normalize_tag_key(str(item)) for item in raw_tags if str(item).strip()]
-            if tag_key not in tags:
-                continue
-
-            title = body.strip().splitlines()[0] if body.strip() else str(meta.get("id", task_file.stem))
-            result.append(
-                {
-                    "id": str(meta.get("id", task_file.stem)),
-                    "title": title,
-                    "priority": str(meta.get("priority", "M")).upper()[:1] or "M",
-                    "due_date": str(meta.get("due_date", "")).strip(),
-                    "path": task_file.as_posix(),
-                }
-            )
-
-        result.sort(key=lambda item: (item["due_date"] or "9999-12-31", item["title"].lower()))
-        return result
+    def _open_tasks_for_tag(self, group_slug: str, tag_slug: str, indexer: VaultIndexer) -> list[dict[str, str]]:
+        rows=indexer.conn.execute("""SELECT DISTINCT t.id,t.title,t.priority,t.due_date,t.path FROM tasks t JOIN notes n ON n.path=t.path JOIN note_tags nt ON nt.note_id=n.id JOIN tags tag ON tag.id=nt.tag_id WHERE tag.category=? AND tag.slug=? AND t.status NOT IN ('done','cancelled','archived') ORDER BY COALESCE(t.due_date,'9999-12-31'), t.title""",(group_slug,tag_slug)).fetchall()
+        return [{key:str(row[key] or '') for key in ('id','title','priority','due_date','path')} for row in rows]
 
     def _rewrite_tag_references(self, old_key: str, new_key: str, remove: bool) -> int:
         old_key = _normalize_tag_key(old_key)
@@ -3314,51 +2997,36 @@ class VaultManager:
             return 0
 
         changed = 0
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
         for file_path in self._iter_markdown_files_for_tag_updates():
             meta, body = parse_markdown(file_path)
-            raw_tags = meta.get("tags", [])
-            if isinstance(raw_tags, str):
-                raw_tags = [raw_tags]
-            if not isinstance(raw_tags, list):
+            touched = False
+            for field in ('tags', 'tags_auto'):
+                raw_tags = meta.get(field, [])
+                if isinstance(raw_tags, str):
+                    raw_tags = [raw_tags]
+                normalized = [_normalize_tag_key(str(item)) for item in raw_tags] if isinstance(raw_tags, list) else []
+                if old_key in normalized:
+                    meta[field] = _dedupe_sorted([new_key if tag == old_key else tag for tag in normalized if tag != old_key or (not remove and new_key)])
+                    touched = True
+            old_group, old_tag = old_key.split(':', 1)
+            old_inline = '{tag:' + old_group + '/' + old_tag + '}'
+            replacement = '' if remove else '{tag:' + new_key.replace(':', '/', 1) + '}'
+            from .markdown_syntax import transform_prose
+            next_body = transform_prose(body, lambda text: text.replace(old_inline, replacement))
+            touched = touched or next_body != body
+            body = next_body
+            if not touched:
                 continue
-
-            normalized_tags = [_normalize_tag_key(str(item)) for item in raw_tags if _normalize_tag_key(str(item))]
-            if old_key not in normalized_tags:
-                continue
-
-            next_tags: list[str] = []
-            for tag in normalized_tags:
-                if tag != old_key:
-                    next_tags.append(tag)
-                    continue
-                if not remove and new_key:
-                    next_tags.append(new_key)
-
-            meta["tags"] = _dedupe_sorted(next_tags)
             meta["updated_at"] = now
-            file_path.write_text(dump_markdown(meta, body), encoding="utf-8")
+            atomic_write_text(file_path, dump_markdown(meta, body), encoding='utf-8')
             changed += 1
 
         return changed
 
     def _iter_markdown_files_for_tag_updates(self) -> list[Path]:
-        files: list[Path] = []
-        excluded = {
-            "00_inbox",
-            "02_entities",
-            self.tag_root_name,
-            "02_tags",
-            self.system_root_name,
-            "99_system",
-            self.media_root_name,
-        }
-        files.extend(self.vault_path.glob("*.md"))
-        for child in self.vault_path.iterdir():
-            if not child.is_dir() or child.name in excluded or self._is_hidden_legacy_root(child.name):
-                continue
-            files.extend(child.rglob("*.md"))
-        return files
+        from .inventory import markdown_sources
+        return markdown_sources(self.vault_path)
 
     def _migrate_legacy_inbox(self) -> None:
         inbox_path = self.vault_path / "00_inbox"
@@ -3385,7 +3053,7 @@ class VaultManager:
                 target_path = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
                 suffix += 1
 
-            shutil.move(str(file_path), str(target_path))
+            _rename_path_with_retry(file_path, target_path)
             moved_paths.append((file_path.as_posix(), target_path.as_posix()))
 
         daily_root = self.daily_root_path
@@ -3396,7 +3064,7 @@ class VaultManager:
                 for old_path, new_path in moved_paths:
                     updated = updated.replace(old_path, new_path)
                 if updated != content:
-                    daily_file.write_text(updated, encoding="utf-8")
+                    atomic_write_text(daily_file, updated, encoding='utf-8')
 
         try:
             _rmtree_with_retry(inbox_path)
@@ -3462,7 +3130,7 @@ class VaultManager:
                     updated = updated.replace(old_path, new_path)
                     updated = updated.replace(f"/{old_path}", f"/{new_path}")
                 if updated != content:
-                    markdown_path.write_text(updated, encoding="utf-8")
+                    atomic_write_text(markdown_path, updated, encoding='utf-8')
 
         for directory in sorted(legacy_notes_path.rglob("*"), key=lambda item: len(item.parts), reverse=True):
             if not directory.is_dir():
@@ -3502,7 +3170,7 @@ class VaultManager:
                 _rename_path_with_retry(source_path, target_path)
             except OSError:
                 try:
-                    shutil.move(str(source_path), str(target_path))
+                    _rename_path_with_retry(source_path, target_path)
                 except OSError:
                     continue
             if target_path.exists() and source_path.exists():
@@ -3954,10 +3622,10 @@ class VaultManager:
             key=lambda item: item.lower(),
         )
         payload = {
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "folders": clean,
         }
-        self.favorite_folders_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(self.favorite_folders_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
     def _remove_favorite_path(self, path_key: str) -> None:
         clean = path_key.replace("\\", "/").strip().strip("/")
@@ -4091,32 +3759,4 @@ class VaultManager:
         return sorted(normalized.values(), key=lambda item: str(item.get("displayName", item.get("id", ""))).lower())
 
     def _write_tag_groups(self, groups: Any) -> None:
-        clean_groups = self._normalize_tag_groups(groups)
-        config = self.read_config()
-        if not isinstance(config, dict):
-            config = {}
-        config["tagGroups"] = clean_groups
-        if "mode" not in config:
-            config["mode"] = "core"
-        if not isinstance(config.get("openai"), dict):
-            config["openai"] = {
-                "enabled": False,
-                "model": "gpt-4.1-mini",
-                "api_key_env": "OPENAI_API_KEY",
-            }
-        config["assistant"] = normalize_assistant_config(config.get("assistant"))
-
-        self.config_path.write_text(
-            json.dumps(config, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-        # Keep legacy file in sync for backwards compatibility with older builds.
-        legacy_payload = {
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-            "tagGroups": clean_groups,
-        }
-        self.tag_groups_path.write_text(
-            json.dumps(legacy_payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        atomic_write_text(self.tag_groups_path, json.dumps({"version": 1, "groups": self._normalize_tag_groups(groups)}, indent=2, ensure_ascii=False))

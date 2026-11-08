@@ -1,0 +1,64 @@
+name: Windows release candidate
+on:
+  pull_request:
+  push:
+    branches: [main, master, 'codex/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24.14.1'
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install locked dependencies
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci
+      - name: Verify generated contracts and icons
+        run: |
+          npm run contracts:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run icons:check
+      - name: Test, lint and build
+        run: npm run check
+      - name: Record bounded graph sample
+        run: .venv/Scripts/python scripts/benchmark-graph.py --count 1000
+      - name: Audit dependencies
+        run: |
+          npm audit --audit-level=moderate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python -m pip_audit -r requirements.txt
+      - name: Package offline Windows installer
+        run: npm run package:win
+      - name: Check payload and run installed-runtime smoke
+        run: |
+          npm run verify:package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run smoke:desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run release:checksums
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NickNotes-Windows-candidate
+          path: |
+            dist/installers/NickNotes-Setup-*.exe
+            dist/installers/package-manifest.json
+            dist/installers/SHA256SUMS.txt
+            .tmp/desktop-smoke-result.json
+            .tmp/graph-benchmark.json
+          retention-days: 14

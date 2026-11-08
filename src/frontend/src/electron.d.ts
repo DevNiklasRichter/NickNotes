@@ -6,6 +6,7 @@ declare global {
       selectDirectory?: () => Promise<string | null>
       selectImportSources?: () => Promise<string[]>
       getBackendUrl?: () => Promise<string>
+      getBackendToken?: () => Promise<string>
       openExternalUrl?: (url: string) => Promise<{ ok: boolean; code?: string; message?: string }>
       openPathInFileExplorer?: (path: string) => Promise<{ ok: boolean; code?: string; message?: string }>
       setWindowTheme?: (theme: 'light' | 'dark') => Promise<{ ok: boolean }>

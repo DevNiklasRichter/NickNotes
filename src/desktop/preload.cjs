@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('nicknotes', {
   selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
   selectImportSources: () => ipcRenderer.invoke('dialog:selectImportSources'),
   getBackendUrl: () => ipcRenderer.invoke('backend:url'),
+  getBackendToken: () => ipcRenderer.invoke('backend:token'),
   openExternalUrl: (url) => ipcRenderer.invoke('shell:openExternal', url),
   openPathInFileExplorer: (path) => ipcRenderer.invoke('shell:openPathInFileExplorer', path),
   setWindowTheme: (theme) => ipcRenderer.invoke('window:set-theme', theme),

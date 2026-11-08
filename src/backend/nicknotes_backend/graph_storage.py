@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from .file_io import atomic_write_text
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,17 +31,7 @@ def read_graph_index(path: Path) -> GraphIndex:
 
 
 def write_graph_index(path: Path, index: GraphIndex) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(json.dumps(index.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-    try:
-        temp_path.replace(path)
-    except PermissionError:
-        path.write_text(temp_path.read_text(encoding="utf-8"), encoding="utf-8")
-        try:
-            temp_path.unlink(missing_ok=True)
-        except PermissionError:
-            pass
+    atomic_write_text(path, json.dumps(index.to_dict(), ensure_ascii=False, separators=(',', ':')))
 
 
 def default_graph_state() -> dict[str, Any]:
@@ -87,15 +78,5 @@ def write_graph_state(path: Path, state: dict[str, Any]) -> dict[str, Any]:
     payload = dict(state) if isinstance(state, dict) else {}
     payload["version"] = GRAPH_STATE_VERSION
     payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    try:
-        temp_path.replace(path)
-    except PermissionError:
-        path.write_text(temp_path.read_text(encoding="utf-8"), encoding="utf-8")
-        try:
-            temp_path.unlink(missing_ok=True)
-        except PermissionError:
-            pass
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
     return payload

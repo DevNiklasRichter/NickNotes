@@ -1,0 +1,32 @@
+appId: local.nicknotes.desktop
+productName: NickNotes
+directories:
+  app: dist/app
+  output: dist/installers
+files:
+  - desktop/**
+  - frontend/**
+  - package.json
+  - THIRD_PARTY_NOTICES.txt
+  - "!node_modules{,/**/*}"
+asar: true
+beforeBuild: scripts/before-build.mjs
+extraResources:
+  - from: dist/backend/nicknotes-backend
+    to: backend
+compression: normal
+electronLanguages: [de, en-US]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  signExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  runAfterFinish: false
+  artifactName: NickNotes-Setup-${version}-${arch}.${ext}

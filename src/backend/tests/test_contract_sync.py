@@ -25,7 +25,7 @@ def _extract_ts_sync_types(source: str) -> list[str]:
 
 def _extract_ts_aliases(source: str) -> dict[str, str]:
     aliases: dict[str, str] = {}
-    for match in re.finditer(r"export\s+type\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:\n|$)", source):
+    for match in re.finditer(r"export\s+type\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*([A-Za-z][A-Za-z0-9_]*)\s*;?\s*(?:\n|$)", source):
         aliases[match.group(1)] = match.group(2)
     return aliases
 
@@ -53,29 +53,21 @@ def _extract_ts_type_body(source: str, type_name: str) -> str | None:
 
 
 def _extract_ts_fields(source: str, type_name: str, aliases: dict[str, str]) -> list[str]:
-    visited: set[str] = set()
-    current_name = type_name
-    while current_name in aliases:
-        if current_name in visited:
-            return []
-        visited.add(current_name)
-        current_name = aliases[current_name]
-
-    body = _extract_ts_type_body(source, current_name)
-    if body is None:
-        return []
-
-    fields: list[str] = []
-    depth = 0
-    for line in body.splitlines():
-        stripped = line.strip()
-        if depth == 0:
-            match = re.match(r"([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:", stripped)
+    model = next((name for name, alias in contracts.CONTRACT_SYNC_MODEL_MAP.items() if alias == type_name), type_name)
+    generated = TS_CONTRACT_PATH.with_name('openapi.generated.ts').read_text(encoding='utf-8')
+    marker = f'        {model}: {{'
+    start = generated.index(marker) + len(marker)
+    depth = 1
+    lines = []
+    for line in generated[start:].splitlines():
+        if depth == 1:
+            match = re.match(r'\s*([A-Za-z_$][A-Za-z0-9_$]*)\??:', line)
             if match:
-                fields.append(match.group(1))
-        depth += stripped.count("{") - stripped.count("}")
-        depth = max(0, depth)
-    return fields
+                lines.append(match.group(1))
+        depth += line.count('{') - line.count('}')
+        if depth == 0:
+            break
+    return lines
 
 
 def _backend_contract_fields(model_name: str) -> list[str]:

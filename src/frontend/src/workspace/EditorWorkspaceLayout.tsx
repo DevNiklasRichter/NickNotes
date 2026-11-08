@@ -108,8 +108,7 @@ function isDraggableWorkspaceTab(tab: NoteTab): boolean {
     tab.kind === 'task_dashboard' ||
     tab.kind === 'focus_dashboard' ||
     tab.kind === 'review_dashboard' ||
-    tab.kind === 'graph_dashboard' ||
-    tab.kind === 'assistant_chat'
+    tab.kind === 'graph_dashboard'
   )
 }
 
@@ -610,7 +609,7 @@ export function EditorWorkspaceLayout({
       >
         {showTabBar ? renderPaneTabBar(paneId) : null}
 
-        <div className="workspace-pane-content">{activeTab ? renderPaneContent(paneId, activeTab) : <EmptyPanePlaceholder />}</div>
+        <div className="workspace-pane-content">{activeTab?.conflict && <p className="graph-warning" role="alert">Die gespeicherte Notiz hat sich geaendert. Dein Entwurf bleibt erhalten. Kopiere ihn vor dem erneuten Laden; Speichern ueberschreibt die externe Fassung nicht.</p>}{activeTab ? renderPaneContent(paneId, activeTab) : <EmptyPanePlaceholder />}</div>
       </article>
     )
   }

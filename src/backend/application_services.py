@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import os
 import base64
 import binascii
@@ -10,7 +11,8 @@ import shutil
 import subprocess
 import sys
 import threading
-from importlib import import_module
+from .session import RuntimeState, coordinated
+from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteOpenRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagMoveRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,58 +32,7 @@ from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
-from .nicknotes_backend.assistant_chat import AssistantChatService
-from .nicknotes_backend.assistant_changesets import AssistantChangeSetService, AssistantOrganizationService, content_hash
-from .nicknotes_backend.assistant_embeddings import build_assistant_embedding_status
-from .nicknotes_backend.assistant_retrieval_eval import build_assistant_retrieval_evaluation_status
-from .nicknotes_backend.assistant_security import (
-    AssistantSecurityError,
-    normalize_assistant_config,
-    normalize_assistant_note_path,
-    normalize_assistant_secret_ref,
-    normalize_reasoning_effort,
-)
-from .nicknotes_backend.assistant_limits import (
-    ASSISTANT_DEFAULT_CONTEXT_CHARS,
-    ASSISTANT_DEFAULT_CONTEXT_NOTES,
-    ASSISTANT_DEFAULT_PROVIDER_RETRIES,
-    ASSISTANT_DEFAULT_REQUEST_CHARS,
-    ASSISTANT_DEFAULT_RESPONSE_CHARS,
-    ASSISTANT_MAX_CHAT_MESSAGE_CHARS,
-    ASSISTANT_MAX_CONTEXT_CHARS,
-    ASSISTANT_MAX_CONTEXT_NOTES,
-    ASSISTANT_MAX_PROVIDER_RETRIES,
-    ASSISTANT_MAX_REQUEST_CHARS,
-    ASSISTANT_MAX_RESPONSE_CHARS,
-    ASSISTANT_MIN_CONTEXT_CHARS,
-    ASSISTANT_MIN_CONTEXT_NOTES,
-    ASSISTANT_MIN_PROVIDER_RETRIES,
-    ASSISTANT_MIN_REQUEST_CHARS,
-    ASSISTANT_MIN_RESPONSE_CHARS,
-)
 
-from .nicknotes_backend.assistant_secret_store import (
-    AssistantSecretStoreError,
-    delete_assistant_provider_secret,
-    provider_secret_ref,
-    write_assistant_provider_secret,
-)
-from .nicknotes_backend.assistant_settings import (
-    SUPPORTED_ASSISTANT_PROVIDERS,
-    build_assistant_settings_response,
-    default_model_for_provider,
-    reasoning_efforts_for_model,
-)
-from .nicknotes_backend.llm_providers import (
-    LlmChatRequest,
-    LlmMessage,
-    LlmProviderConfig,
-    LlmProviderError,
-    LlmTranscriptionRequest,
-    canonical_provider_id,
-    create_llm_provider,
-    redact_secrets,
-)
 from .use_cases import (
     GetFocusDashboardUseCase,
     MoveNoteUseCase,
@@ -99,136 +50,24 @@ from .errors import (
     ValidationDomainError,
 )
 from .operation_context import get_operation_context
+from .nicknotes_backend.source_journal import pending_recovery
 
 """Application layer entry points for NickNotes backend API controllers."""
 
 logger = logging.getLogger(__name__)
 
-ASSISTANT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
-ASSISTANT_AUDIO_EXTENSIONS = {".flac", ".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".ogg", ".wav", ".webm"}
-
-
-def _assistant_stream_event(event_type: str, payload: dict[str, Any]) -> str:
-    return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
-
-
-def _provider_capabilities_to_dict(value: Any) -> dict[str, bool]:
-    return {
-        "chat": bool(getattr(value, "chat", False)),
-        "streaming": bool(getattr(value, "streaming", False)),
-        "toolCalls": bool(getattr(value, "tool_calls", False)),
-        "transcription": bool(getattr(value, "transcription", False)),
-        "embeddings": bool(getattr(value, "embeddings", False)),
-    }
-
-def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return max(minimum, min(maximum, parsed))
-
-
-def _build_assistant_provider_config(
-    assistant_config: Mapping[str, Any],
-    *,
-    timeout_seconds: float = 10.0,
-) -> LlmProviderConfig:
-    provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
-    model = str(assistant_config.get("model") or "").strip() or "gpt-4.1-mini"
-    base_url = str(assistant_config.get("base_url") or "").strip() or None
-    return LlmProviderConfig(
-        enabled=True,
-        provider=provider_id,
-        model=model,
-        api_key_ref=str(assistant_config.get("api_key_ref") or ""),
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        provider_retries=_bounded_int(
-            assistant_config.get("provider_retries"),
-            default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
-            minimum=ASSISTANT_MIN_PROVIDER_RETRIES,
-            maximum=ASSISTANT_MAX_PROVIDER_RETRIES,
-        ),
-        max_request_chars=_bounded_int(
-            assistant_config.get("max_request_chars"),
-            default=ASSISTANT_DEFAULT_REQUEST_CHARS,
-            minimum=ASSISTANT_MIN_REQUEST_CHARS,
-            maximum=ASSISTANT_MAX_REQUEST_CHARS,
-        ),
-        max_response_chars=_bounded_int(
-            assistant_config.get("max_response_chars"),
-            default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
-            minimum=ASSISTANT_MIN_RESPONSE_CHARS,
-            maximum=ASSISTANT_MAX_RESPONSE_CHARS,
-        ),
-        extra=dict(assistant_config),
-    )
-
-
-def _sanitize_provider_probe_error(exc: Exception) -> str:
-    redacted = redact_secrets(str(exc)).strip()
-    lower = redacted.lower()
-    sensitive_markers = (
-        "authorization:",
-        "bearer ",
-        "api-key",
-        "x-api-key",
-        "du bist ein nicknotes provider-diagnosetest",
-        "antworte exakt mit: nicknotes ok",
-    )
-    if any(marker in lower for marker in sensitive_markers):
-        return "Provider-Test fehlgeschlagen; sensible Details wurden entfernt."
-    return redacted[:500] or "Provider-Test fehlgeschlagen."
-
-
-def _assistant_media_placeholder(stage_id: str) -> str:
-    return f"nicknotes-assistant-media://{stage_id}"
-
-
-def _validate_assistant_audio_payload(*, filename: str, content_type: str, data: bytes) -> tuple[str, str]:
-    payload = bytes(data)
-    if not payload:
-        raise ValueError("Die Audiodatei ist leer.")
-    if len(payload) > ASSISTANT_MAX_AUDIO_BYTES:
-        raise ValueError("Audiodatei ist zu gross (maximal 25 MB).")
-    clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
-    suffix = Path(filename or "").suffix.lower()
-    if clean_content_type and not clean_content_type.startswith("audio/") and clean_content_type not in {"video/mp4", "video/webm"}:
-        raise ValueError("Nur Audiodateien koennen transkribiert werden.")
-    if suffix and suffix not in ASSISTANT_AUDIO_EXTENSIONS:
-        raise ValueError("Dieses Audioformat wird nicht unterstuetzt.")
-    safe_name = Path(filename or "").name or "assistant-audio.webm"
-    if Path(safe_name).suffix.lower() not in ASSISTANT_AUDIO_EXTENSIONS:
-        safe_name = f"{Path(safe_name).stem or 'assistant-audio'}.webm"
-    return safe_name, clean_content_type or "audio/webm"
-
-
 class BackendApiService:
     """Transport-agnostic delegating layer for API handlers."""
 
     def __init__(self, runtime: Any | None = None, capabilities: dict[str, Any] | None = None) -> None:
-        self._api_module: Any | None = None
-        self._runtime = runtime
+        self._runtime = runtime if runtime is not None else RuntimeState()
         self._capabilities = capabilities or {}
 
-    def configure(self, *, runtime: Any | None = None, capabilities: dict[str, Any] | None = None) -> None:
-        if runtime is not None:
-            self._runtime = runtime
-        if capabilities is not None:
-            self._capabilities = capabilities
-
-    def _api(self) -> Any:
-        if self._api_module is None:
-            self._api_module = import_module(".api", __package__)
-        return self._api_module
-
     @property
-    def state(self) -> Any:
-        if self._runtime is not None:
-            return self._runtime
-        return self._api().state
+    def state(self) -> RuntimeState:
+        return self._runtime
 
+    @coordinated
     def require_loaded(self) -> tuple[Any, Any]:
         runtime = self.state
         if not runtime.vault or not runtime.indexer:
@@ -286,6 +125,7 @@ class BackendApiService:
             )
         return resolved
 
+    @coordinated
     def counts(self, indexer: Any) -> dict[str, int]:
         cur = indexer.conn.cursor()
         cur.execute("SELECT COUNT(*) AS cnt FROM notes;")
@@ -300,9 +140,11 @@ class BackendApiService:
             "doneTasks": done_tasks,
         }
 
+    @coordinated
     def graph_index_needs_rebuild(self, index: GraphIndex) -> bool:
         return any(item.type == "graphIndexReadFailed" for item in index.diagnostics)
 
+    @coordinated
     def graph_index_status(self, vault: Any, index: GraphIndex | None = None) -> dict[str, Any]:
         runtime = self.state
         loaded = index if index is not None else read_graph_index(vault.graph_index_path)
@@ -371,6 +213,7 @@ class BackendApiService:
                 by_key[item.key] = item
         return sorted(by_key.values(), key=lambda item: (-item.confidence, item.key))
 
+    @coordinated
     def compute_capture(self, text: str, vault: Any, indexer: Any) -> list[TagSuggestion]:
         clean_text = text.strip()
         if not clean_text:
@@ -380,13 +223,11 @@ class BackendApiService:
         parsed = self.state.parser.parse(clean_text, known_tags)
         merged = parsed.merged_suggestions()
 
-        if self.state.openai and self.state.openai.cfg.enabled:
-            ai_suggestions = self.state.openai.suggest_tags(clean_text, known_tags)
-            merged = self._merge_suggestions(merged, ai_suggestions)
 
         return merged
 
     @staticmethod
+    @coordinated
     def tag_payload(item: TagSuggestion) -> dict[str, Any]:
         return {
             "key": item.key,
@@ -443,6 +284,7 @@ class BackendApiService:
             "lineOffset": start - line_start,
         }
 
+    @coordinated
     def scan_tag_matches(self, vault: Any) -> list[dict[str, Any]]:
         tag_rows: list[dict[str, Any]] = []
         for group in vault.read_tag_groups():
@@ -507,6 +349,7 @@ class BackendApiService:
                     )
         return matches
 
+    @coordinated
     def apply_tag_matches(self, vault: Any, raw_matches: list[dict[str, Any]]) -> tuple[int, list[Path]]:
         by_path: dict[Path, list[dict[str, Any]]] = {}
         for item in raw_matches:
@@ -561,6 +404,7 @@ class BackendApiService:
                 touched.append(note_file)
         return applied, touched
 
+    @coordinated
     def rebuild_graph_projection(self, vault: Any) -> dict[str, Any]:
         runtime = self.state
         with runtime.projection_lock:
@@ -577,6 +421,7 @@ class BackendApiService:
             finally:
                 runtime.graph_status.is_updating = False
 
+    @coordinated
     def update_graph_after_note_save(
         self,
         *,
@@ -646,6 +491,13 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
             )
 
+        relative = file_path.relative_to(vault_root)
+        if any(part.startswith(".") or part.lower() in {"system", "99_system"} for part in relative.parts):
+            raise ValidationDomainError("Internal files are not accessible as notes.")
+        if file_path.suffix.lower() not in {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".toml", ".log"}:
+            raise ValidationDomainError("Unsupported document type.")
+        if file_path.exists() and file_path.stat().st_size > 5 * 1024 * 1024:
+            raise ValidationDomainError("Document is too large (maximum 5 MB).")
         return file_path
 
     def _run_mutation_pipeline(
@@ -729,10 +581,11 @@ class BackendApiService:
             context["recovery"] = recovery_log
             raise
 
-    def health(self, *args: Any, **kwargs: Any) -> Any:
+    def health(self) -> dict[str, Any]:
         return {"ok": True, "vaultLoaded": self.state.vault is not None, "capabilities": self._capabilities}
 
-    def get_state(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_state(self) -> dict[str, Any]:
         runtime = self.state
         if not runtime.vault or not runtime.indexer:
             return {"vaultLoaded": False}
@@ -740,16 +593,23 @@ class BackendApiService:
             "vaultLoaded": True,
             "vaultPath": str(runtime.vault.vault_path),
             "noteBasePath": str(runtime.vault.vault_path),
+            "sessionId": runtime.generation,
+            "changeVersion": runtime.change_version,
+            "lastChange": runtime.last_change,
+            "pendingRecovery": pending_recovery(runtime.vault),
             "counts": self.counts(runtime.indexer),
         }
 
-    def open_vault(self, req: Any) -> Any:
+    @coordinated
+    def open_vault(self, req: VaultOpenRequest) -> Any:
         return self._open_vault_impl(req)
 
+    @coordinated
     def _open_vault_impl(self, req: Any, progress_callback: Any | None = None) -> dict[str, Any]:
         return OpenVaultUseCase().execute(self, req, progress_callback=progress_callback)
 
-    def start_notebase_open(self, req: Any) -> Any:
+    @coordinated
+    def start_notebase_open(self, req: VaultOpenRequest) -> Any:
         vault_path = Path(req.path).expanduser().resolve()
         if not vault_path.exists():
             raise ValidationDomainError(
@@ -794,15 +654,15 @@ class BackendApiService:
             )
         except DomainError as exc:
             self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
-        except LlmProviderError as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Could not open NoteBase in background.")
             self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
 
-    def get_notebase_open_status(self, *args: Any, **kwargs: Any) -> Any:
+    def get_notebase_open_status(self) -> dict[str, Any]:
         return self.state.get_load_status()
 
-    def create_vault(self, *args: Any, **kwargs: Any) -> Any:
-        req = args[0] if args else kwargs.get("req")
+    @coordinated
+    def create_vault(self, req: VaultCreateRequest) -> dict[str, Any]:
         parent = Path(req.parent_path).expanduser().resolve()
         if not parent.exists() or not parent.is_dir():
             raise ValidationDomainError(
@@ -819,6 +679,10 @@ class BackendApiService:
                 vault_id=str(parent),
             )
 
+        if name in {".", ".."} or any(c in name for c in '<>:"/\\|?*') or name.rstrip('. ') != name:
+            raise ValidationDomainError("Invalid NoteBase name.")
+        if name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *[f'COM{i}' for i in range(1, 10)], *[f'LPT{i}' for i in range(1, 10)]}:
+            raise ValidationDomainError("Reserved NoteBase name.")
         vault_path = parent / name
         try:
             vault_path.mkdir(parents=True, exist_ok=True)
@@ -831,7 +695,8 @@ class BackendApiService:
             ) from exc
         return self.open_vault(SimpleNamespace(path=str(vault_path)))
 
-    def reindex_vault(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def reindex_vault(self) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
             with self.state.projection_lock:
@@ -845,7 +710,7 @@ class BackendApiService:
                 "tagGroups": tag_groups,
                 "graphStatus": graph_status,
             }
-        except LlmProviderError as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("NoteBase reindex failed")
             raise InfrastructureDomainError(
                 "Could not reindex NoteBase.",
@@ -854,26 +719,31 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-    def open_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        return self.open_vault(*args, **kwargs)
+    @coordinated
+    def open_notebase(self, req: VaultOpenRequest) -> dict[str, Any]:
+        return self.open_vault(req)
 
-    def create_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        return self.create_vault(*args, **kwargs)
+    @coordinated
+    def create_notebase(self, req: VaultCreateRequest) -> dict[str, Any]:
+        return self.create_vault(req)
 
-    def reindex_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        return self.reindex_vault(*args, **kwargs)
+    @coordinated
+    def reindex_notebase(self) -> dict[str, Any]:
+        return self.reindex_vault()
 
-    def preview_onenote_import(self, *args: Any, **kwargs: Any) -> Any:
-        return PreviewOneNoteImportUseCase().execute(self, *args, **kwargs)
+    @coordinated
+    def preview_onenote_import(self, req: OneNoteImportPreviewRequest) -> dict[str, Any]:
+        return PreviewOneNoteImportUseCase().execute(self, req)
 
-    def start_onenote_import(self, *args: Any, **kwargs: Any) -> Any:
-        return StartOneNoteImportUseCase().execute(self, *args, **kwargs)
+    @coordinated
+    def start_onenote_import(self, req: OneNoteImportRequest) -> dict[str, Any]:
+        return StartOneNoteImportUseCase().execute(self, req)
 
-    def get_onenote_import_status(self, *args: Any, **kwargs: Any) -> Any:
+    def get_onenote_import_status(self) -> dict[str, Any]:
         return self.state.get_import_status()
 
-    def rename_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        req = args[0] if args else kwargs.get("req")
+    @coordinated
+    def rename_notebase(self, req: NoteBaseRenameRequest) -> dict[str, Any]:
         raw_path = str(getattr(req, "path", "") or "").strip()
         if raw_path:
             old_path = self._require_note_base_directory(Path(raw_path), operation="rename_notebase")
@@ -936,8 +806,8 @@ class BackendApiService:
             "counts": self.counts(indexer) if indexer else {},
         }
 
-    def delete_notebase(self, *args: Any, **kwargs: Any) -> Any:
-        req = args[0] if args else kwargs.get("req")
+    @coordinated
+    def delete_notebase(self, req: NoteBaseDeleteRequest) -> dict[str, Any]:
         raw_path = str(getattr(req, "path", "") or "").strip()
         if raw_path:
             target = self._require_note_base_directory(Path(raw_path), operation="delete_notebase")
@@ -969,9 +839,9 @@ class BackendApiService:
             "vaultLoaded": bool(getattr(self.state, "vault", None) and getattr(self.state, "indexer", None)),
         }
 
-    def preview_capture(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def preview_capture(self, req: CapturePreviewRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         merged = self.compute_capture(req.text, vault, indexer)
         auto_count = sum(1 for item in merged if item.auto_apply or item.source == "explicit")
         return {
@@ -982,9 +852,9 @@ class BackendApiService:
             },
         }
 
-    def save_capture(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def save_capture(self, req: CaptureSaveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         text = str(req.text).strip()
         if not text:
             raise ValidationDomainError(
@@ -1004,9 +874,10 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    def get_focus_mit(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_focus_mit(self, date: str | None = None) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        day_iso = args[0] if args else kwargs.get("date")
+        day_iso = date
         state = vault.get_daily_mit(day_iso=day_iso)
         return {
             "date": state["date"],
@@ -1014,9 +885,9 @@ class BackendApiService:
             "mitIds": state["mit_ids"],
         }
 
-    def save_focus_mit(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def save_focus_mit(self, req: FocusMitUpdateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         state = vault.set_daily_mit(day_iso=req.date, mit_ids=req.mit_ids, indexer=indexer)
         return {
             "saved": True,
@@ -1026,9 +897,9 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    def quick_capture_focus_todo(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def quick_capture_focus_todo(self, req: FocusQuickCaptureRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             result = vault.add_quick_todo_to_daily(text=req.text, indexer=indexer, day_iso=req.date)
         except ValueError as exc:
@@ -1046,9 +917,10 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    def open_or_create_daily(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def open_or_create_daily(self, date: str | None = None) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        day_iso = args[0] if args else kwargs.get("date")
+        day_iso = date
         state = vault.ensure_daily_note(day_iso=day_iso, indexer=indexer)
         return {
             "date": state["date"],
@@ -1058,22 +930,23 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    def get_focus_dashboard(self, *args: Any, **kwargs: Any) -> Any:
-        return GetFocusDashboardUseCase().execute(self, *args, **kwargs)
+    @coordinated
+    def get_focus_dashboard(self, date: str | None = None) -> dict[str, Any]:
+        return GetFocusDashboardUseCase().execute(self, date_param=date)
 
-    def list_tasks(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def list_tasks(self, include_done: bool = False) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
-        include_done = bool(args[0]) if args else bool(kwargs.get("include_done", False))
         return {"items": indexer.list_tasks(include_done=include_done)}
 
-    def list_todos(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def list_todos(self) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
         return {"items": indexer.list_todos()}
 
-    def toggle_todo(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def toggle_todo(self, todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        todo_id = str(args[0]) if args else str(kwargs.get("todo_id", ""))
-        req = args[1] if len(args) > 1 else kwargs.get("req")
         try:
             return vault.toggle_todo(todo_id=todo_id, indexer=indexer, checked=req.checked)
         except ValueError as exc:
@@ -1084,9 +957,9 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-    def promote_todo(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def promote_todo(self, todo_id: str = '') -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        todo_id = str(args[0]) if args else str(kwargs.get("todo_id", ""))
         try:
             return vault.promote_todo_to_task(todo_id=todo_id, indexer=indexer)
         except ValueError as exc:
@@ -1097,9 +970,9 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-    def mark_task_done(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def mark_task_done(self, task_id: str = '') -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        task_id = str(args[0]) if args else str(kwargs.get("task_id", ""))
         rows = [row for row in indexer.list_tasks(include_done=True) if row["id"] == task_id]
         if not rows:
             raise NotFoundDomainError(
@@ -1194,1008 +1067,15 @@ class BackendApiService:
         )
         return {"done": True, "taskId": task_id, "taskPath": str(done_path)}
 
-    def search_notes(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def search_notes(self, query: str = '', offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
-        query = str(args[0]) if args else str(kwargs.get("query", ""))
-        return {"items": indexer.search_notes(query)}
+        limit, offset = max(1, min(limit, 200)), max(0, min(offset, 100000))
+        items = indexer.search_notes(query, limit=limit+1, offset=offset, tag=tag, note_type=note_type)
+        return {"items": items[:limit], "hasMore": len(items)>limit, "offset": offset, "limit": limit}
 
-    def _assistant_chat_context(self, req: Any) -> tuple[Any, Any, str, dict[str, Any], int]:
-        vault, indexer = self.require_loaded()
-        message = str(getattr(req, "message", "") or "").strip()
-        if not message:
-            raise ValidationDomainError(
-                "Assistant message must not be empty.",
-                operation="assistant_chat",
-                vault_id=str(vault.vault_path),
-            )
-        if len(message) > ASSISTANT_MAX_CHAT_MESSAGE_CHARS:
-            raise ValidationDomainError(
-                f"Assistant message too long ({len(message)} characters).",
-                operation="assistant_chat",
-                vault_id=str(vault.vault_path),
-                details={"maxChars": ASSISTANT_MAX_CHAT_MESSAGE_CHARS},
-            )
-
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_chat",
-                vault_id=str(vault.vault_path),
-            )
-
-        configured_max_sources = _bounded_int(
-            assistant_config.get("max_context_notes"),
-            default=ASSISTANT_DEFAULT_CONTEXT_NOTES,
-            minimum=ASSISTANT_MIN_CONTEXT_NOTES,
-            maximum=ASSISTANT_MAX_CONTEXT_NOTES,
-        )
-        requested_max_sources = getattr(req, "max_sources", None)
-        max_sources = _bounded_int(
-            requested_max_sources,
-            default=configured_max_sources,
-            minimum=ASSISTANT_MIN_CONTEXT_NOTES,
-            maximum=ASSISTANT_MAX_CONTEXT_NOTES,
-        )
-        max_sources = min(configured_max_sources, max_sources)
-
-        return vault, indexer, message, assistant_config, max_sources
-
-    def assistant_chat(self, req: Any) -> Any:
-        vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
-        max_context_chars = _bounded_int(
-            assistant_config.get("max_context_chars"),
-            default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
-            minimum=ASSISTANT_MIN_CONTEXT_CHARS,
-            maximum=ASSISTANT_MAX_CONTEXT_CHARS,
-        )
-        return AssistantChatService(vault=vault, indexer=indexer).answer(
-            question=message,
-            assistant_config=assistant_config,
-            max_sources=max_sources,
-            max_context_chars=max_context_chars,
-        )
-
-    def assistant_chat_stream(self, req: Any) -> Any:
-        yield _assistant_stream_event("status", {"message": "Suche in der NoteBase ..."})
-        try:
-            vault, indexer, message, assistant_config, max_sources = self._assistant_chat_context(req)
-            service = AssistantChatService(vault=vault, indexer=indexer)
-            max_context_chars = _bounded_int(
-                assistant_config.get("max_context_chars"),
-                default=ASSISTANT_DEFAULT_CONTEXT_CHARS,
-                minimum=ASSISTANT_MIN_CONTEXT_CHARS,
-                maximum=ASSISTANT_MAX_CONTEXT_CHARS,
-            )
-            for event in service.stream_answer(
-                question=message,
-                assistant_config=assistant_config,
-                max_sources=max_sources,
-                max_context_chars=max_context_chars,
-            ):
-                event_type = str(event.get("type") or "delta")
-                payload = {key: value for key, value in event.items() if key != "type"}
-                yield _assistant_stream_event(event_type, payload)
-        except DomainError as exc:
-            yield _assistant_stream_event("error", {"message": exc.public_message, "code": exc.error_code})
-            return
-        except Exception:
-            logger.exception("Assistant stream failed")
-            yield _assistant_stream_event("error", {"message": "Assistant-Anfrage fehlgeschlagen.", "code": "service.unexpected"})
-            return
-
-    def assistant_voice_status(self) -> Any:
-        vault, indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-
-        assistant_enabled = bool(assistant_config.get("enabled"))
-        external_allowed = bool(assistant_config.get("allow_external_note_content"))
-        provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
-        model = str(assistant_config.get("model") or "").strip()
-        provider_configured = False
-        provider_transcription_available = False
-
-        if not assistant_enabled:
-            reason = "assistant_disabled"
-        elif not external_allowed:
-            reason = "external_content_not_allowed"
-        else:
-            reason = "provider_not_configured"
-            provider_config = _build_assistant_provider_config(assistant_config)
-            try:
-                provider = create_llm_provider(provider_config)
-                provider_configured = provider.is_configured()
-                if provider_configured and provider.capabilities.transcription:
-                    provider_transcription_available = True
-                    reason = "available"
-                elif provider_configured:
-                    reason = "capability_unavailable"
-            except LlmProviderError:
-                reason = "provider_unavailable"
-
-        return {
-            "assistantEnabled": assistant_enabled,
-            "externalContentAllowed": external_allowed,
-            "provider": provider_id,
-            "model": model,
-            "providerConfigured": provider_configured,
-            "providerTranscriptionAvailable": provider_transcription_available,
-            "providerTranscriptionReason": reason,
-            "privacyMode": "browser",
-        }
-
-    def assistant_transcribe_audio(self, req: Any) -> Any:
-        vault, indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-            )
-        if not assistant_config.get("allow_external_note_content"):
-            raise ValidationDomainError(
-                "Assistant external content transfer is disabled for this NoteBase.",
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-            )
-
-        provider_id = canonical_provider_id(str(assistant_config.get("provider") or ""))
-        provider_config = LlmProviderConfig(
-            enabled=True,
-            provider=provider_id,
-            model=str(assistant_config.get("model") or "gpt-4o-mini"),
-            api_key_ref=str(assistant_config.get("api_key_ref") or ""),
-            base_url=str(assistant_config.get("base_url") or "").strip() or None,
-            timeout_seconds=30.0,
-        provider_retries=_bounded_int(
-            assistant_config.get("provider_retries"),
-            default=ASSISTANT_DEFAULT_PROVIDER_RETRIES,
-            minimum=ASSISTANT_MIN_PROVIDER_RETRIES,
-            maximum=ASSISTANT_MAX_PROVIDER_RETRIES,
-        ),
-        max_request_chars=_bounded_int(
-            assistant_config.get("max_request_chars"),
-            default=ASSISTANT_DEFAULT_REQUEST_CHARS,
-            minimum=ASSISTANT_MIN_REQUEST_CHARS,
-            maximum=ASSISTANT_MAX_REQUEST_CHARS,
-        ),
-        max_response_chars=_bounded_int(
-            assistant_config.get("max_response_chars"),
-            default=ASSISTANT_DEFAULT_RESPONSE_CHARS,
-            minimum=ASSISTANT_MIN_RESPONSE_CHARS,
-            maximum=ASSISTANT_MAX_RESPONSE_CHARS,
-        ),
-            extra=dict(assistant_config),
-        )
-        try:
-            provider = create_llm_provider(provider_config)
-        except LlmProviderError as exc:
-            raise ValidationDomainError(
-                "Assistant transcription provider is not available.",
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-                internal_message=_sanitize_provider_probe_error(exc),
-            ) from exc
-        if not provider.is_configured():
-            raise ValidationDomainError(
-                "Assistant transcription provider is not configured.",
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-            )
-        if not provider.capabilities.transcription:
-            raise ValidationDomainError(
-                "Assistant provider does not support transcription.",
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-                details={"provider": provider_id},
-            )
-
-        try:
-            payload = base64.b64decode(str(getattr(req, "data_base64", "") or "").encode("utf-8"), validate=True)
-            file_name, content_type = _validate_assistant_audio_payload(
-                filename=str(getattr(req, "file_name", "") or "assistant-audio.webm"),
-                content_type=str(getattr(req, "content_type", "") or ""),
-                data=payload,
-            )
-        except (ValueError, binascii.Error) as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
-        try:
-            transcription = provider.transcribe(
-                LlmTranscriptionRequest(
-                    audio=payload,
-                    filename=file_name,
-                    content_type=content_type,
-                    language=str(getattr(req, "language", "") or "").strip(),
-                )
-            )
-        except LlmProviderError as exc:
-            raise InfrastructureDomainError(
-                "Assistant transcription failed.",
-                status_code=502,
-                operation="assistant_transcribe_audio",
-                vault_id=str(vault.vault_path),
-                internal_message=_sanitize_provider_probe_error(exc),
-            ) from exc
-
-        return {
-            "text": transcription.text,
-            "provider": provider_id,
-            "model": str(
-                assistant_config.get("transcription_model")
-                or assistant_config.get("transcriptionModel")
-                or "gpt-4o-mini-transcribe"
-            ),
-            "usedProvider": True,
-            "privacyMode": "provider",
-        }
-
-    def assistant_media_stage(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_media_stage",
-                vault_id=str(vault.vault_path),
-            )
-        if not assistant_config.get("allow_write_actions"):
-            raise ValidationDomainError(
-                "Assistant write actions are disabled for this NoteBase.",
-                operation="assistant_media_stage",
-                vault_id=str(vault.vault_path),
-            )
-        try:
-            payload = base64.b64decode(str(getattr(req, "data_base64", "") or "").encode("utf-8"), validate=True)
-            return vault.stage_assistant_media_asset(
-                filename=str(getattr(req, "file_name", "") or "image"),
-                content_type=str(getattr(req, "content_type", "") or ""),
-                data=payload,
-            )
-        except (ValueError, binascii.Error) as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="assistant_media_stage",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
-    def assistant_embedding_status(self) -> Any:
-        vault, indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        return build_assistant_embedding_status(
-            indexer=indexer,
-            counts=self.counts(indexer),
-            graph_status=self.graph_index_status(vault),
-            assistant_config=assistant_config,
-        )
-
-    def assistant_retrieval_evaluation(self) -> Any:
-        vault, indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        return build_assistant_retrieval_evaluation_status(
-            vault=vault,
-            indexer=indexer,
-            graph_status=self.graph_index_status(vault),
-            assistant_config=assistant_config,
-        )
-
-    def assistant_settings(self) -> Any:
-        vault, _indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        return build_assistant_settings_response(normalize_assistant_config(vault_config.get("assistant")))
-
-    def update_assistant_settings(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        provider = canonical_provider_id(str(getattr(req, "provider", assistant_config.get("provider")) or ""))
-        if provider not in SUPPORTED_ASSISTANT_PROVIDERS:
-            raise ValidationDomainError(
-                "Assistant provider adapter is not available.",
-                operation="assistant_settings_update",
-                vault_id=str(vault.vault_path),
-                details={"provider": provider},
-            )
-
-        base_url = str(getattr(req, "base_url", assistant_config.get("base_url", "")) or "").strip()
-        if base_url and not re.match(r"^https?://[^\s]+$", base_url, flags=re.IGNORECASE):
-            raise ValidationDomainError(
-                "Assistant provider endpoint must be an HTTP or HTTPS URL.",
-                operation="assistant_settings_update",
-                vault_id=str(vault.vault_path),
-            )
-
-        legacy_secret_ref = getattr(req, "api_key_ref", None)
-        if legacy_secret_ref:
-            try:
-                normalize_assistant_secret_ref(legacy_secret_ref, strict=True, provider=provider)
-            except AssistantSecurityError as exc:
-                raise ValidationDomainError(
-                    str(exc),
-                    operation="assistant_settings_update",
-                    vault_id=str(vault.vault_path),
-                    internal_message=str(exc),
-                ) from exc
-
-        model = str(getattr(req, "model", assistant_config.get("model")) or "").strip() or default_model_for_provider(provider)
-        reasoning_effort = normalize_reasoning_effort(
-            getattr(req, "reasoning_effort", assistant_config.get("reasoning_effort"))
-        )
-        if reasoning_effort and reasoning_effort not in reasoning_efforts_for_model(provider, model):
-            reasoning_effort = ""
-
-        next_config = {
-            **assistant_config,
-            "enabled": bool(getattr(req, "enabled", assistant_config.get("enabled"))),
-            "provider": provider,
-            "model": model,
-            "api_key_ref": provider_secret_ref(provider),
-            "base_url": base_url,
-            "reasoning_effort": reasoning_effort,
-            "allow_external_note_content": bool(
-                getattr(req, "allow_external_note_content", assistant_config.get("allow_external_note_content"))
-            ),
-            "allow_write_actions": bool(getattr(req, "allow_write_actions", assistant_config.get("allow_write_actions"))),
-            "max_context_notes": getattr(req, "max_context_notes", assistant_config.get("max_context_notes")),
-            "max_context_chars": getattr(req, "max_context_chars", assistant_config.get("max_context_chars")),
-            "provider_retries": getattr(req, "provider_retries", assistant_config.get("provider_retries")),
-            "max_request_chars": getattr(req, "max_request_chars", assistant_config.get("max_request_chars")),
-            "max_response_chars": getattr(req, "max_response_chars", assistant_config.get("max_response_chars")),
-        }
-        vault_config["assistant"] = normalize_assistant_config(next_config)
-        vault.write_config(vault_config)
-        return build_assistant_settings_response(vault_config["assistant"])
-
-    def save_assistant_provider_secret(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
-        provider = canonical_provider_id(str(getattr(req, "provider", "") or ""))
-        if provider not in SUPPORTED_ASSISTANT_PROVIDERS:
-            raise ValidationDomainError(
-                "Assistant provider adapter is not available.",
-                operation="assistant_secret_save",
-                vault_id=str(vault.vault_path),
-                details={"provider": provider},
-            )
-        api_key = str(getattr(req, "api_key", "") or "").strip()
-        if len(api_key) < 8:
-            raise ValidationDomainError(
-                "Assistant API key is too short.",
-                operation="assistant_secret_save",
-                vault_id=str(vault.vault_path),
-            )
-
-        try:
-            write_assistant_provider_secret(provider, api_key)
-        except AssistantSecretStoreError as exc:
-            raise InfrastructureDomainError(
-                "Assistant API key could not be saved.",
-                status_code=500,
-                operation="assistant_secret_save",
-                vault_id=str(vault.vault_path),
-                internal_message=redact_secrets(str(exc), known_secrets=[api_key]),
-            ) from exc
-
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        model = str(assistant_config.get("model") or "").strip()
-        if canonical_provider_id(str(assistant_config.get("provider") or "")) != provider or not model:
-            model = default_model_for_provider(provider)
-        vault_config["assistant"] = normalize_assistant_config(
-            {
-                **assistant_config,
-                "provider": provider,
-                "model": model,
-                "api_key_ref": provider_secret_ref(provider),
-            }
-        )
-        vault.write_config(vault_config)
-        return build_assistant_settings_response(vault_config["assistant"])
-
-    def delete_assistant_provider_secret(self, provider: str) -> Any:
-        vault, _indexer = self.require_loaded()
-        provider_id = canonical_provider_id(str(provider or ""))
-        if provider_id not in SUPPORTED_ASSISTANT_PROVIDERS:
-            raise ValidationDomainError(
-                "Assistant provider adapter is not available.",
-                operation="assistant_secret_delete",
-                vault_id=str(vault.vault_path),
-                details={"provider": provider_id},
-            )
-
-        try:
-            delete_assistant_provider_secret(provider_id)
-        except AssistantSecretStoreError as exc:
-            raise InfrastructureDomainError(
-                "Assistant API key could not be deleted.",
-                status_code=500,
-                operation="assistant_secret_delete",
-                vault_id=str(vault.vault_path),
-                internal_message=redact_secrets(str(exc)),
-            ) from exc
-
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        vault_config["assistant"] = normalize_assistant_config(
-            {
-                **assistant_config,
-                "api_key_ref": provider_secret_ref(str(assistant_config.get("provider") or provider_id)),
-            }
-        )
-        vault.write_config(vault_config)
-        return build_assistant_settings_response(vault_config["assistant"])
-
-    def assistant_provider_probe(self) -> Any:
-        vault, _indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        provider_id = canonical_provider_id(str(assistant_config.get("provider") or "openai"))
-        model = str(assistant_config.get("model") or "").strip()
-        provider_config = _build_assistant_provider_config(assistant_config)
-        base_response = {
-            "provider": provider_id,
-            "model": model,
-            "usedProvider": False,
-            "noteContentSent": False,
-            "diagnosticOnly": True,
-            "capabilities": _provider_capabilities_to_dict(None),
-            "error": "",
-        }
-
-        try:
-            provider = create_llm_provider(provider_config)
-        except LlmProviderError as exc:
-            return {
-                **base_response,
-                "ok": False,
-                "status": "unsupported_provider",
-                "message": "Provider-Adapter ist nicht verfuegbar.",
-                "error": redact_secrets(str(exc)),
-            }
-
-        capabilities = _provider_capabilities_to_dict(provider.capabilities)
-        if not provider.is_configured():
-            return {
-                **base_response,
-                "capabilities": capabilities,
-                "ok": False,
-                "status": "secret_missing",
-                "message": "Provider-Key fehlt oder ist im Backend-Prozess nicht verfuegbar.",
-            }
-
-        try:
-            provider.chat(
-                LlmChatRequest(
-                    messages=[
-                        LlmMessage(
-                            role="system",
-                            content=(
-                                "Du bist ein NickNotes Provider-Diagnosetest. "
-                                "Es werden keine NoteBase-Inhalte bereitgestellt. Antworte kurz."
-                            ),
-                        ),
-                        LlmMessage(role="user", content="Antworte exakt mit: NickNotes OK"),
-                    ],
-                    response_format="text",
-                )
-            )
-        except LlmProviderError as exc:
-            return {
-                **base_response,
-                "capabilities": capabilities,
-                "ok": False,
-                "status": "provider_error",
-                "message": "Provider-Test fehlgeschlagen.",
-                "error": _sanitize_provider_probe_error(exc),
-            }
-
-        return {
-            **base_response,
-            "capabilities": capabilities,
-            "ok": True,
-            "status": "ready",
-            "message": "Provider-Test erfolgreich.",
-            "usedProvider": True,
-        }
-
-    def assistant_changeset_preview(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
-        instruction = str(getattr(req, "instruction", "") or "").strip()
-        if not instruction:
-            raise ValidationDomainError(
-                "Assistant change instruction must not be empty.",
-                operation="assistant_changeset_preview",
-                vault_id=str(vault.vault_path),
-            )
-
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_changeset_preview",
-                vault_id=str(vault.vault_path),
-            )
-        if not assistant_config.get("allow_write_actions"):
-            raise ValidationDomainError(
-                "Assistant write actions are disabled for this NoteBase.",
-                operation="assistant_changeset_preview",
-                vault_id=str(vault.vault_path),
-            )
-
-        raw_path = str(getattr(req, "path", "") or "").strip()
-        try:
-            return AssistantChangeSetService(vault=vault).preview(
-                raw_path=raw_path,
-                instruction=instruction,
-                assistant_config=assistant_config,
-            )
-        except ValueError as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="assistant_changeset_preview",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
-    def assistant_organize_preview(self, req: Any) -> Any:
-        vault, indexer = self.require_loaded()
-        instruction = str(getattr(req, "instruction", "") or "").strip()
-        actions = getattr(req, "actions", None)
-        raw_actions = actions if isinstance(actions, list) else []
-        if not raw_actions:
-            action: dict[str, Any] = {
-                "actionType": str(getattr(req, "action_type", "") or "").strip(),
-                "title": str(getattr(req, "title", "") or "").strip(),
-                "body": str(getattr(req, "body", "") or "").strip(),
-                "sourcePath": str(getattr(req, "source_path", "") or "").strip(),
-                "targetGroupKey": str(getattr(req, "target_group_key", "") or "").strip(),
-                "taskId": str(getattr(req, "task_id", "") or "").strip(),
-                "todoId": str(getattr(req, "todo_id", "") or "").strip(),
-                "attachments": getattr(req, "attachments", []) if isinstance(getattr(req, "attachments", []), list) else [],
-            }
-            raw_actions = [action]
-        if not instruction and not any(str(action.get("title") or action.get("body") or "").strip() for action in raw_actions if isinstance(action, dict)):
-            raise ValidationDomainError(
-                "Assistant organization instruction must not be empty.",
-                operation="assistant_organize_preview",
-                vault_id=str(vault.vault_path),
-            )
-
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_organize_preview",
-                vault_id=str(vault.vault_path),
-            )
-        if not assistant_config.get("allow_write_actions"):
-            raise ValidationDomainError(
-                "Assistant write actions are disabled for this NoteBase.",
-                operation="assistant_organize_preview",
-                vault_id=str(vault.vault_path),
-            )
-        try:
-            return AssistantOrganizationService(vault=vault, indexer=indexer).preview(
-                instruction=instruction,
-                raw_actions=[action for action in raw_actions if isinstance(action, dict)],
-                assistant_config=assistant_config,
-            )
-        except ValueError as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="assistant_organize_preview",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
-    def assistant_changeset_apply(self, req: Any) -> Any:
-        vault, _indexer = self.require_loaded()
-        vault_config = vault.read_config()
-        assistant_config = normalize_assistant_config(vault_config.get("assistant"))
-        if not assistant_config.get("enabled"):
-            raise ValidationDomainError(
-                "Assistant is disabled for this NoteBase.",
-                operation="assistant_changeset_apply",
-                vault_id=str(vault.vault_path),
-            )
-        if not assistant_config.get("allow_write_actions"):
-            raise ValidationDomainError(
-                "Assistant write actions are disabled for this NoteBase.",
-                operation="assistant_changeset_apply",
-                vault_id=str(vault.vault_path),
-            )
-
-        confirmed = bool(getattr(req, "confirmed", False))
-        if not confirmed:
-            raise ValidationDomainError(
-                "Assistant ChangeSet must be confirmed before apply.",
-                operation="assistant_changeset_apply",
-                vault_id=str(vault.vault_path),
-            )
-
-        change_set = getattr(req, "change_set", None)
-        if not isinstance(change_set, dict):
-            raise ValidationDomainError(
-                "Assistant ChangeSet payload is invalid.",
-                operation="assistant_changeset_apply",
-                vault_id=str(vault.vault_path),
-            )
-        operations = change_set.get("operations")
-        if not isinstance(operations, list) or not operations:
-            raise ValidationDomainError(
-                "Assistant ChangeSet contains no operations.",
-                operation="assistant_changeset_apply",
-                vault_id=str(vault.vault_path),
-            )
-
-        content_action_types = {"replace_note_content", "add_note_tags", "add_related_links", "add_wikilinks"}
-        direct_action_types = {"mark_task_done", "mark_todo_done"}
-        prepared: list[dict[str, Any]] = []
-        for item in operations:
-            if not isinstance(item, dict):
-                raise ValidationDomainError(
-                    "Assistant ChangeSet operation is invalid.",
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                )
-            action_type = str(item.get("actionType") or "").strip()
-            if action_type not in {*content_action_types, *direct_action_types, "create_note", "create_task", "move_note"}:
-                raise ValidationDomainError(
-                    f"Unsupported Assistant ChangeSet action: {action_type}",
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                )
-            if action_type in {"create_note", "create_task"}:
-                after_content = str(item.get("afterContent") or "")
-                after_hash = str(item.get("afterHash") or "").strip()
-                if not after_hash or content_hash(after_content) != after_hash:
-                    raise ValidationDomainError(
-                        "Assistant ChangeSet content hash does not match its payload.",
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        details={"path": str(item.get("path") or "")},
-                    )
-                target_group_key = str(item.get("targetGroupKey") or "").strip()
-                try:
-                    target_group = vault._resolve_group_path(target_group_key)  # noqa: SLF001
-                    if vault._is_creation_locked_path(target_group):  # noqa: SLF001
-                        raise ValueError("Assistant cannot create notes in this folder.")
-                except ValueError as exc:
-                    raise ValidationDomainError(
-                        str(exc),
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        internal_message=str(exc),
-                    ) from exc
-                title = str(item.get("title") or "").strip() or ("Neue Aufgabe" if action_type == "create_task" else "Neue Notiz")
-                prepared.append(
-                    {
-                        "operationId": str(item.get("id") or ""),
-                        "actionType": action_type,
-                        "targetGroupKey": target_group_key,
-                        "title": title,
-                        "content": after_content,
-                        "mediaAttachments": self._assistant_media_attachments_from_operation(item),
-                    }
-                )
-                continue
-            if action_type in direct_action_types:
-                try:
-                    relative_path = normalize_assistant_note_path(str(item.get("path") or ""))
-                except ValueError as exc:
-                    raise ValidationDomainError(
-                        str(exc),
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        internal_message=str(exc),
-                    ) from exc
-                file_path = self._resolve_note_request_path(vault=vault, raw_path=relative_path)
-                current_content = file_path.read_text(encoding="utf-8")
-                current_hash = content_hash(current_content)
-                before_hash = str(item.get("beforeHash") or "").strip()
-                if current_hash != before_hash:
-                    raise ConflictDomainError(
-                        "Die Notiz wurde seit Erstellung des Assistant-Vorschlags geaendert.",
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        details={
-                            "path": relative_path,
-                            "expectedHash": before_hash,
-                            "currentHash": current_hash,
-                        },
-                    )
-                details = item.get("details") if isinstance(item.get("details"), dict) else {}
-                task_id = str(details.get("taskId") or item.get("taskId") or "").strip()
-                todo_id = str(details.get("todoId") or item.get("todoId") or "").strip()
-                if action_type == "mark_task_done" and not task_id:
-                    raise ValidationDomainError(
-                        "Assistant task operation needs a task id.",
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                    )
-                if action_type == "mark_todo_done" and not todo_id:
-                    raise ValidationDomainError(
-                        "Assistant todo operation needs a todo id.",
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                    )
-                prepared.append(
-                    {
-                        "operationId": str(item.get("id") or ""),
-                        "actionType": action_type,
-                        "path": relative_path,
-                        "absolutePath": str(file_path),
-                        "taskId": task_id,
-                        "todoId": todo_id,
-                    }
-                )
-                continue
-            try:
-                relative_path = normalize_assistant_note_path(str(item.get("path") or ""))
-            except ValueError as exc:
-                raise ValidationDomainError(
-                    str(exc),
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                    internal_message=str(exc),
-                ) from exc
-            file_path = self._resolve_note_request_path(vault=vault, raw_path=relative_path)
-            current_content = file_path.read_text(encoding="utf-8")
-            current_hash = content_hash(current_content)
-            before_hash = str(item.get("beforeHash") or "").strip()
-            if current_hash != before_hash:
-                raise ConflictDomainError(
-                    "Die Notiz wurde seit Erstellung des Assistant-Vorschlags geaendert.",
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                    details={
-                        "path": relative_path,
-                        "expectedHash": before_hash,
-                        "currentHash": current_hash,
-                    },
-                )
-            if action_type == "move_note":
-                target_group_key = str(item.get("targetGroupKey") or "").strip()
-                if not target_group_key and "targetGroupKey" not in item:
-                    raise ValidationDomainError(
-                        "Assistant move operation needs a target group.",
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        details={"path": relative_path},
-                    )
-                try:
-                    target_group = vault._resolve_group_path(target_group_key)  # noqa: SLF001
-                    if vault._is_tag_path(target_group) or vault._is_system_path(target_group):  # noqa: SLF001
-                        raise ValueError("Assistant cannot move notes into this folder.")
-                except ValueError as exc:
-                    raise ValidationDomainError(
-                        str(exc),
-                        operation="assistant_changeset_apply",
-                        vault_id=str(vault.vault_path),
-                        internal_message=str(exc),
-                    ) from exc
-                prepared.append(
-                    {
-                        "operationId": str(item.get("id") or ""),
-                        "actionType": action_type,
-                        "path": relative_path,
-                        "absolutePath": str(file_path),
-                        "targetGroupKey": target_group_key,
-                    }
-                )
-                continue
-            after_content = str(item.get("afterContent") or "")
-            after_hash = str(item.get("afterHash") or "").strip()
-            if not after_hash or content_hash(after_content) != after_hash:
-                raise ValidationDomainError(
-                    "Assistant ChangeSet content hash does not match its payload.",
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                    details={"path": relative_path},
-                )
-            prepared.append(
-                {
-                    "operationId": str(item.get("id") or ""),
-                    "actionType": action_type,
-                    "path": relative_path,
-                    "absolutePath": str(file_path),
-                    "content": after_content,
-                }
-            )
-
-        applied_paths: list[str] = []
-        path_mappings: list[dict[str, str]] = []
-        operation_results: list[dict[str, Any]] = []
-        errors: list[dict[str, Any]] = []
-        latest_result: dict[str, Any] = {}
-        for item in prepared:
-            try:
-                if item["actionType"] in content_action_types:
-                    latest_result = self.save_note_content(SimpleNamespace(path=item["path"], content=item["content"]))
-                    previous_path = str(item["absolutePath"])
-                    next_path = str(latest_result.get("path") or item["path"])
-                    applied_paths.extend([previous_path, next_path])
-                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
-                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
-                    operation_results.append(
-                        {
-                            "id": item["operationId"],
-                            "actionType": item["actionType"],
-                            "status": "applied",
-                            "path": next_path,
-                        }
-                    )
-                elif item["actionType"] in {"create_note", "create_task"}:
-                    created = vault.create_note_in_group(
-                        group_key=item["targetGroupKey"],
-                        title=item["title"],
-                        indexer=self.require_loaded()[1],
-                        note_type="task" if item["actionType"] == "create_task" else "note",
-                        status="open",
-                    )
-                    created_path = str(created["note_path"])
-                    content = self._materialize_assistant_media_attachments(
-                        vault=vault,
-                        note_path=created_path,
-                        content=item["content"],
-                        attachments=item.get("mediaAttachments") or [],
-                    )
-                    latest_result = self.save_note_content(SimpleNamespace(path=created_path, content=content))
-                    next_path = str(latest_result.get("path") or created_path)
-                    applied_paths.extend([created_path, next_path])
-                    if created_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
-                        path_mappings.append({"fromPath": created_path, "toPath": next_path})
-                    operation_results.append(
-                        {
-                            "id": item["operationId"],
-                            "actionType": item["actionType"],
-                            "status": "applied",
-                            "path": next_path,
-                        }
-                    )
-                elif item["actionType"] == "move_note":
-                    latest_result = self.move_note(SimpleNamespace(path=item["path"], target_group_key=item["targetGroupKey"]))
-                    next_path = str(latest_result.get("movedPath") or item["path"])
-                    previous_path = str(item["absolutePath"])
-                    applied_paths.extend([previous_path, next_path])
-                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
-                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
-                    operation_results.append(
-                        {
-                            "id": item["operationId"],
-                            "actionType": item["actionType"],
-                            "status": "applied",
-                            "fromPath": previous_path,
-                            "path": next_path,
-                        }
-                    )
-                elif item["actionType"] == "mark_task_done":
-                    latest_result = self.mark_task_done(item["taskId"])
-                    previous_path = str(item["absolutePath"])
-                    next_path = str(latest_result.get("taskPath") or previous_path)
-                    applied_paths.extend([previous_path, next_path])
-                    if previous_path.replace("\\", "/").lower() != next_path.replace("\\", "/").lower():
-                        path_mappings.append({"fromPath": previous_path, "toPath": next_path})
-                    operation_results.append(
-                        {
-                            "id": item["operationId"],
-                            "actionType": item["actionType"],
-                            "status": "applied",
-                            "path": next_path,
-                            "taskId": item["taskId"],
-                        }
-                    )
-                elif item["actionType"] == "mark_todo_done":
-                    latest_result = self.toggle_todo(item["todoId"], SimpleNamespace(checked=True))
-                    next_path = str(latest_result.get("notePath") or item["absolutePath"])
-                    applied_paths.append(next_path)
-                    operation_results.append(
-                        {
-                            "id": item["operationId"],
-                            "actionType": item["actionType"],
-                            "status": "applied",
-                            "path": next_path,
-                            "todoId": item["todoId"],
-                        }
-                    )
-            except DomainError as exc:
-                error = {
-                    "id": item["operationId"],
-                    "actionType": item["actionType"],
-                    "status": "failed",
-                    "error": exc.public_message,
-                    "errorCode": exc.error_code,
-                }
-                errors.append(error)
-                operation_results.append(error)
-
-        return {
-            "applied": any(result.get("status") == "applied" for result in operation_results),
-            "partial": bool(errors) and any(result.get("status") == "applied" for result in operation_results),
-            "changeSetId": str(change_set.get("id") or ""),
-            "paths": list(dict.fromkeys(applied_paths)),
-            "pathMappings": path_mappings,
-            "operationResults": operation_results,
-            "errors": errors,
-            "counts": latest_result.get("counts", self.counts(self.require_loaded()[1])),
-            "graphStatus": latest_result.get("graphStatus", {}),
-            "linkRewrite": latest_result.get("linkRewrite", {}),
-        }
-
-    def _assistant_media_attachments_from_operation(self, item: dict[str, Any]) -> list[dict[str, Any]]:
-        details = item.get("details")
-        if not isinstance(details, dict):
-            return []
-        attachments = details.get("mediaAttachments")
-        if not isinstance(attachments, list):
-            return []
-        clean: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for attachment in attachments:
-            if not isinstance(attachment, dict):
-                continue
-            stage_id = str(attachment.get("id") or "").strip()
-            if not stage_id or stage_id in seen:
-                continue
-            seen.add(stage_id)
-            clean.append(
-                {
-                    "id": stage_id,
-                    "fileName": str(attachment.get("fileName") or "image"),
-                    "contentType": str(attachment.get("contentType") or ""),
-                    "placeholder": str(attachment.get("placeholder") or _assistant_media_placeholder(stage_id)),
-                }
-            )
-        return clean
-
-    def _materialize_assistant_media_attachments(
-        self,
-        *,
-        vault: Any,
-        note_path: str,
-        content: str,
-        attachments: list[dict[str, Any]],
-    ) -> str:
-        next_content = str(content or "")
-        for attachment in attachments:
-            stage_id = str(attachment.get("id") or "").strip()
-            placeholder = str(attachment.get("placeholder") or _assistant_media_placeholder(stage_id))
-            if not stage_id or placeholder not in next_content:
-                continue
-            try:
-                staged = vault.read_staged_assistant_media_asset(stage_id)
-                media_result = vault.add_note_media_asset(
-                    note_path=note_path,
-                    filename=str(staged.get("fileName") or attachment.get("fileName") or "image"),
-                    content_type=str(staged.get("contentType") or attachment.get("contentType") or ""),
-                    data=staged["data"],
-                )
-            except ValueError as exc:
-                raise ValidationDomainError(
-                    str(exc),
-                    operation="assistant_changeset_apply",
-                    vault_id=str(vault.vault_path),
-                    internal_message=str(exc),
-                ) from exc
-            next_content = next_content.replace(placeholder, str(media_result["markdown_path"]))
-            vault.remove_staged_assistant_media_asset(stage_id)
-        return next_content
-
-    def explorer_files(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def explorer_files(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         items: list[dict[str, Any]] = []
         root = vault.vault_path.resolve()
@@ -2271,18 +1151,21 @@ class BackendApiService:
         items.sort(key=lambda row: (row["updated_at"], row["path"]), reverse=True)
         return {"items": items}
 
-    def read_note_content(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def read_note_content(self, path: str = '') -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        raw_path = args[0] if args else kwargs.get("path", "")
+        raw_path = path
         file_path = self._resolve_note_request_path(vault=vault, raw_path=str(raw_path))
-        return {"path": str(file_path), "content": file_path.read_text(encoding="utf-8")}
+        content = file_path.read_bytes()
+        return {"path": str(file_path), "content": content.decode('utf-8'), "revision": hashlib.sha256(content).hexdigest()}
 
-    def save_note_content(self, req: Any) -> Any:
+    @coordinated
+    def save_note_content(self, req: NoteSaveRequest) -> Any:
         return SaveNoteContentUseCase().execute(self, req)
 
-    def add_note_media_asset(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def add_note_media_asset(self, req: NoteMediaAddRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -2313,10 +1196,10 @@ class BackendApiService:
             "fileName": result["file_name"],
         }
 
-    def get_note_media_content(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_note_media_content(self, path: str = '', source: str = '') -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        note_path = str(args[0]) if args else str(kwargs.get("path", ""))
-        source = str(args[1]) if len(args) > 1 else str(kwargs.get("source", ""))
+        note_path = path
         try:
             asset_path, mime_type = vault.resolve_note_media_asset(note_path=note_path, source=source)
         except ValueError as exc:
@@ -2328,12 +1211,14 @@ class BackendApiService:
             ) from exc
         return {"path": asset_path, "mediaType": mime_type, "fileName": asset_path.name}
 
-    def open_note_file(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def open_note_file(self, req: NoteOpenRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         raw_path = str(getattr(req, "path", ""))
         file_path = self._resolve_note_request_path(vault=vault, raw_path=raw_path)
 
+        if file_path.suffix.lower() not in {".md", ".txt"}:
+            raise ValidationDomainError("Only Markdown and plain text can be opened as notes.")
         try:
             if sys.platform.startswith("win"):
                 os.startfile(str(file_path))  # type: ignore[attr-defined]
@@ -2351,7 +1236,8 @@ class BackendApiService:
 
         return {"opened": True, "path": str(file_path)}
 
-    def get_review(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_review(self) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
         today = date.today()
         return {
@@ -2359,11 +1245,9 @@ class BackendApiService:
             "weekly": indexer.weekly_summary(today),
         }
 
-    def get_review_dashboard(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_review_dashboard(self, days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
-        days = args[0] if args else kwargs.get("days", REVIEW_DASHBOARD_DEFAULT_DAYS)
-        day = args[1] if len(args) > 1 else kwargs.get("day")
-        top = args[2] if len(args) > 2 else kwargs.get("top", REVIEW_DASHBOARD_DEFAULT_TOP_NOTES)
         day_iso = GetFocusDashboardUseCase._normalize_iso_day_param(day)
         try:
             end_day = datetime.fromisoformat(day_iso).date()
@@ -2373,29 +1257,34 @@ class BackendApiService:
         safe_top = max(REVIEW_DASHBOARD_TOP_NOTES_MIN, min(int(top), REVIEW_DASHBOARD_TOP_NOTES_MAX))
         return indexer.review_dashboard(end_day=end_day, window_days=safe_days, top_notes_limit=safe_top)
 
-    def get_ui_settings(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_ui_settings(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return {"settings": vault.read_ui_settings()}
 
-    def update_ui_settings(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def update_ui_settings(self, req: UiSettingsUpdateRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         settings = vault.update_ui_settings(app_settings=req.app, explorer_settings=req.explorer)
         return {"settings": settings}
 
-    def get_tag_groups(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_tag_groups(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return {"groups": vault.read_tag_groups()}
 
-    def get_graph_index(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_graph_index(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return {"index": read_graph_index(vault.graph_index_path).to_dict()}
 
-    def get_graph_index_status(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_graph_index_status(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return self.graph_index_status(vault)
 
-    def rebuild_graph_index(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def rebuild_graph_index(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         with self.state.projection_lock:
             self.state.graph_status.is_updating = True
@@ -2411,19 +1300,22 @@ class BackendApiService:
             finally:
                 self.state.graph_status.is_updating = False
 
-    def get_graph_state(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_graph_state(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return {"state": read_graph_state(vault.graph_state_path)}
 
-    def update_graph_state(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def update_graph_state(self, state_payload: dict[str, Any] | None = None) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        state_payload = args[0] if args else kwargs.get("state_payload", {})
+        state_payload = state_payload or {}
         return {"state": write_graph_state(vault.graph_state_path, state_payload)}
 
-    def get_tag_overview(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_tag_overview(self, groupId: str = '', tagId: str = '') -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        group_id = str(args[0]) if args else str(kwargs.get("groupId", ""))
-        tag_id = str(args[1]) if len(args) > 1 else str(kwargs.get("tagId", ""))
+        group_id = groupId
+        tag_id = tagId
         try:
             result = vault.resolve_tag_overview_note(group_id=group_id, tag_id=tag_id, indexer=indexer)
         except ValueError as exc:
@@ -2438,21 +1330,21 @@ class BackendApiService:
             "title": str(result["title"]),
         }
 
-    def add_tag_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def add_tag_group(self, req: TagGroupRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         groups = vault.add_tag_group(req.group_id, req.display_name, req.color, indexer)
         return {"groups": groups}
 
-    def add_tag(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def add_tag(self, req: TagCreateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         groups = vault.add_tag_to_group(req.group_id, req.tag_id, req.display_name, indexer)
         return {"groups": groups, "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def rename_tag_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def rename_tag_group(self, req: TagGroupRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             groups, touched = vault.rename_tag_group(
                 group_id=req.group_id,
@@ -2471,9 +1363,9 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def delete_tag_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def delete_tag_group(self, req: TagGroupDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             groups, touched = vault.delete_tag_group(
                 group_id=req.group_id,
@@ -2489,9 +1381,9 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def rename_tag(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def rename_tag(self, req: TagRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             groups, touched = vault.rename_tag(
                 group_id=req.group_id,
@@ -2510,9 +1402,9 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def move_tag(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def move_tag(self, req: TagMoveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             groups, touched = vault.move_tag(
                 from_group=req.from_group,
@@ -2530,9 +1422,9 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def delete_tag(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def delete_tag(self, req: TagDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             groups, touched = vault.delete_tag(
                 group_id=req.group_id,
@@ -2549,7 +1441,8 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    def scan_tag_match_candidates(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def scan_tag_match_candidates(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         matches = self.scan_tag_matches(vault)
         return {
@@ -2557,9 +1450,9 @@ class BackendApiService:
             "total": len(matches),
         }
 
-    def apply_tag_match_candidates(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def apply_tag_match_candidates(self, req: TagMatchApplyRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         applied, touched_paths = self.apply_tag_matches(vault, req.matches)
         if touched_paths:
             for path in touched_paths:
@@ -2576,13 +1469,14 @@ class BackendApiService:
             "graphStatus": self.rebuild_graph_projection(vault),
         }
 
-    def get_note_groups(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def get_note_groups(self) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         return {"groups": vault.list_note_groups()}
 
-    def add_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def add_note_group(self, req: NoteGroupCreateRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             created = vault.create_note_group(req.group_name, req.parent_key)
         except ValueError as exc:
@@ -2594,9 +1488,9 @@ class BackendApiService:
             ) from exc
         return {"group": created, "groups": vault.list_note_groups()}
 
-    def rename_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def rename_note_group(self, req: NoteGroupRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             renamed = vault.rename_note_group(req.group_key, req.new_name, indexer)
         except ValueError as exc:
@@ -2614,9 +1508,9 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    def delete_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def delete_note_group(self, req: NoteGroupDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             vault.delete_note_group(req.group_key, indexer)
         except ValueError as exc:
@@ -2634,9 +1528,9 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    def move_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def move_note_group(self, req: NoteGroupMoveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             moved = vault.move_note_group(req.group_key, req.target_parent_key, indexer)
         except ValueError as exc:
@@ -2654,9 +1548,9 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    def favorite_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def favorite_note_group(self, req: FavoriteFolderRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             favorites = vault.add_favorite_folder(req.group_key)
         except ValueError as exc:
@@ -2668,9 +1562,9 @@ class BackendApiService:
             ) from exc
         return {"favorites": favorites, "groups": vault.list_note_groups()}
 
-    def unfavorite_note_group(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def unfavorite_note_group(self, req: FavoriteFolderRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             favorites = vault.remove_favorite_folder(req.group_key)
         except ValueError as exc:
@@ -2682,9 +1576,9 @@ class BackendApiService:
             ) from exc
         return {"favorites": favorites, "groups": vault.list_note_groups()}
 
-    def add_note(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def add_note(self, req: NoteCreateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             created = vault.create_note_in_group(
                 group_key=req.group_key,
@@ -2710,11 +1604,12 @@ class BackendApiService:
             "graphStatus": self.rebuild_graph_projection(vault),
         }
 
-    def rename_note(self, *args: Any, **kwargs: Any) -> Any:
-        return RenameNoteUseCase().execute(self, *args, **kwargs)
+    @coordinated
+    def rename_note(self, req: NoteFileRenameRequest) -> dict[str, Any]:
+        return RenameNoteUseCase().execute(self, req)
 
-    def delete_note(self, *args: Any, **kwargs: Any) -> Any:
-        req = args[0]
+    @coordinated
+    def delete_note(self, req: NoteFileDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         note_path = self._resolve_note_request_path(vault=vault, raw_path=req.path)
         pre_state = {
@@ -2751,12 +1646,13 @@ class BackendApiService:
             lock_projection=True,
         )
 
-    def move_note(self, *args: Any, **kwargs: Any) -> Any:
-        return MoveNoteUseCase().execute(self, *args, **kwargs)
+    @coordinated
+    def move_note(self, req: NoteFileMoveRequest) -> dict[str, Any]:
+        return MoveNoteUseCase().execute(self, req)
 
-    def move_notes_batch(self, *args: Any, **kwargs: Any) -> Any:
+    @coordinated
+    def move_notes_batch(self, req: NoteFileMoveBatchRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        req = args[0] if args else kwargs.get("req")
         try:
             moved_paths = vault.move_note_files(req.paths, req.target_group_key, indexer)
         except ValueError as exc:
@@ -2772,15 +1668,3 @@ class BackendApiService:
             "graphStatus": self.rebuild_graph_projection(vault),
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
-
-    # Generic fallback keeps compatibility if route names are added without regenerating this file.
-    def __getattr__(self, name: str) -> Any:
-        impl_name = f"{name}_impl"
-        target = getattr(self._api(), impl_name, None)
-        if target is None or not callable(target):
-            raise AttributeError(f"Backend API service has no implementation for {name!r}.")
-
-        def _delegate(*args: Any, **kwargs: Any) -> Any:
-            return target(*args, **kwargs)
-
-        return _delegate

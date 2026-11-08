@@ -3,20 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-try:
-    from fastapi.testclient import TestClient
-    from src.backend import api as backend_api
-    from src.backend.errors import DomainError
-except Exception:  # pragma: no cover - optional dependency or backend import path issues in env
-    TestClient = None
-    backend_api = None
-    DomainError = None
+from src.backend.tests.http_client import TestClient
+from src.backend import api as backend_api
+from src.backend.errors import DomainError
 
 
-@unittest.skipIf(
-    backend_api is None or TestClient is None or DomainError is None,
-    "FastAPI TestClient oder Backend-API sind in dieser Umgebung nicht verfuegbar.",
-)
 class ApiErrorContractTests(unittest.TestCase):
     def setUp(self) -> None:
         backend_api.state.close()
@@ -44,7 +35,7 @@ class ApiErrorContractTests(unittest.TestCase):
             self.assertIn("operationId", payload.get("error", {}))
 
     def test_unexpected_exception_is_sanitized(self) -> None:
-        client = TestClient(backend_api.app)
+        client = TestClient(backend_api.app, raise_server_exceptions=False)
         with mock.patch.object(
             backend_api.backend_api_service,
             "open_vault",

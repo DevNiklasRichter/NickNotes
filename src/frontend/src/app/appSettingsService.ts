@@ -123,7 +123,7 @@ export class AppSettingsService {
   }
 
   setDisplayName = (nextRawValue: string) => {
-    this.writer.setDisplayName(normalizeLabel(nextRawValue) || 'Max')
+    this.writer.setDisplayName(normalizeLabel(nextRawValue) || 'Mein Wissen')
   }
 
   setThemeMode = (nextMode: ThemeMode) => {
