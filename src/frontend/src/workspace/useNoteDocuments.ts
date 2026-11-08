@@ -1,4 +1,5 @@
 import {useLayoutEffect, useMemo, useRef, type RefObject, type Dispatch, type SetStateAction} from 'react'
+import {flushSync} from 'react-dom'
 import type {WorkspaceState, WorkspaceAction} from './workspaceState'
 import type {AppMutationEvent} from '../app/mutationEvents'
 import type {TagGroupDefinition} from '../tags/tagTypes'
@@ -44,6 +45,7 @@ const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     };
 
 const saveNoteTab = async (path: string): Promise<boolean> => {
+        flushSync(()=>{context.leftEditorRef.current?.flushChanges();context.rightEditorRef.current?.flushChanges()});
         const targetTab = context.findTabByPath(path);
         if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
             return true;

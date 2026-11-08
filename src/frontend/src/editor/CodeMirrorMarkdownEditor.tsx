@@ -1,12 +1,12 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from 'react'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, undo, redo, selectAll } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
 import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, LanguageDescription } from '@codemirror/language'
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
+import { highlightSelectionMatches, searchKeymap, openSearchPanel } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
   Decoration,
@@ -104,6 +104,9 @@ export type MarkdownEditorApi = {
   focus: () => void
   openCommandPalette: () => void
   runCommand: (commandId: MarkdownCommandId) => boolean
+  edit: (action: 'undo'|'redo'|'cut'|'copy'|'paste'|'selectAll') => Promise<void>
+  find: () => void
+  flushChanges: () => void
 }
 
 export type MarkdownLinkTarget = {
@@ -1527,6 +1530,25 @@ export function CodeMirrorMarkdownEditor({
         return instance.state.doc.sliceString(selection.from, selection.to)
       },
       getMarkdown: () => instance.state.doc.toString(),
+      flushChanges: flushQueuedOnChange,
+      find: () => {instance.focus();openSearchPanel(instance)},
+      edit: async action => {
+        instance.focus()
+        if(action==='selectAll'){selectAll(instance);return}
+        const writable=!instance.state.readOnly
+        if(action==='undo'){if(writable)undo(instance);return}
+        if(action==='redo'){if(writable)redo(instance);return}
+        const document=instance.state.doc
+        const range=instance.state.selection.main
+        if(action==='copy'||action==='cut'){
+          if(range.empty)return
+          await navigator.clipboard.writeText(document.sliceString(range.from,range.to))
+          if(action==='cut'&&writable&&editorRef.current===instance&&instance.state.doc===document)instance.dispatch({changes:{from:range.from,to:range.to,insert:''},userEvent:'delete.cut'})
+        } else if(action==='paste'&&writable){
+          const text=await navigator.clipboard.readText()
+          if(editorRef.current===instance)instance.dispatch({...instance.state.replaceSelection(text),userEvent:'input.paste'})
+        }
+      },
       focus: () => instance.focus(),
       openCommandPalette: () => {
         openGlobalPalette()

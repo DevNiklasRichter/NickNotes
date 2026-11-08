@@ -567,7 +567,7 @@ export function getPreferredTheme(): ThemeMode {
     if (typeof window === 'undefined') {
         return 'light';
     }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return window.nicknotes?.startupTheme??(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }
 export { apiRequest } from './apiClient';
 export function toGermanTimestamp(value: string): string {

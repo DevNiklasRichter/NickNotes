@@ -50,6 +50,13 @@ npm run dev
 
 Das startet den Vite-Dev-Server, Electron und das lokale Python-Backend. Alternativ kann `.\Start-NickNotes.ps1` genutzt werden.
 
+Das Fenster und ein lokal gesicherter Schnellerfassungsentwurf starten vor der
+vollstaendigen Oberflaeche und dem Backend. Danach uebernimmt Quick Capture den
+Text; **Senden** speichert ihn in der gewaehlten NoteBase. Ladefehler erhalten eine
+Wiederholen-Aktion. [Start und Wiederherstellung](doc/startup-and-recovery.md).
+`npm run smoke:startup` prueft den echten Entwicklungsstart mit isoliertem Profil
+und frischem Vite-Cache. Ein Entwicklungs-Kaltstart ist langsamer als das fertige Paket.
+
 ## Pruefung
 
 ```powershell
@@ -57,6 +64,18 @@ npm run check
 npm run contracts:check
 npm run icons:check
 ```
+
+## Tastatur und Menues
+
+Datei, Bearbeiten, Ansicht und Hilfe sind direkt in der Titelleiste verfuegbar.
+Haeufige Aktionen: **Strg+N** neue Notiz, **Strg+Umschalt+N** neuer Task,
+**Strg+O** Notiz suchen/oeffnen, **Strg+S** speichern,
+**Strg+Umschalt+S** alle Notizen speichern, **Strg+W** aktive Ansicht schliessen.
+**F1** zeigt alle Befehle, **F10** fokussiert das Menue. Icons zeigen ihre
+Tastenkuerzel beim Darueberfahren. [Vollstaendige Bedienung](doc/keyboard-and-menus.md).
+
+Entwicklungspruefung mit isolierter synthetischer NoteBase: `npm run smoke:commands`.
+Sie prueft auch, dass keine Save-/Refresh-Schleife im Leerlauf entsteht.
 
 ## Windows-Paket und externe Agenten
 
@@ -70,6 +89,7 @@ npm run release:checksums
 Der vollstaendige Offline-Installer liegt unter `dist/installers`. Ressourcen und
 Backendlaufzeit sind enthalten. [Build, Installation und Releasegrenzen](doc/windows-release.md)
 beschreiben den noch nicht signierten Windows-Kandidaten.
+[Was die GitHub-Pipeline auf welchem Rechner macht](doc/github-pipeline.md).
 
 Der eingebaute Assistant wurde durch einen lokalen, authentifizierten MCP-Zugang
 ersetzt. **Einstellungen → Agent-Verbindungen** erstellt widerrufbare Freigaben

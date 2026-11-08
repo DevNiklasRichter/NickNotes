@@ -45,7 +45,9 @@ def coordinated(function):
                     raise ConflictDomainError("Eine unterbrochene Aenderung muss zuerst in den Einstellungen geprueft werden.")
                 with SourceJournal(vault, function.__name__) as journal:
                     result = function(self, *args, **kwargs)
-                self.state.record_change(function.__name__, list(journal.before))
+                # View preferences do not invalidate Markdown, search or open drafts.
+                if function.__name__ not in {'update_ui_settings', 'update_graph_state', 'favorite_note_group', 'unfavorite_note_group'}:
+                    self.state.record_change(function.__name__, list(journal.before))
                 return result
             return function(self, *args, **kwargs)
     return invoke

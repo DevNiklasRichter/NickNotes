@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { NoteTab } from '../app/AppShared'
+import {commandTitle} from '../app/commands'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { PaneId, WorkspaceState } from './workspaceState'
 
@@ -518,7 +519,7 @@ export function EditorWorkspaceLayout({
                     onClick={() => {
                       onCloseTab(tab.id)
                     }}
-                    title="Tab schliessen"
+                    title="Diese Ansicht schließen (Strg+W schließt die aktive Ansicht)"
                   >
                     <LucideNamedIcon name="X" size={14} />
                   </button>
@@ -589,10 +590,14 @@ export function EditorWorkspaceLayout({
     return (
       <article
         key={`workspace-pane-${paneId}`}
+        data-pane-id={paneId}
+        tabIndex={-1}
+        aria-label={paneId==='left'?'Linke Editorgruppe':'Rechte Editorgruppe'}
         className={`workspace-pane ${isDropTarget ? 'drop-active' : ''} ${isActivePane ? 'focused' : ''}`}
         onPointerDown={() => {
           onFocusPane(paneId, activeTab?.id ?? null)
         }}
+        onFocus={() => onFocusPane(paneId, activeTab?.id ?? null)}
         onDragOver={(event) => {
           event.preventDefault()
           if (dragOverPaneId !== paneId) {
@@ -623,7 +628,7 @@ export function EditorWorkspaceLayout({
           renderPaneTabBar('left', 'toolbar')
         )}
         <div className="editor-tab-actions">
-          <button className="icon-button compact muted" onClick={onSaveActive} disabled={disableSave} title="Speichern">
+          <button className="icon-button compact muted" onClick={onSaveActive} disabled={disableSave} aria-label="Speichern" title={commandTitle('save')}>
             <LucideNamedIcon name="Save" size={14} />
           </button>
           <button
@@ -637,11 +642,12 @@ export function EditorWorkspaceLayout({
           <button
             className="icon-button compact muted"
             onClick={onToggleSplitMode}
-            title={workspace.layoutMode === 'split' ? 'Split aus' : 'Split an'}
+            aria-label={workspace.layoutMode === 'split' ? 'Split aus' : 'Split an'}
+            title={commandTitle('split',workspace.layoutMode === 'split' ? 'Split aus' : 'Split an')}
           >
             <LucideNamedIcon name="Columns2" size={14} />
           </button>
-          <button className="icon-button compact muted" onClick={onCloseEditorPanel} title="Editor schliessen">
+          <button className="icon-button compact muted" onClick={onCloseEditorPanel} aria-label="Editor schließen" title={commandTitle('editor','Editor schließen')}>
             <LucideNamedIcon name="X" size={14} />
           </button>
         </div>

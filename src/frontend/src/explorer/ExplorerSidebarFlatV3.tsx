@@ -1,4 +1,5 @@
 import {useSyncedDraft} from '../editor/useSyncedDraft'
+import {commandTitle} from '../app/commands'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type {
@@ -965,7 +966,7 @@ export function ExplorerSidebar({
     if (isCreateLockedFolderKey(parentFolderKey)) {
       return
     }
-    const name = suggestSequentialName(parentFolderKey, 'New Note')
+    const name = suggestSequentialName(parentFolderKey, 'Neue Notiz')
     await onCreateFile(parentFolderKey, name)
   }, [onCreateFile, resolveSelectedFolderKey, suggestSequentialName])
 
@@ -974,7 +975,7 @@ export function ExplorerSidebar({
     if (isCreateLockedFolderKey(parentFolderKey)) {
       return
     }
-    const name = suggestSequentialName(parentFolderKey, 'New Task')
+    const name = suggestSequentialName(parentFolderKey, 'Neuer Task')
     await onCreateTask(parentFolderKey, name)
   }, [onCreateTask, resolveSelectedFolderKey, suggestSequentialName])
 
@@ -1528,7 +1529,7 @@ export function ExplorerSidebar({
                 void runOpenOrCreateTodayDaily()
               }}
               disabled={!vaultLoaded}
-              title="Daily Note oeffnen oder anlegen"
+              title={commandTitle('daily','Tagesnotiz öffnen oder anlegen')}
             >
               <LucideNamedIcon name="CalendarDays" className="row-action-icon" size={14} />
             </button>
@@ -1537,7 +1538,7 @@ export function ExplorerSidebar({
           <h3>Notizen</h3>
 
           <div className="explorer-toolbar-right">
-            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neue Notiz'}>
+            <span title={createActionsDisabled ? createActionsDisabledReason : commandTitle('newNote')}>
               <button
                 className="icon-button compact"
                 onClick={() => {
@@ -1549,7 +1550,7 @@ export function ExplorerSidebar({
                 <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
               </button>
             </span>
-            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neue Task'}>
+            <span title={createActionsDisabled ? createActionsDisabledReason : commandTitle('newTask')}>
               <button
                 className="icon-button compact"
                 onClick={() => {

@@ -4,10 +4,10 @@ import electron from 'electron'
 const root=path.resolve(import.meta.dirname,'..')
 const children=new Set()
 let stopping=false
-function run(binary,args) {
- const child=spawn(binary,args,{cwd:root,stdio:'inherit',windowsHide:true})
+function run(binary,args,options={}) {
+ const child=spawn(binary,args,{cwd:root,stdio:'inherit',windowsHide:true,...options})
  children.add(child)
- child.on('exit',()=>{children.delete(child);stop()})
+ child.on('exit',code=>{children.delete(child);if(!stopping&&code)process.exitCode=code;stop()})
  child.on('error',error=>{console.error(error);stop()})
  return child
 }
@@ -17,13 +17,19 @@ function stop() {
  for(const child of children)child.kill()
 }
 process.on('SIGINT',stop);process.on('SIGTERM',stop)
-const vite=run(process.execPath,[path.join(root,'node_modules/vite/bin/vite.js'),'--strictPort'])
-for(let attempt=0;attempt<100&&!stopping;attempt++) {
- try {
-  const response=await fetch('http://localhost:5173',{signal:AbortSignal.timeout(500)})
-  if(response.ok){run(electron,['.']);break}
- } catch { /* Wait only for the Vite process owned by this command. */ }
- await new Promise(resolve=>setTimeout(resolve,150))
- if(attempt===99){console.error('Vite did not become ready.');stop();process.exitCode=1}
-}
-if(vite.exitCode!==null)process.exitCode=1
+const vite=run(process.execPath,[path.join(root,'node_modules/vite/bin/vite.js'),'--strictPort'],{stdio:['ignore','pipe','pipe']})
+try {
+ await new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>reject(new Error('Der eigene Vite-Prozess wurde nicht rechtzeitig bereit.')),30000)
+  let output=''
+  vite.stdout.on('data',data=>{
+   process.stdout.write(data)
+   output=(output+data.toString()).replace(/\u001b\[[0-9;]*m/g,'').slice(-8000)
+   if(output.includes('Local:')&&output.includes('http://localhost:5173/')){clearTimeout(timer);resolve()}
+  })
+  vite.stderr.on('data',data=>process.stderr.write(data))
+  vite.once('error',error=>{clearTimeout(timer);reject(error)})
+  vite.once('exit',()=>{clearTimeout(timer);reject(new Error('Vite wurde vor dem App-Start beendet. Ist Port 5173 bereits belegt?'))})
+ })
+ if(!stopping)run(electron,['.'],{windowsHide:false})
+} catch(error) {console.error(String(error));process.exitCode=1;stop()}
