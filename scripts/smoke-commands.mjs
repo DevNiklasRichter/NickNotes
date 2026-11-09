@@ -32,6 +32,35 @@ async function menu(group,id){
   await page.getByRole('menubar').getByRole('menuitem',{name:group,exact:true}).click()
   await page.locator(`[role="menu"] [data-command="${id}"]`).click()
 }
+async function verifyUpdateUi(){
+  // Test-only IPC responses: exercise download/progress/restart controls without
+  // a signing identity, a public release or launching any installer.
+  await app.evaluate(({app,ipcMain,BrowserWindow})=>{
+    let state={phase:'available',currentVersion:app.getVersion(),version:'2.2.0',message:'NickNotes 2.2.0 ist verfügbar.'}
+    const emit=patch=>{state={...state,...patch};BrowserWindow.getAllWindows()[0].webContents.send('updates:state',state);return state}
+    for(const channel of ['updates:check','updates:download','updates:install'])ipcMain.removeHandler(channel)
+    ipcMain.handle('updates:check',()=>state)
+    ipcMain.handle('updates:download',async()=>{
+      emit({phase:'downloading',percent:50,message:'Update wird heruntergeladen …'})
+      await new Promise(resolve=>globalThis.__finishTestUpdateDownload=resolve)
+      return emit({phase:'downloaded',percent:100,message:'NickNotes 2.2.0 ist bereit zur Installation.'})
+    })
+    ipcMain.handle('updates:install',()=>emit({phase:'downloaded',message:'Installation abgebrochen. Dein Update bleibt heruntergeladen.'}))
+    globalThis.__resetTestUpdate=()=>emit({phase:'disabled',version:undefined,message:'Updates sind in dieser unsignierten Testversion deaktiviert.'})
+  })
+  await menu('Hilfe','updates')
+  await page.getByRole('button',{name:'Update herunterladen',exact:true}).click()
+  await expect(page.getByRole('progressbar',{name:'Update-Download'})).toHaveAttribute('value','50')
+  await app.evaluate(()=>globalThis.__finishTestUpdateDownload())
+  await expect(page.getByRole('button',{name:'Neu starten und installieren',exact:true})).toBeEnabled()
+  await page.screenshot({path:path.join(root,'.tmp/updates-downloaded.png')})
+  await page.getByRole('button',{name:'Neu starten und installieren',exact:true}).click()
+  await expect(page.getByText('Installation abgebrochen. Dein Update bleibt heruntergeladen.',{exact:true})).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button',{name:'Update installieren',exact:true})).toBeVisible()
+  await app.evaluate(()=>globalThis.__resetTestUpdate())
+  await expect(page.getByRole('button',{name:'Update installieren',exact:true})).toHaveCount(0)
+}
 async function bodyEditor(title){
   // A backend search can see a newly created file before its editor has loaded.
   // Wait for the requested document, rather than typing into the previous tab.
@@ -204,6 +233,13 @@ try{
   }
   await launch()
   assert.equal(new URL(page.url()).origin,'http://localhost:5173')
+  await menu('Hilfe','updates')
+  await expect(page.getByRole('heading',{name:'NickNotes aktualisieren'})).toBeVisible()
+  await expect(page.getByText('Installierte Version:',{exact:false})).toContainText(JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version)
+  await expect(page.getByText('Updates sind in dieser unsignierten Testversion deaktiviert.',{exact:true})).toBeVisible()
+  await page.screenshot({path:path.join(root,'.tmp/updates-candidate.png')})
+  await page.keyboard.press('Escape')
+  await verifyUpdateUi()
   await page.getByRole('menubar').getByRole('menuitem',{name:'Datei',exact:true}).click()
   await expect(page.locator('[data-command="settings"]')).toBeDisabled()
   await page.keyboard.press('Escape');await page.keyboard.press('F1')

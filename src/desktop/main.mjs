@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, protocol, net } from 'electron'
-import { spawn } from 'node:child_process'
+import {Worker} from 'node:worker_threads'
 import fs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
@@ -7,6 +7,7 @@ import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {CaptureDraftStore} from './capture-draft-store.mjs'
 import {createWindowCloseGuard} from './window-close-guard.mjs'
+import {createUpdateService} from './update-service.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -49,6 +50,37 @@ let backendProcess = null
 let mainWindow = null
 let backendStopping = false
 const closeGuards = new Map()
+let releaseConfig={updatesEnabled:false}
+if(app.isPackaged){
+  try{releaseConfig=JSON.parse(fs.readFileSync(path.join(__dirname,'release-config.json'),'utf8'))}catch{ /* Local candidate: updates stay disabled. */ }
+}
+const updates=createUpdateService({
+  version:app.getVersion(),enabled:app.isPackaged&&process.platform==='win32'&&releaseConfig.updatesEnabled===true,
+  notify:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('updates:state',state)},
+  loadUpdater:async()=>{
+    const [{default:module},{parse},{verifyInstallerSignature}]=await Promise.all([import('electron-updater'),import('yaml'),import('./verify-installer.mjs')])
+    const config=parse(await fs.promises.readFile(path.join(process.resourcesPath,'app-update.yml'),'utf8'))
+    const publishers=Array.isArray(config.publisherName)?config.publisherName:[config.publisherName]
+    if(!releaseConfig.publisherName||publishers.length!==1||publishers[0]!==releaseConfig.publisherName)throw new Error('Die erwartete Herausgebersignatur ist nicht konfiguriert.')
+    const updater=module.autoUpdater
+    updater.verifyUpdateCodeSignature=(_publishers,file)=>verifyInstallerSignature(file,releaseConfig.publisherName)
+    updater.disableWebInstaller=true
+    updater.setFeedURL({provider:'github',owner:'DevNiklasRichter',repo:'NickNotes',private:false,channel:'latest'})
+    return updater
+  },
+  prepareInstall:async install=>{
+    const win=mainWindow,guard=win&&closeGuards.get(win.webContents.id)
+    if(!guard)return false
+    return guard.requestClose(async()=>{
+      await draftStore?.flush()
+      await stopBackend()
+      try{install()}catch(error){
+        if(!win.isDestroyed())await startBackend()
+        throw error
+      }
+    })
+  },
+})
 const EXTERNAL_URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:'])
 
 const NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS = process.env.NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS?.split(',')
@@ -177,41 +209,37 @@ async function startBackend() {
   const packaged = path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'nicknotes-backend.exe' : 'nicknotes-backend')
   backendStopping = false
   startupMark('backend-spawn-start')
-  backendProcess = spawn(app.isPackaged ? packaged : resolvePythonBinary(), app.isPackaged ? [] : ['-m', 'src.backend.server'], {
-    cwd: app.isPackaged ? app.getPath('userData') : PROJECT_ROOT,
-    stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...process.env, NICKNOTES_DESKTOP_BOOT: '1', PYTHONUNBUFFERED: '1' },
-  })
-  startupMark('backend-spawned')
-  backendProcess.stdin.on('error', () => {}) // Process exit is reported by the readiness handler.
-  backendProcess.stdin.write(JSON.stringify({ token: API_TOKEN, port: BACKEND_PORT, parent_pid: process.pid, user_data: app.getPath('userData') }) + '\n')
-  backendProcess.stderr.on('data', data => process.stderr.write(data))
+  const worker=new Worker(new URL('./backend-worker.mjs',import.meta.url),{workerData:{
+    executable:app.isPackaged?packaged:resolvePythonBinary(),args:app.isPackaged?[]:['-m','src.backend.server'],
+    cwd:app.isPackaged?app.getPath('userData'):PROJECT_ROOT,
+    boot:{token:API_TOKEN,port:BACKEND_PORT,parent_pid:process.pid,user_data:app.getPath('userData')},
+  }})
+  backendProcess=worker
+  worker.once('exit',()=>{if(backendProcess===worker)backendProcess=null})
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Backend antwortet nicht.')), 45000)
-    let pending = ''
-    backendProcess.stdout.on('data', data => {
-      pending += data.toString()
-      let index
-      while ((index = pending.indexOf('\n')) >= 0) {
-        const line = pending.slice(0, index); pending = pending.slice(index + 1)
-        try { if (JSON.parse(line).event === 'ready') { clearTimeout(timer); resolve() } } catch {}
+    worker.on('message',message=>{
+      if(message.event==='spawned')startupMark('backend-spawned')
+      if(message.event==='ready'){clearTimeout(timer);resolve()}
+      if(message.event==='error'||message.event==='exit'){
+        clearTimeout(timer);reject(new Error(message.message??`Backend wurde beendet (${message.code}). Möglicherweise ist Port ${BACKEND_PORT} belegt.`))
       }
     })
-    backendProcess.once('error', error => { clearTimeout(timer); reject(error) })
-    backendProcess.once('exit', code => { clearTimeout(timer); reject(new Error(`Backend wurde beendet (${code}). Möglicherweise ist Port ${BACKEND_PORT} belegt.`)) })
+    worker.once('error',error=>{clearTimeout(timer);reject(error)})
+    worker.once('exit',code=>{clearTimeout(timer);reject(new Error(`Backend-Worker wurde beendet (${code}).`))})
   })
-  backendProcess.on('exit', () => { backendProcess = null })
 }
 
 async function stopBackend() {
   const child = backendProcess
   if (!child || backendStopping) return
-  if (child.exitCode !== null || child.signalCode !== null) { backendProcess = null; return }
   backendStopping = true
-  try { child.stdin.write(JSON.stringify({ command: 'shutdown' }) + '\n') } catch {}
-  await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))])
-  if (child.exitCode === null) child.kill()
-  backendProcess = null
+  let timer
+  const stopped=new Promise(resolve=>child.once('exit',resolve))
+  child.postMessage('stop')
+  await Promise.race([stopped,new Promise(resolve=>{timer=setTimeout(resolve,6500)})])
+  clearTimeout(timer)
+  if(backendProcess===child){await child.terminate();backendProcess=null}
 }
 
 function createWindow() {
@@ -273,6 +301,7 @@ app.on('second-instance', () => { if (mainWindow) { mainWindow.restore(); mainWi
 
 app.whenReady().then(async () => {
   if (!hasInstanceLock) return
+  startupMark('app-ready')
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
   draftStore=new CaptureDraftStore(app.getPath('userData'))
   const draftLoaded=draftStore.load()
@@ -294,7 +323,7 @@ app.whenReady().then(async () => {
   let releaseFirstPaint
   const firstPaint=new Promise(resolve=>releaseFirstPaint=resolve)
   listen('startup:mark',(_event,name)=>{
-    if(['quick-entry-ready','ui-rendered','workspace-ready'].includes(name))startupMark(name)
+    if(['quick-entry-enabled','quick-entry-ready','ui-rendered','workspace-ready'].includes(name))startupMark(name)
     if(name==='quick-entry-ready')releaseFirstPaint()
   })
 
@@ -339,6 +368,10 @@ app.whenReady().then(async () => {
 
   handle('backend:token', async () => {await backendReadyPromise;return API_TOKEN})
   handle('backend:status', () => backendStatus)
+  handle('updates:state',()=>updates.getState())
+  handle('updates:check',()=>updates.check())
+  handle('updates:download',()=>updates.download())
+  handle('updates:install',()=>updates.install())
   handle('capture:draft-read', async () => {await draftLoaded;return draftStore.current})
   handle('capture:draft-write', async (_event,text) => {await draftLoaded;await draftStore.set(text)})
 
@@ -405,6 +438,7 @@ app.whenReady().then(async () => {
   void firstPaint.then(()=>{clearTimeout(paintTimeout);if(mainWindow)return startBackend();throw new Error('Fenster wurde geschlossen.')}).then(()=>{
     backendStatus={phase:'ready',message:'Lokaler Dienst bereit.'};resolveBackendReady()
     startupMark('backend-ready')
+    updates.start()
     mainWindow?.webContents.send('backend:status-changed',backendStatus)
   }).catch(async error=>{
     const message=String(error.message||error)
@@ -425,7 +459,7 @@ app.on('window-all-closed', () => { app.quit() })
 let quitting = false
 app.on('will-quit', event => {
   if (quitting || (!backendProcess&&!draftStore)) return
-  event.preventDefault(); quitting = true
+  event.preventDefault(); quitting = true;updates.dispose()
   void Promise.allSettled([stopBackend(),draftStore?.flush()]).finally(() => app.quit())
 })
 process.once('SIGINT', () => { void stopBackend().finally(() => app.quit()) })

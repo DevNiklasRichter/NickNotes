@@ -1,0 +1,23 @@
+name: Fehler melden
+description: Ein reproduzierbares Problem mit NickNotes
+body:
+  - type: input
+    id: version
+    attributes:
+      label: NickNotes- und Windows-Version
+      placeholder: z. B. 2.1.0-rc.4, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Schritte zum Reproduzieren
+      description: Möglichst mit synthetischen Notizen. Keine persönlichen Daten oder Tokens anhängen.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes und tatsächliches Verhalten
+    validations:
+      required: true

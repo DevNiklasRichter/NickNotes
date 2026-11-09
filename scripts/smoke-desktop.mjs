@@ -3,12 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {spawnSync} from 'node:child_process'
 import assert from 'node:assert/strict'
+import {extractFile} from '@electron/asar'
 const root=path.resolve(import.meta.dirname,'..')
 const scratch=fs.mkdtempSync(path.join(root,'.tmp','desktop-smoke-'))
 const profile=path.join(scratch,'profile'),foreign=path.join(scratch,'foreign-cwd')
 fs.mkdirSync(profile);fs.mkdirSync(foreign)
 fs.writeFileSync(path.join(profile,'capture-draft.md'),'Packaged pending capture survives startup.','utf8')
 const executablePath=process.argv[2]||path.join(root,'dist/installers/win-unpacked/NickNotes.exe')
+const releaseConfig=JSON.parse(extractFile(path.join(path.dirname(executablePath),'resources/app.asar'),path.join('desktop','release-config.json')).toString())
 const python=path.join(root,'.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python')
 let app,page
 let releaseNoteRead=()=>{}
@@ -22,6 +24,9 @@ async function launch(){
  page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message))
  await page.waitForFunction(()=>document.getElementById('root')?.textContent?.includes('NoteBase'),{timeout:60_000})
  await expect(page.getByRole('menubar')).toBeVisible({timeout:60000})
+ const updates=await page.evaluate(()=>window.nicknotes.getUpdateState())
+ if(releaseConfig.updatesEnabled)assert.notEqual(updates.phase,'disabled')
+ else assert.equal(updates.phase,'disabled','Unsigned package must not download updates')
  await expect.poll(()=>fs.existsSync(metricsFile)&&fs.readFileSync(metricsFile,'utf8')).toContain('backend-ready')
  const metrics=fs.readFileSync(metricsFile,'utf8').trim().split('\n').map(line=>JSON.parse(line))
  startupRuns.push(metrics.map(mark=>({...mark,fromLaunchMs:mark.wallTime-startedWall})))
@@ -43,6 +48,19 @@ function sdk(token,write=true){
 }
 try {
  const coldReadyMs=await launch()
+ const runtimeModules=await app.evaluate(({app})=>{
+   const runtimeRequire=process.getBuiltinModule('module').createRequire(app.getAppPath()+'/package.json')
+   return {updater:typeof runtimeRequire('electron-updater').NsisUpdater,semver:runtimeRequire('semver').valid('2.1.0'),yaml:runtimeRequire('yaml').parse('ready: true').ready}
+ })
+ assert.deepEqual(runtimeModules,{updater:'function',semver:'2.1.0',yaml:true})
+ const rejectedSignature=await app.evaluate(async({app})=>{
+   const fs=process.getBuiltinModule('fs'),runtimeRequire=process.getBuiltinModule('module').createRequire(app.getAppPath()+'/package.json')
+   const file=app.getPath('userData')+'/signature-probe.exe'
+   fs.writeFileSync(file,'Synthetic non-executable signature probe.')
+   const {verifyInstallerSignature}=runtimeRequire(app.getAppPath()+'/desktop/verify-installer.mjs')
+   return verifyInstallerSignature(file,'Synthetic NickNotes Publisher')
+ })
+ assert.equal(rejectedSignature,'Windows meldet keine gültige zeitgestempelte Signatur.','Packaged signature checker must run and reject the unsigned fixture')
  await expect(page.locator('[data-launch-capture]')).toHaveValue('Packaged pending capture survives startup.')
  const health=await request('/health');assert.equal(health.capabilities.contractVersion,'2.0.0')
  const vault=await request('/notebase/create',{parentPath:scratch,name:'Vault'})

@@ -111,6 +111,35 @@ ist keine zugesicherte Zeit fuer alle Geraete oder beliebig grosse NoteBases.
 
 ## Ergebnis dieser Arbeitsrunde
 
+### Nachtrag RC.4: Hintergrundstart und Releasevorbereitung
+
+Der Windows-Prozessstart fuer das Backend und seine Kontrollpipe liegen jetzt
+in `backend-worker.mjs`. Ein synchron blockierender `spawn` blockiert damit nicht
+mehr den Electron-Hauptthread. Die Readiness-/Shutdown-Nachrichten, der einzelne
+Backendprozess und sein Parent-Watchdog bleiben erhalten.
+
+Die Nachmessung ohne Testbrowser deckte einen weiteren Startpfad auf: Bei
+ausbleibenden Animation-Frames wurden weder React geladen noch die Hauptansicht
+freigegeben. `startup.js` stellt jetzt fuer beide Schritte denselben einmaligen
+500-ms-Timer-Fallback bereit. Der Smoke-Test unterdrueckt Frames absichtlich und
+prueft trotzdem Menue und erhaltenen Entwurf. Das ist eine Anwendungsregression,
+keine Erhoehung eines Test-Timeouts. Hintergrundfenster koennen
+[`requestAnimationFrame` pausieren](https://developer.mozilla.org/en-US/docs/Web/API/Window/requestAnimationFrame).
+
+Messungen unterscheiden jetzt `quick-entry-enabled` (DOM-Eingabe freigegeben)
+von `quick-entry-ready` (Paint-Callbacks beobachtet). Der Benchmark verlangt DOM,
+React und Backend; ein Backend allein gilt nicht mehr als vollstaendiger Start.
+`paintObserved` zeigt ausdruecklich, ob Paint-Callbacks stattgefunden haben.
+Fehlende Frames werden nicht als schnelle sichtbare Eingabe ausgegeben.
+
+MIT-Lizenz, eigenes Windows-Icon und Updatefunktion sind hinzugekommen. Die
+Update-Laufzeit wird erst bei einer Pruefung geladen; unsignierte Kandidaten
+pruefen keine Updates. Signierung und Installations-/Upgradeabnahme bleiben
+entsprechend der Benutzerentscheidung auf dem anderen Laptop beziehungsweise
+beim Benutzer. Die folgenden RC.3-Messungen bleiben historische Vergleichsdaten.
+
+### Historische RC.3-Nachweise
+
 Nachtrag vom 9. November: 87 Backend-, 20 Frontend- und 14 Desktoptests; Build,
 Schnittstellen-/Iconpruefung, Menue-/Tastaturregression, echter npm-Kaltstart mit
 Modul- und React-Fehlern sowie der Pakettest einschliesslich MCP. Lint hat keine

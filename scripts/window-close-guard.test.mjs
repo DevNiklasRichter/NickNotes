@@ -87,3 +87,24 @@ test('a native dialog failure leaves the window usable',t=>{
   guard.setReady(true);win.close();check(true)
   assert.equal(win.enabled,true);assert.equal(win.destroyed,false);assert.equal(errors.length,1)
 })
+
+test('an update action waits for draft save approval and leaves closing to the updater',async t=>{
+  const {win,guard,check}=setup(t,0)
+  guard.setReady(true)
+  let installed=false
+  const approved=guard.requestClose(()=>{installed=true})
+  const requestId=check(true)
+  assert.equal(installed,false);assert.equal(win.enabled,false)
+  guard.receiveSaveResult({requestId,ok:true})
+  assert.equal(await approved,true);assert.equal(installed,true);assert.equal(win.destroyed,false)
+  win.close();assert.equal(win.destroyed,true)
+})
+test('cancel and failed update restart never grant later close permission',async t=>{
+  const {win,guard,check}=setup(t,2)
+  guard.setReady(true)
+  const canceled=guard.requestClose(()=>assert.fail('must not install'));check(true)
+  assert.equal(await canceled,false);assert.equal(win.enabled,true)
+  const failed=guard.requestClose(()=>{throw new Error('installer unavailable')});check(false)
+  assert.equal(await failed,false);assert.equal(win.enabled,true);assert.equal(win.destroyed,false)
+  win.close();assert.equal(win.destroyed,false)
+})

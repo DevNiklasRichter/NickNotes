@@ -1,7 +1,18 @@
 {
   "name": "nicknotes",
   "private": true,
-  "version": "2.1.0-rc.3",
+  "description": "Lokale Markdown-NoteBase mit Tasks, Wissensgraph und MCP",
+  "author": "Niklas Richter",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevNiklasRichter/NickNotes.git"
+  },
+  "homepage": "https://github.com/DevNiklasRichter/NickNotes",
+  "bugs": {
+    "url": "https://github.com/DevNiklasRichter/NickNotes/issues"
+  },
+  "version": "2.1.0-rc.4",
   "main": "src/desktop/main.mjs",
   "type": "module",
   "scripts": {
@@ -14,19 +25,24 @@
     "preview": "vite preview",
     "test:frontend": "vitest run --root src/frontend",
     "test:backend": "node scripts/run-backend-tests.mjs",
-    "test:desktop": "node --test scripts/capture-draft-store.test.mjs scripts/vite-readiness.test.mjs scripts/window-close-guard.test.mjs",
+    "test:desktop": "node --test scripts/capture-draft-store.test.mjs scripts/vite-readiness.test.mjs scripts/window-close-guard.test.mjs scripts/update-service.test.mjs scripts/backend-worker.test.mjs scripts/release-policy.test.mjs",
     "test": "npm run test:frontend && npm run test:backend && npm run test:desktop",
     "check": "npm test && npm run lint && npm run build",
     "build:backend": "node scripts/build-backend.mjs",
     "stage:app": "node scripts/stage-app.mjs",
     "package:win": "npm run build && npm run build:backend && npm run stage:app && electron-builder --win --publish never",
     "package:dir": "npm run build && npm run build:backend && npm run stage:app && electron-builder --dir --publish never",
+    "package:release": "node scripts/package-release.mjs",
+    "release:validate": "node scripts/release-policy.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "release:draft": "node scripts/release-draft.mjs --upload",
     "contracts:generate": "node scripts/generate-contracts.mjs",
     "contracts:check": "node scripts/generate-contracts.mjs --check",
     "verify:package": "node scripts/verify-package.mjs",
     "smoke:desktop": "node scripts/smoke-desktop.mjs",
     "smoke:commands": "node scripts/smoke-commands.mjs",
     "smoke:startup": "node scripts/smoke-startup.mjs",
+    "smoke:updates": "node scripts/smoke-updates.mjs",
     "benchmark:startup": "node scripts/measure-startup.mjs",
     "icons:generate": "node scripts/generate-icon-names.mjs",
     "icons:check": "node scripts/generate-icon-names.mjs --check",
@@ -40,9 +56,11 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.0",
     "cytoscape": "^3.33.3",
+    "electron-updater": "6.8.11",
     "lucide-react": "^1.7.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "semver": "7.7.3",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

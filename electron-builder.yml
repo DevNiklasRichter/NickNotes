@@ -8,15 +8,19 @@ files:
   - frontend/**
   - package.json
   - THIRD_PARTY_NOTICES.txt
-  - "!node_modules{,/**/*}"
+  - LICENSE
+  - runtime-dependencies.json
 asar: true
-beforeBuild: scripts/before-build.mjs
+npmRebuild: false
+allowMissingDependencies: false
+beforePack: scripts/before-pack.mjs
 extraResources:
   - from: dist/backend/nicknotes-backend
     to: backend
 compression: normal
 electronLanguages: [de, en-US]
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -30,3 +34,9 @@ nsis:
   createStartMenuShortcut: true
   runAfterFinish: false
   artifactName: NickNotes-Setup-${version}-${arch}.${ext}
+publish:
+  provider: github
+  owner: DevNiklasRichter
+  repo: NickNotes
+  private: false
+  releaseType: draft

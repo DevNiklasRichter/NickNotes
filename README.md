@@ -2,6 +2,40 @@
 
 NickNotes ist eine lokale Windows-first Desktop-App fuer portable Markdown-NoteBases. Notizen und eigenstaendige Tasks bleiben als Markdown-Dateien lesbar; Indizes, Graphen und Uebersichten sind nur wiederherstellbare Projektionen.
 
+## Download und erster Start
+
+Freigegebene Installer stehen unter
+[GitHub Releases](https://github.com/DevNiklasRichter/NickNotes/releases).
+Solange dort noch keine stabile Version freigegeben ist, gibt es ausschließlich
+Testkandidaten. RCs und Actions-Artefakte sind Testfassungen.
+
+Für Windows x64 den Installer `NickNotes-Setup-<Version>-x64.exe` herunterladen
+und ausführen. Die Installation erfolgt pro Benutzer mit wählbarem Zielordner;
+Node.js und Python müssen auf dem Zielgerät nicht installiert werden. Danach
+NickNotes starten und eine NoteBase anlegen oder einen bestehenden Ordner öffnen.
+Die NoteBase liegt separat von der Installation und bleibt bei der Deinstallation
+erhalten. Vor einem Versionswechsel eine Sicherung der eigenen NoteBase anlegen.
+
+NickNotes arbeitet lokal und offline. **Hilfe → Nach Updates suchen** zeigt die
+installierte Version und den Updatestatus. Signierte öffentliche Pakete prüfen
+nach dem Start und regelmäßig auf veröffentlichte stabile Versionen. Download
+und Installationsneustart benötigen eine bewusste Aktion; RCs werden nicht als
+stabiles Update angeboten. In unsignierten Testpaketen sind Updates deaktiviert.
+Ein manueller neuer Installer bleibt als Updateweg verfügbar.
+
+Notizen und Tasks sind Markdown-Dateien, Tags stehen in `.system/tag_groups.json`.
+SQLite und Graph-Dateien sind wiederherstellbare Projektionen. MCP-Freigaben und
+der noch nicht abgesendete Capture-Entwurf liegen im lokalen App-Profil und
+werden nicht mit der NoteBase übertragen. Details: [Windows-Auslieferung](doc/windows-release.md).
+
+## Hilfe und Beiträge
+
+- Fehler und Vorschläge: [Issues](https://github.com/DevNiklasRichter/NickNotes/issues).
+- Sicherheitsmeldungen: [SECURITY.md](SECURITY.md).
+- Änderungen und bekannte Grenzen: [Changelog](CHANGELOG.md).
+- Beiträge: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Lizenz: [MIT](LICENSE); mitgelieferte Drittanbieterhinweise bleiben gültig.
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite

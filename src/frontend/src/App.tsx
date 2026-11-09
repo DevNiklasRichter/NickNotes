@@ -5,6 +5,7 @@ import {COMMANDS, commandTitle, type AppCommand, type CommandId} from './app/com
 import {useAppCommands} from './app/useAppCommands';
 import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
+import {UpdateDialog} from './layout/UpdateDialog';
 import {flushSync} from 'react-dom';
 
 
@@ -157,6 +158,7 @@ function App() {
     const [openTabs, setOpenTabs] = useState<NoteTab[]>([]);
     const [quickOpen, setQuickOpen] = useState(false);
     const [shortcutHelp, setShortcutHelp] = useState(false);
+    const [updatesOpen,setUpdatesOpen]=useState(false);
     const openTabsRef = useRef<NoteTab[]>([]);
     const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState);
     const workspaceStateRef = useRef(workspaceState);
@@ -2893,12 +2895,12 @@ function App() {
         capture:()=>{setCapturePinned(true);setCapturePanelOpen(value=>!value)},focusCapture,
         notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
         focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
-        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),
+        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),
     };
     const appCommands:AppCommand[]=COMMANDS.map(spec=>{
         let enabled=vaultLoaded;
         if(['openNote','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
-        if(['quit','fullscreen','help'].includes(spec.id))enabled=true;
+        if(['quit','fullscreen','help','updates'].includes(spec.id))enabled=true;
         if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
         if(spec.id==='closeAll')enabled=openTabs.length>0;
         if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
@@ -2914,6 +2916,7 @@ function App() {
     const windowTitlebar = (<div className="window-titlebar">
       <div className="window-titlebar-brand" aria-label="NickNotes"><span className="window-titlebar-logo">NN</span><span className="window-titlebar-title">NickNotes</span></div>
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
+      <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
     </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;
     const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0;

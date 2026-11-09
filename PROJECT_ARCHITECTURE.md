@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 9. November 2026, Windows-Kandidat 2.1.0-rc.3. Der
+Stand: 9. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -208,6 +208,15 @@ ermittelt, der Token wartet auf die Startfreigabe: keine vorzeitigen Anfragen an
 einen geratenen Standardport.
 Der Pythonprozess startet nach der ersten gezeichneten Eingabe; ein Fallback nach
 drei Sekunden verhindert einen dauerhaft blockierten Backendstart bei UI-Fehlern.
+Das Laden von React und die Freigabe der Hauptoberflaeche warten bevorzugt auf
+zwei Paint-Callbacks, besitzen aber einen einmaligen 500-ms-Timer-Fallback.
+Ausbleibende Frames in verdeckten Fenstern blockieren dadurch den Start nicht.
+`quick-entry-enabled` meldet DOM-Bereitschaft; `quick-entry-ready` bleibt die
+getrennte Markierung fuer beobachtete Paint-Callbacks.
+`backend-worker.mjs` besitzt den Prozessstart und die Kontrollpipe. Ein unter
+Windows synchron blockierender `spawn` laeuft dadurch ausserhalb des Electron-
+Hauptthreads. Readiness, Fehler und Ende werden an Main gemeldet; Shutdown und
+Parent-Watchdog bleiben erhalten. Es gibt weiterhin nur einen Backendprozess.
 
 Ein noch nicht abgesendeter Quick-Capture-Entwurf liegt als `capture-draft.md` im
 geraetelokalen Profil. `capture-draft-store.mjs` serialisiert atomare Ersetzungen
@@ -241,12 +250,20 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
   pro Benutzer. Auf dem Zielgeraet sind Node/Python nicht erforderlich.
 - Ressourcen ueber `process.resourcesPath`, keine Abhaengigkeit vom Arbeitsordner.
   Profil standardmaessig `%APPDATA%/NickNotes`, NoteBase separat gewaehlt.
+- Projektlizenz MIT, Metadaten und Drittanbieterhinweise im Paket; eigenes
+  Vektor-/Windows-Icon unter `build`, Export mit `scripts/generate-app-icon.ps1`.
+- `stage:app` nimmt nur die expliziten Desktop-Abhaengigkeiten `electron-updater`,
+  `semver`, `yaml` und ihren aufgeloesten Laufzeitbaum auf. Ein Paketmanifest
+  erlaubt diesen Baum; gebuendelte Renderer-Abhaengigkeiten bleiben draussen.
 - `verify:package`, `smoke:desktop`, `release:checksums` pruefen den Kandidaten.
   Der Paket-Smoke haelt einen Notiz-Leseaufruf gezielt zurueck und wartet danach
   auf den geladenen Notiz-Editor. Er prueft Speichern bis in die Markdown-Datei
   sowie die tatsaechlichen HTTP-Antworten 200 bzw. 409 bei einem Revisionskonflikt.
-- Windows-CI baut und prueft Kandidaten; oeffentliche Signatur, Lizenzentscheidung und
-  saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
+- Windows-CI baut und prueft Kandidaten. Stabile, zur Paketversion passende Tags
+  auf `main` erzeugen nach bestandenen Pruefungen einen leeren Release-Entwurf.
+  Die Signierung erfolgt auf Wunsch des Benutzers ausschliesslich auf seinem
+  anderen Laptop. `package:release`, `release:verify` und `release:draft` sind
+  fuer diesen Ablauf vorbereitet; hier wurde keine Signierung ausgefuehrt.
 - CI-Actions sind auf offizielle Commits gepinnt; der Kandidaten-Upload nutzt
   `actions/upload-artifact` 7.0.0 mit Node-24-Laufzeit.
 - Die CI installiert vor den Pruefungen die zum Lockfile gehoerende Electron-
@@ -257,10 +274,31 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur
 synthetische Bestaende. Fuer die oeffentliche Windows-Auslieferung sind Quellcode
-und Downloads im selben oeffentlichen GitHub-Repository vorgesehen. Release-
-Entwurf, explizite Freigabe und Updatepruefung bilden den naechsten Ausbauschritt;
-sie sind noch nicht implementiert. App-ID und Profilpfad bleiben dabei stabil.
+und Downloads im selben oeffentlichen GitHub-Repository vorgesehen. Signierte
+Assets werden erst nach Pruefung an den Entwurf angehaengt; die Veroeffentlichung
+bleibt eine ausdrueckliche Aktion in GitHub. Main-Pushes veroeffentlichen nichts.
+App-ID und Profilpfad bleiben stabil. Installer-/Upgradeabnahme bleibt beim Benutzer.
 Linux/macOS und eigene Synchronisation benoetigen spaeter eigene Abnahme.
+
+`update-service.mjs` koordiniert ausschliesslich veroeffentlichte stabile Updates
+im Hauptprozess. Import und automatische Pruefung erfolgen erst nach dem Start
+(30 Sekunden nach Backend-Bereitschaft, danach alle vier Stunden). Download und
+Installation sind getrennte Benutzeraktionen. Der Renderer erhaelt nur Status und
+feste IPC-Aktionen; keine Feed-URL, Pfade oder Zugangstokens. Die Bridge vertraut
+weiterhin nur dem App-Hauptframe. Verfuegbare Updates erscheinen als Hinweis in
+der Titelleiste; **Hilfe → Nach Updates suchen** zeigt Version und Fortschritt.
+
+Unsignierte Kandidaten aktivieren den Updater nicht. Signierte Pakete benoetigen
+die festgelegte Herausgeberkonfiguration. Vor Installation wird ueber denselben
+Close-Guard synchronisiert und gegebenenfalls gespeichert; erst nach Zustimmung
+enden Backend und App. Automatische Installation beim normalen Beenden ist aus.
+Pruefsummen und Windows-Signatur werden vor Installationsbereitschaft geprueft;
+fehlende Signaturpruefung, falscher Herausgeber und Timeout werden abgelehnt.
+Kein privater GitHub-Token wird an Benutzer ausgeliefert.
+Der Signaturhelfer liest sein festes Pruefskript aus ASAR und uebergibt nur
+Dateinamen/Herausgeber als Daten an Windows PowerShell. Der Systempfad ist
+explizit, ein geerbter PowerShell-7-Modulpfad wird nur fuer diesen Unterprozess
+entfernt. So braucht der Zielrechner weder Entwickler-PATH noch PowerShell 7.
 
 ## Leitlinien fuer weitere Aenderungen
 

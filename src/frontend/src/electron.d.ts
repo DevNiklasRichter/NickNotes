@@ -1,15 +1,22 @@
 ﻿export {}
 
+import type {UpdateState} from './app/updateTypes'
+
 declare global {
   interface Window {
-    nicknotesStartup?: {mount:(callback:(ready:()=>void,failed:(error:unknown)=>void)=>void)=>void}
+    nicknotesStartup?: {deferUi:(callback:()=>void)=>void;mount:(callback:(ready:()=>void,failed:(error:unknown)=>void)=>void)=>void}
     nicknotes?: {
       startupTheme?:'light'|'dark'
-      startupMark?:(event:'quick-entry-ready'|'ui-rendered'|'workspace-ready')=>void
+      startupMark?:(event:'quick-entry-enabled'|'quick-entry-ready'|'ui-rendered'|'workspace-ready')=>void
       getBackendStatus?:()=>Promise<{phase:'starting'|'ready'|'error';message:string}>
       onBackendStatus?:(handler:(status:{phase:'starting'|'ready'|'error';message:string})=>void)=>()=>void
       readCaptureDraft?:()=>Promise<string>
       writeCaptureDraft?:(text:string)=>Promise<void>
+      getUpdateState?:()=>Promise<UpdateState>
+      checkForUpdates?:()=>Promise<UpdateState>
+      downloadUpdate?:()=>Promise<UpdateState>
+      installUpdate?:()=>Promise<UpdateState>
+      onUpdateState?:(handler:(state:UpdateState)=>void)=>()=>void
       selectDirectory?: () => Promise<string | null>
       selectImportSources?: () => Promise<string[]>
       getBackendUrl?: () => Promise<string>

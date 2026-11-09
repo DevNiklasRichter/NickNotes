@@ -1,0 +1,17 @@
+# Changelog
+
+## [Unreleased]
+
+Für den ersten stabilen Release stehen die manuelle Windows-Abnahme und die
+Signierung auf dem Release-Laptop noch aus.
+
+## [2.1.0-rc.4] - 2026-11-09
+
+- Lokale Markdown-Notizen, Tasks, To-dos, Tags und Wissensgraph; geschützter MCP-Zugriff.
+- Windows-Offline-Installer und kontrollierte GitHub-Release-Entwürfe.
+- Updateprüfung für signierte Pakete, manueller Download und bestätigter Neustart.
+- Schutz gepufferter Notiz- und Capture-Entwürfe beim Fensterschließen.
+
+Noch kein stabiler öffentlicher Release. Vor dem ersten Versionstag einen Abschnitt
+`## [2.1.0]` mit den tatsächlich freigegebenen Änderungen und bekannten Grenzen
+anlegen. RCs sind Testfassungen und werden stabilen Clients nicht als Update angeboten.

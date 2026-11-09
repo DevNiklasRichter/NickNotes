@@ -41,7 +41,7 @@ try{
   page.on('pageerror',error=>errors.push(error.message))
   await expect(page.getByRole('menubar')).toBeVisible({timeout:60000})
   const coldMarks=[...log.matchAll(/\[startup\] (\{[^\r\n]+\})/g)].map(match=>JSON.parse(match[1]))
-  for(const event of ['window-created','quick-entry-ready','ui-rendered','backend-ready'])assert.ok(coldMarks.some(mark=>mark.event===event),`Missing startup mark: ${event}`)
+  for(const event of ['window-created','quick-entry-enabled','ui-rendered','backend-ready'])assert.ok(coldMarks.some(mark=>mark.event===event),`Missing startup mark: ${event}`)
   assert.deepEqual(errors,[])
   assert.ok(!log.includes('Failed to fetch'),log)
 
@@ -61,6 +61,18 @@ try{
   await expect(page.getByRole('menubar')).toBeVisible()
   await expect(page.locator('[data-launch-capture]')).toHaveValue(marker)
   await context.unroute('**/src/mountApp.tsx*',blockModule)
+
+  // A background window must finish loading even if Chromium never paints it.
+  await context.addInitScript(()=>{
+    if(sessionStorage.getItem('nicknotes-test-block-frames')==='1')window.requestAnimationFrame=()=>0
+  })
+  await page.evaluate(()=>sessionStorage.setItem('nicknotes-test-block-frames','1'))
+  await page.reload({waitUntil:'domcontentloaded'})
+  await expect(page.getByRole('menubar')).toBeVisible()
+  await expect(page.locator('[data-launch-capture]')).toHaveValue(marker)
+  await page.evaluate(()=>sessionStorage.removeItem('nicknotes-test-block-frames'))
+  await page.reload({waitUntil:'domcontentloaded'})
+  await expect(page.getByRole('menubar')).toBeVisible()
 
   // A missing application module must show an actionable error, never a blank page.
   const brokenModule=route=>route.abort('failed')
@@ -98,7 +110,7 @@ try{
   const files=fs.readdirSync(path.join(scratch,'Vault/daily'),{recursive:true}).filter(file=>String(file).endsWith('.md'))
   assert.ok(files.some(file=>fs.readFileSync(path.join(scratch,'Vault/daily',String(file)),'utf8').includes(marker+' retry')))
   assert.deepEqual(errors,[])
-  const result={scratch,coldViteCache:true,coldMarks:coldMarks.map(mark=>({...mark,fromNpmLaunchMs:mark.wallTime-startedWall})),elapsedMs:Math.round(performance.now()-started),url:page.url(),earlyDraftWhileUiBlocked:true,draftHandoff:true,moduleFailureVisible:true,reactRenderFailureVisible:true,retryPreservesDraft:true,captureReachesMarkdown:true,pendingFileCleared:true,errors}
+  const result={scratch,coldViteCache:true,coldMarks:coldMarks.map(mark=>({...mark,fromNpmLaunchMs:mark.wallTime-startedWall})),elapsedMs:Math.round(performance.now()-started),url:page.url(),earlyDraftWhileUiBlocked:true,draftHandoff:true,startupWithoutAnimationFrames:true,moduleFailureVisible:true,reactRenderFailureVisible:true,retryPreservesDraft:true,captureReachesMarkdown:true,pendingFileCleared:true,errors}
   await page.screenshot({path:path.join(root,'.tmp/startup-smoke.png')})
   fs.writeFileSync(path.join(root,'.tmp/startup-smoke-result.json'),JSON.stringify(result,null,2))
   console.log(JSON.stringify(result,null,2))

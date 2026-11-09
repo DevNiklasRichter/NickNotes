@@ -25,11 +25,11 @@ async function measure(){
       if(fs.existsSync(metricsFile)){
         const lines=fs.readFileSync(metricsFile,'utf8').split('\n').slice(0,-1)
         metrics=lines.map(line=>JSON.parse(line))
-        if(['quick-entry-ready','ui-rendered','backend-ready'].every(event=>metrics.some(mark=>mark.event===event)))break
+        if(['quick-entry-enabled','ui-rendered','backend-ready'].every(event=>metrics.some(mark=>mark.event===event)))break
       }
       await pause(100)
     }
-    assert.ok(metrics.some(mark=>mark.event==='backend-ready'),'Startup timed out: '+log)
+    for(const event of ['quick-entry-enabled','ui-rendered','backend-ready'])assert.ok(metrics.some(mark=>mark.event===event),'Startup timed out before '+event+': '+log)
     assert.ok(!log.includes('[renderer]'),log)
     return metrics.map(mark=>({...mark,fromProcessLaunchMs:mark.wallTime-started}))
   } finally {
@@ -43,5 +43,6 @@ async function measure(){
   }
 }
 const result={executable,launchArgs,profile,automationAttached:false,firstProfile:await measure(),sameProfileRestart:await measure()}
+result.paintObserved={firstProfile:result.firstProfile.some(mark=>mark.event==='quick-entry-ready'),sameProfileRestart:result.sameProfileRestart.some(mark=>mark.event==='quick-entry-ready')}
 fs.writeFileSync(path.join(root,launchArgs.length?'.tmp/startup-comparison-result.json':'.tmp/startup-timing-result.json'),JSON.stringify(result,null,2))
 console.log(JSON.stringify(result,null,2))

@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [main, master, 'codex/**']
+    tags: ['v*']
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,6 +16,8 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '24.14.1'
@@ -53,12 +56,23 @@ jobs:
           npm run contracts:check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run icons:check
+      - name: Validate stable release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          npm run release:validate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release tags must refer to a commit on main.' }
       - name: Test, lint and build
         run: npm run check
       - name: Verify development startup, menus and keyboard commands
         run: npm run smoke:commands
       - name: Verify real npm cold start, early capture and startup recovery
         run: npm run smoke:startup
+      - name: Reject corrupt and unsigned update downloads
+        run: npm run smoke:updates
       - name: Record bounded graph sample
         run: .venv/Scripts/python scripts/benchmark-graph.py --count 1000
       - name: Audit dependencies
@@ -82,8 +96,31 @@ jobs:
             dist/installers/NickNotes-Setup-*.exe
             dist/installers/package-manifest.json
             dist/installers/SHA256SUMS.txt
+            dist/installers/*.blockmap
+            dist/installers/latest.yml
+            dist/installers/LICENSE
+            dist/installers/THIRD_PARTY_NOTICES.txt
             .tmp/desktop-smoke-result.json
             .tmp/commands-smoke-result.json
             .tmp/startup-smoke-result.json
+            .tmp/update-smoke-result.json
             .tmp/graph-benchmark.json
           retention-days: 14
+  release-draft:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: windows
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24.14.1'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Prepare draft for signing laptop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-draft.mjs --prepare

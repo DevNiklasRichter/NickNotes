@@ -1,5 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import {stageDesktopDependencies} from './desktop-dependencies.mjs'
+import {spawnSync} from 'node:child_process'
 
 const root = path.resolve(import.meta.dirname, '..')
 const target = path.resolve(root, 'dist/app')
@@ -9,13 +11,20 @@ fs.mkdirSync(target, { recursive: true })
 fs.cpSync(path.join(root, 'dist/frontend'), path.join(target, 'frontend'), { recursive: true })
 fs.cpSync(path.join(root, 'src/desktop'), path.join(target, 'desktop'), { recursive: true })
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+const dependencies=stageDesktopDependencies(root,target)
+const release=process.env.NICKNOTES_RELEASE_BUILD==='1'
+if(release&&(!process.env.NICKNOTES_PUBLISHER_NAME||pkg.license!=='MIT'))throw new Error('A release needs the selected license and expected signing publisher.')
+const revision=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'})
+if(release&&revision.status!==0)throw new Error('A release needs a traceable Git commit.')
+fs.writeFileSync(path.join(target,'desktop/release-config.json'),JSON.stringify({updatesEnabled:release,publisherName:release?process.env.NICKNOTES_PUBLISHER_NAME:undefined,sourceCommit:revision.stdout?.trim()})+'\n')
 fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version,
-  description: 'Lokale Markdown NoteBase mit Wissensgraph und MCP', author: 'NickNotes',
-  license: 'UNLICENSED', dependencies: {}, type: 'module', main: 'desktop/main.mjs',
+  description: pkg.description, author: pkg.author,repository:pkg.repository,
+  license: pkg.license, dependencies, type: 'module', main: 'desktop/main.mjs',
 }, null, 2))
+fs.copyFileSync(path.join(root,'LICENSE'),path.join(target,'LICENSE'))
 console.log('Staged runtime files only:', target)
 
-const notices = ['NickNotes dependency notices. NickNotes itself has no public redistribution license yet.\n']
+const notices = ['NickNotes is licensed under the MIT License; see LICENSE. Dependency notices follow.\n']
 const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
 for (const [relative, entry] of Object.entries(lock.packages)) {
   if (!relative || entry.dev || !relative.includes('node_modules/')) continue

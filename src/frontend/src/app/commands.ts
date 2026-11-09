@@ -43,6 +43,7 @@ export const COMMANDS = [
   {id:'vault', label:'NoteBase', group:'Ansicht', shortcut:'Alt+0'},
   {id:'fullscreen', label:'Vollbild', group:'Ansicht', shortcut:'F11'},
   {id:'help', label:'Tastenkürzel und Bedienung …', group:'Hilfe', shortcut:'F1'},
+  {id:'updates', label:'Nach Updates suchen …', group:'Hilfe'},
 ] as const
 
 export type CommandId = typeof COMMANDS[number]['id']

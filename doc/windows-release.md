@@ -18,7 +18,7 @@ npm run verify:package
 npm run smoke:desktop
 ```
 
-`package:win` baut Frontend, isoliertes PyInstaller-Backend und NSIS-Installer. Das Backend wird aus `.tmp/build-venv` mit `requirements-build.txt` erstellt; die normale Entwicklerumgebung wird nicht kopiert. `stage:app` legt nur Desktop-Dateien, fertiges Frontend, Paketmetadaten und Lizenzhinweise bereit. Der Builder-Hook unterbindet die automatische Sammlung der bereits gebuendelten Renderer-Abhaengigkeiten aus dem Projektverzeichnis. Die Paketpruefung wuerde solche Doppelungen ablehnen.
+`package:win` baut Frontend, isoliertes PyInstaller-Backend und NSIS-Installer. Das Backend wird aus `.tmp/build-venv` mit `requirements-build.txt` erstellt; die normale Entwicklerumgebung wird nicht kopiert. `stage:app` legt Desktop, fertiges Frontend, MIT-Lizenz, Metadaten und Drittanbieterhinweise bereit. Nur `electron-updater`, `semver`, `yaml` und deren aufgeloeste Laufzeitabhaengigkeiten werden zusaetzlich kopiert. `runtime-dependencies.json` und die Paketpruefung begrenzen diesen Baum. Gebuendelte Renderer-Abhaengigkeiten werden nicht nochmals aufgenommen.
 
 Ausgaben unter `dist/installers`:
 
@@ -79,35 +79,36 @@ Installers und ersetzt die manuelle Abnahme auf dem Zielgeraet nicht.
 
 ## Freigabe vor einem oeffentlichen Download
 
-Der erzeugte Kandidat ist lokal und **nicht signiert**. App-ID: `local.nicknotes.desktop`. Auto-Updates sind noch nicht aktiviert. Die Projektlizenz ist noch nicht festgelegt; das Paket ist als `UNLICENSED` gekennzeichnet. Drittanbieterhinweise sind enthalten.
+Der normale Kandidat ist **nicht signiert**, besitzt App-ID `local.nicknotes.desktop` und steht unter MIT. Die Updatefunktion ist implementiert, in unsignierten Testpaketen aber deaktiviert. Drittanbieterhinweise sind enthalten. Die Signierung uebernimmt der Benutzer auf einem anderen Laptop; hier wird keine Identitaet eingerichtet und keine Signierung ausgefuehrt.
 
-Noch erforderlich sind eine reale Herausgeber-/Signaturidentitaet, die Lizenzentscheidung und eine ausdrueckliche Veroeffentlichungsfreigabe. Signieren erst mit vorhandener Identitaet; den privaten Signaturschluessel nicht im Repository ablegen. Danach Installer und eingebettete Programmdateien auf Signaturen pruefen, neue Pruefsummen erzeugen und genau dieses Paket testen.
+Noch erforderlich sind das signierte Endpaket vom Release-Laptop, die manuelle Installer-Abnahme und die ausdrueckliche Veroeffentlichung. Die Lizenzentscheidung MIT ist erfolgt. Private Signaturschluessel gehoeren nicht ins Repository. Installer, App und Backend werden auf gueltige zeitgestempelte Signaturen desselben erwarteten Herausgebers geprueft; Pruefsummen entstehen danach fuer genau diese Bytes.
 
-Die [Windows-CI](../.github/workflows/windows.yml) baut und prueft den Kandidaten, veroeffentlicht aber keinen GitHub-Release. Die Actions sind auf feste offizielle Commits gepinnt. Die Pipeline wurde inzwischen auf GitHub ausgefuehrt; die lokalen Nachweise vom 8. November beschreiben den damaligen Stand.
+Die [Windows-CI](../.github/workflows/windows.yml) baut und prueft Kandidaten. Main-Pushes veroeffentlichen nichts. Ein stabiler Versionstag erzeugt nach allen Pruefungen einen Release-Entwurf ohne Downloadassets; die signierten Enddateien werden spaeter vom Release-Laptop angehaengt. Die Actions sind auf feste offizielle Commits gepinnt. Die Nachweise vom 8. November beschreiben den damaligen Stand.
 
 Eine frische Windows-VM muss vor der oeffentlichen Freigabe noch Installation ohne Entwicklertools, Offlinebetrieb, Upgrade einer synthetischen aelteren NoteBase und Deinstallation pruefen. Windows Sandbox ist auf dem Entwicklungsrechner nicht verfuegbar. Die lokale Paketabnahme ersetzt diesen Nachweis nicht. OneNote COM sowie Linux/macOS benoetigen eigene Plattformabnahmen.
 
-## Geplanter oeffentlicher Releaseablauf
+## Kontrollierter oeffentlicher Releaseablauf
 
 Am 9. November festgelegt: Quellcode und Downloads sollen im selben oeffentlichen
 GitHub-Repository liegen. Die Sichtbarkeit wurde hier nicht umgestellt. Die
-folgenden Punkte beschreiben den noch umzusetzenden Ablauf, keine bereits
-aktivierte Release- oder Updatefunktion.
+folgenden Schritte sind implementiert beziehungsweise als bewusst manuelle
+Abnahme/Signierung gekennzeichnet. Es wurde noch kein stabiler Tag oder
+oeffentlicher Release erstellt.
 
 1. Stabile Version in Paket und Lockfile setzen, Aenderungen und bekannte Grenzen
    dokumentieren. Ein Release-Tag wie `v2.1.0` muss exakt zur Paketversion und zum
    geprueften Commit passen. Ein normaler Push nach `main` bleibt Kandidaten-CI.
-2. CI prueft und baut aus diesem Stand. Mit vorhandener Herausgeberidentitaet
-   Programmdateien und Installer signieren, Signaturen pruefen und anschliessend
-   Paket-Smoke, Manifest und Pruefsummen fuer genau die auszuliefernden Bytes
-   erzeugen. App-ID `local.nicknotes.desktop` und Profilpfad beibehalten.
-3. Installer, Update-Metadaten (`latest.yml` und zugehoerige Blockmap), Pruefsummen,
-   Paketmanifest und Lizenzhinweise an einen **GitHub-Release-Entwurf** anhaengen.
-   Release-Schreibrechte nur im dafuer vorgesehenen Job verwenden; Signaturdaten
-   ueber geschuetzte Secrets bereitstellen. Keine Schluessel oder Zugangstokens
-   in Repository, Installer oder Update-Client aufnehmen.
+2. CI prueft und baut den Kandidaten aus diesem Stand und erzeugt erst nach
+   Erfolg einen leeren **GitHub-Release-Entwurf**. Schreibrechte besitzt nur der
+   Entwurfsjob. Die unsignierten CI-Installer bleiben Actions-Artefakte.
+3. Auf dem anderen Laptop denselben sauberen Tag auschecken, mit vorhandener
+   Identitaet `package:release` ausfuehren, Paket-Smoke und Signaturen pruefen,
+   Manifest und Pruefsummen erstellen. `release:draft` prueft die Assets und den
+   erfolgreichen Tag-CI-Lauf, bevor Installer, `latest.yml`, Blockmap, Manifest,
+   Pruefsummen und Lizenzhinweise an den Entwurf angehaengt werden. Es wird dabei
+   keine Signieridentitaet im CI oder beim Endbenutzer hinterlegt.
 4. Installer-/Upgradeabnahme und Release Notes pruefen, dann bewusst in GitHub
-   veroeffentlichen. RCs als Pre-Release kennzeichnen; stabile Clients erhalten
+   veroeffentlichen und den stabilen Release als Latest verwenden. RCs als Pre-Release kennzeichnen; stabile Clients erhalten
    ausschliesslich veroeffentlichte stabile Versionen. Nach Veroeffentlichung
    Assets nicht unter derselben Version austauschen; Korrektur mit neuer Version.
 5. Oeffentlichen Download und Update von einer installierten Vorgaengerversion
@@ -118,10 +119,11 @@ GitHub unterstuetzt [Release-Entwuerfe und deren ausdrueckliche Veroeffentlichun
 Die eingesetzte Builder-Hauptversion bietet NSIS-Updates ueber
 [`electron-updater` und Update-Metadaten](https://www.electron.build/v26/docs/features/auto-update/).
 
-## Geplantes Updateverhalten
+## Updateverhalten
 
-Die Pruefung gehoert in den Electron-Hauptprozess, nur fuer installierte Pakete.
-Vorgesehen sind eine automatische Pruefung nach dem Start und ein manueller
+Die Pruefung laeuft im Electron-Hauptprozess, nur fuer signierte Releasepakete.
+Es gibt eine automatische Pruefung 30 Sekunden nach Backend-Bereitschaft und
+danach alle vier Stunden sowie einen manuellen
 Befehl **Nach Updates suchen**, sichtbare Versions-/Fortschritts-/Fehlermeldungen
 sowie **Herunterladen** und **Jetzt neu starten und installieren**. Keine
 Installationsunterbrechung ohne Zustimmung; offline bleibt die App benutzbar.
@@ -133,13 +135,47 @@ und der Installer gestartet werden. Abbrechen, Speicherfehler oder Timeout
 muessen auch den Update-Neustart abbrechen. Signaturpruefung fuer den erwarteten
 Herausgeber konfigurieren und den Fehlerfall testen.
 
-`stage:app` liefert bisher bewusst keine externen Desktop-Laufzeitabhaengigkeiten
-mit. Bei Integration von `electron-updater` dessen benoetigte Abhaengigkeiten
-gezielt mitpacken und Staging-Hook/Paket-Allowlist anpassen; die gebuendelten
-Renderer-Pakete nicht nochmals komplett aufnehmen.
+`stage:app` liefert den explizit aufgeloesten Desktop-Laufzeitbaum mit; der
+Pakettest prueft Namen und Versionen gegen das Laufzeitmanifest.
 
-Vor der oeffentlichen Umschaltung ausserdem Projektlizenz festlegen, Paketmetadaten
-und Lizenzhinweise daran anpassen, README um Installation und Updateverhalten
-ergaenzen sowie Changelog, Support-/Fehlermeldeweg, Sicherheitskontakt und ein
-eigenes App-/Installer-Icon bereitstellen. Signierung benoetigt eine reale Identitaet und gegebenenfalls
-Kostenfreigabe; sie ist keine Zusage, dass Windows niemals Warnungen anzeigt.
+MIT-Lizenz, Paketmetadaten, Anwender-README, Changelog, Support-/Fehlermeldeweg,
+Sicherheitskontakt und eigenes App-/Installer-Icon sind enthalten. Vor der
+oeffentlichen Umschaltung im Repository Private Vulnerability Reporting
+aktivieren und die Windows-CI als Mergepflicht einrichten; diese Einstellungen
+wurden hier nicht umgestellt. Signierung ist keine Zusage, dass Windows niemals
+Warnungen anzeigt.
+
+## Uebergabe an den Signier-Laptop
+
+Dieser Abschnitt ist eine Anleitung fuer spaeter; er wurde hier nicht ausgefuehrt.
+Vorher stabile Paket-/Lockversion setzen, Changelog um genau diese Version
+ergaenzen, auf `main` pruefen/committen und den passenden `v<Version>`-Tag pushen.
+Die CI muss bestanden und den leeren Entwurf angelegt haben.
+
+Auf dem anderen Windows-Laptop denselben Tag sauber auschecken, die dokumentierten
+Node-/Python-Buildvoraussetzungen installieren und die vorhandene Signieridentitaet
+entsprechend electron-builder konfigurieren. Beispielsweise liest der Builder
+`WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD`; fuer ein vorhandenes Windows-Zertifikat kann
+optional `NICKNOTES_CERTIFICATE_SUBJECT_NAME` gesetzt werden. Keine Schluessel oder
+Passwoerter in Dateien dieses Repositories speichern. GitHub CLI (`gh`) wird zum
+Anhaengen benoetigt; dessen Anmeldung verbleibt auf dem Laptop.
+
+```powershell
+$env:NICKNOTES_PUBLISHER_NAME = 'Exakter Common Name des eigenen Zertifikats'
+npm ci
+npm run package:release
+npm run verify:package
+npm run smoke:desktop
+npm run release:checksums
+npm run release:verify
+npm run release:draft
+```
+
+`package:release` verweigert RC-Versionen, fehlende Notes, einen schmutzigen oder
+nicht zum Tag passenden Checkout und fehlende Herausgeberkonfiguration. Der
+Release-Builder erzwingt die Signierung; der Backend-EXE ausserhalb von ASAR wird
+ausdruecklich einbezogen. Update-Metadaten entstehen aus dem signierten Installer.
+`release:verify` liest nur: korrekte Versionen, Update-Hash, Paketlizenz,
+Herausgeberkonfiguration, Windows-Signaturen und vollstaendige SHA256-Liste.
+`release:draft` haengt nur an unveroeffentlichte Entwuerfe an; es veroeffentlicht
+nichts. Nach manueller Abnahme den fertigen Entwurf in GitHub bewusst publizieren.

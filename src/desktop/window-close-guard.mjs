@@ -1,9 +1,11 @@
 /** Synchronize renderer drafts before native close; never close on a missing/stale reply. */
 export function createWindowCloseGuard(win, dialog) {
-  let ready=false,dirty=false,phase='idle',requestId=0,allowClose=false,timer
+  let ready=false,dirty=false,phase='idle',requestId=0,allowClose=false,timer,approvedAction,resolveRequest
   const clearTimer=()=>{clearTimeout(timer);timer=undefined}
   const reset=()=>{
     clearTimer();phase='idle'
+    allowClose=false;approvedAction=undefined
+    resolveRequest?.(false);resolveRequest=undefined
     if(!win.isDestroyed())win.setEnabled(true)
   }
   const fail=message=>{
@@ -19,7 +21,12 @@ export function createWindowCloseGuard(win, dialog) {
   }
   const finish=()=>{
     clearTimer();phase='closing';allowClose=true
-    win.close()
+    if(!approvedAction){win.close();return}
+    win.setEnabled(false)
+    const action=approvedAction;approvedAction=undefined
+    Promise.resolve().then(action).then(()=>{
+      resolveRequest?.(true);resolveRequest=undefined
+    }).catch(()=>fail('Der Update-Neustart konnte nicht abgeschlossen werden. Das Fenster bleibt geöffnet.'))
   }
   const decide=()=>{
     if(!dirty){finish();return}
@@ -37,6 +44,10 @@ export function createWindowCloseGuard(win, dialog) {
     win.webContents.send('app:request-save-before-close',{requestId})
   }
   const guard={
+    requestClose(action){
+      if(phase!=='idle')return Promise.resolve(false)
+      return new Promise(resolve=>{approvedAction=action;resolveRequest=resolve;win.close()})
+    },
     setReady(value){ready=value===true},
     setDirty(value){if(typeof value==='boolean')dirty=value},
     receiveState(payload){

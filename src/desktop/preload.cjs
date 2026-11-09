@@ -10,6 +10,15 @@ contextBridge.exposeInMainWorld('nicknotes', {
   getBackendStatus: () => ipcRenderer.invoke('backend:status'),
   readCaptureDraft: () => ipcRenderer.invoke('capture:draft-read'),
   writeCaptureDraft: (text) => ipcRenderer.invoke('capture:draft-write',text),
+  getUpdateState: () => ipcRenderer.invoke('updates:state'),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateState: (handler) => {
+    const listener=(_event,state)=>handler(state)
+    ipcRenderer.on('updates:state',listener)
+    return()=>ipcRenderer.removeListener('updates:state',listener)
+  },
   onBackendStatus: (handler) => {
     const listener=(_event,status)=>handler(status)
     ipcRenderer.on('backend:status-changed',listener)
