@@ -111,12 +111,17 @@ ist keine zugesicherte Zeit fuer alle Geraete oder beliebig grosse NoteBases.
 
 ## Ergebnis dieser Arbeitsrunde
 
-Bestanden: 87 Backend-, 11 Frontend- und 3 Desktop-Entwurfstests; Build,
+Nachtrag vom 9. November: 87 Backend-, 20 Frontend- und 14 Desktoptests; Build,
 Schnittstellen-/Iconpruefung, Menue-/Tastaturregression, echter npm-Kaltstart mit
 Modul- und React-Fehlern sowie der Pakettest einschliesslich MCP. Lint hat keine
-Fehler, weiterhin 13 Hinweise im bestehenden App-Kompositionscode.
+Fehler oder Hinweise. Natives Fensterschliessen synchronisiert jetzt auch den
+letzten gepufferten Notiztext, prueft Dirty-Drafts und wartet bei **Speichern**
+auf den bestaetigten Save. Abbrechen oder Timeout lassen das Fenster offen.
+Die Schliessen-Abfrage synchronisiert auch den Capture-Editor und wartet auf
+dessen Profil-Sicherung. Ein lokaler Schreibfehler verlangt die ausdrueckliche
+Entscheidung Speichern/Verwerfen/Abbrechen, auch wenn keine Notiz dirty ist.
 
-Die letzte Messung der gebuendelten EXE ohne angeschlossenen Testbrowser ergab:
+Die fruehere Messung der gebuendelten EXE ohne angeschlossenen Testbrowser ergab:
 
 | Phase, ab Prozessaufruf | Erstes frisches Testprofil nach Paketierung | Weiterer Start desselben Profils |
 | --- | ---: | ---: |
@@ -145,3 +150,21 @@ Startphasen, sichere Entwurfsuebernahme, sichtbare Fehler statt leerem React-Roo
 und die automatisierten Regressionspruefungen. Weitere Arbeit muss die Zeit vor
 dem Desktopcode und die grundlegende Electron-/Rendererinitialisierung messen;
 ein weiterer Umbau von NoteBase oder Graph allein erklaert diese Werte nicht.
+
+Nachmessung vom 9. November, unveraenderte RC.3-EXE nach dem Paket-Smoke, ohne
+Testbrowser und ohne gleichzeitig laufende Paketkompression:
+
+| Phase ab Prozessaufruf | Frisches Profil | Neustart desselben Profils |
+| --- | ---: | ---: |
+| Fenster erzeugt | 1,2 s | 1,2 s |
+| Schnellerfassung bereit | 3,8 s | 4,1 s |
+| Backend bereit | 5,5 s | 5,8 s |
+
+Beim allerersten Aufruf direkt nach Neubau hatte der Paket-Smoke dagegen rund
+67 s bis zur Bereitschaft gemessen, davon etwa 35 s vor der Fenstererzeugung und
+weitere 21 s beim Backend-Prozessstart. Der Neustart mit Testbrowser lag bei
+6,8 s. Die Nachmessung wiederholt keinen ersten Aufruf einer neuen Binaerdatei;
+sie beweist daher nicht, dass der langsame Erststart beseitigt ist. Erststart auf
+sauberem Windows und mit dem finalen signierten Paket bleibt ein offener
+Abnahmepunkt unter IMP-021. Messdateien: `.tmp/startup-timing-result.json` und
+`.tmp/desktop-smoke-result.json`.

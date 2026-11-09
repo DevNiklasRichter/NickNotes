@@ -124,7 +124,7 @@ try {
  await page.keyboard.press('Alt+q')
  await page.locator('.capture-markdown-editor .cm-content').fill('Pending capture after actual process restart.')
  await expect.poll(()=>fs.existsSync(path.join(profile,'capture-draft.md'))?fs.readFileSync(path.join(profile,'capture-draft.md'),'utf8'):'').toContain('actual process restart')
- await page.evaluate(()=>window.nicknotes.setUnsavedChanges(false))
+ await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>1})
  await app.close();app=null
  const warmReadyMs=await launch()
  await expect(page.locator('.capture-markdown-editor .cm-content')).toContainText('Pending capture after actual process restart.')
@@ -145,5 +145,5 @@ try {
  throw error
 }finally{
  releaseNoteRead()
- if(app){if(page)await page.evaluate(()=>window.nicknotes?.setUnsavedChanges?.(false)).catch(()=>{});await app.close()}
+ if(app){await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>1}).catch(()=>{});await app.close()}
 }

@@ -66,6 +66,7 @@ festhalten. Nur synthetische Inhalte verwenden.
 | --- | --- |
 | Installer und synthetische alte NoteBase in frische Windows-VM kopieren, Netzwerk trennen | Vollstaendige Installation ohne Node, Python, npm oder pip; Zielordner pro Benutzer waehlbar |
 | App starten, NoteBase anlegen/oeffnen, Notiz/Task/Todo mit Tags erzeugen, Suche und Graph verwenden | Lokale Kernablaeufe funktionieren offline; Dateien liegen ausserhalb der Installation |
+| Erststart der frischen Installation und Neustart messen | Zeit bis Fenster, nutzbarer Schnellerfassung und Backend getrennt festhalten; starke lokale Schwankungen vor Freigabe bewerten |
 | Zwei externe Bearbeitungen und einen veralteten Editor-Save ausloesen | Externe Aenderung erscheint; Dirty-Draft bleibt erhalten; keine stille Ueberschreibung |
 | Freigabe erstellen, Client verbinden und widerrufen | Nur freigegebene NoteBase zugaenglich, Schreiben braucht Schreibrecht, Widerruf greift sofort |
 | App beenden; Vorgaengerversion installieren und auf Kandidaten aktualisieren, falls vorhanden | Ressourcen werden ersetzt; synthetische NoteBase und Migrationssicherungen bleiben erhalten |
@@ -82,6 +83,63 @@ Der erzeugte Kandidat ist lokal und **nicht signiert**. App-ID: `local.nicknotes
 
 Noch erforderlich sind eine reale Herausgeber-/Signaturidentitaet, die Lizenzentscheidung und eine ausdrueckliche Veroeffentlichungsfreigabe. Signieren erst mit vorhandener Identitaet; den privaten Signaturschluessel nicht im Repository ablegen. Danach Installer und eingebettete Programmdateien auf Signaturen pruefen, neue Pruefsummen erzeugen und genau dieses Paket testen.
 
-Die [Windows-CI](../.github/workflows/windows.yml) baut und prueft den Kandidaten, veroeffentlicht aber keinen GitHub-Release. Die Actions sind auf feste offizielle Commits gepinnt. Der lokale CI-Workflow wurde hier vorbereitet, aber nicht auf GitHub ausgefuehrt.
+Die [Windows-CI](../.github/workflows/windows.yml) baut und prueft den Kandidaten, veroeffentlicht aber keinen GitHub-Release. Die Actions sind auf feste offizielle Commits gepinnt. Die Pipeline wurde inzwischen auf GitHub ausgefuehrt; die lokalen Nachweise vom 8. November beschreiben den damaligen Stand.
 
 Eine frische Windows-VM muss vor der oeffentlichen Freigabe noch Installation ohne Entwicklertools, Offlinebetrieb, Upgrade einer synthetischen aelteren NoteBase und Deinstallation pruefen. Windows Sandbox ist auf dem Entwicklungsrechner nicht verfuegbar. Die lokale Paketabnahme ersetzt diesen Nachweis nicht. OneNote COM sowie Linux/macOS benoetigen eigene Plattformabnahmen.
+
+## Geplanter oeffentlicher Releaseablauf
+
+Am 9. November festgelegt: Quellcode und Downloads sollen im selben oeffentlichen
+GitHub-Repository liegen. Die Sichtbarkeit wurde hier nicht umgestellt. Die
+folgenden Punkte beschreiben den noch umzusetzenden Ablauf, keine bereits
+aktivierte Release- oder Updatefunktion.
+
+1. Stabile Version in Paket und Lockfile setzen, Aenderungen und bekannte Grenzen
+   dokumentieren. Ein Release-Tag wie `v2.1.0` muss exakt zur Paketversion und zum
+   geprueften Commit passen. Ein normaler Push nach `main` bleibt Kandidaten-CI.
+2. CI prueft und baut aus diesem Stand. Mit vorhandener Herausgeberidentitaet
+   Programmdateien und Installer signieren, Signaturen pruefen und anschliessend
+   Paket-Smoke, Manifest und Pruefsummen fuer genau die auszuliefernden Bytes
+   erzeugen. App-ID `local.nicknotes.desktop` und Profilpfad beibehalten.
+3. Installer, Update-Metadaten (`latest.yml` und zugehoerige Blockmap), Pruefsummen,
+   Paketmanifest und Lizenzhinweise an einen **GitHub-Release-Entwurf** anhaengen.
+   Release-Schreibrechte nur im dafuer vorgesehenen Job verwenden; Signaturdaten
+   ueber geschuetzte Secrets bereitstellen. Keine Schluessel oder Zugangstokens
+   in Repository, Installer oder Update-Client aufnehmen.
+4. Installer-/Upgradeabnahme und Release Notes pruefen, dann bewusst in GitHub
+   veroeffentlichen. RCs als Pre-Release kennzeichnen; stabile Clients erhalten
+   ausschliesslich veroeffentlichte stabile Versionen. Nach Veroeffentlichung
+   Assets nicht unter derselben Version austauschen; Korrektur mit neuer Version.
+5. Oeffentlichen Download und Update von einer installierten Vorgaengerversion
+   auf einem sauberen Windows-System pruefen. Eine erste Version muss den
+   Update-Client bereits enthalten, damit spaetere Updates angeboten werden.
+
+GitHub unterstuetzt [Release-Entwuerfe und deren ausdrueckliche Veroeffentlichung](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
+Die eingesetzte Builder-Hauptversion bietet NSIS-Updates ueber
+[`electron-updater` und Update-Metadaten](https://www.electron.build/v26/docs/features/auto-update/).
+
+## Geplantes Updateverhalten
+
+Die Pruefung gehoert in den Electron-Hauptprozess, nur fuer installierte Pakete.
+Vorgesehen sind eine automatische Pruefung nach dem Start und ein manueller
+Befehl **Nach Updates suchen**, sichtbare Versions-/Fortschritts-/Fehlermeldungen
+sowie **Herunterladen** und **Jetzt neu starten und installieren**. Keine
+Installationsunterbrechung ohne Zustimmung; offline bleibt die App benutzbar.
+Pre-Releases und Downgrades werden fuer den stabilen Kanal ausgeschlossen.
+
+Der Neustart muss den vorhandenen Schutz fuer Notiz- und Einstellungsentwuerfe
+nutzen. Erst nach erfolgreicher Schliessfreigabe duerfen Backend und App beendet
+und der Installer gestartet werden. Abbrechen, Speicherfehler oder Timeout
+muessen auch den Update-Neustart abbrechen. Signaturpruefung fuer den erwarteten
+Herausgeber konfigurieren und den Fehlerfall testen.
+
+`stage:app` liefert bisher bewusst keine externen Desktop-Laufzeitabhaengigkeiten
+mit. Bei Integration von `electron-updater` dessen benoetigte Abhaengigkeiten
+gezielt mitpacken und Staging-Hook/Paket-Allowlist anpassen; die gebuendelten
+Renderer-Pakete nicht nochmals komplett aufnehmen.
+
+Vor der oeffentlichen Umschaltung ausserdem Projektlizenz festlegen, Paketmetadaten
+und Lizenzhinweise daran anpassen, README um Installation und Updateverhalten
+ergaenzen sowie Changelog, Support-/Fehlermeldeweg, Sicherheitskontakt und ein
+eigenes App-/Installer-Icon bereitstellen. Signierung benoetigt eine reale Identitaet und gegebenenfalls
+Kostenfreigabe; sie ist keine Zusage, dass Windows niemals Warnungen anzeigt.

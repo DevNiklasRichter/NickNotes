@@ -2166,8 +2166,20 @@ function App() {
         }
         return true;
     }
+    const prepareCloseState = useEffectEvent(async ():Promise<boolean> => {
+        const captureDraft=captureEditorRef.current?.getMarkdown()??captureText;
+        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges();captureEditorRef.current?.flushChanges()});
+        try{
+            await window.nicknotes?.writeCaptureDraft?.(captureDraft);
+        }catch(error){
+            setError('Schnellerfassungsentwurf konnte vor dem Schließen nicht lokal gesichert werden: '+String(error));
+            throw error;
+        }
+        return settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.kind==='note'&&tab.dirty);
+    });
     const requestSaveBeforeAppClose = useEffectEvent(async (): Promise<boolean> => {
-        if (settingsDirty) {
+        await prepareCloseState();
+        if (settingsDirtyRef.current) {
             const settingsSaved = await saveSettings();
             if (!settingsSaved) {
                 return false;
@@ -2180,7 +2192,9 @@ function App() {
                 return false;
             }
         }
-        return true;
+        const remainingChanges=await prepareCloseState();
+        if(remainingChanges)setWarnMessage('Es gibt neuere ungespeicherte Änderungen. Das Fenster bleibt geöffnet.');
+        return !remainingChanges;
     });
     useEffect(() => {
         window.nicknotes?.setUnsavedChanges?.(hasUnsavedChanges);
@@ -2190,16 +2204,27 @@ function App() {
         if (!register) {
             return;
         }
-        const cleanup = register(() => {
-            void requestSaveBeforeAppClose()
-                .then((ok) => {
-                window.nicknotes?.respondSaveBeforeClose?.(ok);
-            })
-                .catch(() => {
-                window.nicknotes?.respondSaveBeforeClose?.(false);
+        const cleanupCheck=window.nicknotes?.onRequestCloseState?.(requestId=>{
+            void prepareCloseState().then(hasChanges=>{
+                window.nicknotes?.respondCloseState?.(requestId,hasChanges);
+            }).catch(()=>{
+                // A failed capture write needs the same explicit save/discard choice.
+                window.nicknotes?.respondCloseState?.(requestId,true);
             });
         });
+        const cleanup = register((requestId) => {
+            void requestSaveBeforeAppClose()
+                .then((ok) => {
+                window.nicknotes?.respondSaveBeforeClose?.(requestId,ok);
+            })
+                .catch(() => {
+                window.nicknotes?.respondSaveBeforeClose?.(requestId,false);
+            });
+        });
+        window.nicknotes?.setCloseGuardReady?.(true);
         return () => {
+            window.nicknotes?.setCloseGuardReady?.(false);
+            cleanupCheck?.();
             if (typeof cleanup === 'function') {
                 cleanup();
             }

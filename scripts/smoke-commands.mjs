@@ -127,6 +127,74 @@ async function verifyEditorValueSync(){
     await dispose.dispose()
   }
 }
+async function verifyNativeClose(){
+  await menu('Datei','newNote')
+  const editor=await bodyEditor('Neue Notiz')
+  await editor.fill('Stored native-close baseline')
+  const saveResponse=page.waitForResponse(response=>response.url().endsWith('/notes/save'))
+  await page.keyboard.press('Control+s')
+  const saved=await (await saveResponse).json()
+  await expect(page.locator('.note-editor-shell')).toHaveAttribute('data-note-revision',saved.revision)
+  await expect(page.locator('.tab-dirty-dot')).toHaveCount(0)
+  // Keep the last input in CodeMirror's frame buffer and deliberately stale the
+  // main-process flag. Only a synchronous renderer snapshot can protect it.
+  const restoreRaf=await page.evaluateHandle(()=>{
+    const original=window.requestAnimationFrame
+    window.requestAnimationFrame=()=>999999
+    return original
+  })
+  try{
+    await page.keyboard.press('Alt+q')
+    await page.locator('.capture-markdown-editor .cm-content').fill('Buffered capture at native close')
+    await editor.click();await page.keyboard.press('Control+End')
+    await page.keyboard.type(' Unsaved native close')
+    await page.evaluate(async()=>{window.nicknotes.setUnsavedChanges(false);await window.nicknotes.getBackendUrl()})
+    await app.evaluate(({dialog})=>{
+      globalThis.__nativeClosePrompts=0
+      dialog.showMessageBoxSync=()=>{globalThis.__nativeClosePrompts++;return 2}
+    })
+    let closed=false;page.on('close',()=>closed=true)
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close())
+    await expect.poll(async()=>closed?'closed':app.evaluate(()=>globalThis.__nativeClosePrompts),{timeout:15000}).toBe(1)
+  }finally{
+    await page.evaluate(original=>{window.requestAnimationFrame=original},restoreRaf)
+    await restoreRaf.dispose()
+  }
+  await expect(editor).toContainText('Unsaved native close')
+  assert.ok(!fs.readFileSync(saved.path,'utf8').includes('Unsaved native close'))
+  assert.ok(fs.readFileSync(path.join(scratch,'profile/capture-draft.md'),'utf8').includes('Buffered capture at native close'))
+  // Hold the save response: the native window must stay open without accepting
+  // more user input until the acknowledged Markdown save has completed.
+  let savedBeforeClose,releaseSave,routeError
+  const saveGate=new Promise(resolve=>releaseSave=resolve)
+  const holdSave=async route=>{
+    try{
+      const response=await route.fetch()
+      assert.equal(response.status(),200)
+      savedBeforeClose=await response.json()
+      await saveGate
+      await route.fulfill({response})
+    }catch(error){routeError=String(error);await route.abort().catch(()=>{})}
+  }
+  await page.route('**/notes/save',holdSave)
+  try{
+    await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>0})
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close())
+    await expect.poll(()=>({revision:savedBeforeClose?.revision,error:routeError}),{timeout:15000}).toMatchObject({revision:expect.any(String),error:undefined})
+    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isEnabled()),false)
+    assert.ok(fs.readFileSync(saved.path,'utf8').includes('Unsaved native close'))
+    const electronProcess=app.process()
+    const appClosed=app.waitForEvent('close',{timeout:45000})
+    releaseSave()
+    await appClosed
+    app=null
+    assert.equal(electronProcess.exitCode,0)
+    assert.ok(fs.readFileSync(path.join(scratch,'profile/capture-draft.md'),'utf8').includes('Buffered capture at native close'))
+  }finally{
+    releaseSave()
+    if(!page.isClosed())await page.unroute('**/notes/save',holdSave)
+  }
+}
 try{
   for(let attempt=0;attempt<100;attempt++){
     if(vite.exitCode!==null)throw new Error('Owned Vite process failed: '+viteLog)
@@ -251,14 +319,15 @@ try{
   assert.equal(restartIdleRequests.filter(req=>req.method==='POST').length,0,JSON.stringify(restartIdleRequests))
   assert.ok(restartIdleRequests.length<=6,'Restart request loop: '+JSON.stringify(restartIdleRequests))
   await verifyEditorValueSync()
+  await verifyNativeClose()
   assert.deepEqual(errors,[])
-  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,queuedSaveExecuted:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,pageErrors:errors}
+  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,queuedSaveExecuted:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,nativeCloseBufferedDraftProtected:true,nativeCloseSaveBeforeExit:true,pageErrors:errors}
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){
   if(page)await page.screenshot({path:path.join(root,'.tmp/commands-failure.png')}).catch(()=>{})
   throw error
 }finally{
-  if(app){if(page)await page.evaluate(()=>window.nicknotes?.setUnsavedChanges?.(false)).catch(()=>{});await app.close()}
+  if(app){await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>1}).catch(()=>{});await app.close()}
   if(vite.exitCode===null)vite.kill()
 }

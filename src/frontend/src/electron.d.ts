@@ -20,8 +20,11 @@ declare global {
       openPathInFileExplorer?: (path: string) => Promise<{ ok: boolean; code?: string; message?: string }>
       setWindowTheme?: (theme: 'light' | 'dark') => Promise<{ ok: boolean }>
       setUnsavedChanges?: (hasUnsavedChanges: boolean) => void
-      onRequestSaveBeforeClose?: (handler: () => void) => (() => void) | void
-      respondSaveBeforeClose?: (ok: boolean) => void
+      setCloseGuardReady?: (ready:boolean) => void
+      onRequestCloseState?: (handler:(requestId:number)=>void) => ()=>void
+      respondCloseState?: (requestId:number,hasUnsavedChanges:boolean) => void
+      onRequestSaveBeforeClose?: (handler: (requestId:number) => void) => (() => void) | void
+      respondSaveBeforeClose?: (requestId:number,ok: boolean) => void
     }
   }
 }

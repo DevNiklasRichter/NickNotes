@@ -21,17 +21,24 @@ contextBridge.exposeInMainWorld('nicknotes', {
   openPathInFileExplorer: (path) => ipcRenderer.invoke('shell:openPathInFileExplorer', path),
   setWindowTheme: (theme) => ipcRenderer.invoke('window:set-theme', theme),
   setUnsavedChanges: (hasUnsavedChanges) => ipcRenderer.send('app:set-unsaved', Boolean(hasUnsavedChanges)),
+  setCloseGuardReady: (ready) => ipcRenderer.send('app:close-guard-ready',Boolean(ready)),
+  onRequestCloseState: (handler) => {
+    const listener=(_event,payload)=>handler(payload.requestId)
+    ipcRenderer.on('app:request-close-state',listener)
+    return()=>ipcRenderer.removeListener('app:request-close-state',listener)
+  },
+  respondCloseState: (requestId,hasUnsavedChanges) => ipcRenderer.send('app:close-state-result',{requestId,hasUnsavedChanges:Boolean(hasUnsavedChanges)}),
   onRequestSaveBeforeClose: (handler) => {
     if (typeof handler !== 'function') {
       return () => {}
     }
-    const listener = () => {
-      handler()
+    const listener = (_event,payload) => {
+      handler(payload.requestId)
     }
     ipcRenderer.on('app:request-save-before-close', listener)
     return () => {
       ipcRenderer.removeListener('app:request-save-before-close', listener)
     }
   },
-  respondSaveBeforeClose: (ok) => ipcRenderer.send('app:save-before-close-result', { ok: Boolean(ok) }),
+  respondSaveBeforeClose: (requestId,ok) => ipcRenderer.send('app:save-before-close-result', { requestId,ok: Boolean(ok) }),
 })

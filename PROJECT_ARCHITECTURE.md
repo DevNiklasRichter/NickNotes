@@ -171,6 +171,16 @@ React-Updates bei Dirty-Pruefung und Sammelspeichern nicht uebersehen werden.
 Dialogabschluesse loesen ihr Ergebnis ohne Timer auf und entfernen sofort die
 aktive Dialogreferenz. So ist ein abgebrochener Befehl vor dem naechsten
 Eingabeereignis wieder frei; doppelte Abschluesse bleiben wirkungslos.
+Auch natives Fensterschliessen (X/Alt+F4) fordert vor der Dirty-Pruefung einen
+synchronen Editor-Snapshot an. `window-close-guard.mjs` koordiniert diese
+Abfrage und anschliessendes Speichern mit eindeutigen Anfrage-IDs. Waehrend
+Pruefung und Save ist die Fenstereingabe gesperrt; Abbrechen, Fehler und
+Timeout lassen das Fenster wieder bedienbar offen. Fehlende oder veraltete
+Antworten erteilen keine Schliessfreigabe. Vor dem React-Start gibt es noch
+keinen Notizeditor; die Schnellerfassung nutzt ihren eigenen Profilentwurf.
+Nach dem React-Start uebernimmt dieselbe Abfrage auch den gepufferten Capture-
+Text und wartet auf dessen lokale Sicherung. Scheitert sie, ist Schliessen nur
+nach erneut erfolgreichem Speichern oder ausdruecklichem Verwerfen moeglich.
 CodeMirror behaelt seine Textbearbeitung und Undo-Historie; native Eingabefelder
 nutzen ausschliesslich erlaubte Editierbefehle ueber die vertrauensgebundene IPC.
 
@@ -235,7 +245,7 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
   Der Paket-Smoke haelt einen Notiz-Leseaufruf gezielt zurueck und wartet danach
   auf den geladenen Notiz-Editor. Er prueft Speichern bis in die Markdown-Datei
   sowie die tatsaechlichen HTTP-Antworten 200 bzw. 409 bei einem Revisionskonflikt.
-- Windows-CI ist vorbereitet; oeffentliche Signatur, Lizenzentscheidung und
+- Windows-CI baut und prueft Kandidaten; oeffentliche Signatur, Lizenzentscheidung und
   saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
 - CI-Actions sind auf offizielle Commits gepinnt; der Kandidaten-Upload nutzt
   `actions/upload-artifact` 7.0.0 mit Node-24-Laufzeit.
@@ -246,8 +256,11 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur
-synthetische Bestaende. Linux/macOS, Auto-Updates und eigene Synchronisation
-benoetigen spaeter eigene Abnahme; sie sind kein Teil dieses Windows-Kandidaten.
+synthetische Bestaende. Fuer die oeffentliche Windows-Auslieferung sind Quellcode
+und Downloads im selben oeffentlichen GitHub-Repository vorgesehen. Release-
+Entwurf, explizite Freigabe und Updatepruefung bilden den naechsten Ausbauschritt;
+sie sind noch nicht implementiert. App-ID und Profilpfad bleiben dabei stabil.
+Linux/macOS und eigene Synchronisation benoetigen spaeter eigene Abnahme.
 
 ## Leitlinien fuer weitere Aenderungen
 

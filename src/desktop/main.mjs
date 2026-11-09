@@ -6,6 +6,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {CaptureDraftStore} from './capture-draft-store.mjs'
+import {createWindowCloseGuard} from './window-close-guard.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -47,9 +48,7 @@ try {const saved=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'w
 let backendProcess = null
 let mainWindow = null
 let backendStopping = false
-const unsavedByWebContentsId = new Map()
-const pendingSaveBeforeCloseByWebContentsId = new Set()
-const allowCloseByWebContentsId = new Set()
+const closeGuards = new Map()
 const EXTERNAL_URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:'])
 
 const NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS = process.env.NICKNOTES_ALLOWED_EXTERNAL_URL_ORIGINS?.split(',')
@@ -250,48 +249,10 @@ function createWindow() {
   startupMark('window-created')
   win.webContents.once('dom-ready',()=>startupMark('html-ready'))
   const webContentsId = win.webContents.id
-  unsavedByWebContentsId.set(webContentsId, false)
-
-  win.on('close', (event) => {
-    if (allowCloseByWebContentsId.has(webContentsId)) {
-      allowCloseByWebContentsId.delete(webContentsId)
-      return
-    }
-    const hasUnsavedChanges = unsavedByWebContentsId.get(webContentsId) ?? false
-    if (!hasUnsavedChanges) {
-      return
-    }
-
-    event.preventDefault()
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'question',
-      buttons: ['Speichern', 'Nicht speichern', 'Abbrechen'],
-      defaultId: 0,
-      cancelId: 2,
-      title: 'Ungespeicherte Aenderungen',
-      message: 'Es gibt ungespeicherte Aenderungen. Vor dem Schliessen speichern?',
-      noLink: true,
-    })
-
-    if (choice === 1) {
-      allowCloseByWebContentsId.add(webContentsId)
-      win.close()
-      return
-    }
-    if (choice !== 0) {
-      return
-    }
-    if (pendingSaveBeforeCloseByWebContentsId.has(webContentsId)) {
-      return
-    }
-    pendingSaveBeforeCloseByWebContentsId.add(webContentsId)
-    win.webContents.send('app:request-save-before-close')
-  })
+  closeGuards.set(webContentsId,createWindowCloseGuard(win,dialog))
 
   win.on('closed', () => {
-    unsavedByWebContentsId.delete(webContentsId)
-    pendingSaveBeforeCloseByWebContentsId.delete(webContentsId)
-    allowCloseByWebContentsId.delete(webContentsId)
+    closeGuards.delete(webContentsId)
     if (mainWindow === win) {
       mainWindow = null
     }
@@ -338,25 +299,12 @@ app.whenReady().then(async () => {
   })
 
   listen('app:set-unsaved', (event, payload) => {
-    unsavedByWebContentsId.set(event.sender.id, Boolean(payload))
+    closeGuards.get(event.sender.id)?.setDirty(payload)
   })
-
+  listen('app:close-guard-ready',(event,payload)=>closeGuards.get(event.sender.id)?.setReady(payload))
+  listen('app:close-state-result',(event,payload)=>closeGuards.get(event.sender.id)?.receiveState(payload))
   listen('app:save-before-close-result', (event, payload) => {
-    const webContentsId = event.sender.id
-    if (!pendingSaveBeforeCloseByWebContentsId.has(webContentsId)) {
-      return
-    }
-    pendingSaveBeforeCloseByWebContentsId.delete(webContentsId)
-
-    const targetWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!targetWindow || targetWindow.isDestroyed()) {
-      return
-    }
-    if (!payload || payload.ok !== true) {
-      return
-    }
-    allowCloseByWebContentsId.add(webContentsId)
-    targetWindow.close()
+    closeGuards.get(event.sender.id)?.receiveSaveResult(payload)
   })
 
   handle('dialog:selectDirectory', async () => {
