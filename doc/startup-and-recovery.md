@@ -168,3 +168,10 @@ sie beweist daher nicht, dass der langsame Erststart beseitigt ist. Erststart au
 sauberem Windows und mit dem finalen signierten Paket bleibt ein offener
 Abnahmepunkt unter IMP-021. Messdateien: `.tmp/startup-timing-result.json` und
 `.tmp/desktop-smoke-result.json`.
+
+Nach dem abschliessenden Neubau mit Capture-Schliessschutz bestand auch der
+erneute Paket-Smoke alle Funktionspruefungen. Dieser Lauf lag bei 38,2 s bis zur
+Bereitschaft beim ersten Aufruf und 13,2 s beim Neustart; Eingabebereitschaft
+bei 33,4 bzw. 11,0 s. Auch damit bleiben die Schwankungen sichtbar. Der aktuelle
+Desktop-Messbericht gehoert zu diesem letzten Lauf, die Messung ohne Testbrowser
+zum vorherigen unveraenderten Paketstand vor der Capture-Ergaenzung.
