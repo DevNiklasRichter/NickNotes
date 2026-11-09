@@ -32,7 +32,14 @@ async function menu(group,id){
   await page.getByRole('menubar').getByRole('menuitem',{name:group,exact:true}).click()
   await page.locator(`[role="menu"] [data-command="${id}"]`).click()
 }
-async function bodyEditor(){const editor=page.locator('.note-body-editor .cm-content').first();await expect(editor).toBeVisible();return editor}
+async function bodyEditor(title){
+  // A backend search can see a newly created file before its editor has loaded.
+  // Wait for the requested document, rather than typing into the previous tab.
+  if(title)await expect(page.locator('.note-title-input').first()).toHaveValue(title)
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  await expect(editor).toBeVisible()
+  return editor
+}
 try{
   for(let attempt=0;attempt<100;attempt++){
     if(vite.exitCode!==null)throw new Error('Owned Vite process failed: '+viteLog)
@@ -56,7 +63,7 @@ try{
   assert.equal(idleRequests.filter(req=>req.method==='POST').length,0,JSON.stringify(idleRequests))
   assert.ok(idleRequests.length<=6,'Request loop: '+JSON.stringify(idleRequests))
   await page.keyboard.press('Control+n')
-  const first=await bodyEditor()
+  const first=await bodyEditor('Neue Notiz')
   await expect(first).toBeFocused();await page.keyboard.type('Saved immediately after typing.')
   await page.keyboard.press('Control+s')
   await expect.poll(async()=>JSON.stringify(await request('/search?query=immediately'))).toContain('Neue Notiz')
@@ -65,7 +72,7 @@ try{
   await expect(page.getByRole('button',{name:'Speichern',exact:true})).toHaveAttribute('title',/Strg\+S/)
   await page.keyboard.press('Control+Shift+n')
   await expect.poll(async()=>JSON.stringify(await request('/tasks?include_done=true'))).toContain('Neuer Task')
-  await expect(await bodyEditor()).toBeFocused();await page.keyboard.type('Task draft for save all')
+  await expect(await bodyEditor('Neuer Task')).toBeFocused();await page.keyboard.type('Task draft for save all')
   await page.keyboard.press('Control+Shift+s')
   await expect.poll(async()=>JSON.stringify(await request('/search?query=Task%20draft'))).toContain('Neuer Task')
   // Ctrl+O uses a keyboard-navigable note picker.
@@ -73,6 +80,7 @@ try{
   await page.getByRole('combobox',{name:'Notiz suchen'}).fill('immediately')
   await expect(page.getByRole('dialog').getByRole('option')).toHaveCount(1)
   await page.keyboard.press('Enter');await expect(page.getByRole('dialog')).toHaveCount(0)
+  await bodyEditor('Neue Notiz')
   // Menu editing uses CodeMirror history, including the last buffered keystroke.
   await (await bodyEditor()).click();await page.keyboard.press('Control+End');await page.keyboard.type(' undo-marker')
   await menu('Bearbeiten','undo')
@@ -84,11 +92,11 @@ try{
   await page.keyboard.press('Control+o')
   await page.getByRole('combobox',{name:'Notiz suchen'}).fill('Neuer Task')
   await expect(page.getByRole('dialog').getByRole('option')).toHaveCount(1)
-  await page.keyboard.press('Enter');await (await bodyEditor()).click();await page.keyboard.press('Control+End');await page.keyboard.type(' multi-task-marker')
+  await page.keyboard.press('Enter');await (await bodyEditor('Neuer Task')).click();await page.keyboard.press('Control+End');await page.keyboard.type(' multi-task-marker')
   await page.keyboard.press('Control+o')
   await page.getByRole('combobox',{name:'Notiz suchen'}).fill('Neue Notiz')
   await expect(page.getByRole('dialog').getByRole('option')).toHaveCount(1)
-  await page.keyboard.press('Enter');await (await bodyEditor()).click();await page.keyboard.press('Control+End');await page.keyboard.type(' multi-note-marker')
+  await page.keyboard.press('Enter');await (await bodyEditor('Neue Notiz')).click();await page.keyboard.press('Control+End');await page.keyboard.type(' multi-note-marker')
   await page.keyboard.press('Control+Shift+s')
   await expect.poll(async()=>JSON.stringify(await request('/search?query=multi-task-marker'))).toContain('Neuer Task')
   await expect.poll(()=>fs.readFileSync(firstNote.path,'utf8')).toContain('multi-note-marker')

@@ -37,8 +37,6 @@ jobs:
       - name: Test, lint and build
         run: npm run check
       - name: Verify development startup, menus and keyboard commands
-        env:
-          FORCE_COLOR: '1'
         run: npm run smoke:commands
       - name: Verify real npm cold start, early capture and startup recovery
         run: npm run smoke:startup
@@ -58,7 +56,7 @@ jobs:
           npm run smoke:desktop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run release:checksums
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: NickNotes-Windows-candidate
           path: |

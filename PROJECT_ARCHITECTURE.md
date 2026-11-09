@@ -159,6 +159,15 @@ Servicefunktionen. UI-/Graph-Ansichtseinstellungen erzeugen keine fachliche
 Aenderungsversion. So loesen Einstellungen weder Dokumentrevalidierung noch eine
 Save-/Refresh-Rueckkopplung aus. Routine-Requestlogs haben DEBUG-Level; Fehler
 bleiben sichtbar. DevTools werden nur mit `NICKNOTES_DEVTOOLS=1` automatisch geoeffnet.
+Pfadhelfer und Tagdialog-Callbacks besitzen stabile Referenzen. Lifecycle- und
+Settings-Service werden mit dem aktuellen Render-Snapshot erzeugt; ihre ueber
+Save-Callbacks gekoppelte Instanziierung wird nicht wirkungslos memoisiert.
+Refs fuer offene Tabs, Workspace und ungespeicherte Einstellungen werden nach
+dem Commit im Layout-Effect aktualisiert. Im Render gilt der aktuelle State.
+An Service-Konstruktoren sind Compiler-Ausnahmen eng begrenzt und kommentiert:
+Diese speichern Callbacks nur, statt sie waehrend des Renderns auszufuehren
+oder zu veraendern. Hook-Reihenfolge und vollstaendige Abhaengigkeiten bleiben
+geprueft. Ref-Inhalte sind keine reaktiven Abhaengigkeiten.
 
 Der Desktop registriert IPC und oeffnet sein Fenster vor der Backend-Bereitschaft.
 `index.html` und das abhaengigkeitsfreie `public/startup.js` stellen eine kleine
@@ -208,6 +217,8 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
   sowie die tatsaechlichen HTTP-Antworten 200 bzw. 409 bei einem Revisionskonflikt.
 - Windows-CI ist vorbereitet; oeffentliche Signatur, Lizenzentscheidung und
   saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
+- CI-Actions sind auf offizielle Commits gepinnt; der Kandidaten-Upload nutzt
+  `actions/upload-artifact` 7.0.0 mit Node-24-Laufzeit.
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur

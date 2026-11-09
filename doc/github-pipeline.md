@@ -76,7 +76,7 @@ dem jeweiligen Benutzerrechner.
 | Dependency Audit | Sucht bekannte gemeldete Sicherheitsluecken: npm ab Schweregrad `moderate`, Python-Laufzeit mit `pip-audit`. Neue Sicherheitsmeldungen koennen diesen Schritt auch ohne Codeaenderung rot werden lassen. |
 | Package offline Windows installer | Baut Frontend, isoliertes Python-Backend und den Windows-Installer. |
 | Payload / Runtime smoke | Prueft Dateien und Groessen; startet die gebuendelte EXE aus fremdem Arbeitsordner mit eingeschraenktem PATH. Prueft Editor, Konflikte, Entwuerfe, Dashboards, Themes und MCP. Erzeugt SHA-256-Pruefsummen. |
-| Upload artifact | Speichert Installer, Manifest, Pruefsummen und Test-/Graphberichte als `NickNotes-Windows-candidate` fuer 14 Tage bei GitHub. |
+| Upload artifact | `actions/upload-artifact` 7.0.0 mit Node 24, auf einen festen Commit gepinnt: Speichert Installer, Manifest, Pruefsummen und Test-/Graphberichte als `NickNotes-Windows-candidate` fuer 14 Tage bei GitHub. |
 
 Windows-Befehle laufen standardmaessig in PowerShell. Die ausdruecklichen
 `$LASTEXITCODE`-Pruefungen verhindern, dass ein spaeter erfolgreicher Befehl einen

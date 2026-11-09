@@ -8,7 +8,7 @@ import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {flushSync} from 'react-dom';
 
 
-import {lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef, useState } from 'react';
+import {lazy, Suspense, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { CodeMirrorMarkdownEditor } from './editor/CodeMirrorMarkdownEditor';
 import type { MarkdownEditorApi, MarkdownLinkTarget } from './editor/CodeMirrorMarkdownEditor';
@@ -67,6 +67,9 @@ const EMPTY_FOCUS_DASHBOARD_STATS: FocusDashboardAggregateStats = {
     unknownBlockerTaskCount: 0,
     unknownBlockerReferenceCount: 0,
 };
+const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '');
+const toNoteId = (path: string): string => normalizePath(path).toLowerCase();
+
 function App() {
     const autoOpenTriedRef = useRef(false);
     const explorerRecoveryRef = useRef(false);
@@ -180,14 +183,14 @@ function App() {
     useEffect(() => {
         explorerViewStateRef.current = explorerViewState;
     }, [explorerViewState]);
-    openTabsRef.current = openTabs;
-    workspaceStateRef.current = workspaceState;
-    const createTabId = () => {
+    useLayoutEffect(() => {
+        openTabsRef.current = openTabs;
+        workspaceStateRef.current = workspaceState;
+    }, [openTabs, workspaceState]);
+    const createTabId = useCallback(() => {
         tabIdCounterRef.current += 1;
         return `tab-${Date.now()}-${tabIdCounterRef.current}`;
-    };
-    const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '');
-    const toNoteId = (path: string): string => normalizePath(path).toLowerCase();
+    }, []);
     const isTagOverviewPath = (path: string): boolean => {
         const normalized = normalizePath(path).toLowerCase();
         return /\/(tags|02_tags)\//.test(normalized) && normalized.endsWith('/overview.md');
@@ -327,7 +330,9 @@ function App() {
         activeColorProfileId,
         colorProfiles
     ]);
-    settingsDirtyRef.current = settingsDirty;
+    useLayoutEffect(() => {
+        settingsDirtyRef.current = settingsDirty;
+    }, [settingsDirty]);
     const hasUnsavedChanges = useMemo(() => settingsDirty || openTabs.some((tab) => tab.kind === 'note' && tab.dirty), [openTabs, settingsDirty]);
     const tabsById = useMemo<Record<string, NoteTab>>(() => {
         const map: Record<string, NoteTab> = {};
@@ -374,6 +379,35 @@ function App() {
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
     const activeTab = paneActiveTabs[activePaneId] ?? null;
+    const openTagActionDialog = useCallback((config: {
+        kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
+        title: string;
+        message?: string;
+        placeholder?: string;
+        initialValue?: string;
+        initialGroupValues?: TagGroupFormValues;
+        initialTagValues?: TagFormValues;
+        tagGroupOptions?: Array<{
+            id: string;
+            displayName: string;
+        }>;
+        actions: TagActionDialogAction[];
+    }): Promise<TagActionDialogResult> => {
+        return new Promise((resolve) => {
+            setTagActionDialog({
+                kind: config.kind,
+                title: config.title,
+                message: config.message,
+                placeholder: config.placeholder,
+                value: config.initialValue ?? '',
+                groupValues: config.initialGroupValues,
+                tagValues: config.initialTagValues,
+                tagGroupOptions: config.tagGroupOptions,
+                actions: config.actions,
+                resolve,
+            });
+        });
+    }, [setTagActionDialog]);
     const backendDataService = useMemo(() => new BackendDataService({
         getBackendUrl: () => backendUrl,
         isVaultLoaded: () => vaultLoaded,
@@ -621,7 +655,11 @@ function App() {
         }
         void refreshReview();
     }, [vaultLoaded, reviewDashboardFilters.window, refreshReview]);
-    const appLifecycleService = useMemo(() => new AppLifecycleService({
+    // Lifecycle and settings services share deferred save callbacks. Their
+    // snapshots are rebuilt each render; memoizing them cannot break that cycle.
+    // The constructor only stores these callbacks; it never invokes them in render.
+    // eslint-disable-next-line react-hooks/refs
+    const appLifecycleService = new AppLifecycleService({
         getBackendUrl: () => backendUrl,
         snapshot: {
             getTheme: () => theme,
@@ -717,37 +755,7 @@ function App() {
         setAutoOpenTried: (value) => {
             autoOpenTriedRef.current = value;
         },
-    }), [
-        activeColorProfileId,
-        autoOpenTriedRef,
-        autoOpenTriedRef.current,
-        backendUrl,
-        capturePanelOpen,
-        capturePinned,
-        colorProfiles,
-        displayName,
-        editorPanelOpen,
-        expandedFolders,
-        searchQuery,
-        explorerOptions,
-        explorerWidth,
-        openTagActionDialog,
-        requestSaveBeforeNoteBaseSwitch,
-        clearAppStateForClosedNoteBase,
-        noteBaseOpenStatus,
-        refreshWorkspaceData,
-        createNoteBaseDisplayName,
-        createNoteBaseName,
-        createNoteBaseParentPath,
-        createNoteBasePending,
-        vaultPath,
-        sidebarOpen,
-        statusBarPrefs,
-        taskFeatureSettings,
-        theme,
-        workspaceState.layoutMode,
-        workspaceState.splitRatio
-    ]);
+    });
     const saveUiSettingsPatch = appLifecycleService.saveUiSettingsPatch;
     const buildFullAppUiSettings = appLifecycleService.buildFullAppUiSettings;
     const buildLayoutUiSettings = appLifecycleService.buildLayoutUiSettings;
@@ -759,6 +767,8 @@ function App() {
     const pickAndOpenVault = appLifecycleService.pickAndOpenVault;
     const renameNoteBase = appLifecycleService.renameNoteBase;
     const deleteNoteBase = appLifecycleService.deleteNoteBase;
+    // The constructor only stores these callbacks; refs are read by later actions.
+    // eslint-disable-next-line react-hooks/refs
     const noteCaptureService = useMemo(() => new NoteCaptureService({
         getBackendUrl: () => backendUrl,
         isVaultLoaded: () => vaultLoaded,
@@ -788,13 +798,16 @@ function App() {
         emitMutationEvent,
         ignoredCaptureTagKeys,
         selectedTagKeys,
+        setCaptureText,
+        setError,
+        setMessage,
         vaultLoaded
     ]);
     const previewCapture = noteCaptureService.previewCapture;
     const toggleCaptureTag = noteCaptureService.toggleCaptureTag;
     const rejectCaptureTag = noteCaptureService.rejectCaptureTag;
     const saveCapture = noteCaptureService.saveCapture;
-    const appSettingsService = useMemo(() => new AppSettingsService({
+    const appSettingsService = new AppSettingsService({
         snapshot: {
             getTheme: () => theme,
             getActiveColorProfileId: () => activeColorProfileId,
@@ -837,27 +850,7 @@ function App() {
         setSettingsDialogOpen,
         saveUiSettingsPatch,
         buildFullAppUiSettings,
-    }), [
-        activeColorProfileId,
-        buildFullAppUiSettings,
-        colorProfiles,
-        displayName,
-        explorerOptions,
-        saveUiSettingsPatch,
-        savedActiveColorProfileId,
-        savedColorProfiles,
-        savedDisplayName,
-        savedExplorerOptions,
-        savedSidebarOpen,
-        savedStatusBarPrefs,
-        savedTaskFeatureSettings,
-        savedTheme,
-        sidebarOpen,
-        statusBarPrefs,
-        taskFeatureSettings,
-        theme,
-        vaultLoaded
-    ]);
+    });
     const saveSettings = appSettingsService.saveSettings;
     const discardSettings = appSettingsService.discardSettings;
     const requestSaveSettings = appSettingsService.requestSaveSettings;
@@ -1144,9 +1137,9 @@ function App() {
         const today = toLocalIsoDate();
         return tasks.filter((task) => task.status !== 'done' && task.due_date === today).length;
     }, [tasks]);
-    const toWikiTargetForRow = (row: SearchRow): string => {
+    const toWikiTargetForRow = useCallback((row: SearchRow): string => {
         return getRelativeVaultPath(row.path, vaultPath).replace(/\.md$/i, '') || toNoteDisplayName(row.path);
-    };
+    }, [vaultPath]);
     const propertyRelatedOptions = useMemo(() => {
         const values = new Set<string>();
         for (const row of linkIndexRows) {
@@ -1532,7 +1525,7 @@ function App() {
         catch (caught) {
             setError(String(caught));
         }
-    }, [backendUrl, openNoteInTab]);
+    }, [backendUrl, openNoteInTab, setError]);
     const confirmCloseTab = async (tabId: string): Promise<boolean> => {
         const tab = openTabsRef.current.find((candidate) => candidate.id === tabId);
         if (!tab) {
@@ -1641,7 +1634,7 @@ function App() {
             initialNoteType: normalizeNoteTypeValue(match.note_type),
             targetPane: paneId ?? workspaceStateRef.current.lastFocusedPane,
         });
-    }, [explorerRows, openNoteInTab, vaultPath]);
+    }, [explorerRows, openNoteInTab, setWarnMessage, vaultPath]);
     const revealActiveNoteInExplorer = () => {
         if (!activeTab || activeTab.kind !== 'note') {
             return;
@@ -2058,9 +2051,9 @@ function App() {
     const toggleFolder = (folderKey: string) => {
         setExpandedFolders((prev) => ({ ...prev, [folderKey]: !prev[folderKey] }));
     };
-    const setFolderOpen = (folderKey: string) => {
+    const setFolderOpen = useCallback((folderKey: string) => {
         setExpandedFolders((prev) => ({ ...prev, [folderKey]: true }));
-    };
+    }, []);
     const handleExplorerViewStateChange = useCallback((nextState: ExplorerViewState) => {
         if (areExplorerViewStatesEqual(explorerViewStateRef.current, nextState)) {
             return;
@@ -2079,7 +2072,7 @@ function App() {
             });
         }, 250);
     }, [saveUiSettingsPatch, vaultLoaded]);
-    const remapOpenNotePaths = (fromPrefix: string, toPrefix: string) => {
+    const remapOpenNotePaths = useCallback((fromPrefix: string, toPrefix: string) => {
         const cleanFrom = normalizePath(fromPrefix);
         const cleanTo = normalizePath(toPrefix);
         if (!cleanFrom || !cleanTo || cleanFrom === cleanTo) {
@@ -2111,36 +2104,7 @@ function App() {
                 title: toNoteDisplayName(nextPath),
             };
         }));
-    };
-    function openTagActionDialog(config: {
-        kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
-        title: string;
-        message?: string;
-        placeholder?: string;
-        initialValue?: string;
-        initialGroupValues?: TagGroupFormValues;
-        initialTagValues?: TagFormValues;
-        tagGroupOptions?: Array<{
-            id: string;
-            displayName: string;
-        }>;
-        actions: TagActionDialogAction[];
-    }): Promise<TagActionDialogResult> {
-        return new Promise((resolve) => {
-            setTagActionDialog({
-                kind: config.kind,
-                title: config.title,
-                message: config.message,
-                placeholder: config.placeholder,
-                value: config.initialValue ?? '',
-                groupValues: config.initialGroupValues,
-                tagValues: config.initialTagValues,
-                tagGroupOptions: config.tagGroupOptions,
-                actions: config.actions,
-                resolve,
-            });
-        });
-    }
+    }, []);
     const closeTagActionDialog = (actionId: string) => {
         const current = tagActionDialogRef.current;
         if (!current) {
@@ -2157,7 +2121,7 @@ function App() {
             current.resolve(payload);
         }, 0);
     };
-    const askTagChoice = async (title: string, message: string, actions: TagActionDialogAction[]): Promise<string | null> => {
+    const askTagChoice = useCallback(async (title: string, message: string, actions: TagActionDialogAction[]): Promise<string | null> => {
         const result = await openTagActionDialog({
             kind: 'choice',
             title,
@@ -2168,7 +2132,7 @@ function App() {
             return null;
         }
         return result.actionId;
-    };
+    }, [openTagActionDialog]);
     async function requestSaveBeforeNoteBaseSwitch(): Promise<boolean> {
         const dirtyTabs = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty);
         if (!settingsDirtyRef.current && dirtyTabs.length === 0) {
@@ -2201,7 +2165,7 @@ function App() {
         }
         return true;
     }
-    const requestSaveBeforeAppClose = useCallback(async (): Promise<boolean> => {
+    const requestSaveBeforeAppClose = useEffectEvent(async (): Promise<boolean> => {
         if (settingsDirty) {
             const settingsSaved = await saveSettings();
             if (!settingsSaved) {
@@ -2216,7 +2180,7 @@ function App() {
             }
         }
         return true;
-    }, [saveSettings, saveTab, settingsDirty]);
+    });
     useEffect(() => {
         window.nicknotes?.setUnsavedChanges?.(hasUnsavedChanges);
     }, [hasUnsavedChanges]);
@@ -2239,8 +2203,8 @@ function App() {
                 cleanup();
             }
         };
-    }, [requestSaveBeforeAppClose]);
-    const openTagGroupFormDialog = async (config: {
+    }, []);
+    const openTagGroupFormDialog = useCallback(async (config: {
         title: string;
         message?: string;
         confirmLabel: string;
@@ -2266,8 +2230,8 @@ function App() {
             displayName: normalizeLabel(result.groupValues.displayName),
             color: normalizeTagColor(result.groupValues.color),
         };
-    };
-    const openTagFormDialog = async (config: {
+    }, [openTagActionDialog]);
+    const openTagFormDialog = useCallback(async (config: {
         title: string;
         message?: string;
         confirmLabel: string;
@@ -2298,7 +2262,9 @@ function App() {
             id: normalizeTagId(result.tagValues.id),
             displayName: normalizeLabel(result.tagValues.displayName),
         };
-    };
+    }, [openTagActionDialog]);
+    // The service stores callbacks without mutating them; keep their manual memoization.
+    /* eslint-disable react-hooks/preserve-manual-memoization */
     const tagManagementService = useMemo(() => new TagManagementService({
         getBackendUrl: () => backendUrl,
         getMergedTagGroups: () => mergedTagGroups,
@@ -2327,6 +2293,7 @@ function App() {
         setMessage
     ]);
     const createTagGroup = tagManagementService.createTagGroup;
+    /* eslint-enable react-hooks/preserve-manual-memoization */
     const createTagInExistingGroup = tagManagementService.createTagInExistingGroup;
     const createTagFromEditorSelection = tagManagementService.createTagFromEditorSelection;
     const renameTagGroup = tagManagementService.renameTagGroup;
@@ -2787,6 +2754,8 @@ function App() {
           </div>) : null}
       </aside>
     </div>) : null;
+    // The service stores callbacks without mutating them; keep their manual memoization.
+    /* eslint-disable react-hooks/preserve-manual-memoization */
     const explorerMutationService = useMemo(() => new ExplorerMutationService({
         getBackendUrl: () => backendUrl,
         getVaultLoaded: () => vaultLoaded,
@@ -2812,6 +2781,7 @@ function App() {
         vaultLoaded
     ]);
     const createExplorerFolder = explorerMutationService.createExplorerFolder;
+    /* eslint-enable react-hooks/preserve-manual-memoization */
     const createExplorerFile = explorerMutationService.createExplorerFile;
     const createExplorerTask = explorerMutationService.createExplorerTask;
     const renameExplorerFolder = explorerMutationService.renameExplorerFolder;
@@ -2907,7 +2877,7 @@ function App() {
         if(spec.id==='closeAll')enabled=openTabs.length>0;
         if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
         if(spec.id==='save')enabled=settingsDialogOpen||Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
-        if(spec.id==='saveAll')enabled=settingsDirtyRef.current||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
+        if(spec.id==='saveAll')enabled=settingsDirty||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
         if(spec.id==='deleteNote')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
         if(['find','format'].includes(spec.id))enabled=Boolean(activeTab?.kind==='note'&&editorPanelOpen)||capturePanelOpen&&vaultLoaded;
         const checked=spec.id==='split'?workspaceState.layoutMode==='split':spec.id==='capture'?capturePanelOpen:spec.id==='sidebar'?sidebarOpen:spec.id==='editor'?editorPanelOpen:undefined;
