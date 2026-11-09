@@ -204,3 +204,26 @@ Bereitschaft beim ersten Aufruf und 13,2 s beim Neustart; Eingabebereitschaft
 bei 33,4 bzw. 11,0 s. Auch damit bleiben die Schwankungen sichtbar. Der aktuelle
 Desktop-Messbericht gehoert zu diesem letzten Lauf, die Messung ohne Testbrowser
 zum vorherigen unveraenderten Paketstand vor der Capture-Ergaenzung.
+
+### Abschliessende RC.4-Messung
+
+Nach Worker- und Frame-Fallback-Korrektur vollendet auch der Start ohne
+angeschlossenen Testbrowser DOM, React und Backend. In dieser Messsitzung wurden
+bei beiden Starts keine Paint-Callbacks beobachtet (`paintObserved: false`);
+deshalb sind die folgenden Werte ausdruecklich keine sichtbaren Paint-Zeiten.
+
+| Phase ab Prozessaufruf | Frisches Testprofil | Neustart desselben Profils |
+| --- | ---: | ---: |
+| Fenster erzeugt | 1,8 s | 2,2 s |
+| Capture-DOM freigegeben | 8,6 s | 6,9 s |
+| React gemountet | 9,9 s | 8,4 s |
+| Backend bereit | 9,1 s | 8,0 s |
+
+Der vorherige Lauf hatte bei fehlenden Frames ueberhaupt keine React-Bereitschaft
+gemeldet; der alte Benchmark hatte dennoch Backend-Bereitschaft akzeptiert.
+Diese unvollstaendigen Messungen werden nicht als erfolgreiche UI-Starts gewertet.
+Der neue Smoke-Test prueft den Fall gezielt mit blockierten Frames und erhaltenem
+Capture-Text. Im abschliessenden Paket-Smoke mit Testbrowser lagen erster Aufruf
+und Neustart bei 34,8 bzw. 7,6 s bis Bereitschaft, mit viel Wartezeit bereits vor
+Electron-Code. Das Ein-Sekunden-Ziel bleibt unerreicht; saubere Windows-Abnahme
+und Messung des spaeter signierten Endpakets bleiben beim Benutzer.

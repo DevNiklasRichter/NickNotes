@@ -232,8 +232,8 @@ Vite-Prozesses. Rendererfehler erscheinen im Terminal. `smoke:startup` prueft de
 echten npm-Start mit frischem Vite-Cache, blockierter Hauptoberflaeche, absichtlichem
 Modulfehler und Entwurfsuebernahme bis ins Markdown.
 `scripts/vite-readiness.mjs` erkennt die lokale Vite-URL fuer Entwicklungsstarter
-und Menue-Smoke gemeinsam und entfernt dabei ANSI-Steuerzeichen. Die CI fuehrt
-den Menue-Smoke bewusst mit `FORCE_COLOR=1` aus, damit farbige Ausgabe mitgeprueft wird.
+und Menue-Smoke gemeinsam und entfernt dabei ANSI-Steuerzeichen. Die
+Readiness-Regressionen pruefen auch farbige und ueber mehrere Chunks verteilte Ausgabe.
 `NICKNOTES_STARTUP_DIAGNOSTICS=1` protokolliert Startmarken im Testprofil und
 aktiviert nur im Entwicklungsmodus einen zufaelligen lokalen Debug-Port.
 Details: [Startverhalten](doc/startup-and-recovery.md) und
