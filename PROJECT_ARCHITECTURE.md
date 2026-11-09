@@ -219,6 +219,10 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
   saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
 - CI-Actions sind auf offizielle Commits gepinnt; der Kandidaten-Upload nutzt
   `actions/upload-artifact` 7.0.0 mit Node-24-Laufzeit.
+- Die CI installiert vor den Pruefungen die zum Lockfile gehoerende Electron-
+  Laufzeit explizit. Nur dieser Installationsschritt wird bei Fehlern bis zu
+  dreimal versucht (10/20 Sekunden Pause, fuenf Minuten Gesamtlimit); EXE und
+  Version werden danach geprueft. Smoke-Tests werden nicht automatisch wiederholt.
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur

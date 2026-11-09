@@ -29,6 +29,25 @@ jobs:
           .venv/Scripts/python -m pip install -r requirements-dev.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm ci
+      - name: Install locked Electron runtime
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Installing locked Electron runtime (attempt $attempt/3)"
+            node node_modules/electron/install.js
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'Electron runtime installation failed after 3 attempts.' }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          if (-not (Test-Path -LiteralPath 'node_modules/electron/dist/electron.exe' -PathType Leaf)) {
+            throw 'Electron runtime installer did not produce electron.exe.'
+          }
+          $expectedVersion = (Get-Content -LiteralPath 'node_modules/electron/package.json' -Raw | ConvertFrom-Json).version
+          $installedVersion = (Get-Content -LiteralPath 'node_modules/electron/dist/version' -Raw).Trim() -replace '^v', ''
+          if ($installedVersion -ne $expectedVersion) {
+            throw "Electron runtime version mismatch: expected $expectedVersion, found $installedVersion."
+          }
       - name: Verify generated contracts and icons
         run: |
           npm run contracts:check

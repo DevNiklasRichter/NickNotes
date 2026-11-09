@@ -68,6 +68,7 @@ dem jeweiligen Benutzerrechner.
 | Checkout | Holt den zum Lauf gehoerenden Code. Bei Pull Requests standardmaessig einen Test-Mergestand. |
 | Setup Node / Python | Stellt Node.js 24.14.1 und Python 3.13 bereit. Der npm-Cache spart wiederholte Downloads. |
 | Install locked dependencies | Erstellt `.venv`, installiert Python-Entwicklungsabhaengigkeiten und fuehrt `npm ci` anhand des Lockfiles aus. |
+| Install locked Electron runtime | Installiert die Electron-Laufzeit aus dem gesperrten npm-Paket vor den Tests. Maximal drei Versuche mit 10/20 Sekunden Pause und fuenf Minuten Gesamtlimit; danach werden `electron.exe` und Version geprueft. |
 | Contracts / Icons | Prueft, ob generierte Frontend-API-Typen und Iconliste zum Quellcode passen. |
 | Test, lint and build | `npm run check`: Frontend-, Backend- und Desktop-Entwurfstests, ESLint sowie TypeScript-/Vite-Build. |
 | Menues / Tastatur | Startet Electron mit synthetischer NoteBase und prueft Shortcuts, Menues, Speichern und die Anfragen im Leerlauf. |
@@ -82,6 +83,13 @@ Windows-Befehle laufen standardmaessig in PowerShell. Die ausdruecklichen
 `$LASTEXITCODE`-Pruefungen verhindern, dass ein spaeter erfolgreicher Befehl einen
 frueheren Fehler verdeckt. Schlaegt ein Schritt fehl, laufen die folgenden normalen
 Schritte nicht weiter; der abschliessende Kandidaten-Upload entfaellt.
+
+Electron 45 laedt seine Laufzeit standardmaessig erst bei der ersten Verwendung.
+Ein erfolgreicher `npm ci`-Schritt garantiert deshalb noch keinen erfolgreichen
+Electron-Download. Der eigene Installationsschritt verwendet den offiziellen
+Installer und dessen Cache/Pruefsummen. Er faengt voruebergehende Downloadfehler
+wie HTTP 504 begrenzt ab. Scheitern alle Versuche, bricht der Job dort ab;
+fehlgeschlagene Smoke-Tests werden nicht durch Wiederholungen verdeckt.
 
 ## Wie entsteht der Installer?
 
