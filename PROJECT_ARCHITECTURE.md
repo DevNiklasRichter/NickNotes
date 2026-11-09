@@ -157,9 +157,17 @@ Vorhandene CSS-Tokens und Themes sind die gestalterische Grundlage.
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.
+Speichern und Alle speichern teilen eine Warteschlange fuer Menue, Tasten und
+das Speicher-Icon. Jeder Auftrag behaelt seinen angeforderten Dokumentkontext;
+weitere Saves werden waehrend eines laufenden Saves nicht still verworfen.
+Ein NoteBase-Wechsel oder Abbau des Command-Hooks verwirft wartende Auftraege.
+Andere Befehle behalten ihren Schutz gegen gleichzeitige Doppelaufrufe.
 Fachaktionen verwenden die bestehenden Dokument-/Explorerfunktionen. Schliessen
 fragt Dirty-Drafts ab, Loeschen verlangt eine Bestaetigung. Vor Save und Close
 werden gepufferte Editor-Aenderungen synchron in den Dokumentzustand uebernommen.
+Die explizite Editor-Synchronisierung meldet den aktuellen Text auch bei leerem
+Frame-Puffer erneut innerhalb von `flushSync`, damit noch ausstehende
+React-Updates bei Dirty-Pruefung und Sammelspeichern nicht uebersehen werden.
 Dialogabschluesse loesen ihr Ergebnis ohne Timer auf und entfernen sofort die
 aktive Dialogreferenz. So ist ein abgebrochener Befehl vor dem naechsten
 Eingabeereignis wieder frei; doppelte Abschluesse bleiben wirkungslos.

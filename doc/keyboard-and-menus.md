@@ -59,6 +59,12 @@ werden noch gepufferte Editoreingaben uebernommen. Ein Speicherkonflikt beendet
 den Sammelspeichervorgang; verbleibende Drafts bleiben erhalten. Alle/andere
 Ansichten schliessen verwendet dieselbe Speichern-/Verwerfen-/Abbrechen-Abfrage
 wie ein einzelner Tab. Datei loeschen fordert eine gesonderte Bestaetigung.
+Mehrere ausdrueckliche Speicheranforderungen werden nacheinander ausgefuehrt,
+auch wenn der vorherige Save noch Datenansichten aktualisiert. Bei einem Wechsel
+der NoteBase werden wartende Speicherauftraege verworfen.
+Der Editor meldet bei dieser expliziten Synchronisierung seinen aktuellen Text
+auch dann erneut, wenn der Frame-Puffer bereits geleert wurde, React die
+Aenderung aber noch nicht uebernommen hat.
 
 F10 fokussiert das Menue. Alt+D/B/A/H oeffnet Datei/Bearbeiten/Ansicht/Hilfe.
 Links/rechts wechselt Menues, hoch/runter navigiert Eintraege; Pos1/Ende und Esc

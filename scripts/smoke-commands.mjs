@@ -40,6 +40,60 @@ async function bodyEditor(title){
   await expect(editor).toBeVisible()
   return editor
 }
+async function verifyQueuedSaves(editor){
+  const document=page.locator('.note-editor-shell')
+  const notePath=await document.getAttribute('data-note-path')
+  assert.ok(notePath)
+  let firstSaved,secondSaved,releaseFirst,releaseSecond,routeError
+  let saveRequests=0
+  const firstGate=new Promise(resolve=>releaseFirst=resolve)
+  const secondGate=new Promise(resolve=>releaseSecond=resolve)
+  const holdSave=async route=>{
+    if(route.request().postDataJSON().path!==notePath){await route.continue();return}
+    const requestNumber=++saveRequests
+    try{
+      const response=await route.fetch()
+      assert.equal(response.status(),200)
+      const saved=await response.json()
+      if(requestNumber===1){firstSaved=saved;await firstGate}
+      else if(requestNumber===2){secondSaved=saved;await secondGate}
+      await route.fulfill({response})
+    }catch(error){routeError=String(error);await route.abort().catch(()=>{})}
+  }
+  await page.route('**/notes/save',holdSave)
+  try{
+    // Start with the first save in the scenario, independent of previous commands.
+    await page.keyboard.press('Control+s')
+    await expect.poll(()=>({requests:saveRequests,revision:firstSaved?.revision,error:routeError}),{
+      timeout:15000,message:'The initial save must reach the backend',
+    }).toMatchObject({requests:1,revision:expect.any(String),error:undefined})
+    assert.ok(fs.readFileSync(notePath,'utf8').includes('Saved immediately after typing.'))
+    await page.keyboard.type(' Queued save request')
+    await page.keyboard.press('Control+s')
+    assert.equal(saveRequests,1,'Concurrent save requests must wait for the first save')
+    releaseFirst()
+    await expect.poll(()=>({requests:saveRequests,revision:secondSaved?.revision,error:routeError}),{
+      timeout:15000,message:'The queued second save must reach the backend',
+    }).toMatchObject({requests:2,revision:expect.any(String),error:undefined})
+    assert.ok(fs.readFileSync(notePath,'utf8').includes('Queued save request'))
+    await page.keyboard.type(' Keep this draft')
+    await expect(editor).toContainText('Keep this draft')
+    releaseSecond()
+    await expect(document).toHaveAttribute('data-note-revision',secondSaved.revision)
+  }finally{
+    releaseFirst();releaseSecond()
+    await page.unroute('**/notes/save',holdSave)
+  }
+  assert.ok(!fs.readFileSync(notePath,'utf8').includes('Keep this draft'))
+  await expect(editor).toContainText('Keep this draft')
+  await page.keyboard.press('Control+w')
+  await expect(page.getByText('Was soll passieren?',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'Abbrechen',exact:true}).click()
+  await expect(editor).toContainText('Keep this draft')
+  // The toolbar shares the save queue with keyboard and menu commands.
+  await page.getByRole('button',{name:'Speichern',exact:true}).click()
+  await expect.poll(()=>fs.readFileSync(notePath,'utf8')).toContain('Keep this draft')
+}
 async function verifyEditorValueSync(){
   const fixtureUrl='/@fs/'+path.join(root,'scripts/fixtures/editor-value-sync.tsx').replaceAll('\\','/')
   const dispose=await page.evaluateHandle(async url=>(await import(url)).mountEditorValueSyncFixture(),fixtureUrl)
@@ -55,6 +109,9 @@ async function verifyEditorValueSync(){
       await expect(fixture.getByTestId('pending-echo-count')).toHaveText(String(index+1))
     }
     await expect(editor).toHaveText(text)
+    // Even after the frame buffer drained, save/close need a synchronous snapshot.
+    await fixture.getByRole('button',{name:'Flush editor snapshot',exact:true}).click()
+    await expect(fixture.getByTestId('pending-echo-count')).toHaveText('21')
     await fixture.getByRole('button',{name:'Apply oldest echo',exact:true}).click()
     await expect(fixture.getByTestId('parent-editor-value')).toHaveText('a')
     await expect(editor).toHaveText(text)
@@ -95,7 +152,7 @@ try{
   await page.keyboard.press('Control+n')
   const first=await bodyEditor('Neue Notiz')
   await expect(first).toBeFocused();await page.keyboard.type('Saved immediately after typing.')
-  await page.keyboard.press('Control+s')
+  await verifyQueuedSaves(first)
   await expect.poll(async()=>JSON.stringify(await request('/search?query=immediately'))).toContain('Neue Notiz')
   const firstNote=(await request('/search?query=immediately')).items.find(item=>item.title==='Neue Notiz')
   assert.ok(fs.readFileSync(firstNote.path,'utf8').includes('Saved immediately after typing.'))
@@ -143,43 +200,18 @@ try{
   await expect(page.locator('.capture-workspace-panel')).toBeHidden()
   await page.keyboard.press('Alt+q')
   await expect(page.locator('.capture-markdown-editor .cm-content')).toBeFocused()
-  // A delayed save response must preserve later typing and its dirty-close guard.
+  // Closing immediately after typing must flush the editor before checking dirty state.
   await page.keyboard.press('Control+1')
   const dirtyEditor=await bodyEditor('Neue Notiz')
   const leftDocument=page.locator('[data-pane-id="left"] .note-editor-shell')
   await expect(leftDocument).toHaveAttribute('data-note-path',firstNote.path)
-  await dirtyEditor.click();await page.keyboard.type(' Before delayed save')
-  let savedDuringClose,releaseSave
-  const saveGate=new Promise(resolve=>releaseSave=resolve)
-  const holdSave=async route=>{
-    if(route.request().postDataJSON().path!==firstNote.path){await route.continue();return}
-    const response=await route.fetch()
-    assert.equal(response.status(),200)
-    savedDuringClose=await response.json()
-    await saveGate
-    await route.fulfill({response})
-  }
-  await page.route('**/notes/save',holdSave)
-  try{
-    await page.keyboard.press('Control+s')
-    await expect.poll(()=>savedDuringClose?.revision,{timeout:15000}).toBeTruthy()
-    await page.keyboard.type(' Keep this draft')
-    await expect(dirtyEditor).toContainText('Keep this draft')
-    releaseSave()
-    await expect(leftDocument).toHaveAttribute('data-note-revision',savedDuringClose.revision)
-  }finally{
-    releaseSave()
-    await page.unroute('**/notes/save',holdSave)
-  }
-  assert.ok(!fs.readFileSync(firstNote.path,'utf8').includes('Keep this draft'))
-  await expect(dirtyEditor).toContainText('Keep this draft')
-  // A dirty close is cancelable and never closes the application.
+  await dirtyEditor.click();await page.keyboard.type(' Close cancellation draft')
   await page.keyboard.press('Control+w')
   await expect(page.getByText('Was soll passieren?',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'Abbrechen',exact:true}).click()
-  await expect(await bodyEditor()).toContainText('Keep this draft')
+  await expect(await bodyEditor()).toContainText('Close cancellation draft')
   await page.keyboard.press('Control+s')
-  await expect.poll(()=>fs.readFileSync(firstNote.path,'utf8')).toContain('Keep this draft')
+  await expect.poll(()=>fs.readFileSync(firstNote.path,'utf8')).toContain('Close cancellation draft')
   await menu('Ansicht','closeOthers')
   await expect(page.locator('.tab-open')).toHaveCount(1)
   // A canceled command must be reusable even when zero-delay timers are throttled.
@@ -220,7 +252,7 @@ try{
   assert.ok(restartIdleRequests.length<=6,'Restart request loop: '+JSON.stringify(restartIdleRequests))
   await verifyEditorValueSync()
   assert.deepEqual(errors,[])
-  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,pageErrors:errors}
+  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,queuedSaveExecuted:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,pageErrors:errors}
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){

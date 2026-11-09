@@ -12,6 +12,7 @@ function EditorValueSyncFixture() {
   return <section data-testid="editor-value-sync-fixture">
     <output data-testid="pending-echo-count">{pending.length}</output>
     <output data-testid="parent-editor-value">{value}</output>
+    <button onClick={()=>editorApi.current?.flushChanges()}>Flush editor snapshot</button>
     <button disabled={!pending.length} onClick={()=>{setValue(pending[0]??'');setPending(pending.slice(1))}}>Apply oldest echo</button>
     <button disabled={!pending.length} onClick={()=>{setValue(pending[pending.length-1]??'');setPending([])}}>Apply latest echo</button>
     <button onClick={()=>setValue('External replacement')}>Replace externally</button>

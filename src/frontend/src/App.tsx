@@ -3024,9 +3024,7 @@ function App() {
         <div ref={workspaceGridRef} className={workspaceGridClassName} style={workspaceGridStyle}>
           <div className="workspace-main-row">
             {editorPanelOpen ? (<EditorWorkspaceLayout workspace={workspaceState} paneTabs={paneTabs} paneActiveTabs={paneActiveTabs} activePaneId={activePaneId} disableSave={!activeTab || !activeTab.dirty} disableReveal={activeTab?.kind !== 'note'} onSaveActive={() => {
-                if (activeTab) {
-                    void saveTab(activeTab.path);
-                }
+                void executeCommand('save');
             }} onRevealActive={revealActiveNoteInExplorer} onToggleSplitMode={toggleSplitView} onCloseEditorPanel={toggleEditorPanel} onSetSplitRatio={(nextRatio) => {
                 dispatchWorkspace({
                     type: 'SET_SPLIT_RATIO',

@@ -854,12 +854,12 @@ export function CodeMirrorMarkdownEditor({
     return true
   }, [])
 
-  const flushQueuedOnChange = useCallback(() => {
+  const flushQueuedOnChange = useCallback((forceSnapshot = false) => {
     if (onChangeFrameRef.current !== null) {
       window.cancelAnimationFrame(onChangeFrameRef.current)
       onChangeFrameRef.current = null
     }
-    const queued = pendingDocRef.current
+    const queued = pendingDocRef.current ?? (forceSnapshot ? editorRef.current?.state.doc.toString() ?? null : null)
     pendingDocRef.current = null
     if (queued !== null) {
       rememberLocalEchoValue(queued)
@@ -1521,7 +1521,9 @@ export function CodeMirrorMarkdownEditor({
         return instance.state.doc.sliceString(selection.from, selection.to)
       },
       getMarkdown: () => instance.state.doc.toString(),
-      flushChanges: flushQueuedOnChange,
+      // A frame may already have emitted onChange without React committing it.
+      // Explicit save/close must enqueue a fresh snapshot inside flushSync.
+      flushChanges: () => flushQueuedOnChange(true),
       find: () => {instance.focus();openSearchPanel(instance)},
       edit: async action => {
         instance.focus()
