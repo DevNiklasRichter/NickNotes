@@ -178,8 +178,6 @@ type ResolvedTagSuggestion = {
   to: number
 }
 
-const LOCAL_ECHO_TTL_MS = 2000
-const LOCAL_ECHO_MAX_ITEMS = 12
 const EXPLORER_MULTI_DRAG_MIME = 'application/x-nicknotes-explorer-files'
 
 const codeLanguages = [
@@ -688,7 +686,7 @@ export function CodeMirrorMarkdownEditor({
   const syncingRef = useRef(false)
   const pendingDocRef = useRef<string | null>(null)
   const onChangeFrameRef = useRef<number | null>(null)
-  const localEchoValuesRef = useRef<Array<{ value: string; at: number }>>([])
+  const localEchoValuesRef = useRef<string[]>([])
   const themeCompartmentRef = useRef(new Compartment())
   const readOnlyCompartmentRef = useRef(new Compartment())
   const tagLookupCompartmentRef = useRef(new Compartment())
@@ -841,27 +839,20 @@ export function CodeMirrorMarkdownEditor({
   const openTagRef = useRef(onOpenTagReference)
   useEffect(() => {openWikiRef.current=onOpenWikiLink;openTagRef.current=onOpenTagReference}, [onOpenWikiLink,onOpenTagReference])
 
-  const pruneLocalEchoValues = useCallback((now: number) => {
-    localEchoValuesRef.current = localEchoValuesRef.current.filter((entry) => now - entry.at <= LOCAL_ECHO_TTL_MS)
-    if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
-      localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
-    }
+  // Keep emitted snapshots until the parent acknowledges them. A slow render
+  // must not turn an older local echo into an external document replacement.
+  const rememberLocalEchoValue = useCallback((nextValue: string) => {
+    const pending = localEchoValuesRef.current
+    if (pending[pending.length - 1] !== nextValue) pending.push(nextValue)
   }, [])
 
-  const rememberLocalEchoValue = useCallback((nextValue: string) => {
-    const now = Date.now()
-    pruneLocalEchoValues(now)
-    localEchoValuesRef.current.push({ value: nextValue, at: now })
-    if (localEchoValuesRef.current.length > LOCAL_ECHO_MAX_ITEMS) {
-      localEchoValuesRef.current = localEchoValuesRef.current.slice(-LOCAL_ECHO_MAX_ITEMS)
-    }
-  }, [pruneLocalEchoValues])
-
-  const isRecentLocalEchoValue = useCallback((nextValue: string): boolean => {
-    const now = Date.now()
-    pruneLocalEchoValues(now)
-    return localEchoValuesRef.current.some((entry) => entry.value === nextValue)
-  }, [pruneLocalEchoValues])
+  const acknowledgeLocalEchoValue = useCallback((nextValue: string): boolean => {
+    const pending = localEchoValuesRef.current
+    const index = pending.indexOf(nextValue)
+    if (index < 0) return false
+    pending.splice(0, index + 1)
+    return true
+  }, [])
 
   const flushQueuedOnChange = useCallback(() => {
     if (onChangeFrameRef.current !== null) {
@@ -1647,12 +1638,11 @@ export function CodeMirrorMarkdownEditor({
     }
 
     const currentValue = instance.state.doc.toString()
-    if (currentValue === value) {
+    const localEcho = acknowledgeLocalEchoValue(value)
+    if (currentValue === value || localEcho) {
       return
     }
-    if (isRecentLocalEchoValue(value)) {
-      return
-    }
+    localEchoValuesRef.current = []
 
     const selection = instance.state.selection.main
     const nextAnchor = Math.min(value.length, selection.anchor)
@@ -1665,7 +1655,7 @@ export function CodeMirrorMarkdownEditor({
       scrollIntoView: false,
     })
     syncingRef.current = false
-  }, [value, isRecentLocalEchoValue])
+  }, [value, acknowledgeLocalEchoValue])
 
   const onPaletteInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (

@@ -138,6 +138,15 @@ Fehler bleiben sichtbar; ein manuelles Reindex ist weiterhin moeglich.
 Jeder Tab besitzt Inhalt, eigene gespeicherte Revision und Dirty-Zustand.
 Speichern laesst zwischenzeitliche Eingaben stehen; externe Aenderungen
 aktualisieren saubere Tabs und markieren Konflikte bei Dirty-Tabs.
+Der Save-Abgleich vergleicht das aktuelle geparste Dokument mit dem tatsaechlich
+abgesendeten Markdown-Snapshot. `tab.content` allein erkennt Body-/Property-
+Aenderungen nicht, da es bis zum Save noch den alten Dateistand enthalten kann.
+Eine verspaetete Speicherantwort aktualisiert die Revision, laesst neuere Drafts
+aber dirty und behaelt damit die Schliessen-Rueckfrage bei.
+CodeMirror behaelt ausstehende lokale Text-Snapshots bis zum zugehoerigen React-
+Echo. Sie verfallen weder nach Zeit noch nach einer festen Anzahl weiterer
+Eingaben. Bestaetigte Snapshots werden entfernt; echte externe Ersetzungen
+leeren die ausstehende Liste und aktualisieren den Editor.
 
 `app/apiClient.ts` zentralisiert Token, Timeouts, Abbruch und Sessionwechsel.
 Verspaetete Antworten einer alten NoteBase werden verworfen. OpenAPI/Pydantic

@@ -97,6 +97,12 @@ Profil, Port und synthetischen Notizen. Es prueft Leerlauf-Requests, Neuanlage,
 sofortiges Speichern, mehrere Dirty-Drafts, Notizsuche, Undo/Redo ueber Menues,
 Splitfokus, Quick Capture, geschuetztes Schliessen, Loeschbestaetigung, Tastatur-
 menues und Hilfe. Ein Neustart prueft das automatische Wiedereroeffnen.
+Eine gezielt zurueckgehaltene Speicherantwort prueft zwischenzeitliche Eingaben:
+Der neuere Entwurf muss im Editor erhalten bleiben, darf noch nicht in der Datei
+stehen und muss beim Schliessen die Speichern-/Verwerfen-/Abbrechen-Abfrage ausloesen.
+Eine isolierte Editor-Fixture haelt ausserdem mehr als zwoelf lokale Text-Echos
+zurueck: Alte Bestaetigungen duerfen neuere Eingaben nicht ersetzen; echte
+externe Textwechsel muessen danach weiterhin uebernommen werden.
 Beim Abbrechen und unmittelbaren Wiedereroeffnen des Loeschdialogs werden
 Nullzeit-Timer kuenstlich verzoegert. Der Befehl muss trotzdem sofort erneut
 verfuegbar sein; erst die folgende Bestaetigung darf die Testdatei loeschen.

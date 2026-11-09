@@ -2556,7 +2556,7 @@ function App() {
         const document = paneTab.parsedDocument ?? parseNoteDocument(paneTab.content, paneTab.title || toNoteDisplayName(paneTab.path));
         const isReadOnlyNote = Boolean(paneTab.readOnly);
         const readOnlyTitle = normalizeLabel(document.frontmatter.title) || paneTab.title || toNoteDisplayName(paneTab.path);
-        return (<div className="note-editor-shell">
+        return (<div className="note-editor-shell" data-note-path={paneTab.path} data-note-revision={paneTab.revision}>
         <div className={`note-flow-content ${workspaceState.layoutMode === 'split' ? 'split-note-flow-content' : ''}`}>
           {isReadOnlyNote ? (<section className={`note-readonly-banner ${workspaceState.layoutMode === 'split' ? 'split-note-readonly-banner' : ''}`}>
               <h2>{readOnlyTitle}</h2>

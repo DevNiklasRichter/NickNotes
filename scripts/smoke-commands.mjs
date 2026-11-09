@@ -40,6 +40,36 @@ async function bodyEditor(title){
   await expect(editor).toBeVisible()
   return editor
 }
+async function verifyEditorValueSync(){
+  const fixtureUrl='/@fs/'+path.join(root,'scripts/fixtures/editor-value-sync.tsx').replaceAll('\\','/')
+  const dispose=await page.evaluateHandle(async url=>(await import(url)).mountEditorValueSyncFixture(),fixtureUrl)
+  try{
+    const fixture=page.getByTestId('editor-value-sync-fixture')
+    const editor=fixture.locator('.cm-content')
+    await editor.click()
+    let text=''
+    for(let index=0;index<20;index++){
+      const character=String.fromCharCode(97+index)
+      text+=character
+      await page.keyboard.type(character)
+      await expect(fixture.getByTestId('pending-echo-count')).toHaveText(String(index+1))
+    }
+    await expect(editor).toHaveText(text)
+    await fixture.getByRole('button',{name:'Apply oldest echo',exact:true}).click()
+    await expect(fixture.getByTestId('parent-editor-value')).toHaveText('a')
+    await expect(editor).toHaveText(text)
+    await fixture.getByRole('button',{name:'Apply latest echo',exact:true}).click()
+    await expect(fixture.getByTestId('parent-editor-value')).toHaveText(text)
+    await expect(editor).toHaveText(text)
+    await fixture.getByRole('button',{name:'Replace externally',exact:true}).click()
+    await expect(editor).toHaveText('External replacement')
+    await fixture.getByRole('button',{name:'Use old text externally',exact:true}).click()
+    await expect(editor).toHaveText('a')
+  }finally{
+    await page.evaluate(dispose=>dispose(),dispose)
+    await dispose.dispose()
+  }
+}
 try{
   for(let attempt=0;attempt<100;attempt++){
     if(vite.exitCode!==null)throw new Error('Owned Vite process failed: '+viteLog)
@@ -113,13 +143,43 @@ try{
   await expect(page.locator('.capture-workspace-panel')).toBeHidden()
   await page.keyboard.press('Alt+q')
   await expect(page.locator('.capture-markdown-editor .cm-content')).toBeFocused()
+  // A delayed save response must preserve later typing and its dirty-close guard.
+  await page.keyboard.press('Control+1')
+  const dirtyEditor=await bodyEditor('Neue Notiz')
+  const leftDocument=page.locator('[data-pane-id="left"] .note-editor-shell')
+  await expect(leftDocument).toHaveAttribute('data-note-path',firstNote.path)
+  await dirtyEditor.click();await page.keyboard.type(' Before delayed save')
+  let savedDuringClose,releaseSave
+  const saveGate=new Promise(resolve=>releaseSave=resolve)
+  const holdSave=async route=>{
+    if(route.request().postDataJSON().path!==firstNote.path){await route.continue();return}
+    const response=await route.fetch()
+    assert.equal(response.status(),200)
+    savedDuringClose=await response.json()
+    await saveGate
+    await route.fulfill({response})
+  }
+  await page.route('**/notes/save',holdSave)
+  try{
+    await page.keyboard.press('Control+s')
+    await expect.poll(()=>savedDuringClose?.revision,{timeout:15000}).toBeTruthy()
+    await page.keyboard.type(' Keep this draft')
+    await expect(dirtyEditor).toContainText('Keep this draft')
+    releaseSave()
+    await expect(leftDocument).toHaveAttribute('data-note-revision',savedDuringClose.revision)
+  }finally{
+    releaseSave()
+    await page.unroute('**/notes/save',holdSave)
+  }
+  assert.ok(!fs.readFileSync(firstNote.path,'utf8').includes('Keep this draft'))
+  await expect(dirtyEditor).toContainText('Keep this draft')
   // A dirty close is cancelable and never closes the application.
-  await page.keyboard.press('Control+1');await (await bodyEditor()).click();await page.keyboard.type(' Keep this draft')
   await page.keyboard.press('Control+w')
   await expect(page.getByText('Was soll passieren?',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'Abbrechen',exact:true}).click()
   await expect(await bodyEditor()).toContainText('Keep this draft')
   await page.keyboard.press('Control+s')
+  await expect.poll(()=>fs.readFileSync(firstNote.path,'utf8')).toContain('Keep this draft')
   await menu('Ansicht','closeOthers')
   await expect(page.locator('.tab-open')).toHaveCount(1)
   // A canceled command must be reusable even when zero-delay timers are throttled.
@@ -158,8 +218,9 @@ try{
   const restartIdleRequests=[...requests]
   assert.equal(restartIdleRequests.filter(req=>req.method==='POST').length,0,JSON.stringify(restartIdleRequests))
   assert.ok(restartIdleRequests.length<=6,'Restart request loop: '+JSON.stringify(restartIdleRequests))
+  await verifyEditorValueSync()
   assert.deepEqual(errors,[])
-  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,pageErrors:errors}
+  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,pageErrors:errors}
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){

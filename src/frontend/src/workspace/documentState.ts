@@ -1,9 +1,12 @@
 import type {NoteTab} from '../app/AppShared'
-import {parseNoteDocument} from '../editor/noteDocument'
+import {parseNoteDocument, serializeNoteDocument} from '../editor/noteDocument'
 type StoredDocument = {path: string; content: string; revision: string; title?: string}
 /** Preserve typing performed while a save was in flight, updating only its stored base. */
 export function mergeSavedTab(current: NoteTab, submitted: NoteTab, stored: StoredDocument): NoteTab {
-  const changedDuringSave = current.content !== submitted.content
+  // UI edits live in parsedDocument; content can still contain the old disk base.
+  const currentDraft = current.parsedDocument ? serializeNoteDocument(current.parsedDocument) : current.content
+  const submittedDraft = submitted.parsedDocument ? serializeNoteDocument(submitted.parsedDocument) : submitted.content
+  const changedDuringSave = currentDraft !== submittedDraft
   const parsed = parseNoteDocument(stored.content, stored.title || current.title)
   return {...current, path: stored.path, revision: stored.revision, conflict: false,
     title: changedDuringSave ? current.title : (stored.title || parsed.frontmatter.title || current.title),

@@ -58,6 +58,7 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
         const liveBody = getLiveMarkdownForTab(targetTab);
         const nextDocument = liveBody !== null ? { ...baseDocument, body: liveBody } : baseDocument;
         const liveContent = serializeNoteDocument(nextDocument);
+        const submittedTab = { ...targetTab, content: liveContent, parsedDocument: nextDocument };
         try {
             context.setError('');
             const response = await apiRequest<NoteSaveResponse>(context.backendUrl, '/notes/save', {
@@ -80,7 +81,7 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
                 if (tab.path !== path && tab.path !== savedPath) {
                     return tab;
                 }
-                return mergeSavedTab(tab, targetTab, {path: savedPath || tab.path, content: response.content, revision: response.revision, title: response.title});
+                return mergeSavedTab(tab, submittedTab, {path: savedPath || tab.path, content: response.content, revision: response.revision, title: response.title});
             }));
             context.setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`);
             await context.emitMutationEvent({
