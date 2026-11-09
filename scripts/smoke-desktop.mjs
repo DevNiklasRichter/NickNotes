@@ -11,6 +11,7 @@ fs.writeFileSync(path.join(profile,'capture-draft.md'),'Packaged pending capture
 const executablePath=process.argv[2]||path.join(root,'dist/installers/win-unpacked/NickNotes.exe')
 const python=path.join(root,'.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python')
 let app,page
+let releaseNoteRead=()=>{}
 const errors=[]
 const startupRuns=[]
 async function launch(){
@@ -57,19 +58,39 @@ try {
  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
  if(!await page.locator('.left-sidebar').isVisible())await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
  const row=page.locator('.explorer-row').filter({hasText:/Smoke[ _]Note/}).first()
+ // While the note request is pending, Quick Capture is the only CodeMirror editor.
+ // Hold the request explicitly so the test cannot pass merely because this machine is fast.
+ const noteEditor=page.locator('.note-body-editor .cm-content')
+ let noteReadHeld=false
+ const noteReadGate=new Promise(resolve=>releaseNoteRead=resolve)
+ const holdNoteRead=async route=>{noteReadHeld=true;await noteReadGate;await route.continue()}
+ await page.route('**/notes/content?*',holdNoteRead)
  await row.dblclick()
- await page.locator('.cm-content').first().waitFor()
- await page.locator('.cm-content').first().click()
+ await expect.poll(()=>noteReadHeld).toBe(true)
+ await expect(noteEditor).toHaveCount(0)
+ await expect(page.locator('.capture-markdown-editor .cm-content')).toBeVisible()
+ releaseNoteRead()
+ await expect(noteEditor).toBeVisible()
+ await expect(noteEditor).toContainText('Installed backend works.')
+ await page.unroute('**/notes/content?*',holdNoteRead)
+ await noteEditor.click()
+ await expect(noteEditor).toBeFocused()
  await page.keyboard.press('Control+A');await page.keyboard.type('Edited through the real desktop editor.\n- [ ] UI todo')
+ const saveResponse=page.waitForResponse(response=>response.url().endsWith('/notes/save')&&response.request().method()==='POST',{timeout:15000})
  await page.keyboard.press('Control+S')
+ assert.equal((await saveResponse).status(),200)
+ await expect(noteEditor).toContainText('Edited through the real desktop editor.')
  await expect.poll(()=>fs.readFileSync(note.notePath,'utf8'),{timeout:15000}).toContain('Edited through the real desktop editor.')
  // Preserve a draft while an external editor changes the same source file.
- await page.locator('.cm-content').first().click();await page.keyboard.press('Control+End');await page.keyboard.type('\nUnsaved draft remains.')
+ await noteEditor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\nUnsaved draft remains.')
+ await expect(page.locator('.pane-tab.active .tab-dirty-dot')).toBeVisible()
  fs.appendFileSync(note.notePath,'\nExternal file change.\n')
  await expect(page.getByRole('alert').filter({hasText:'Dein Entwurf bleibt erhalten'})).toBeVisible({timeout:20000})
- await expect(page.locator('.cm-content').first()).toContainText('Unsaved draft remains.')
+ await expect(noteEditor).toContainText('Unsaved draft remains.')
+ const conflictResponse=page.waitForResponse(response=>response.url().endsWith('/notes/save')&&response.request().method()==='POST',{timeout:15000})
  await page.keyboard.press('Control+S')
- await new Promise(resolve=>setTimeout(resolve,600))
+ assert.equal((await conflictResponse).status(),409)
+ await expect(noteEditor).toContainText('Unsaved draft remains.')
  assert.ok(!fs.readFileSync(note.notePath,'utf8').includes('Unsaved draft remains.'))
  await page.screenshot({path:path.join(root,'.tmp/desktop-draft-conflict.png')})
  // One write grant exercised using the actual official SDK transport.
@@ -116,12 +137,13 @@ try {
  const revoked=await page.evaluate(async token=>{const base=await window.nicknotes.getBackendUrl();return(await fetch(base+'/mcp/',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:'{}'})).status},grant.token)
  assert.equal(revoked,401)
  assert.deepEqual(errors,[])
- const report={version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,executablePath,coldReadyMs,warmReadyMs,startupRuns,pendingCaptureRestored:true,pendingCaptureCommitted:true,pendingCaptureAcrossProcessRestart:true,vault:vault.noteBasePath,profile,foreignWorkingDirectory:foreign,developerToolsInRuntimePath:false,uiEditSaved:true,dirtyDraftPreserved:true,externalRevisionConflict:true,dashboardsOpened:dashboards.map(([name])=>name),splitLayout:true,themeSwitch:true,unauthorized,revoked,mcp:client,mcpAfterRestart:restartedClient,pageErrors:errors}
+ const report={version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,executablePath,coldReadyMs,warmReadyMs,startupRuns,pendingCaptureRestored:true,pendingCaptureCommitted:true,pendingCaptureAcrossProcessRestart:true,vault:vault.noteBasePath,profile,foreignWorkingDirectory:foreign,developerToolsInRuntimePath:false,delayedNoteLoad:true,noteEditorScoped:true,uiSaveStatus:200,conflictSaveStatus:409,uiEditSaved:true,dirtyDraftPreserved:true,externalRevisionConflict:true,dashboardsOpened:dashboards.map(([name])=>name),splitLayout:true,themeSwitch:true,unauthorized,revoked,mcp:client,mcpAfterRestart:restartedClient,pageErrors:errors}
  fs.writeFileSync(path.join(root,'.tmp/desktop-smoke-result.json'),JSON.stringify(report,null,2))
  console.log(JSON.stringify(report,null,2))
 }catch(error){
  if(page)await page.screenshot({path:path.join(root,'.tmp/desktop-smoke-failure.png')}).catch(()=>{})
  throw error
 }finally{
+ releaseNoteRead()
  if(app){if(page)await page.evaluate(()=>window.nicknotes?.setUnsavedChanges?.(false)).catch(()=>{});await app.close()}
 }

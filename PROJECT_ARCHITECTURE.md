@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 8. November 2026, Windows-Kandidat 2.1.0-rc.3. Der
+Stand: 9. November 2026, Windows-Kandidat 2.1.0-rc.3. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -203,6 +203,9 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
 - Ressourcen ueber `process.resourcesPath`, keine Abhaengigkeit vom Arbeitsordner.
   Profil standardmaessig `%APPDATA%/NickNotes`, NoteBase separat gewaehlt.
 - `verify:package`, `smoke:desktop`, `release:checksums` pruefen den Kandidaten.
+  Der Paket-Smoke haelt einen Notiz-Leseaufruf gezielt zurueck und wartet danach
+  auf den geladenen Notiz-Editor. Er prueft Speichern bis in die Markdown-Datei
+  sowie die tatsaechlichen HTTP-Antworten 200 bzw. 409 bei einem Revisionskonflikt.
 - Windows-CI ist vorbereitet; oeffentliche Signatur, Lizenzentscheidung und
   saubere VM-Abnahme stehen vor einer oeffentlichen Auslieferung noch aus.
 
