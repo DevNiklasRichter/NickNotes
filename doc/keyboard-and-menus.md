@@ -97,6 +97,9 @@ Profil, Port und synthetischen Notizen. Es prueft Leerlauf-Requests, Neuanlage,
 sofortiges Speichern, mehrere Dirty-Drafts, Notizsuche, Undo/Redo ueber Menues,
 Splitfokus, Quick Capture, geschuetztes Schliessen, Loeschbestaetigung, Tastatur-
 menues und Hilfe. Ein Neustart prueft das automatische Wiedereroeffnen.
+Beim Abbrechen und unmittelbaren Wiedereroeffnen des Loeschdialogs werden
+Nullzeit-Timer kuenstlich verzoegert. Der Befehl muss trotzdem sofort erneut
+verfuegbar sein; erst die folgende Bestaetigung darf die Testdatei loeschen.
 Das ist keine Installer-Installation oder VM-Abnahme; diese bleibt beim Benutzer.
 
 Lokal bestanden: 87 Backendtests, elf Frontendtests, Build sowie Contract-/

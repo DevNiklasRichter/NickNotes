@@ -2116,10 +2116,11 @@ function App() {
             groupValues: current.groupValues,
             tagValues: current.tagValues,
         };
+        // Complete the action before the next input event can issue it again.
+        // A timer leaves a closed dialog's command temporarily marked as running.
+        tagActionDialogRef.current = null;
         setTagActionDialog(null);
-        window.setTimeout(() => {
-            current.resolve(payload);
-        }, 0);
+        current.resolve(payload);
     };
     const askTagChoice = useCallback(async (title: string, message: string, actions: TagActionDialogAction[]): Promise<string | null> => {
         const result = await openTagActionDialog({

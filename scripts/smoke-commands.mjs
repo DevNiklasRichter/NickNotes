@@ -122,11 +122,21 @@ try{
   await page.keyboard.press('Control+s')
   await menu('Ansicht','closeOthers')
   await expect(page.locator('.tab-open')).toHaveCount(1)
+  // A canceled command must be reusable even when zero-delay timers are throttled.
+  const originalTimeout=await page.evaluateHandle(()=>{
+    const original=window.setTimeout
+    window.setTimeout=(callback,delay,...args)=>original.call(window,callback,delay===0?15000:delay,...args)
+    return original
+  })
   await page.keyboard.press('Control+Shift+Delete')
-  await expect(page.getByText('Datei löschen',{exact:true}).first()).toBeVisible()
+  await expect(page.getByRole('heading',{name:'Datei löschen',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'Abbrechen',exact:true}).click()
+  await expect(page.locator('.tag-action-modal')).toHaveCount(0)
   assert.ok(fs.existsSync(firstNote.path))
   await page.keyboard.press('Control+Shift+Delete')
+  await expect(page.getByRole('heading',{name:'Datei löschen',exact:true})).toBeVisible()
+  await page.evaluate(original=>{window.setTimeout=original},originalTimeout)
+  await originalTimeout.dispose()
   await page.getByRole('button',{name:'Datei löschen',exact:true}).click()
   await expect.poll(()=>fs.existsSync(firstNote.path)).toBe(false)
   await page.keyboard.press('Alt+3')
@@ -149,7 +159,7 @@ try{
   assert.equal(restartIdleRequests.filter(req=>req.method==='POST').length,0,JSON.stringify(restartIdleRequests))
   assert.ok(restartIdleRequests.length<=6,'Restart request loop: '+JSON.stringify(restartIdleRequests))
   assert.deepEqual(errors,[])
-  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,pageErrors:errors}
+  const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,pageErrors:errors}
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){

@@ -151,6 +151,9 @@ Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle au
 Fachaktionen verwenden die bestehenden Dokument-/Explorerfunktionen. Schliessen
 fragt Dirty-Drafts ab, Loeschen verlangt eine Bestaetigung. Vor Save und Close
 werden gepufferte Editor-Aenderungen synchron in den Dokumentzustand uebernommen.
+Dialogabschluesse loesen ihr Ergebnis ohne Timer auf und entfernen sofort die
+aktive Dialogreferenz. So ist ein abgebrochener Befehl vor dem naechsten
+Eingabeereignis wieder frei; doppelte Abschluesse bleiben wirkungslos.
 CodeMirror behaelt seine Textbearbeitung und Undo-Historie; native Eingabefelder
 nutzen ausschliesslich erlaubte Editierbefehle ueber die vertrauensgebundene IPC.
 
