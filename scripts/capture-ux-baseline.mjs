@@ -17,9 +17,10 @@ const review = process.argv.includes('--review')
 const edgesOnly = process.argv.includes('--edges-only')
 const foundations = process.argv.includes('--foundations')
 const menus = process.argv.includes('--menus')
+const tags = process.argv.includes('--tags')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -305,6 +306,125 @@ async function verifyMenus() {
   report.checks.menuNarrowZoomAndScroll = true
 }
 
+async function verifyTags() {
+  await request('/tag-groups/add-group',{groupId:'ux-projekt',displayName:'UX Projekte',color:'#81a1c1'})
+  await request('/tag-groups/add-tag',{groupId:'ux-projekt',tagId:'layout',displayName:'Layout'})
+  const source = await request('/notes/content?path='+encodeURIComponent(notePath))
+  await request('/notes/save',{path:notePath,content:source.content+'\n{tag:ux-projekt/layout}\n',expectedRevision:source.revision})
+  const definitionsPath = path.join(vaultPath,'.system','tag_groups.json')
+  // Add a long synthetic tag list using the same portable source format.
+  const definitions = JSON.parse(fs.readFileSync(definitionsPath,'utf8'))
+  definitions.groups.push({id:'z-tests',displayName:'Weitere synthetische Tags',color:'#a3be8c',tags:Array.from({length:32},(_,i)=>({id:`eintrag-${i+1}`,displayName:`Prüfeintrag ${String(i+1).padStart(2,'0')}`}))})
+  fs.writeFileSync(definitionsPath,JSON.stringify(definitions,null,2))
+  await request('/notebase/reindex',{})
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+  const shell = page.locator('.tag-explorer-shell')
+  const group = shell.locator('[data-tag-group="ux-projekt"]:not([data-tag-id])')
+  const tag = shell.locator('[data-tag-key="ux-projekt:layout"]')
+  const menu = page.getByRole('menu',{name:'Tagaktionen',exact:true})
+  const dialog = page.locator('.tag-action-modal')
+  const original = fs.readFileSync(definitionsPath,'utf8')
+  await group.locator('.row-folder-menu').focus(); await page.keyboard.press('Enter')
+  await expect(menu.getByRole('menuitem').first()).toBeFocused()
+  await capture('tag-group-menu-dark','Group actions opened with Enter on the keyboard-reachable action button')
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter')
+  await expect(dialog).toHaveAttribute('role','dialog')
+  await expect(dialog.locator('#tag-group-id')).toBeFocused()
+  await dialog.locator('#tag-group-display-name').fill('Diese Änderung wird abgebrochen')
+  await dialog.locator('#tag-group-id').focus(); await page.keyboard.press('Shift+Tab')
+  await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(dialog.locator('#tag-group-id')).toBeFocused()
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0)
+  await expect(group.locator('.row-folder-menu')).toBeFocused()
+  assert.equal(fs.readFileSync(definitionsPath,'utf8'),original,'Enter on Cancel must not save group edits')
+  report.checks.tagGroupCancelEnterAndFocus = true
+
+  await page.keyboard.press('Shift+F10'); await page.keyboard.press('Home'); await page.keyboard.press('Enter')
+  await expect(dialog.locator('#tag-id')).toBeFocused()
+  await dialog.locator('#tag-id').fill('neuer-ui-tag')
+  await dialog.locator('#tag-display-name').fill('UI Testtag')
+  const created = page.waitForResponse(res=>res.url().endsWith('/tag-groups/add-tag')&&res.request().method()==='POST')
+  await page.keyboard.press('Enter'); assert.equal((await created).status(),200)
+  await expect(dialog).toHaveCount(0)
+  assert.ok(JSON.parse(fs.readFileSync(definitionsPath,'utf8')).groups.find(g=>g.id==='ux-projekt').tags.some(t=>t.id==='neuer-ui-tag'))
+  report.checks.tagCreatedFromGroupMenu200 = true
+
+  await tag.focus(); await page.keyboard.press('Shift+F10')
+  await expect(menu.getByRole('menuitem',{name:'Tag bearbeiten',exact:true})).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(dialog.locator('#tag-id')).toBeFocused()
+  await dialog.locator('#tag-display-name').fill('Layout geprüft')
+  await capture('tag-edit-dialog-dark','Tag form receives focus and preserves edits while tabbing through its fields')
+  const saved = page.waitForResponse(res=>res.url().endsWith('/tag-groups/rename-tag')&&res.request().method()==='POST')
+  await page.keyboard.press('Enter')
+  assert.equal((await saved).status(),200)
+  await expect(dialog).toHaveCount(0); await expect(tag).toBeFocused()
+  const updated = JSON.parse(fs.readFileSync(definitionsPath,'utf8'))
+  assert.equal(updated.groups.find(g=>g.id==='ux-projekt').tags.find(t=>t.id==='layout').displayName,'Layout geprüft')
+  assert.ok(fs.readFileSync(notePath,'utf8').includes('{tag:ux-projekt/layout}'))
+  report.checks.tagSave200AndMarkdownReferencePreserved = true
+
+  await page.keyboard.press('ContextMenu'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await capture('tag-delete-choice-dark','Tag deletion choice defaults to Cancel; Enter retains the definition and Markdown reference')
+  await page.keyboard.press('Tab'); await expect(dialog.getByRole('button',{name:'Auch aus Notizen entfernen',exact:true})).toBeFocused()
+  await page.keyboard.press('Shift+Tab'); await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  const before = report.requests.length
+  await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0); await expect(tag).toBeFocused()
+  assert.equal(report.requests.slice(before).some(r=>r.method==='POST'&&r.endpoint==='/tag-groups/delete-tag'),false)
+  assert.ok(JSON.parse(fs.readFileSync(definitionsPath,'utf8')).groups.find(g=>g.id==='ux-projekt').tags.some(t=>t.id==='layout'))
+  report.checks.tagDeleteCancelEnterDoesNotMutate = true
+
+  await group.focus(); await page.keyboard.press('Shift+F10')
+  await menu.getByRole('menuitem',{name:'Farbe setzen',exact:true}).focus(); await page.keyboard.press('Space')
+  await expect(dialog.locator('input[type=color]')).toBeFocused()
+  await dialog.locator('.tag-color-swatch').first().focus(); await page.keyboard.press('Enter')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0); await expect(group).toBeFocused()
+  report.checks.tagColorButtonEnterKeepsDialogOpen = true
+
+  const tree = shell.locator('.tag-explorer-tree')
+  await tree.focus(); await page.keyboard.press('Shift+F10')
+  await expect(menu.getByRole('menuitem',{name:'Alle erweitern',exact:true})).toBeFocused()
+  await page.keyboard.press('Escape'); await expect(tree).toBeFocused()
+  const last = shell.locator('.tag-entry-row').last()
+  await last.scrollIntoViewIfNeeded(); await last.click({button:'right'})
+  await capture('tag-menu-bottom-dark','Tag menu at the bottom of a long tag list is clamped to the window')
+  await page.keyboard.press('Escape'); await expect(last).toBeFocused()
+  await windowSize(1280,800,1.5)
+  await last.focus(); await page.keyboard.press('Shift+F10')
+  await capture('tag-menu-zoom-dark','Tag actions remain reachable at 150% app zoom')
+  await page.keyboard.press('Escape'); await windowSize(1280,800)
+  await theme('light')
+  await last.scrollIntoViewIfNeeded(); await last.click({button:'right'})
+  await capture('tag-menu-light','Shared tag menu in the light theme')
+  await page.keyboard.press('Escape')
+  report.checks.tagTreeKeyboardEdgesAndZoom = true
+  await theme('dark')
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  await openNote('Arbeitsnotiz')
+  const editor = page.locator('.note-body-editor .cm-content').first()
+  const marker = 'Der gemeinsame Tagdialog schützt auch diesen Entwurf.'
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n'+marker)
+  await page.keyboard.press('Control+w')
+  await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await capture('tag-shared-draft-guard-dark','Shared choice dialog protects a dirty note; Enter on Cancel preserves its draft')
+  await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0)
+  await expect(editor).toContainText(marker)
+  await page.keyboard.press('Control+w')
+  const savedDraft = page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await dialog.getByRole('button',{name:'Speichern',exact:true}).focus(); await page.keyboard.press('Enter')
+  assert.equal((await savedDraft).status(),200)
+  await expect(page.locator('.tab-open').filter({hasText:'Arbeitsnotiz'})).toHaveCount(0)
+  assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  await openNote('Arbeitsnotiz')
+  report.checks.tagSharedDialogCancelAndSavePreserveDraft = true
+}
+
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -390,6 +510,7 @@ try {
 
     if (foundations) await verifyFoundations()
     if (menus) await verifyMenus()
+    if (tags) await verifyTags()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

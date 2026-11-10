@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { normalizeTagColor } from './tagTypes'
 
 export type TagActionDialogTone = 'default' | 'primary' | 'danger'
@@ -60,7 +60,6 @@ type ColorSelectionSource = 'preset' | 'custom'
 type TagColorPickerProps = {
   colorPresets: string[]
   selectedColor: string
-  autoFocus?: boolean
   onSelectColor: (color: string) => void
 }
 
@@ -72,7 +71,7 @@ function sanitizeTagIdInput(value: string): { cleanValue: string; rejectedInvali
   }
 }
 
-function TagColorPicker({ colorPresets, selectedColor, autoFocus = false, onSelectColor }: TagColorPickerProps) {
+function TagColorPicker({ colorPresets, selectedColor, onSelectColor }: TagColorPickerProps) {
   const normalizedPresets = useMemo(() => colorPresets.map((preset) => normalizeTagColor(preset)), [colorPresets])
   const normalizedSelectedColor = normalizeTagColor(selectedColor || normalizedPresets[0] || '')
   const selectedPresetIndex = normalizedPresets.findIndex((preset) => preset === normalizedSelectedColor)
@@ -123,7 +122,6 @@ function TagColorPicker({ colorPresets, selectedColor, autoFocus = false, onSele
           <input
             type="color"
             className="tag-color-custom-input"
-            autoFocus={autoFocus}
             defaultValue={customColor}
             onClick={(event) => {
               commitCustomColor(event.currentTarget.value)
@@ -148,6 +146,28 @@ function TagColorPicker({ colorPresets, selectedColor, autoFocus = false, onSele
 }
 
 export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog }: TagActionDialogModalProps) {
+  const modalRef = useRef<HTMLElement>(null)
+  const identity = dialog?.resolve
+  const focusInitial = useEffectEvent(() => {
+    const modal = modalRef.current
+    if (!modal || !dialog) return
+    const target = dialog.kind === 'choice'
+      ? modal.querySelector<HTMLElement>('[data-tag-action="cancel"]')
+      : modal.querySelector<HTMLElement>('input,select,textarea')
+    ;(target ?? modal).focus({preventScroll: true})
+  })
+  useLayoutEffect(() => {
+    const modal = modalRef.current
+    if (!identity || !modal) return
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const fallback = previous?.closest<HTMLElement>('.tag-explorer-shell')
+    focusInitial()
+    return () => {
+      if (document.activeElement !== document.body && !modal.contains(document.activeElement)) return
+      const target = previous?.isConnected ? previous : fallback?.isConnected ? fallback : null
+      target?.focus({preventScroll: true})
+    }
+  }, [identity])
   const [hintState, setHintState] = useState<{
     dialogKind: TagActionDialogState['kind'] | null
     groupIdHintVisible: boolean
@@ -188,22 +208,28 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
     >
       <aside
         className="tag-action-modal"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={dialog.title}
+        tabIndex={-1}
         onClick={(event) => {
           event.stopPropagation()
         }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            onClose('cancel')
-            return
+        onKeyDown={event => {
+          event.stopPropagation()
+          if (event.key === 'Escape') {event.preventDefault(); onClose('cancel'); return}
+          if (event.key === 'Tab') {
+            const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('input,select,textarea,button')]
+              .filter(node => !node.matches(':disabled,[hidden]') && node.getClientRects().length > 0)
+            const first = controls[0], last = controls[controls.length - 1]
+            if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus()}
+            else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus()}
           }
-          if (event.key === 'Enter') {
-            const target = event.target
-            if (target instanceof HTMLTextAreaElement) {
-              return
-            }
-            event.preventDefault()
-            onClose('confirm')
+          // Native buttons retain their own action, including Cancel and destructive choices.
+          if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.type === 'text'
+              && dialog.actions.some(action => action.id === 'confirm')) {
+            event.preventDefault(); onClose('confirm')
           }
         }}
       >
@@ -217,20 +243,9 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
           <input
             value={dialog.value}
             placeholder={dialog.placeholder}
-            autoFocus
             onChange={(event) => {
               const nextValue = event.target.value
               setDialog((current) => (current ? { ...current, value: nextValue } : current))
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                onClose('confirm')
-              }
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                onClose('cancel')
-              }
             }}
           />
         ) : null}
@@ -242,7 +257,6 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
             </label>
             <input
               id="tag-group-id"
-              autoFocus
               value={dialog.groupValues?.id ?? ''}
               placeholder="z. B. projekt"
               onChange={(event) => {
@@ -321,7 +335,6 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
                 </label>
                 <select
                   id="tag-group-select"
-                  autoFocus
                   value={dialog.tagValues.groupId}
                   onChange={(event) => {
                     const nextGroupId = event.target.value
@@ -413,7 +426,6 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
             </label>
             <input
               id="tag-id"
-              autoFocus={dialog.tagValues?.groupId === undefined}
               value={dialog.tagValues?.id ?? ''}
               placeholder="z. B. projekt-a"
               onChange={(event) => {
@@ -472,7 +484,6 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
               <TagColorPicker
                 colorPresets={colorPresets}
                 selectedColor={dialog.groupValues?.color ?? colorPresets[0]}
-                autoFocus
                 onSelectColor={(nextColor) => {
                   setDialog((current) =>
                     current && current.kind === 'color-form'
@@ -496,6 +507,7 @@ export function TagActionDialogModal({ dialog, colorPresets, onClose, setDialog 
           {dialog.actions.map((action) => (
             <button
               key={`tag-action-${action.id}`}
+              data-tag-action={action.id}
               className={`tag-action-button ${action.tone === 'danger' ? 'danger' : ''} ${
                 action.tone === 'primary' ? 'primary' : ''
               }`}

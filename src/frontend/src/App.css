@@ -2515,10 +2515,6 @@
   color: var(--error-text);
 }
 
-.explorer-context-menu {
-  z-index: 20;
-}
-
 .icon-button {
   width: 34px;
   height: 34px;
@@ -6135,9 +6131,7 @@ button:disabled {
 .window-content .left-sidebar .explorer-search-input,
 .window-content .left-sidebar .icon-button.compact,
 .window-content .left-sidebar .row-folder-menu,
-.window-content .left-sidebar .explorer-row,
-.window-content .left-sidebar .explorer-context-panel,
-.window-content .left-sidebar .context-menu-item {
+.window-content .left-sidebar .explorer-row {
   border-radius: 3px !important;
 }
 
@@ -6648,8 +6642,7 @@ button:disabled {
 .tag-context-menu button,
 .cm-md-table-context-menu button,
 .editor-selection-context-menu button,
-.graph-node-context-menu button,
-.context-menu-item {
+.graph-node-context-menu button {
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
@@ -6665,7 +6658,6 @@ button:disabled {
   justify-content: flex-start;
 }
 
-.context-menu-item span,
 .cm-md-table-context-menu button span,
 .editor-selection-context-menu button span,
 .graph-node-context-menu button span {

@@ -40,7 +40,14 @@
 }
 
 .nn-context-menu .context-menu-item span {min-width: 0; white-space: normal;}
-.nn-context-menu .context-menu-icon {flex: 0 0 14px;}
+.nn-context-menu .context-menu-icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.45;
+}
 .nn-context-menu .context-menu-item:hover,
 .nn-context-menu .context-menu-item:focus {
   background: var(--surface-strong);

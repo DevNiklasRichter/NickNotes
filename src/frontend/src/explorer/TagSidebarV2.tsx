@@ -1,3 +1,6 @@
+import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { CSSProperties } from 'react'
@@ -21,9 +24,7 @@ type ContextMenuTarget =
 
 type NodeContextMenuTarget = Exclude<ContextMenuTarget, { kind: 'tree' }>
 
-type ContextMenuState = {
-  x: number
-  y: number
+type ContextMenuState = ContextMenuAnchor & {
   target: ContextMenuTarget
 } | null
 
@@ -103,7 +104,8 @@ function openContextAt(
   event.stopPropagation()
   setSelectedGroupId(target.groupId)
   setSelectedTagKey(target.kind === 'tag' ? `${target.groupId}:${target.tagId}` : '')
-  setContextMenu({ x: event.clientX, y: event.clientY, target })
+  const anchor = contextMenuAnchor(event.currentTarget, event.currentTarget.closest<HTMLElement>('.tag-explorer-shell'))
+  setContextMenu({ ...(event.detail === 0 && event.type === 'click' ? anchor : {...anchor, x: event.clientX, y: event.clientY}), target })
 }
 
 export function TagSidebar({
@@ -130,7 +132,7 @@ export function TagSidebar({
   const [sortDirection, setSortDirection] = useState<TagSortDirection>('asc')
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const [searchCursor, setSearchCursor] = useState(-1)
-  const contextPanelRef = useRef<HTMLDivElement | null>(null)
+  const shellRef = useRef<HTMLDivElement | null>(null)
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -158,7 +160,7 @@ export function TagSidebar({
   const openTreeContextAt = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
-    setContextMenu({ x: event.clientX, y: event.clientY, target: { kind: 'tree' } })
+    setContextMenu({ ...contextMenuAnchor(event.currentTarget, event.currentTarget.closest<HTMLElement>('.tag-explorer-shell')), x: event.clientX, y: event.clientY, target: { kind: 'tree' } })
   }, [])
 
   const visibleGroups = useMemo<VisibleTagGroup[]>(() => {
@@ -264,20 +266,6 @@ export function TagSidebar({
   const effectiveSelectedGroupId = groups.some(group => group.id === selectedGroupId) ? selectedGroupId : (visibleGroups[0]?.group.id ?? groups[0]?.id ?? '')
   const effectiveSelectedTagKey = groups.some(group => group.tags.some(tag => `${group.id}:${tag.id}` === selectedTagKey)) ? selectedTagKey : ''
 
-  useEffect(() => {
-    if (!contextMenu) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && contextPanelRef.current?.contains(target)) {
-        return
-      }
-      setContextMenu(null)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
-  }, [contextMenu])
 
   useEffect(() => {
     if (!sortMenuOpen) {
@@ -297,6 +285,24 @@ export function TagSidebar({
   return (
     <div
       className="explorer-shell tag-explorer-shell"
+      ref={shellRef}
+      tabIndex={0}
+      onKeyDown={event => {
+        if (!isContextMenuKey(event)) return
+        if (event.target instanceof HTMLElement && event.target.closest('input,select,textarea')) return
+        event.preventDefault(); event.stopPropagation()
+        const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-tag-group]') : null
+        const treeFocus = event.target instanceof HTMLElement && event.target.matches('.tag-explorer-tree')
+        const selectedRow = row ?? (treeFocus ? null : [...(shellRef.current?.querySelectorAll<HTMLElement>('[data-tag-group]') ?? [])].find(node =>
+          effectiveSelectedTagKey ? node.dataset.tagKey === effectiveSelectedTagKey : node.dataset.tagGroup === effectiveSelectedGroupId && !node.dataset.tagKey))
+        const groupId = selectedRow?.dataset.tagGroup
+        const tagId = selectedRow?.dataset.tagId
+        const target: ContextMenuTarget = groupId ? tagId ? {kind:'tag',groupId,tagId} : {kind:'group',groupId} : {kind:'tree'}
+        if (groupId) {setSelectedGroupId(groupId); setSelectedTagKey(tagId ? `${groupId}:${tagId}` : '')}
+        setSortMenuOpen(false)
+        const trigger = selectedRow ?? (treeFocus ? event.target as HTMLElement : event.currentTarget)
+        setContextMenu({...contextMenuAnchor(trigger,event.currentTarget),target})
+      }}
       onClick={() => {
         setContextMenu(null)
         setSortMenuOpen(false)
@@ -429,6 +435,7 @@ export function TagSidebar({
 
       <section
         className="explorer-tree explorer-flat-tree tag-explorer-tree"
+        tabIndex={-1}
         onContextMenu={(event) => {
           const target = event.target
           if (!(target instanceof HTMLElement)) {
@@ -452,6 +459,8 @@ export function TagSidebar({
               <div
                 className={`explorer-row compact tag-group-row ${isSelected ? 'selected' : ''}`}
                 style={{ marginLeft: '8px' }}
+                tabIndex={-1}
+                data-tag-group={group.id}
                 onClick={(event) => {
                   event.stopPropagation()
                   setContextMenu(null)
@@ -518,6 +527,17 @@ export function TagSidebar({
                       key={tagKey}
                       className={`explorer-row compact tag-entry-row ${effectiveSelectedTagKey.toLowerCase() === tagKey.toLowerCase() ? 'selected' : ''}`}
                       style={{ marginLeft: '30px' }}
+                      tabIndex={0}
+                      data-tag-group={group.id}
+                      data-tag-id={tag.id}
+                      data-tag-key={tagKey}
+                      onKeyDown={event => {
+                        if (event.target !== event.currentTarget || !['Enter',' '].includes(event.key)) return
+                        event.preventDefault(); event.stopPropagation()
+                        setSortMenuOpen(false)
+                        setSelectedGroupId(group.id); setSelectedTagKey(tagKey)
+                        onOpenTagOverview?.(group.id,tag.id)
+                      }}
                       onClick={(event) => {
                         event.stopPropagation()
                         setContextMenu(null)
@@ -586,12 +606,10 @@ export function TagSidebar({
       </section>
 
       {contextMenu ? (
-        <div className="explorer-context-menu" style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}>
-          <div className="explorer-context-panel modern-tag-context" ref={contextPanelRef}>
+        <ContextMenu anchor={contextMenu} label="Tagaktionen" onClose={() => setContextMenu(null)}>
             {contextMenu.target.kind === 'tree' ? (
               <>
-                <button
-                  className="context-menu-item"
+                <ContextMenuItem
                   onClick={() => {
                     expandAllGroups()
                     setContextMenu(null)
@@ -599,9 +617,8 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="ChevronsDown" className="context-menu-icon" size={14} />
                   <span>Alle erweitern</span>
-                </button>
-                <button
-                  className="context-menu-item"
+                </ContextMenuItem>
+                <ContextMenuItem
                   onClick={() => {
                     collapseAllGroups()
                     setContextMenu(null)
@@ -609,13 +626,12 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="ChevronsUp" className="context-menu-icon" size={14} />
                   <span>Alle reduzieren</span>
-                </button>
+                </ContextMenuItem>
               </>
             ) : null}
             {contextMenu.target.kind === 'group' ? (
               <>
-                <button
-                  className="context-menu-item"
+                <ContextMenuItem
                   onClick={() => {
                     if (contextMenu.target.kind !== 'group') {
                       return
@@ -626,9 +642,8 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Tag" className="context-menu-icon" size={14} />
                   <span>Neuen Tag erstellen</span>
-                </button>
-                <button
-                  className="context-menu-item"
+                </ContextMenuItem>
+                <ContextMenuItem
                   onClick={() => {
                     if (contextMenu.target.kind !== 'group') {
                       return
@@ -639,9 +654,8 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
                   <span>Gruppe bearbeiten</span>
-                </button>
-                <button
-                  className="context-menu-item"
+                </ContextMenuItem>
+                <ContextMenuItem
                   onClick={() => {
                     if (contextMenu.target.kind !== 'group') {
                       return
@@ -652,9 +666,9 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
                   <span>Farbe setzen</span>
-                </button>
-                <button
-                  className="context-menu-item danger"
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="danger"
                   onClick={() => {
                     if (contextMenu.target.kind !== 'group') {
                       return
@@ -665,13 +679,12 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
                   <span>Gruppe loeschen</span>
-                </button>
+                </ContextMenuItem>
               </>
             ) : null}
             {contextMenu.target.kind === 'tag' ? (
               <>
-                <button
-                  className="context-menu-item"
+                <ContextMenuItem
                   onClick={() => {
                     if (!isTagTarget(contextMenu.target)) {
                       return
@@ -682,9 +695,9 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
                   <span>Tag bearbeiten</span>
-                </button>
-                <button
-                  className="context-menu-item danger"
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="danger"
                   onClick={() => {
                     if (!isTagTarget(contextMenu.target)) {
                       return
@@ -695,11 +708,10 @@ export function TagSidebar({
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
                   <span>Tag loeschen</span>
-                </button>
+                </ContextMenuItem>
               </>
             ) : null}
-          </div>
-        </div>
+        </ContextMenu>
       ) : null}
 
       <div

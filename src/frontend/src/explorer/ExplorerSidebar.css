@@ -505,43 +505,6 @@
   font-size: var(--font-label);
 }
 
-.explorer-context-menu {
-  position: fixed;
-  z-index: 40;
-}
-
-.explorer-context-panel {
-  min-width: 210px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  display: grid;
-  gap: var(--space-1);
-  padding: 0.34rem;
-}
-
-.explorer-context-panel button {
-  text-align: left;
-  border-radius: var(--radius-md);
-  padding: 0.36rem 0.5rem;
-  font-size: var(--font-label);
-}
-
-.explorer-context-panel button.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.explorer-context-panel .danger {
-  color: var(--error-text);
-  border-color: var(--error-border);
-}
-
-.explorer-context-panel .muted {
-  color: var(--muted);
-}
-
 .explorer-width-handle {
   position: absolute;
   top: 0;
@@ -772,39 +735,6 @@
   border-radius: var(--radius-lg);
 }
 
-.explorer-context-panel {
-  border-radius: 12px;
-}
-
-.context-menu-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.42rem;
-}
-
-.context-menu-divider {
-  height: 1px;
-  margin: 0.2rem 0.16rem;
-  background: color-mix(in srgb, var(--line) 82%, transparent);
-}
-
-.context-menu-item:disabled .context-menu-icon {
-  opacity: 0.5;
-}
-
-.context-menu-icon {
-  width: 0.875rem;
-  height: 0.875rem;
-  min-width: 0.875rem;
-  display: inline-block;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.45;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: 0.86;
-}
-
 .row-action-icon,
 .row-menu-icon,
 .row-pin-icon,
@@ -872,11 +802,6 @@
 .tag-group-empty {
   padding: 0.12rem 0.38rem 0.22rem 1.98rem;
   font-size: var(--font-caption);
-}
-
-.modern-tag-context {
-  min-width: 210px;
-  border-radius: 12px;
 }
 
 .explorer-icon-picker-overlay {
@@ -1041,33 +966,24 @@
   border-color: var(--error-border);
 }
 
-.explorer-sort-menu,
-.explorer-context-panel {
+.explorer-sort-menu {
   width: max-content;
   max-width: calc(100vw - 18px);
   overflow-x: auto;
 }
 
-.explorer-sort-menu,
-.explorer-context-menu {
+.explorer-sort-menu {
   z-index: 420;
 }
 
-.explorer-sort-menu-section button,
-.explorer-context-panel button,
-.context-menu-item {
+.explorer-sort-menu-section button {
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
 }
 
-.explorer-sort-menu-section button,
-.explorer-context-panel button {
+.explorer-sort-menu-section button {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-}
-
-.context-menu-item span {
-  white-space: nowrap;
 }
