@@ -176,6 +176,23 @@ Farbprofils nach Reload. Screenshots kommen aus Electrons Compositor, damit
 Zoomaufnahmen die vollstaendige Fensterflaeche zeigen; Layoutmesswerte bleiben
 in CSS-Pixeln. Nachweis: [Gestaltungsgrundlage](doc/ui-foundations-2026-11-10.md).
 
+`ui/ContextMenu.tsx` besitzt die flachen Explorer- und Tabaktionsmenues:
+Portal unter `document.body`, Fensterbegrenzung, Scrollen, Tastaturfokus und
+Dismiss-Verhalten. `ui/contextMenuAnchor.ts` beschreibt nur den fluechtigen
+Bildschirmanker samt Ausloeser und Fokusfallback, keine gespeicherten Daten.
+Aktionen bleiben in Explorer und App; `ContextMenuItem` stellt vor ihrem Aufruf
+den Ausloeserfokus wieder her, damit bestehende Dialoge den Fokus uebernehmen
+koennen. Entfernte Ausloeser fallen auf Explorer bzw. Editorgruppe zurueck.
+Die globalen App-Shortcuts greifen nicht in fokussierte Kontextmenues ein.
+Der vorhandene Explorer-Eingabe-/Bestaetigungsdialog gibt beim Schliessen den
+Fokus zurueck, begrenzt die Tabfolge und loest sein Ergebnis ohne Timer auf.
+Bei Loeschbestaetigungen liegt der Standardfokus auf Abbrechen. Tag-/Graph-/Editormenues
+und andere Overlays werden erst in weiteren Schnitten migriert.
+`npm run ux:baseline -- --foundations --menus` prueft zusaetzlich konkrete
+Menueaktionen, deaktivierte Eintraege, Tastatur-/Dialogfokus und sehr kleine
+Testfenster. Die reduzierte Fenstermindestgroesse gilt ausschliesslich fuer
+das isolierte Testprofil. Details: [Kontextmenues](doc/context-menus-2026-11-10.md).
+
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.

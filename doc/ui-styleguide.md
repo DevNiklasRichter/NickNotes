@@ -45,7 +45,8 @@ Benutzerprofile nutzen weiterhin die bestehenden Farbfelder in
 `.system/ui_settings.json`; keine neuen Profilfelder oder Migrationen.
 Der globale Fokusstil ist die Grundlage. Komponenten dürfen ihn nur durch einen
 mindestens gleich gut sichtbaren Fokus ersetzen. Menüfokus und vollständige
-Tastaturführung werden in POT-03 konsolidiert.
+Tastaturführung werden in POT-03 konsolidiert; Explorer und Tabs verwenden
+bereits `ui/ContextMenu.tsx` mit benannten Menüs und sichtbarem Eintragsfokus.
 
 ## Arbeitsfläche und CSS-Verantwortung
 
@@ -76,9 +77,15 @@ Zoom oder Fenstergröße schreiben keine Layoutpräferenzen zurück.
 - **Tooltip:** knappe Erläuterung bzw. Shortcut; kein notwendiger Bedienweg
   und kein Ersatz für den zugänglichen Namen eines Iconbuttons.
 
-Diese Interaktionsregeln sind das Ziel für POT-03. Die bestehenden Kontextmenüs
-erfüllen sie noch nicht vollständig; POT-02 führt dafür keine parallele
-Overlayimplementierung ein.
+Für Explorer- und Tabaktionen gelten diese Regeln über `ContextMenu` und
+`ContextMenuItem`: benanntes Menü im Body-Portal, Pfeile/Home/End, Enter/Leertaste,
+Escape mit Fokus-Rückgabe, Tab-Ausstieg und Öffnen mit Shift+F10 bzw. Menütaste.
+Deaktivierte Einträge sind mit `aria-disabled` erkennbar, per Pfeiltaste
+fokussierbar und nicht aktivierbar. Lange Labels umbrechen, hohe Menüs scrollen.
+Die bestehende Fachaktion bleibt beim Aufrufer. Neue solche Aktionsmenüs
+verwenden diesen Baustein; keine eigenen Fenster-/Dismiss-Listener daneben.
+Tag-/Graph-/Editor-Menüs sowie weitere Dialoge und Tooltips erfüllen die Regeln
+noch nicht vollständig und folgen in weiteren POT-03-Schnitten.
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

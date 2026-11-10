@@ -3,6 +3,7 @@
 .window-frame {
   height: 100vh;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--layout-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
 }
@@ -45,6 +46,7 @@
 }
 
 .window-content {
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -2708,26 +2710,6 @@
   width: 13px;
   height: 13px;
   stroke-width: 1.9;
-}
-
-.editor-tab-context-menu {
-  position: fixed;
-  z-index: 60;
-  min-width: 230px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  display: grid;
-  gap: 0.22rem;
-  padding: 0.34rem;
-}
-
-.editor-tab-context-menu button {
-  text-align: left;
-  border-radius: 6px;
-  padding: 0.36rem 0.5rem;
-  font-size: var(--font-label);
 }
 
 .compare-selector {
@@ -6647,7 +6629,6 @@ button:disabled {
 
 .hover-menu,
 .tag-context-menu,
-.editor-tab-context-menu,
 .cm-md-table-context-menu,
 .editor-selection-context-menu,
 .graph-node-context-menu {
@@ -6658,7 +6639,6 @@ button:disabled {
 
 .hover-menu,
 .tag-context-menu,
-.editor-tab-context-menu,
 .editor-selection-context-menu,
 .graph-node-context-menu {
   z-index: 420;
@@ -6666,7 +6646,6 @@ button:disabled {
 
 .hover-menu button,
 .tag-context-menu button,
-.editor-tab-context-menu button,
 .cm-md-table-context-menu button,
 .editor-selection-context-menu button,
 .graph-node-context-menu button,
@@ -6678,7 +6657,6 @@ button:disabled {
 
 .hover-menu button,
 .tag-context-menu button,
-.editor-tab-context-menu button,
 .cm-md-table-context-menu button,
 .editor-selection-context-menu button,
 .graph-node-context-menu button {
@@ -6688,7 +6666,6 @@ button:disabled {
 }
 
 .context-menu-item span,
-.editor-tab-context-menu button span,
 .cm-md-table-context-menu button span,
 .editor-selection-context-menu button span,
 .graph-node-context-menu button span {

@@ -1,3 +1,5 @@
+import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type { NoteTab } from '../app/AppShared'
@@ -39,7 +41,7 @@ type EditorWorkspaceLayoutProps = {
   onMoveTabWithinPane: (paneId: PaneId, fromIndex: number, toIndex: number) => void
   onMoveTabToPane: (fromPaneId: PaneId, toPaneId: PaneId, tabId: string) => void
   onDropExternalNote: (paneId: PaneId, payload: ExternalNoteDropPayload) => void
-  onTabContextMenu: (tabId: string, x: number, y: number) => void
+  onTabContextMenu: (tabId: string, anchor: ContextMenuAnchor) => void
   renderPaneContent: (paneId: PaneId, activeTab: NoteTab | null) => ReactNode
   resolveTabIconName: (tab: NoteTab) => string
   getTabTooltip: (tab: NoteTab) => string
@@ -395,6 +397,9 @@ export function EditorWorkspaceLayout({
   }, [workspace.layoutMode, workspace.splitRatio])
 
   const renderPaneTabBar = (paneId: PaneId, variant: 'pane' | 'toolbar' = 'pane') => {
+    const menuAnchor = (trigger: HTMLElement) => contextMenuAnchor(trigger,
+      trigger.closest<HTMLElement>('.workspace-pane') ??
+      trigger.closest('.editor-workspace-panel')?.querySelector<HTMLElement>(`[data-pane-id="${paneId}"]`))
     const tabs = paneTabs[paneId]
     const hiddenTabIdSet = new Set(hiddenTabIdsByPane[paneId])
     const visibleEntries = tabs
@@ -494,11 +499,18 @@ export function EditorWorkspaceLayout({
                   }}
                   onContextMenu={(event) => {
                     event.preventDefault()
-                    onTabContextMenu(tab.id, event.clientX, event.clientY)
+                    const trigger = event.currentTarget.querySelector<HTMLButtonElement>('.tab-open')!
+                    onTabContextMenu(tab.id, {...menuAnchor(trigger), x: event.clientX, y: event.clientY})
                   }}
                 >
                   <button
                     className="tab-open"
+                    aria-haspopup="menu"
+                    onKeyDown={event => {
+                      if (!isContextMenuKey(event)) return
+                      event.preventDefault(); event.stopPropagation()
+                      onTabContextMenu(tab.id, menuAnchor(event.currentTarget))
+                    }}
                     onClick={() => {
                       onActivateTab(paneId, tab.id)
                     }}

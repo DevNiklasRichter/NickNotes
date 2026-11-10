@@ -35,10 +35,11 @@ export function useAppCommands(commands:AppCommand[], onError:(message:string)=>
   const execute=(id:CommandId)=>runner.execute(commands.find(item=>item.id===id))
   const keydown=useEffectEvent((event:KeyboardEvent)=>{
     if(event.defaultPrevented||event.isComposing||event.repeat||event.getModifierState('AltGraph'))return
+    if(event.target instanceof Element && event.target.closest('.nn-context-menu'))return
     const command=commandForKey(event)
     if(!command||command.native)return // Let the focused editor/input handle normal text editing.
     event.preventDefault()
-    if(document.querySelector('.modal-overlay') && !(settingsOpen&&command.id==='save'))return
+    if(document.querySelector('.modal-overlay,[aria-modal="true"]') && !(settingsOpen&&command.id==='save'))return
     execute(command.id)
   })
   useEffect(()=>{

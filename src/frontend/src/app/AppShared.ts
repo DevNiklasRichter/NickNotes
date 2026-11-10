@@ -281,11 +281,6 @@ export type NoteTab = {
     noteType?: 'note' | 'task';
     parsedDocument?: ParsedNoteDocument;
 };
-export type EditorTabContextMenuState = {
-    x: number;
-    y: number;
-    tabId: string;
-} | null;
 export type RecentNoteBase = {
     path: string;
     name: string;

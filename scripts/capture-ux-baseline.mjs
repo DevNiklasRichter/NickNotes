@@ -16,9 +16,10 @@ const expect = baseExpect.configure({timeout: 20000})
 const review = process.argv.includes('--review')
 const edgesOnly = process.argv.includes('--edges-only')
 const foundations = process.argv.includes('--foundations')
+const menus = process.argv.includes('--menus')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -92,9 +93,10 @@ async function capture(name, description) {
       palette: Object.fromEntries(['text','muted','surface','surface-strong','surface-contrast','bg-layer-1','accent-strong','editor-note-bg'].map(key => [key,getComputedStyle(document.documentElement).getPropertyValue('--'+key).trim()])),
       properties: rect('.note-properties-panel'), editor: rect('.note-body-editor .cm-scroller'),
       capture: rect('.capture-workspace-panel'),
-      menus: [...document.querySelectorAll('.explorer-context-menu,.editor-tab-context-menu,.editor-selection-context-menu')].map(node => {
+      menus: [...document.querySelectorAll('.nn-context-menu,.explorer-context-menu,.editor-selection-context-menu')].map(node => {
         const {x, y, width, height} = node.getBoundingClientRect()
         return {className: node.className, role: node.getAttribute('role'), x, y, width, height,
+          scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, scrollTop: node.scrollTop,
           outsideViewport: x < 0 || y < 0 || x + width > innerWidth || y + height > innerHeight}
       }),
     }
@@ -106,6 +108,7 @@ async function capture(name, description) {
   }
   // Capture the compositor surface. CDP screenshots in Electron can crop a
   // zoomed window to CSS viewport dimensions instead of its full pixel surface.
+  for (const menu of metrics.menus.filter(m => m.className === 'nn-context-menu')) assert.equal(menu.outsideViewport,false,'Context menu is outside viewport')
   const pixels = await app.evaluate(async ({BrowserWindow}) => {
     const win = BrowserWindow.getAllWindows()[0]
     const capture = await win.webContents.capturePage()
@@ -188,6 +191,120 @@ async function verifyFoundations() {
   await theme('dark')
 }
 
+async function verifyMenus() {
+  const tab = page.locator('.tab-open').filter({hasText:'Arbeitsnotiz'}).first()
+  const tabMenu = page.getByRole('menu',{name:'Registerkartenaktionen',exact:true})
+  const explorerMenu = page.getByRole('menu',{name:'Exploreraktionen',exact:true})
+  await tab.focus(); await page.keyboard.press('Shift+F10')
+  await expect(tabMenu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('End'); await expect(tabMenu.getByRole('menuitem').last()).toBeFocused()
+  await page.keyboard.press('ArrowDown'); await expect(tabMenu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('ArrowUp'); await expect(tabMenu.getByRole('menuitem').last()).toBeFocused()
+  await page.keyboard.press('Home'); await expect(tabMenu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown')
+  const disabled = tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schliessen',exact:true})
+  await expect(disabled).toHaveAttribute('aria-disabled','true')
+  await expect(disabled).toBeFocused()
+  await page.keyboard.press('Enter'); await expect(tabMenu).toBeVisible()
+  await page.keyboard.press('Space'); await expect(tabMenu).toBeVisible()
+  const count = await page.locator('.tab-open').count()
+  await page.keyboard.press('Control+w')
+  await expect(page.locator('.tab-open')).toHaveCount(count)
+  await capture('menu-keyboard-disabled-dark','Tab menu opened with Shift+F10; disabled action is focusable but cannot activate')
+  await page.keyboard.press('Escape'); await expect(tabMenu).toHaveCount(0); await expect(tab).toBeFocused()
+  report.checks.menuKeyboardNavigationAndDisabled = true
+
+  await page.keyboard.press('Shift+F10'); await page.keyboard.press('Tab')
+  await expect(tabMenu).toHaveCount(0)
+  assert.equal(await page.evaluate(()=>document.activeElement===document.body),false,'Tab must leave menu with usable focus')
+  await tab.focus(); await page.keyboard.press('Shift+F10'); await page.keyboard.press('Shift+Tab')
+  await expect(tabMenu).toHaveCount(0)
+  assert.equal(await page.evaluate(()=>document.activeElement===document.body),false)
+  report.checks.menuTabExits = true
+
+  // Remove the invoked tab to check the surviving pane as the focus fallback.
+  await tab.focus(); await page.keyboard.press('Shift+F10')
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter')
+  await expect(tab).toHaveCount(0)
+  await expect.poll(()=>page.evaluate(()=>document.activeElement?.classList.contains('workspace-pane'))).toBe(true)
+  await openNote('Arbeitsnotiz')
+  report.checks.menuRemovedTriggerFallback = true
+
+  await expect(page.locator('.left-sidebar')).toBeVisible()
+  const row = page.locator('.explorer-row').filter({hasText:'Arbeitsnotiz'}).first()
+  await row.click({button:'right'})
+  await expect(explorerMenu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('Escape'); await expect(row).toBeFocused()
+  await page.keyboard.press('Shift+F10')
+  await page.keyboard.press('u')
+  await expect(explorerMenu.getByRole('menuitem',{name:'Umbenennen',exact:true})).toBeFocused()
+  await page.keyboard.press('Enter')
+  const input = page.locator('.explorer-action-dialog input')
+  await expect(input).toBeFocused()
+  await expect(explorerMenu).toHaveCount(0)
+  await page.keyboard.press('Shift+Tab')
+  await expect(page.locator('.explorer-action-dialog button').last()).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(input).toBeFocused()
+  await page.keyboard.press('Control+w'); await expect(tab).toHaveCount(1); await expect(input).toBeFocused()
+  await capture('menu-rename-dialog-dark','Enter hands focus to the existing rename dialog; no action executed on cancel')
+  await page.keyboard.press('Escape'); await expect(input).toHaveCount(0); await expect(row).toBeFocused()
+  assert.ok(fs.existsSync(notePath))
+  report.checks.menuDialogFocusRoundTrip = true
+
+  await page.keyboard.press('Shift+F10'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  const confirm = page.locator('.explorer-action-dialog')
+  await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(confirm.getByRole('button',{name:'Loeschen',exact:true})).toBeFocused()
+  await page.keyboard.press('Shift+Tab'); await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await capture('menu-delete-confirm-dark','Existing delete confirmation receives focus; Escape cancels without deleting the Markdown file')
+  await page.keyboard.press('Enter'); await expect(confirm).toHaveCount(0); await expect(row).toBeFocused()
+  assert.ok(fs.existsSync(notePath))
+  await page.keyboard.press('Shift+F10'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await page.keyboard.press('Escape'); await expect(confirm).toHaveCount(0); await expect(row).toBeFocused()
+  assert.ok(fs.existsSync(notePath))
+  report.checks.menuDeleteConfirmationCancelled = true
+
+  await page.keyboard.press('ContextMenu'); await expect(explorerMenu).toBeVisible()
+  await page.keyboard.press('Escape'); await expect(row).toBeFocused()
+  report.checks.menuContextKey = true
+
+  await page.keyboard.press('Shift+F10'); await page.keyboard.press('Home'); await page.keyboard.press('Space')
+  await expect(explorerMenu).toHaveCount(0)
+  await expect(page.locator('.note-title-input').first()).toHaveValue('Arbeitsnotiz')
+  await row.click({button:'right'})
+  const search = page.locator('.explorer-search-input')
+  await search.click(); await expect(explorerMenu).toHaveCount(0); await expect(search).toBeFocused()
+  const folderButton = page.locator('.explorer-row').filter({has:page.getByText('tasks',{exact:true})}).locator('.row-folder-menu')
+  await folderButton.focus(); await expect(folderButton).toBeFocused(); await page.keyboard.press('Enter')
+  await expect(explorerMenu).toBeVisible()
+  const point = await explorerMenu.boundingBox()
+  assert.ok(point && point.x>8 && point.y>8,'Keyboard activation of folder button should anchor to its control')
+  await page.keyboard.press('Escape'); await expect(folderButton).toBeFocused()
+  await row.click({button:'right'})
+  await search.hover(); await page.mouse.wheel(0,100)
+  await expect(explorerMenu).toHaveCount(0)
+  report.checks.menuSpaceAndOutsidePointer = true
+
+  // Only this disposable test window is allowed below the product's normal minimum.
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(240,240))
+  await windowSize(360,480,1.5)
+  await tab.focus(); await page.keyboard.press('Shift+F10')
+  await capture('menu-narrow-zoom-dark','Long labels wrap inside a 240-CSS-pixel viewport at 150% zoom')
+  assert.equal(await tabMenu.evaluate(menu=>menu.scrollWidth>menu.clientWidth),false)
+  assert.ok(await tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schliessen',exact:true}).evaluate(item=>item.getBoundingClientRect().height>32),'Long label should wrap')
+  await page.keyboard.press('End'); await expect(tabMenu.getByRole('menuitem').last()).toBeFocused()
+  await windowSize(360,240,1.5)
+  await expect.poll(()=>tabMenu.evaluate(menu=>menu.scrollHeight>menu.clientHeight)).toBe(true)
+  await page.keyboard.press('Home'); await page.keyboard.press('End')
+  await expect.poll(()=>tabMenu.evaluate(menu=>menu.scrollTop>0)).toBe(true)
+  await capture('menu-short-scroll-dark','Short zoomed viewport: menu remains inside window and scrolls to its final item')
+  await page.keyboard.press('Escape')
+  await windowSize(1280,800)
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(1100,740))
+  report.checks.menuNarrowZoomAndScroll = true
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -203,14 +320,12 @@ async function captureTabMenuEdges() {
       return {x: event.clientX, y: event.clientY}
     }, {x, y})
     assert.deepEqual(coordinates, {x, y})
-    await expect(page.locator('.editor-tab-context-menu')).toBeVisible()
+    await expect(page.getByRole('menu', {name:'Registerkartenaktionen',exact:true})).toBeVisible()
     await capture(`tab-edge-${corner}-light`, `Actual tab menu handler with synthetic ${corner} pointer coordinates`)
     await page.keyboard.press('Escape')
-    report.checks.tabMenuEscapeByCorner[corner] = await page.locator('.editor-tab-context-menu').count() === 0
-    // Record the current Escape defect rather than turning a baseline capture into
-    // a release gate. A click on inert status text safely dismisses the menu.
-    if (!report.checks.tabMenuEscapeByCorner[corner]) await page.locator('.status-bar').click({position: {x: 500, y: 8}})
-    await expect(page.locator('.editor-tab-context-menu')).toHaveCount(0)
+    report.checks.tabMenuEscapeByCorner[corner] = await page.getByRole('menu', {name:'Registerkartenaktionen',exact:true}).count() === 0
+    assert.equal(report.checks.tabMenuEscapeByCorner[corner],true,'Escape must close tab menus at every edge')
+    await expect(page.getByRole('menu', {name:'Registerkartenaktionen',exact:true})).toHaveCount(0)
   }
 
 }
@@ -274,6 +389,7 @@ try {
     await windowSize(1280, 800)
 
     if (foundations) await verifyFoundations()
+    if (menus) await verifyMenus()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
@@ -316,11 +432,11 @@ try {
     await page.locator('.activity-rail').getByRole('button', {name: 'Notizen', exact: true}).click()
     await expect(page.locator('.explorer-row').filter({hasText: 'Arbeitsnotiz'}).first()).toBeVisible()
     await page.locator('.explorer-row').filter({hasText: 'Arbeitsnotiz'}).first().click({button: 'right'})
-    await expect(page.locator('.explorer-context-menu')).toBeVisible()
+    await expect(page.getByRole('menu', {name:'Exploreraktionen',exact:true})).toBeVisible()
     await capture('explorer-menu-dark', 'Explorer context menu, dark, 1280×800')
     await page.keyboard.press('Escape')
     await page.locator('.tab-open').filter({hasText: 'Arbeitsnotiz'}).first().click({button: 'right'})
-    await expect(page.locator('.editor-tab-context-menu')).toBeVisible()
+    await expect(page.getByRole('menu', {name:'Registerkartenaktionen',exact:true})).toBeVisible()
     await capture('tab-menu-dark', 'Tab context menu, dark, 1280×800')
     await page.keyboard.press('Escape')
     const editor = page.locator('.note-body-editor .cm-content').first()
@@ -336,10 +452,11 @@ try {
     const lastRow = page.locator('.explorer-row').last()
     await lastRow.scrollIntoViewIfNeeded()
     await lastRow.click({button: 'right'})
-    await expect(page.locator('.explorer-context-menu')).toBeVisible()
+    await expect(page.getByRole('menu', {name:'Exploreraktionen',exact:true})).toBeVisible()
     await capture('explorer-menu-bottom-dark', 'File context menu at the bottom of the long explorer list')
     await page.keyboard.press('ArrowDown')
-    report.checks.explorerMenuOwnsArrowFocus = await page.evaluate(() => Boolean(document.querySelector('.explorer-context-menu')?.contains(document.activeElement)))
+    report.checks.explorerMenuOwnsArrowFocus = await page.evaluate(() => Boolean(document.querySelector('.nn-context-menu')?.contains(document.activeElement)))
+    assert.equal(report.checks.explorerMenuOwnsArrowFocus,true,'Arrow keys must stay in the explorer menu')
     await page.keyboard.press('Escape')
 
     await page.locator('.activity-rail').getByRole('button', {name: 'Einstellungen', exact: true}).click()

@@ -1,3 +1,5 @@
+import {ContextMenu, ContextMenuItem} from './ui/ContextMenu';
+import type {ContextMenuAnchor} from './ui/contextMenuAnchor';
 import {useNoteDocuments} from './workspace/useNoteDocuments';
 import {useExternalChanges} from './app/useExternalChanges';
 import {useCaptureDraft} from './app/useCaptureDraft';
@@ -43,7 +45,7 @@ import type { AppMutationEvent, MutationRefreshPlan } from './app/mutationEvents
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
 import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, DEFAULT_LIGHT_COLOR_PROFILE, DEFAULT_DARK_COLOR_PROFILE, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, applyColorProfileToDocument, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areColorProfilesEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
-import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, EditorTabContextMenuState, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus, ColorProfile } from './app/AppShared';
+import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus, ColorProfile } from './app/AppShared';
 function resolveGraphNodePath(path: string, vaultPath: string): string {
     const cleanPath = normalizeLabel(path);
     if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
@@ -163,7 +165,7 @@ function App() {
     const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState);
     const workspaceStateRef = useRef(workspaceState);
     const tabIdCounterRef = useRef(0);
-    const [tabContextMenu, setTabContextMenu] = useState<EditorTabContextMenuState>(null);
+    const [tabContextMenu, setTabContextMenu] = useState<(ContextMenuAnchor & {tabId: string}) | null>(null);
     const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null);
     const tagActionDialogRef = useRef<TagActionDialogState | null>(null);
     const { tagMatchWorkflow, visibleTagMatchItems, activeTagMatch, openTagMatchWorkflowLoading, resolveTagMatchWorkflowCandidates, stopTagMatchWorkflowLoading, closeTagMatchWorkflow, moveTagMatchCursor, skipTagMatch, setTagMatchApplying, removeAppliedTagMatches, } = useTagMatchWorkflowState();
@@ -905,22 +907,6 @@ function App() {
         const frame=window.requestAnimationFrame(()=>activateStartupCapture());
         return()=>window.cancelAnimationFrame(frame);
     },[vaultLoaded,workspaceReady]);
-    useEffect(() => {
-        if (!tabContextMenu) {
-            return;
-        }
-        const onPointerDown = (event: PointerEvent) => {
-            const target = event.target;
-            if (target instanceof HTMLElement && target.closest('.editor-tab-context-menu')) {
-                return;
-            }
-            setTabContextMenu(null);
-        };
-        window.addEventListener('pointerdown', onPointerDown);
-        return () => {
-            window.removeEventListener('pointerdown', onPointerDown);
-        };
-    }, [tabContextMenu]);
     useEffect(() => {
         if (!vaultLoaded) {
             return;
@@ -3060,8 +3046,8 @@ function App() {
                 });
             }} onActivateTab={handleActivatePaneTab} onCloseTab={(tabId) => {
                 void closeEditorTab(tabId);
-            }} onFocusPane={handleFocusPane} onMoveTabWithinPane={handleMoveTabWithinPane} onMoveTabToPane={handleMoveTabToOtherPane} onDropExternalNote={handleWorkspaceExternalDrop} onTabContextMenu={(tabId, x, y) => {
-                setTabContextMenu({ x, y, tabId });
+            }} onFocusPane={handleFocusPane} onMoveTabWithinPane={handleMoveTabWithinPane} onMoveTabToPane={handleMoveTabToOtherPane} onDropExternalNote={handleWorkspaceExternalDrop} onTabContextMenu={(tabId, anchor) => {
+                setTabContextMenu({ ...anchor, tabId });
             }} renderPaneContent={renderWorkspacePaneContent} resolveTabIconName={resolveNoteTabIconName} getTabTooltip={getTabTooltip}/>) : null}
 
 
@@ -3107,28 +3093,28 @@ function App() {
           </div>) : null}
       </section>
 
-      {tabContextMenu && tabContextTarget ? (<div className="editor-tab-context-menu" style={{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }} onClick={(event) => event.stopPropagation()}>
-          <button onClick={() => {
+      {tabContextMenu && tabContextTarget ? (<ContextMenu anchor={tabContextMenu} label="Registerkartenaktionen" onClose={() => setTabContextMenu(null)}>
+          <ContextMenuItem onClick={() => {
                 showNoteInSplitView(tabContextTarget.path);
             }}>
             In anderen Bereich verschieben
-          </button>
-          <button className="muted" onClick={() => {
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => {
                 void closeEditorTab(tabContextTarget.id);
             }}>
             Registerkarte schliessen
-          </button>
-          <button className="muted" onClick={() => {
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => {
                 void closeOtherEditorTabs(tabContextTarget.id);
             }} disabled={openTabs.length <= 1}>
             Alle anderen Registerkarten schliessen
-          </button>
-          <button className="muted" onClick={() => {
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => {
                 void closeAllEditorTabs();
             }} disabled={openTabs.length === 0}>
             Alle Registerkarten schliessen
-          </button>
-        </div>) : null}
+          </ContextMenuItem>
+        </ContextMenu>) : null}
 
       <StatusBar prefs={statusBarPrefs} notification={latestOperatorNotification} noteBaseName={noteBaseName} counts={counts} dueTodayCount={dueTodayCount}/>
 

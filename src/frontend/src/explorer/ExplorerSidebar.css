@@ -706,12 +706,18 @@
   color: var(--muted);
   box-shadow: none;
   opacity: 0;
-  visibility: hidden;
 }
 
-.explorer-row:hover .row-folder-menu {
+.explorer-row:hover .row-folder-menu,
+.explorer-row:focus-within .row-folder-menu {
   opacity: 1;
-  visibility: visible;
+}
+
+.explorer-row:focus-visible,
+.explorer-tree:focus-visible,
+.explorer-shell:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .row-folder-menu:hover {

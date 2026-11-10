@@ -1,3 +1,6 @@
+import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 import {useSyncedDraft} from '../editor/useSyncedDraft'
 import {commandTitle} from '../app/commands'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -59,8 +62,8 @@ type ExplorerSidebarProps = {
 type DropPosition = 'before' | 'inside' | 'after'
 type DropIndicator = { nodeId: string; position: DropPosition } | null
 type ContextMenu =
-  | { x: number; y: number; target: 'tree' }
-  | { x: number; y: number; target: 'node'; nodeId: string }
+  | (ContextMenuAnchor & { target: 'tree' })
+  | (ContextMenuAnchor & { target: 'node'; nodeId: string })
   | null
 type FolderFileCount = { direct: number; total: number }
 type NodeIconOverrides = ExplorerIconOverrides
@@ -430,7 +433,6 @@ export function ExplorerSidebar({
   }), [viewStateSeed])
   const seedIdentity = String(viewStateSeedId ?? '')
   const treeRef = useRef<HTMLElement | null>(null)
-  const contextPanelRef = useRef<HTMLDivElement | null>(null)
   const [expandedNodes, setExpandedNodes] = useSyncedDraft(seedIdentity, seed.expanded)
   const [selectedNodeId, setSelectedNodeId] = useSyncedDraft<string | null>(seedIdentity, seed.selected)
   const [rawSelectedFileNodeIds, setSelectedFileNodeIds] = useState<Set<string>>(() => new Set())
@@ -447,6 +449,7 @@ export function ExplorerSidebar({
   const [actionDialog, setActionDialog] = useState<ExplorerActionDialogState | null>(null)
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const actionDialogRef = useRef<ExplorerActionDialogState | null>(null)
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -829,14 +832,11 @@ export function ExplorerSidebar({
     if (!current) {
       return
     }
+    actionDialogRef.current = null
     setActionDialog(null)
-    window.setTimeout(() => {
-      if (current.kind === 'input') {
-        current.resolve({ confirmed, value: current.value })
-        return
-      }
-      current.resolve({ confirmed })
-    }, 0)
+    if (dialogReturnFocusRef.current?.isConnected) dialogReturnFocusRef.current.focus({preventScroll: true})
+    if (current.kind === 'input') current.resolve({ confirmed, value: current.value })
+    else current.resolve({ confirmed })
   }, [])
 
   const setSortMode = useCallback(
@@ -871,6 +871,7 @@ export function ExplorerSidebar({
       validate?: (value: string) => string | null
     ): Promise<string | null> =>
       new Promise((resolve) => {
+        dialogReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
         setActionDialog({
           kind: 'input',
           title,
@@ -890,6 +891,7 @@ export function ExplorerSidebar({
   const askConfirmDialog = useCallback(
     (title: string, message: string, confirmLabel: string, danger = false): Promise<boolean> =>
       new Promise((resolve) => {
+        dialogReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
         setActionDialog({
           kind: 'confirm',
           title,
@@ -1214,9 +1216,7 @@ export function ExplorerSidebar({
     [doDrop, draggingNodeId, onMoveFiles, orderedDraggedFileNodeIds, resolveFileDropTargetKey, tree.nodeById, tree.parentById]
   )
 
-  const openContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>, node: ExplorerNode) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const openNodeContextMenu = useCallback((anchor: ContextMenuAnchor, node: ExplorerNode) => {
     if (node.type === 'file') {
       const isAlreadySelected = selectedFileNodeIds.has(node.id)
       if (!isAlreadySelected) {
@@ -1227,13 +1227,19 @@ export function ExplorerSidebar({
       clearFileSelection()
     }
     setSelectedNodeId(node.id)
-    setContextMenu({ x: event.clientX, y: event.clientY, target: 'node', nodeId: node.id })
+    setContextMenu({ ...anchor, target: 'node', nodeId: node.id })
   }, [clearFileSelection, selectedFileNodeIds, setSelectedNodeId])
+
+  const openContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>, node: ExplorerNode) => {
+    event.preventDefault(); event.stopPropagation()
+    const anchor = contextMenuAnchor(event.currentTarget, event.currentTarget.closest<HTMLElement>('.explorer-shell'))
+    openNodeContextMenu(event.detail === 0 && event.type === 'click' ? anchor : {...anchor, x: event.clientX, y: event.clientY}, node)
+  }, [openNodeContextMenu])
 
   const openTreeContextMenuAt = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
-    setContextMenu({ x: event.clientX, y: event.clientY, target: 'tree' })
+    setContextMenu({ ...contextMenuAnchor(event.currentTarget, event.currentTarget.closest<HTMLElement>('.explorer-shell')), x: event.clientX, y: event.clientY, target: 'tree' })
   }, [])
 
   const contextNode = contextMenu?.target === 'node' ? tree.nodeById.get(contextMenu.nodeId) ?? null : null
@@ -1394,20 +1400,6 @@ export function ExplorerSidebar({
     })
   }, [setIconOverrides])
 
-  useEffect(() => {
-    if (!contextMenu) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && contextPanelRef.current?.contains(target)) {
-        return
-      }
-      setContextMenu(null)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
-  }, [contextMenu])
 
   const actionDialogValidationMessage =
     actionDialog && actionDialog.kind === 'input' && actionDialog.validate
@@ -1423,7 +1415,19 @@ export function ExplorerSidebar({
       className="explorer-shell"
       tabIndex={0}
       onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-        if (isInputEventTarget(event.target) || tree.visibleNodes.length === 0) {
+        if (isInputEventTarget(event.target)) return
+        if (isContextMenuKey(event)) {
+          event.preventDefault(); event.stopPropagation()
+          const focusedNodeId = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId : null
+          const nodeId = focusedNodeId ?? selectedNodeId
+          const node = nodeId ? tree.nodeById.get(nodeId) : null
+          const row = [...(treeRef.current?.querySelectorAll<HTMLElement>('[data-node-id]') ?? [])].find(row => row.dataset.nodeId === node?.id)
+          const anchor = contextMenuAnchor(row ?? event.currentTarget, event.currentTarget)
+          if (node) openNodeContextMenu(anchor, node)
+          else setContextMenu({...anchor, target: 'tree'})
+          return
+        }
+        if (tree.visibleNodes.length === 0) {
           return
         }
         const selectedIndex = selectedNodeId
@@ -1612,6 +1616,7 @@ export function ExplorerSidebar({
 
       <section
         className="explorer-tree explorer-flat-tree"
+        tabIndex={-1}
         ref={treeRef}
         onClick={(event) => {
           const target = event.target
@@ -1662,6 +1667,8 @@ export function ExplorerSidebar({
               <div
                 className={`explorer-row ${isRowSelected ? 'selected' : ''} ${options.compactMode ? 'compact' : ''} ${dropPos ? `drop-${dropPos}` : ''}`}
                 style={{ marginLeft: `${8 + entry.depth * 14}px` }}
+                data-node-id={node.id}
+                tabIndex={-1}
                 draggable={canDrag}
                 onDragStart={(event) => {
                   if (!canDrag) {
@@ -1791,46 +1798,45 @@ export function ExplorerSidebar({
       </section>
 
       {contextMenu && (contextMenu.target === 'tree' || contextNode) ? (
-        <div className="explorer-context-menu" style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}>
-          <div className="explorer-context-panel" ref={contextPanelRef}>
+        <ContextMenu anchor={contextMenu} label="Exploreraktionen" onClose={() => setContextMenu(null)}>
             {contextMenu.target === 'tree' ? (
               <>
-                <button className="context-menu-item" onClick={() => { expandAllFolders(); setContextMenu(null) }}>
+                <ContextMenuItem onClick={() => { expandAllFolders(); setContextMenu(null) }}>
                   <LucideNamedIcon name="ChevronsDown" className="context-menu-icon" size={14} />
                   <span>Alle erweitern</span>
-                </button>
-                <button className="context-menu-item" onClick={() => { collapseAllFolders(); setContextMenu(null) }}>
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => { collapseAllFolders(); setContextMenu(null) }}>
                   <LucideNamedIcon name="ChevronsUp" className="context-menu-icon" size={14} />
                   <span>Alle reduzieren</span>
-                </button>
+                </ContextMenuItem>
               </>
             ) : null}
             {contextMenu.target === 'node' && contextNode?.type === 'folder' ? (
-              <button className="context-menu-item" onClick={() => { expandFolderSubtree(contextNode); setContextMenu(null) }}>
+              <ContextMenuItem onClick={() => { expandFolderSubtree(contextNode); setContextMenu(null) }}>
                 <LucideNamedIcon name="ChevronsDown" className="context-menu-icon" size={14} />
                 <span>Alle erweitern</span>
-              </button>
+              </ContextMenuItem>
             ) : null}
             {contextMenu.target === 'node' && contextNode?.type === 'folder' ? (
-              <button className="context-menu-item" onClick={() => { collapseFolderSubtree(contextNode); setContextMenu(null) }}>
+              <ContextMenuItem onClick={() => { collapseFolderSubtree(contextNode); setContextMenu(null) }}>
                 <LucideNamedIcon name="ChevronsUp" className="context-menu-icon" size={14} />
                 <span>Alle reduzieren</span>
-              </button>
+              </ContextMenuItem>
             ) : null}
             {contextMenu.target === 'node' && contextNode ? (
-              <div className="context-menu-divider" />
+              <div role="separator" />
             ) : null}
             {contextMenu.target === 'node' && contextNode ? (
               <>
                 {contextNode.type === 'file' ? (
-                  <button className="context-menu-item" onClick={() => { void onOpenFile(resolveOpenPath(contextNode), contextNode.name); setContextMenu(null) }}>
+                  <ContextMenuItem onClick={() => { void onOpenFile(resolveOpenPath(contextNode), contextNode.name); setContextMenu(null) }}>
                     <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
                     <span>Datei oeffnen</span>
-                  </button>
+                  </ContextMenuItem>
                 ) : null}
                 {contextNode.type === 'folder' ? (
-                  <button
-                    className="context-menu-item"
+                  <ContextMenuItem
+
                     disabled={contextCreateLocked}
                     title={contextCreateLocked ? contextCreateLockReason : 'Neue Datei'}
                     onClick={() => {
@@ -1839,11 +1845,11 @@ export function ExplorerSidebar({
                   >
                     <LucideNamedIcon name="FilePlus" className="context-menu-icon" size={14} />
                     <span>Neue Datei</span>
-                  </button>
+                  </ContextMenuItem>
                 ) : null}
                 {contextNode.type === 'folder' ? (
-                  <button
-                    className="context-menu-item"
+                  <ContextMenuItem
+
                     disabled={contextCreateLocked}
                     title={contextCreateLocked ? contextCreateLockReason : 'Neue Task'}
                     onClick={() => {
@@ -1852,11 +1858,11 @@ export function ExplorerSidebar({
                   >
                     <LucideNamedIcon name="CheckSquare" className="context-menu-icon" size={14} />
                     <span>Neue Task</span>
-                  </button>
+                  </ContextMenuItem>
                 ) : null}
                 {contextNode.type === 'folder' ? (
-                  <button
-                    className="context-menu-item"
+                  <ContextMenuItem
+
                     disabled={contextCreateLocked}
                     title={contextCreateLocked ? contextCreateLockReason : 'Neuer Ordner'}
                     onClick={() => {
@@ -1865,10 +1871,10 @@ export function ExplorerSidebar({
                   >
                     <LucideNamedIcon name="FolderPlus" className="context-menu-icon" size={14} />
                     <span>Neuer Ordner</span>
-                  </button>
+                  </ContextMenuItem>
                 ) : null}
-                <button
-                  className="context-menu-item"
+                <ContextMenuItem
+
                   disabled={contextReadonlyLinkFile}
                   title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht umbenannt werden.' : 'Umbenennen'}
                   onClick={() => {
@@ -1877,19 +1883,19 @@ export function ExplorerSidebar({
                 >
                   <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
                   <span>Umbenennen</span>
-                </button>
-                <button className="context-menu-item" onClick={() => { openIconPicker(contextNode) }}>
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => { openIconPicker(contextNode) }}>
                   <LucideNamedIcon name="Palette" className="context-menu-icon" size={14} />
                   <span>Icon festlegen</span>
-                </button>
+                </ContextMenuItem>
                 {contextNode.type === 'folder' ? (
-                  <button className="context-menu-item" disabled={isPinnedRoot(contextNode.path) && contextNode.favorite} onClick={() => { if (!(isPinnedRoot(contextNode.path) && contextNode.favorite)) { void onToggleFavoriteFolder(normalizeGroupKey(contextNode.path)) }; setContextMenu(null) }}>
+                  <ContextMenuItem disabled={isPinnedRoot(contextNode.path) && contextNode.favorite} onClick={() => { if (!(isPinnedRoot(contextNode.path) && contextNode.favorite)) { void onToggleFavoriteFolder(normalizeGroupKey(contextNode.path)) }; setContextMenu(null) }}>
                     <LucideNamedIcon name={contextNode.favorite ? 'PinOff' : 'Pin'} className="context-menu-icon" size={14} />
                     <span>{isPinnedRoot(contextNode.path) && contextNode.favorite ? 'Fixierung aktiv (nicht aufhebbar)' : contextNode.favorite ? 'Fixierung aufheben' : 'Ordner fixieren'}</span>
-                  </button>
+                  </ContextMenuItem>
                 ) : null}
-                <button
-                  className="context-menu-item danger"
+                <ContextMenuItem
+                  className="danger"
                   disabled={(contextNode.type === 'folder' && contextNode.canDelete === false) || contextReadonlyLinkFile}
                   title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht geloescht werden.' : 'Loeschen'}
                   onClick={() => {
@@ -1898,11 +1904,10 @@ export function ExplorerSidebar({
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
                   <span>Loeschen</span>
-                </button>
+                </ContextMenuItem>
               </>
             ) : null}
-          </div>
-        </div>
+        </ContextMenu>
       ) : null}
 
       {actionDialog ? (
@@ -1914,6 +1919,19 @@ export function ExplorerSidebar({
         >
           <aside
             className="explorer-action-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={actionDialog.title}
+            onKeyDown={event => {
+              event.stopPropagation()
+              if (event.key === 'Escape') {event.preventDefault(); closeActionDialog(false)}
+              if (event.key === 'Tab') {
+                const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('input,button:not(:disabled)')]
+                const first = controls[0], last = controls[controls.length - 1]
+                if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus()}
+                else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus()}
+              }
+            }}
             onClick={(event) => {
               event.stopPropagation()
             }}
@@ -1942,6 +1960,7 @@ export function ExplorerSidebar({
                     }
                   } else if (event.key === 'Escape') {
                     event.preventDefault()
+                    event.stopPropagation()
                     closeActionDialog(false)
                   }
                 }}
@@ -1957,6 +1976,7 @@ export function ExplorerSidebar({
             <div className="explorer-action-dialog-actions">
               <button
                 className={actionDialog.danger ? 'danger' : ''}
+                autoFocus={actionDialog.kind === 'confirm' && !actionDialog.danger}
                 disabled={!canConfirmActionDialog}
                 onClick={() => {
                   closeActionDialog(true)
@@ -1965,6 +1985,7 @@ export function ExplorerSidebar({
                 {actionDialog.confirmLabel}
               </button>
               <button
+                autoFocus={actionDialog.kind === 'confirm' && actionDialog.danger}
                 onClick={() => {
                   closeActionDialog(false)
                 }}
