@@ -1,7 +1,8 @@
 import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {MenuButton} from '../ui/MenuButton'
 import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
 import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { CSSProperties } from 'react'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
@@ -130,10 +131,8 @@ export function TagSidebar({
   const [selectedTagKey, setSelectedTagKey] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [sortDirection, setSortDirection] = useState<TagSortDirection>('asc')
-  const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const [searchCursor, setSearchCursor] = useState(-1)
   const shellRef = useRef<HTMLDivElement | null>(null)
-  const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   const applyExpandedValueForGroups = useCallback(
@@ -267,21 +266,6 @@ export function TagSidebar({
   const effectiveSelectedTagKey = groups.some(group => group.tags.some(tag => `${group.id}:${tag.id}` === selectedTagKey)) ? selectedTagKey : ''
 
 
-  useEffect(() => {
-    if (!sortMenuOpen) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && sortMenuRef.current?.contains(target)) {
-        return
-      }
-      setSortMenuOpen(false)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
-  }, [sortMenuOpen])
-
   return (
     <div
       className="explorer-shell tag-explorer-shell"
@@ -299,56 +283,21 @@ export function TagSidebar({
         const tagId = selectedRow?.dataset.tagId
         const target: ContextMenuTarget = groupId ? tagId ? {kind:'tag',groupId,tagId} : {kind:'group',groupId} : {kind:'tree'}
         if (groupId) {setSelectedGroupId(groupId); setSelectedTagKey(tagId ? `${groupId}:${tagId}` : '')}
-        setSortMenuOpen(false)
         const trigger = selectedRow ?? (treeFocus ? event.target as HTMLElement : event.currentTarget)
         setContextMenu({...contextMenuAnchor(trigger,event.currentTarget),target})
       }}
       onClick={() => {
         setContextMenu(null)
-        setSortMenuOpen(false)
       }}
     >
       <header className="explorer-toolbar">
         <div className="explorer-toolbar-top">
           <div className="explorer-toolbar-left">
-            <div className="explorer-sort-anchor" ref={sortMenuRef}>
-              <button
-                className={`icon-button compact ${sortMenuOpen ? 'active' : ''}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setSortMenuOpen((prev) => !prev)
-                }}
-                disabled={!vaultLoaded}
-                title="Sortierung aendern"
-              >
-                <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
-              </button>
-              {sortMenuOpen ? (
-                <div className="explorer-sort-menu">
-                  <div className="explorer-sort-menu-section">
-                    <span>Sortierung</span>
-                    <button
-                      className={sortDirection === 'asc' ? 'active' : ''}
-                      onClick={() => {
-                        setSortDirection('asc')
-                        setSortMenuOpen(false)
-                      }}
-                    >
-                      Alphabetisch (A-Z)
-                    </button>
-                    <button
-                      className={sortDirection === 'desc' ? 'active' : ''}
-                      onClick={() => {
-                        setSortDirection('desc')
-                        setSortMenuOpen(false)
-                      }}
-                    >
-                      Alphabetisch (Z-A)
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <MenuButton label="Tags sortieren" disabled={!vaultLoaded}
+              icon={<LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />}>
+              <ContextMenuItem role="menuitemradio" aria-checked={sortDirection === 'asc'} onClick={() => setSortDirection('asc')}>Alphabetisch (A–Z)</ContextMenuItem>
+              <ContextMenuItem role="menuitemradio" aria-checked={sortDirection === 'desc'} onClick={() => setSortDirection('desc')}>Alphabetisch (Z–A)</ContextMenuItem>
+            </MenuButton>
           </div>
 
           <h3>Tags</h3>
@@ -464,7 +413,6 @@ export function TagSidebar({
                 onClick={(event) => {
                   event.stopPropagation()
                   setContextMenu(null)
-                  setSortMenuOpen(false)
                   setSelectedGroupId(group.id)
                   setSelectedTagKey('')
                   onToggleGroup(entry.folderKey)
@@ -488,7 +436,6 @@ export function TagSidebar({
                     onClick={(event) => {
                       event.stopPropagation()
                       setContextMenu(null)
-                      setSortMenuOpen(false)
                       setSelectedGroupId(group.id)
                       setSelectedTagKey('')
                       onToggleGroup(entry.folderKey)
@@ -534,14 +481,12 @@ export function TagSidebar({
                       onKeyDown={event => {
                         if (event.target !== event.currentTarget || !['Enter',' '].includes(event.key)) return
                         event.preventDefault(); event.stopPropagation()
-                        setSortMenuOpen(false)
                         setSelectedGroupId(group.id); setSelectedTagKey(tagKey)
                         onOpenTagOverview?.(group.id,tag.id)
                       }}
                       onClick={(event) => {
                         event.stopPropagation()
                         setContextMenu(null)
-                        setSortMenuOpen(false)
                         setSelectedGroupId(group.id)
                         setSelectedTagKey(tagKey)
                         onOpenTagOverview?.(group.id, tag.id)

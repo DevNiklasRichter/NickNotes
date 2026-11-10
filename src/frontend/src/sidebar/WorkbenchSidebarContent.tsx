@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {ContextMenuItem} from '../ui/ContextMenu'
+import {MenuButton} from '../ui/MenuButton'
 import { ExplorerSidebar } from '../explorer/ExplorerSidebarFlatV3'
 import { TagSidebar } from '../explorer/TagSidebarV2'
 import type { ExplorerOptions, ExplorerSourceFile, ExplorerSourceGroup, ExplorerViewState } from '../explorer/types'
@@ -231,6 +233,7 @@ export function WorkbenchSidebarContent({
   const setFocusFilter = (patch: Partial<FocusDashboardFilters>) => {
     onFocusFiltersChange({ ...focusFilters, ...patch })
   }
+  const noteBaseShellRef = useRef<HTMLDivElement | null>(null)
   const [taskOpenDropdown, setTaskOpenDropdown] = useState<TaskDropdownKey | null>(null)
   const [taskDropdownQueries, setTaskDropdownQueries] = useState<Record<TaskDropdownKey, string>>({
     status: '',
@@ -1066,49 +1069,46 @@ export function WorkbenchSidebarContent({
   const currentNoteBasePathKey = noteBasePathKey(vaultPath)
   const recentNoteBasesForList = recentNoteBases.filter((recent) => noteBasePathKey(recent.path) !== currentNoteBasePathKey)
 
-  const renderNoteBaseMenu = (path: string, variant: 'active' | 'recent') => {
+  const renderNoteBaseMenu = (path: string, name: string, variant: 'active' | 'recent') => {
     const hasPath = Boolean(path.trim())
     return (
-      <div className="hover-menu-anchor notebase-menu-anchor">
-        <button className="icon-button compact muted notebase-menu-button" disabled={!hasPath} title="NoteBase-Menue">
-          <LucideNamedIcon name="MoreHorizontal" size={14} />
-        </button>
-        {hasPath ? (
-          <div className="hover-menu notebase-row-menu">
+      <div className="notebase-menu-anchor">
+        <MenuButton key={path} label={`Aktionen für NoteBase ${name || 'Keine NoteBase'}`} heading={name}
+          className="icon-button compact muted notebase-menu-button" disabled={!hasPath} fallbackRef={noteBaseShellRef}
+          icon={<LucideNamedIcon name="MoreHorizontal" size={14} />}>
             {variant === 'recent' ? (
-              <button className="context-menu-item" onClick={() => onOpenRecentNoteBase(path)}>
+              <ContextMenuItem onClick={() => onOpenRecentNoteBase(path)}>
                 <LucideNamedIcon name="FolderOpen" className="context-menu-icon" size={14} />
-                <span>NoteBase oeffnen</span>
-              </button>
+                <span>NoteBase öffnen</span>
+              </ContextMenuItem>
             ) : null}
-            <button className="context-menu-item" onClick={() => (variant === 'active' ? onRenameNoteBase() : onRenameRecentNoteBase(path))}>
+            <ContextMenuItem onClick={() => (variant === 'active' ? onRenameNoteBase() : onRenameRecentNoteBase(path))}>
               <LucideNamedIcon name="Pencil" className="context-menu-icon" size={14} />
               <span>NoteBase umbenennen</span>
-            </button>
-            <button className="context-menu-item" onClick={() => onOpenNoteBaseInExplorer(path)}>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onOpenNoteBaseInExplorer(path)}>
               <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
-              <span>Im Windows Explorer oeffnen</span>
-            </button>
+              <span>Im Windows Explorer öffnen</span>
+            </ContextMenuItem>
             {variant === 'recent' ? (
-              <button className="context-menu-item" onClick={() => onRemoveRecentNoteBase(path)}>
+              <ContextMenuItem onClick={() => onRemoveRecentNoteBase(path)}>
                 <LucideNamedIcon name="ListX" className="context-menu-icon" size={14} />
                 <span>Aus Liste entfernen</span>
-              </button>
+              </ContextMenuItem>
             ) : null}
-            <div className="context-menu-divider" />
-            <button className="context-menu-item danger" onClick={() => (variant === 'active' ? onDeleteNoteBase() : onDeleteRecentNoteBase(path))}>
+            <div role="separator" />
+            <ContextMenuItem className="danger" onClick={() => (variant === 'active' ? onDeleteNoteBase() : onDeleteRecentNoteBase(path))}>
               <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
-              <span>NoteBase loeschen</span>
-            </button>
-          </div>
-        ) : null}
+              <span>NoteBase löschen</span>
+            </ContextMenuItem>
+        </MenuButton>
       </div>
     )
   }
 
   if (sidebarView === 'vault') {
     return (
-      <div className="explorer-shell notebase-sidebar-shell">
+      <div className="explorer-shell notebase-sidebar-shell" ref={noteBaseShellRef} tabIndex={-1}>
         <header className="explorer-toolbar notebase-sidebar-toolbar">
           <div className="explorer-toolbar-top">
             <div className="explorer-toolbar-left" />
@@ -1133,7 +1133,7 @@ export function WorkbenchSidebarContent({
                   <strong>{noteBaseName || 'Keine NoteBase'}</strong>
                   <span>{vaultPath || 'Keine NoteBase geladen'}</span>
                 </div>
-                {renderNoteBaseMenu(vaultLoaded ? vaultPath : '', 'active')}
+                {renderNoteBaseMenu(vaultLoaded ? vaultPath : '', noteBaseName, 'active')}
               </div>
             </div>
           </section>
@@ -1148,7 +1148,7 @@ export function WorkbenchSidebarContent({
                       <strong>{recent.name}</strong>
                       <span>{recent.path}</span>
                     </div>
-                    {renderNoteBaseMenu(recent.path, 'recent')}
+                    {renderNoteBaseMenu(recent.path, recent.name, 'recent')}
                   </div>
                 ))}
               </div>

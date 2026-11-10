@@ -48,6 +48,18 @@
   overflow-wrap: anywhere;
 }
 
+.nn-context-menu-group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.nn-context-menu .context-menu-check {
+  flex: 0 0 14px;
+  width: 14px;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
 .nn-context-menu .context-menu-item span {min-width: 0; white-space: normal;}
 .nn-context-menu .context-menu-icon {
   flex: 0 0 14px;

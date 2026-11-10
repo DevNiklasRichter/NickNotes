@@ -304,10 +304,6 @@
   justify-self: end;
 }
 
-.notebase-row-menu {
-  min-width: 220px;
-}
-
 .recent-notebases-empty {
   margin: 0;
   border: 1px dashed var(--line);
@@ -315,39 +311,6 @@
   color: var(--muted);
   padding: 0.5rem 0.55rem;
   font-size: var(--font-label);
-}
-
-.hover-menu-anchor {
-  position: relative;
-}
-
-.hover-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  min-width: 180px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 0.3rem;
-  display: none;
-  z-index: 12;
-}
-
-.hover-menu-anchor:hover .hover-menu,
-.hover-menu-anchor:focus-within .hover-menu {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.hover-menu button {
-  text-align: left;
-}
-
-.hover-menu button.danger {
-  color: var(--error-text);
-  border-color: var(--error-border);
 }
 
 .sidebar-header-row {
@@ -6552,26 +6515,22 @@ button:disabled {
   text-align: center;
 }
 
-.hover-menu,
 .tag-context-menu {
   width: max-content;
   max-width: calc(100vw - 18px);
   overflow-x: auto;
 }
 
-.hover-menu,
 .tag-context-menu {
   z-index: 420;
 }
 
-.hover-menu button,
 .tag-context-menu button {
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
 }
 
-.hover-menu button,
 .tag-context-menu button {
   display: inline-flex;
   align-items: center;

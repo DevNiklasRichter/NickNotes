@@ -1,4 +1,5 @@
 import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {MenuButton} from '../ui/MenuButton'
 import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
 import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 import {useSyncedDraft} from '../editor/useSyncedDraft'
@@ -447,11 +448,9 @@ export function ExplorerSidebar({
   const [iconPicker, setIconPicker] = useState<IconPickerState>(null)
   const [iconSearchQuery, setIconSearchQuery] = useState('')
   const [actionDialog, setActionDialog] = useState<ExplorerActionDialogState | null>(null)
-  const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const actionDialogRef = useRef<ExplorerActionDialogState | null>(null)
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
   const onViewStateChangeRef = useRef(onViewStateChange)
-  const sortMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   const fixedRootKeys = useMemo(() => {
@@ -560,21 +559,6 @@ export function ExplorerSidebar({
   useEffect(() => {
     onViewStateChangeRef.current = onViewStateChange
   }, [onViewStateChange])
-
-  useEffect(() => {
-    if (!sortMenuOpen) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && sortMenuRef.current?.contains(target)) {
-        return
-      }
-      setSortMenuOpen(false)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
-  }, [sortMenuOpen])
 
   useEffect(() => {
     const notify = onViewStateChangeRef.current
@@ -845,7 +829,6 @@ export function ExplorerSidebar({
         return
       }
       onOptionsChange({ ...options, sortMode: mode })
-      setSortMenuOpen(false)
     },
     [onOptionsChange, options]
   )
@@ -856,7 +839,6 @@ export function ExplorerSidebar({
         return
       }
       onOptionsChange({ ...options, sortDirection: direction })
-      setSortMenuOpen(false)
     },
     [onOptionsChange, options]
   )
@@ -1482,51 +1464,23 @@ export function ExplorerSidebar({
       <header className="explorer-toolbar">
         <div className="explorer-toolbar-top">
           <div className="explorer-toolbar-left">
-            <div className="explorer-sort-anchor" ref={sortMenuRef}>
-              <button
-                className={`icon-button compact ${sortMenuOpen ? 'active' : ''}`}
-                onClick={() => {
-                  setSortMenuOpen((prev) => !prev)
-                }}
-                disabled={!vaultLoaded}
-                title="Darstellungsreihenfolge"
-              >
-                <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
-              </button>
-              {sortMenuOpen ? (
-                <div className="explorer-sort-menu">
-                  <div className="explorer-sort-menu-section">
-                    <span>Sortieren nach</span>
-                    <button className={options.sortMode === 'manual' ? 'active' : ''} onClick={() => setSortMode('manual')}>
-                      Manuell
-                    </button>
-                    <button className={options.sortMode === 'name' ? 'active' : ''} onClick={() => setSortMode('name')}>
-                      Name
-                    </button>
-                    <button className={options.sortMode === 'noteCount' ? 'active' : ''} onClick={() => setSortMode('noteCount')}>
-                      Notizanzahl
-                    </button>
-                    <button className={options.sortMode === 'modified' ? 'active' : ''} onClick={() => setSortMode('modified')}>
-                      Letzte Aenderung
-                    </button>
-                  </div>
-                  <div className="explorer-sort-menu-section">
-                    <span>Richtung</span>
-                    <button className={options.sortDirection === 'asc' ? 'active' : ''} onClick={() => setSortDirection('asc')}>
-                      Aufsteigend
-                    </button>
-                    <button className={options.sortDirection === 'desc' ? 'active' : ''} onClick={() => setSortDirection('desc')}>
-                      Absteigend
-                    </button>
-                  </div>
-                  <div className="explorer-sort-menu-section">
-                    <button onClick={onRefresh} disabled={!vaultLoaded}>
-                      Aktualisieren
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <MenuButton label="Notizen sortieren" disabled={!vaultLoaded}
+              icon={<LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />}>
+              <div role="group" aria-label="Sortieren nach" className="nn-context-menu-group">
+                <div className="nn-context-menu-heading" aria-hidden="true">Sortieren nach</div>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortMode === 'manual'} onClick={() => setSortMode('manual')}>Manuell</ContextMenuItem>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortMode === 'name'} onClick={() => setSortMode('name')}>Name</ContextMenuItem>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortMode === 'noteCount'} onClick={() => setSortMode('noteCount')}>Notizanzahl</ContextMenuItem>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortMode === 'modified'} onClick={() => setSortMode('modified')}>Letzte Änderung</ContextMenuItem>
+              </div>
+              <div role="group" aria-label="Richtung" className="nn-context-menu-group">
+                <div className="nn-context-menu-heading" aria-hidden="true">Richtung</div>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortDirection === 'asc'} onClick={() => setSortDirection('asc')}>Aufsteigend</ContextMenuItem>
+                <ContextMenuItem role="menuitemradio" aria-checked={options.sortDirection === 'desc'} onClick={() => setSortDirection('desc')}>Absteigend</ContextMenuItem>
+              </div>
+              <div role="separator" />
+              <ContextMenuItem onClick={onRefresh} disabled={!vaultLoaded}>Aktualisieren</ContextMenuItem>
+            </MenuButton>
             <button
               className="icon-button compact"
               onClick={() => {

@@ -117,45 +117,6 @@
   display: inline-flex;
 }
 
-.explorer-sort-menu {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  left: 0;
-  z-index: 240;
-  min-width: 190px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 0.35rem;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.explorer-sort-menu-section {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.explorer-sort-menu-section span {
-  font-size: var(--font-caption);
-  color: var(--muted);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.explorer-sort-menu-section button {
-  text-align: left;
-  border-radius: var(--radius-lg);
-  padding: 0.28rem var(--space-1);
-  font-size: var(--font-label);
-}
-
-.explorer-sort-menu-section button.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface-contrast) 45%);
-}
-
 .explorer-shell .icon-button.compact {
   border-color: var(--line);
   background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
@@ -964,26 +925,4 @@
 .explorer-action-dialog-actions .danger {
   color: var(--error-text);
   border-color: var(--error-border);
-}
-
-.explorer-sort-menu {
-  width: max-content;
-  max-width: calc(100vw - 18px);
-  overflow-x: auto;
-}
-
-.explorer-sort-menu {
-  z-index: 420;
-}
-
-.explorer-sort-menu-section button {
-  width: max-content;
-  min-width: 100%;
-  white-space: nowrap;
-}
-
-.explorer-sort-menu-section button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
 }

@@ -232,6 +232,23 @@ gerendert. Es gibt keine zweite Inhaltsquelle oder Formatmigration.
 Undo/Redo und eine isolierte Komponentenprobe fuer Schreibschutz und veraltete
 Auswahlcallbacks. Nachweise: [Editormenues](doc/editor-menus-2026-11-10.md).
 
+`ui/MenuButton.tsx` ergaenzt den gemeinsamen Menuebaustein um einen expliziten
+Ausloeser mit `aria-haspopup`/`aria-expanded`, Klick-Toggle und Tastaturoeffnung.
+Pfeil nach unten/oben startet beim ersten/letzten Eintrag. Nur solche Ausloeser
+nehmen ihren eigenen Pointer-/Fokuswechsel vom Aussen-Dismiss aus; andere
+Kontextmenues behalten ihr bisheriges Verhalten. Der Baustein besitzt keine
+Fachaktionen oder Persistenz. Explorer-/Tagsortierung verwendet Radioeintraege
+mit unabhaengiger Auswahl von Modus und Richtung. Bestehende Exploreroptionen
+und die lokale Tagsortierung bleiben deren Zustandsquellen.
+`WorkbenchSidebarContent.tsx` verwendet dieselben Buttons fuer aktive und
+zuletzt geoeffnete NoteBases; ein entfernter Historieneintrag faellt beim Fokus
+auf die NoteBase-Seitenleiste zurueck. Umbenennen, Oeffnen, Entfernen und Loeschen
+laufen weiterhin ueber den bestehenden Lifecycle-Service samt Dialogen und
+Draftschutz. Die alten Sortier- und Hover-Menues sind entfernt. `--sidebar-menus`
+prueft Reihenfolgen, Menuetoggle, bestaetigungspflichtige Dialoge, Historie und
+Wechsel zwischen zwei isolierten NoteBases. Nachweise:
+[Sortierung und NoteBase-Menues](doc/sidebar-menus-2026-11-10.md).
+
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.

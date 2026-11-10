@@ -6,22 +6,31 @@ import './ContextMenu.css'
 
 const MenuActivation = createContext<((action: () => void) => void) | null>(null)
 
-export function ContextMenuItem({disabled, onClick, className = '', ...props}: ButtonHTMLAttributes<HTMLButtonElement>) {
+const menuItemSelector = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]'
+
+export function ContextMenuItem({disabled, onClick, role = 'menuitem', className = '', children, ...props}: ButtonHTMLAttributes<HTMLButtonElement>) {
   const activate = useContext(MenuActivation)
-  return <button {...props} type="button" role="menuitem" tabIndex={-1}
+  return <button {...props} type="button" role={role} tabIndex={-1}
     className={`context-menu-item ${className}`} aria-disabled={disabled || undefined}
     onClick={event => {
       if (disabled) {event.preventDefault(); event.stopPropagation(); return}
       if (activate) activate(() => onClick?.(event))
       else onClick?.(event)
-    }} />
+    }}>
+    {role === 'menuitemradio' ? <span className="context-menu-check" aria-hidden="true">
+      {props['aria-checked'] === true ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4 10-10" /></svg> : null}
+    </span> : null}
+    {children}
+  </button>
 }
 
 /** Flat action menu. Domain actions and their confirmation dialogs stay with the caller. */
-export function ContextMenu({anchor, label, heading, onClose, children}: {
+export function ContextMenu({anchor, label, heading, initialFocus = 'first', triggerToggles = false, onClose, children}: {
   anchor: ContextMenuAnchor
   label: string
   heading?: string
+  initialFocus?: 'first' | 'last'
+  triggerToggles?: boolean
   onClose: () => void
   children: ReactNode
 }) {
@@ -32,7 +41,7 @@ export function ContextMenu({anchor, label, heading, onClose, children}: {
     target?.focus({preventScroll: true})
   }
   const dismiss = (restore: boolean) => {if (restore) restoreFocus(); onClose()}
-  const items = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+  const items = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>(menuItemSelector) ?? [])]
   const focusItem = (item?: HTMLButtonElement) => {
     item?.focus({preventScroll: true})
     item?.scrollIntoView({block: 'nearest'})
@@ -57,15 +66,18 @@ export function ContextMenu({anchor, label, heading, onClose, children}: {
       menu.style.top = `${Math.max(edge, Math.min(anchor.y, window.innerHeight - height - edge))}px`
     }
     place()
-    menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus({preventScroll: true})
+    const entries = menu.querySelectorAll<HTMLElement>(menuItemSelector)
+    entries[initialFocus === 'last' ? entries.length - 1 : 0]?.focus({preventScroll: true})
     const observer = new ResizeObserver(place)
     observer.observe(menu)
     window.addEventListener('resize', place)
     return () => {observer.disconnect(); window.removeEventListener('resize', place)}
-  }, [anchor])
+  }, [anchor, initialFocus])
 
   useEffect(() => {
     const outside = (event: Event) => {
+      // Explicit menu buttons own their toggle, including the pointer/focus before click.
+      if (triggerToggles && event.type !== 'wheel' && event.target instanceof Node && anchor.trigger.contains(event.target)) return
       if (event.target instanceof Node && !ref.current?.contains(event.target)) close()
     }
     const blur = () => close()
@@ -79,7 +91,7 @@ export function ContextMenu({anchor, label, heading, onClose, children}: {
       document.removeEventListener('focusin', outside)
       window.removeEventListener('blur', blur)
     }
-  }, [])
+  }, [anchor.trigger, triggerToggles])
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation()
@@ -106,7 +118,7 @@ export function ContextMenu({anchor, label, heading, onClose, children}: {
     onContextMenu={event => {event.preventDefault(); event.stopPropagation()}}
     onPointerMove={event => {
       if (!event.movementX && !event.movementY) return
-      const item = (event.target as Element).closest<HTMLButtonElement>('[role="menuitem"]')
+      const item = (event.target as Element).closest<HTMLButtonElement>(menuItemSelector)
       if (item && ref.current?.contains(item)) item.focus({preventScroll: true})
     }}
     onClick={event => event.stopPropagation()}>

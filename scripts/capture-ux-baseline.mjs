@@ -20,9 +20,10 @@ const menus = process.argv.includes('--menus')
 const tags = process.argv.includes('--tags')
 const graph = process.argv.includes('--graph')
 const editorMenus = process.argv.includes('--editor-menus')
+const sidebarMenus = process.argv.includes('--sidebar-menus')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -434,6 +435,9 @@ async function verifyGraph() {
   const alphaPath = await createNote('UX-Graph Alpha','[[UX-Graph Beta]]\n\n{tag:ux-graph/thema}\n')
   await createNote('UX-Graph Beta','[[UX-Graph Alpha]]\n')
   await request('/graph-index/rebuild',{})
+  // Establish the externally seeded graph before UI filtering; a late fixture
+  // refresh otherwise reapplies its saved filters during the pointer measurement.
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
   await page.locator('.activity-rail').getByRole('button',{name:'Graph',exact:true}).click()
   await expect.poll(async()=>Number.parseInt(await page.locator('.graph-sidebar-metrics span').first().innerText())).toBeGreaterThan(0)
   await page.getByRole('button',{name:'Graph oeffnen',exact:true}).click()
@@ -711,6 +715,145 @@ async function verifyEditorMenus() {
 }
 
 
+async function verifySidebarMenus() {
+  // Two genuine disposable NoteBases; only the recent-list seed is installed directly.
+  const other = await request('/notebase/create', {parentPath:scratch, name:'UX-Zweite-NoteBase'})
+  const otherPath = path.resolve(other.noteBasePath)
+  assert.equal(otherPath, path.join(scratch, 'UX-Zweite-NoteBase'))
+  await request('/notebase/open', {path:vaultPath})
+  await request('/tag-groups/add-group', {groupId:'ux-sort-a', displayName:'A Sortierprobe', color:'#81a1c1'})
+  await request('/tag-groups/add-group', {groupId:'ux-sort-z', displayName:'Z Sortierprobe', color:'#81a1c1'})
+  await request('/tag-groups/add-tag', {groupId:'ux-sort-a', tagId:'alpha', displayName:'Alpha'})
+  await request('/tag-groups/add-tag', {groupId:'ux-sort-a', tagId:'zulu', displayName:'Zulu'})
+  await page.evaluate(paths => localStorage.setItem('nicknotes-recent-notebases', JSON.stringify(paths)), [vaultPath,otherPath])
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await openNote('Arbeitsnotiz')
+  const sort = page.getByRole('button', {name:'Notizen sortieren',exact:true})
+  const sortMenu = page.getByRole('menu', {name:'Notizen sortieren',exact:true})
+  const radio = name => sortMenu.getByRole('menuitemradio', {name,exact:true})
+  await sort.focus(); await page.keyboard.press('ArrowDown')
+  await expect(radio('Manuell')).toBeFocused()
+  await page.keyboard.press('ArrowUp'); await expect(sortMenu.getByRole('menuitem', {name:'Aktualisieren',exact:true})).toBeFocused()
+  await page.keyboard.press('Home'); await page.keyboard.press('n'); await expect(radio('Name')).toBeFocused()
+  await page.keyboard.press('Enter'); await expect(sortMenu).toHaveCount(0); await expect(sort).toBeFocused()
+  await page.keyboard.press('Space'); await expect(radio('Name')).toHaveAttribute('aria-checked','true')
+  await page.keyboard.press('End'); await page.keyboard.press('ArrowUp'); await expect(radio('Absteigend')).toBeFocused()
+  await page.keyboard.press('Space'); await expect(sort).toBeFocused()
+  const researchNames = () => page.locator('.explorer-row[data-node-id^="file:"] .row-name').allTextContents().then(names => names.filter(name => name.startsWith('Recherche-')))
+  await expect.poll(async () => (await researchNames())[0]).toBe('Recherche-60')
+  await sort.click(); await expect(radio('Absteigend')).toHaveAttribute('aria-checked','true')
+  await expect(sortMenu.locator('[aria-checked="true"]')).toHaveCount(2)
+  await capture('notes-sort-radio-dark','Named sort groups show independent checked mode and direction; keyboard navigation spans both')
+  await radio('Aufsteigend').click(); await expect.poll(async () => (await researchNames())[0]).toBe('Recherche-01')
+  await sort.click(); await expect(sortMenu).toBeVisible(); await sort.click(); await expect(sortMenu).toHaveCount(0)
+  await sort.focus(); await page.keyboard.press('Shift+F10'); await expect(sortMenu).toBeVisible()
+  await page.keyboard.press('Escape'); await expect(sort).toBeFocused()
+  await page.keyboard.press('ContextMenu'); await expect(sortMenu).toBeVisible()
+  await page.keyboard.press('Tab'); await expect(sortMenu).toHaveCount(0)
+  assert.equal(await page.evaluate(() => document.activeElement === document.body),false)
+  const search=page.locator('.explorer-search-input')
+  await sort.click(); await search.click({position:{x:(await search.boundingBox()).width-8,y:10}})
+  await expect(sortMenu).toHaveCount(0); await expect(search).toBeFocused()
+  report.checks.sidebarSortRadioKeyboardToggleAndOrder=true
+
+  await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+  const tagSort=page.getByRole('button',{name:'Tags sortieren',exact:true})
+  const tagMenu=page.getByRole('menu',{name:'Tags sortieren',exact:true})
+  await tagSort.focus(); await page.keyboard.press('ArrowUp')
+  await expect(tagMenu.getByRole('menuitemradio').last()).toBeFocused()
+  await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  const groupIds=()=>page.locator('.tag-group-row').evaluateAll(rows=>rows.map(row=>row.dataset.tagGroup))
+  await expect.poll(async () => (await groupIds()).filter(id=>id.startsWith('ux-sort-'))).toEqual(['ux-sort-z','ux-sort-a'])
+  await expect(page.locator('.tag-entry-row[data-tag-group="ux-sort-a"] .row-name')).toHaveText(['Zulu','Alpha'])
+  await tagSort.click(); await expect(tagMenu.getByRole('menuitemradio').last()).toHaveAttribute('aria-checked','true')
+  await capture('tags-sort-radio-dark','Tag sorting changes both groups and entries; checked direction remains explicit')
+  await tagMenu.getByRole('menuitemradio').first().click()
+  await expect.poll(async () => (await groupIds()).filter(id=>id.startsWith('ux-sort-'))).toEqual(['ux-sort-a','ux-sort-z'])
+  await expect(page.locator('.tag-entry-row[data-tag-group="ux-sort-a"] .row-name')).toHaveText(['Alpha','Zulu'])
+  report.checks.sidebarTagSortOrder=true
+
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  const marker='Sidebar-Menüs erhalten diesen Entwurf.'
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n'+marker)
+  await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
+  const activeButton=page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true})
+  const activeMenu=page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true})
+  const recentButton=page.getByRole('button',{name:'Aktionen für NoteBase UX-Zweite-NoteBase',exact:true})
+  const recentMenu=page.getByRole('menu',{name:'Aktionen für NoteBase UX-Zweite-NoteBase',exact:true})
+  await activeButton.hover(); await expect(activeMenu).toHaveCount(0)
+  await activeButton.focus(); await expect(activeMenu).toHaveCount(0)
+  await page.keyboard.press('Enter'); await expect(activeMenu.getByRole('menuitem').first()).toBeFocused()
+  await capture('notebase-active-menu-dark','Explicit active NoteBase menu names its target and exposes existing confirmed actions')
+  await activeMenu.getByRole('menuitem',{name:'NoteBase umbenennen',exact:true}).click()
+  const dialog=page.locator('.tag-action-modal')
+  await expect(dialog.getByRole('heading',{name:'NoteBase umbenennen',exact:true})).toBeVisible()
+  await capture('notebase-rename-dialog-dark','Existing NoteBase rename dialog receives focus from the shared menu')
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(activeButton).toBeFocused()
+  const deletes=report.requests.filter(req=>req.endpoint==='/notebase/delete').length
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
+  await expect(dialog.getByRole('heading',{name:'NoteBase loeschen',exact:true})).toBeVisible()
+  await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await capture('notebase-delete-cancel-dark','Destructive NoteBase action still starts on cancel in the existing confirmation dialog')
+  await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0); await expect(activeButton).toBeFocused()
+  assert.equal(report.requests.filter(req=>req.endpoint==='/notebase/delete').length,deletes)
+  assert.ok(fs.existsSync(notePath)); await expect(editor).toContainText(marker)
+  report.checks.sidebarNoteBaseDialogCancelPreservesDraft=true
+
+  await recentButton.click(); await expect(activeMenu).toHaveCount(0)
+  await capture('notebase-recent-menu-dark','Recent NoteBase includes open and remove-from-list, distinct from deleting files')
+  await recentMenu.getByRole('menuitem',{name:'NoteBase umbenennen',exact:true}).click()
+  await expect(dialog.getByRole('textbox')).toHaveValue('UX-Zweite-NoteBase')
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(recentButton).toBeFocused()
+  const switches=report.requests.filter(req=>req.endpoint==='/notebase/open/start').length
+  await recentButton.click(); await recentMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Aenderungen',exact:true})).toBeVisible()
+  await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0); await expect(recentButton).toBeFocused()
+  assert.equal(report.requests.filter(req=>req.endpoint==='/notebase/open/start').length,switches)
+  await expect(editor).toContainText(marker)
+  await page.keyboard.press('Control+s'); await expect.poll(()=>fs.readFileSync(notePath,'utf8')).toContain(marker)
+  report.checks.sidebarNoteBaseSwitchCancelPreservesDraft=true
+
+  await recentButton.click(); await recentMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  // Sort preferences are pending UI settings even after saving the note itself.
+  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Aenderungen',exact:true})).toBeVisible()
+  await dialog.getByRole('button',{name:'Speichern',exact:true}).click()
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Zweite-NoteBase')
+  await activeButton.click(); await activeMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
+  await recentButton.click(); await recentMenu.getByRole('menuitem',{name:'Aus Liste entfernen',exact:true}).click()
+  await expect(recentButton).toHaveCount(0); await expect(page.locator('.notebase-sidebar-shell')).toBeFocused()
+  assert.ok(fs.existsSync(path.join(otherPath,'.system','config.json')))
+  const history=await page.evaluate(()=>JSON.parse(localStorage.getItem('nicknotes-recent-notebases')||'[]'))
+  assert.equal(history.some(entry=>(typeof entry==='string'?entry:entry.path)===otherPath),false)
+  report.checks.sidebarNoteBaseOpenAndRemoveHistoryOnly=true
+
+  report.checks.sidebarMenuCorners={}
+  for (const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+    await activeButton.evaluate((button,corner)=>button.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,
+      clientX:corner.endsWith('right')?innerWidth-2:2,clientY:corner.startsWith('bottom')?innerHeight-2:2})),corner)
+    await expect(activeMenu).toBeVisible()
+    const viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight})), rect=await activeMenu.boundingBox()
+    assert.ok(Math.abs(rect.x-(corner.endsWith('right')?viewport.width-rect.width-8:8))<2)
+    assert.ok(Math.abs(rect.y-(corner.startsWith('bottom')?viewport.height-rect.height-8:8))<2)
+    await capture(`notebase-menu-edge-${corner}-dark`,`Actual menu-button handler with explicitly synthetic ${corner} client coordinates`)
+    await page.keyboard.press('Escape'); await expect(activeButton).toBeFocused()
+    report.checks.sidebarMenuCorners[corner]=true
+  }
+  await windowSize(1280,800,1.5); await activeButton.click()
+  await capture('notebase-menu-zoom-dark','Explicit NoteBase menu at 150% app zoom')
+  await page.keyboard.press('Escape'); await windowSize(1280,800)
+  await theme('light'); await activeButton.click()
+  await capture('notebase-menu-light','Shared NoteBase actions in the light theme')
+  await page.keyboard.press('Escape'); await theme('dark')
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  await openNote('Arbeitsnotiz'); await expect(editor).toContainText(marker)
+  await sort.click(); await expect(radio('Name')).toHaveAttribute('aria-checked','true')
+  await expect(radio('Aufsteigend')).toHaveAttribute('aria-checked','true'); await page.keyboard.press('Escape')
+  report.checks.sidebarSortPreferenceSurvivesNoteBaseReopen=true
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -799,6 +942,7 @@ try {
     if (tags) await verifyTags()
     if (graph) await verifyGraph()
     if (editorMenus) await verifyEditorMenus()
+    if (sidebarMenus) await verifySidebarMenus()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

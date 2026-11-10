@@ -99,10 +99,19 @@ zurück; Menüfokus darf einen Tabellenentwurf nicht vorzeitig abschließen.
 Tabellenstrukturaktionen sind einzeln rückgängig machbar; die letzte Spalte
 und letzte Datenzeile bleiben geschützt. Schreibgeschützte Tabellen zeigen
 deaktivierte Aktionen. Native Textbearbeitung in Eingabefeldern bleibt erhalten.
-Sortierauswahl, NoteBase-Aktionen, Tagvorschläge sowie weitere Dialoge und
-Tooltips folgen in weiteren POT-03-Schnitten.
+Sortierauswahl und NoteBase-Aktionen verwenden `ui/MenuButton.tsx` als expliziten
+Auslöser für denselben Menübaustein. Hover und bloßer Fokus öffnen kein Menü.
+Klick/Enter/Leertaste toggeln; Pfeil nach unten/oben öffnet am ersten/letzten
+Eintrag. `aria-expanded` zeigt den Öffnungszustand. Sortiermodus und Richtung
+sind benannte Radiogruppen mit `aria-checked` und visuellem Häkchen. Das Häkchen
+gehört weder zum zugänglichen Namen noch zur Buchstabennavigation.
+NoteBase-Menüs nennen ihren Bezug; Entfernen aus der Historie und Löschen der
+Dateien bleiben klar getrennte Aktionen. Die bestehenden Bestätigungsdialoge
+bleiben erhalten. Tagvorschläge sowie weitere Dialoge und Tooltips folgen in
+weiteren POT-03-Schnitten.
 
 Nachweise für Auswahl-/Tabellenaktionen: [Editormenüs](editor-menus-2026-11-10.md).
+Nachweise für Sortierung/NoteBase: [Seitenleistenmenüs](sidebar-menus-2026-11-10.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).
