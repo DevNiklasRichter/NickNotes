@@ -249,6 +249,28 @@ prueft Reihenfolgen, Menuetoggle, bestaetigungspflichtige Dialoge, Historie und
 Wechsel zwischen zwei isolierten NoteBases. Nachweise:
 [Sortierung und NoteBase-Menues](doc/sidebar-menus-2026-11-10.md).
 
+Tagvorschlaege in Quick Capture verwenden denselben Kontextmenuebaustein.
+Hover oeffnet ohne Fokusuebernahme; eine kurze Schliessverzoegerung erlaubt den
+Pointeruebergang zum Portal. Shift+F10/Menuetaste am Cursor und Rechtsklick auf
+eine freie Vorschlagsstelle oeffnen mit Aktionsfokus. CodeMirror-Markierungen
+und eine Editorbeschreibung nennen den Tastaturweg. Bereits eingefuegte
+`{tag:gruppe/tag}`-Bereiche sind keine freien Vorschlagsstellen.
+Aktionen halten einen fluechtigen Editor-/Dokument-/Vorschlagssnapshot und
+pruefen ihn vor jeder Uebernahme. Neue Vorschlagslisten, Dokument-/Auswahl- und
+Schreibschutzwechsel verwerfen offene Aktionen. Uebernehmen ist ein eigener
+Undo-Schritt; Verwerfen verwendet weiterhin den Capture-Service ohne Textersatz.
+Der gemeinsame Menuebaustein gibt bei externem Abbau eines fokussierten Menues
+den Fokus an seinen noch vorhandenen Ausloeser zurueck. Normale Kontextmenues
+behalten ihre initiale Fokusuebernahme.
+Die Rueckgabe wartet auf tatsaechlichen DOM-Abbau und respektiert zwischenzeitlich
+fokussierte Controls; StrictMode-Probedurchlaeufe loesen sie nicht aus. Der
+Vorschlagseditor bleibt auch bei Schreibschutz per Tab erreichbar.
+Der statische `tag_payload`-Formatierer besitzt keine Servicesperre; Preview und
+Save bleiben unter ihrer bestehenden Koordination. Ein versehentlicher
+Sessionzugriff dieses Helfers hatte nichtleere Capture-Vorschauen verhindert.
+`--suggestions` prueft echte Vorschau-/Capture-Saves und isolierte Propwechsel.
+Nachweise: [Tagvorschlags-Aktionen](doc/tag-suggestions-2026-11-10.md).
+
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.

@@ -4177,37 +4177,6 @@
     0 0 0 1px color-mix(in srgb, #f59e0b 38%, transparent);
 }
 
-.editor-tag-suggestion-menu {
-  position: absolute;
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  max-width: min(320px, calc(100% - 1rem));
-  padding: 0.34rem 0.4rem;
-  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-contrast) 96%, transparent);
-  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
-  font-size: var(--font-caption);
-}
-
-.editor-tag-suggestion-title {
-  min-width: 0;
-  color: var(--text);
-  font-weight: 620;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.editor-tag-suggestion-menu button {
-  flex: 0 0 auto;
-  padding: 0.16rem 0.44rem;
-  border-radius: 6px;
-  font-size: var(--font-caption);
-}
-
 .capture-input-wrap button {
   margin: 0.15rem;
   align-self: flex-end;

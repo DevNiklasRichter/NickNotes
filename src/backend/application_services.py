@@ -227,7 +227,6 @@ class BackendApiService:
         return merged
 
     @staticmethod
-    @coordinated
     def tag_payload(item: TagSuggestion) -> dict[str, Any]:
         return {
             "key": item.key,

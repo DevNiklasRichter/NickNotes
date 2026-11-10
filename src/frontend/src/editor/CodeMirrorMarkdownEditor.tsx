@@ -154,18 +154,21 @@ export type MarkdownEditorTagSuggestion = {
   source: string
 }
 
+const EMPTY_TAG_SUGGESTIONS: MarkdownEditorTagSuggestion[] = []
+
 type SlashMatch = {
   from: number
   to: number
   query: string
 }
 
-type HoveredTagSuggestion = {
-  key: string
+type TagSuggestionMenu = ContextMenuAnchor & {
+  suggestion: MarkdownEditorTagSuggestion
+  view: EditorView
+  document: EditorState['doc']
   from: number
   to: number
-  left: number
-  top: number
+  initialFocus: 'first' | 'none'
 }
 
 type SelectionTagContextMenu = ContextMenuAnchor & {
@@ -281,14 +284,6 @@ function buildExplorerSearchHighlightExtension(query: string): Extension {
   )
 }
 
-const captureTagSuggestionDeco = Decoration.mark({
-  class: 'cm-capture-tag-suggestion',
-})
-
-const captureTagSuggestionSelectedDeco = Decoration.mark({
-  class: 'cm-capture-tag-suggestion selected',
-})
-
 function buildTagSuggestionTerms(suggestion: MarkdownEditorTagSuggestion): string[] {
   const terms = new Set<string>()
   const addTerm = (value: string) => {
@@ -306,6 +301,13 @@ function buildTagSuggestionTerms(suggestion: MarkdownEditorTagSuggestion): strin
   return Array.from(terms).sort((left, right) => right.length - left.length)
 }
 
+function overlapsInlineTag(text: string, from: number, to: number): boolean {
+  for (const match of text.matchAll(/\{tag:[^}\r\n]+\}/gi)) {
+    if (match.index < to && match.index + match[0].length > from) return true
+  }
+  return false
+}
+
 function buildTagSuggestionHighlightExtension(
   suggestions: readonly MarkdownEditorTagSuggestion[],
   selectedKeys: readonly string[]
@@ -316,7 +318,7 @@ function buildTagSuggestionHighlightExtension(
   }
 
   const selected = new Set(selectedKeys)
-  return ViewPlugin.fromClass(
+  const highlights = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
 
@@ -331,7 +333,7 @@ function buildTagSuggestionHighlightExtension(
       }
 
       build(view: EditorView): DecorationSet {
-        const ranges: ReturnType<typeof captureTagSuggestionDeco.range>[] = []
+        const ranges: ReturnType<Decoration['range']>[] = []
         const occupied = new Set<string>()
         for (const visibleRange of view.visibleRanges) {
           const end = Math.max(visibleRange.from, visibleRange.to - 1)
@@ -339,13 +341,17 @@ function buildTagSuggestionHighlightExtension(
           const endLine = view.state.doc.lineAt(end).number
           while (true) {
             for (const suggestion of usableSuggestions) {
-              const decoration = selected.has(suggestion.key) ? captureTagSuggestionSelectedDeco : captureTagSuggestionDeco
+              const decoration = Decoration.mark({
+                class: `cm-capture-tag-suggestion${selected.has(suggestion.key) ? ' selected' : ''}`,
+                attributes: {title: `Tagvorschlag: ${suggestion.displayName} (${suggestion.category}). Aktionen: Shift+F10 oder Menütaste.`},
+              })
               for (const term of buildTagSuggestionTerms(suggestion)) {
                 const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, 'gi')
                 for (const match of line.text.matchAll(pattern)) {
                   if (typeof match.index !== 'number') {
                     continue
                   }
+                  if (overlapsInlineTag(line.text, match.index, match.index + match[0].length)) continue
                   const from = line.from + match.index
                   const to = from + match[0].length
                   const key = `${from}:${to}`
@@ -371,6 +377,10 @@ function buildTagSuggestionHighlightExtension(
       decorations: (instance) => instance.decorations,
     }
   )
+  return [highlights, EditorView.contentAttributes.of({
+    tabindex: '0',
+    'aria-description': 'Tagvorschläge sind im Text markiert. Cursor in einen Vorschlag setzen und Shift+F10 oder Menütaste für die Aktionen drücken.',
+  })]
 }
 
 function findTagSuggestionAtPosition(
@@ -390,6 +400,7 @@ function findTagSuggestionAtPosition(
         if (typeof match.index !== 'number') {
           continue
         }
+        if (overlapsInlineTag(line.text, match.index, match.index + match[0].length)) continue
         if (offset >= match.index && offset <= match.index + match[0].length) {
           const from = line.from + match.index
           return {
@@ -660,7 +671,7 @@ export function CodeMirrorMarkdownEditor({
   className = '',
   embeddedInScroll = false,
   placeholderText = 'Starte mit einer Notiz ...',
-  tagSuggestions = [],
+  tagSuggestions = EMPTY_TAG_SUGGESTIONS,
   selectedTagSuggestionKeys = [],
   onChange,
   onSubmitShortcut,
@@ -709,10 +720,36 @@ export function CodeMirrorMarkdownEditor({
   const initialTagSuggestionsRef = useRef(tagSuggestions)
   const initialSelectedTagSuggestionKeysRef = useRef(selectedTagSuggestionKeys)
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
-  const [hoveredTagSuggestion, setHoveredTagSuggestion] = useState<HoveredTagSuggestion | null>(null)
+  const [tagSuggestionMenu, setTagSuggestionMenu] = useState<TagSuggestionMenu | null>(null)
+  const [suggestionSource, setSuggestionSource] = useState(tagSuggestions)
+  // A new preview invalidates its old action snapshot, even when the key remains.
+  if (suggestionSource !== tagSuggestions) {
+    setSuggestionSource(tagSuggestions)
+    setTagSuggestionMenu(null)
+  }
+  const tagSuggestionMenuRef = useRef<TagSuggestionMenu | null>(null)
+  const suggestionDismissTimerRef = useRef<number | null>(null)
   const [selectionTagContextMenu, setSelectionTagContextMenu] = useState<SelectionTagContextMenu | null>(null)
   const [tableContextMenu, setTableContextMenu] = useState<MarkdownTableMenuRequest | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
+
+  useEffect(() => {tagSuggestionMenuRef.current = tagSuggestionMenu}, [tagSuggestionMenu])
+  const cancelSuggestionDismiss = useCallback(() => {
+    if (suggestionDismissTimerRef.current !== null) window.clearTimeout(suggestionDismissTimerRef.current)
+    suggestionDismissTimerRef.current = null
+  }, [])
+  const closeSuggestionMenu = useCallback(() => {
+    cancelSuggestionDismiss()
+    setTagSuggestionMenu(null)
+  }, [cancelSuggestionDismiss])
+  const delaySuggestionDismiss = useCallback(() => {
+    cancelSuggestionDismiss()
+    suggestionDismissTimerRef.current = window.setTimeout(() => {
+      suggestionDismissTimerRef.current = null
+      setTagSuggestionMenu(current => current?.initialFocus === 'none' ? null : current)
+    }, 180)
+  }, [cancelSuggestionDismiss])
+  useEffect(() => cancelSuggestionDismiss, [cancelSuggestionDismiss])
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
     if (!paletteState) {
@@ -1296,6 +1333,26 @@ export function CodeMirrorMarkdownEditor({
       setSelectionTagContextMenu({selectedText, from: selection.from, to: selection.to,
         x, y, trigger: view.contentDOM, view, document: view.state.doc})
       setPaletteState(null)
+      closeSuggestionMenu()
+      return true
+    }
+
+    const openSuggestionMenu = (view: EditorView, position: number, initialFocus: 'first' | 'none', pointer?: {x: number; y: number}) => {
+      const resolved = findTagSuggestionAtPosition(view, position, tagSuggestionsRef.current)
+      if (!resolved) return false
+      const selection = view.state.selection.main
+      if (initialFocus === 'first' && !selection.empty && (selection.from !== resolved.from || selection.to !== resolved.to)) return false
+      const coords = view.coordsAtPos(resolved.to)
+      if (!coords) return false
+      cancelSuggestionDismiss()
+      setTagSuggestionMenu(current => {
+        if (initialFocus === 'none' && current?.suggestion === resolved.suggestion && current.document === view.state.doc) return current
+        return {suggestion: resolved.suggestion, view, document: view.state.doc,
+          from: resolved.from, to: resolved.to, initialFocus,
+          x: pointer?.x ?? coords.left, y: pointer?.y ?? coords.bottom + 8, trigger: view.contentDOM}
+      })
+      setSelectionTagContextMenu(null)
+      setPaletteState(null)
       return true
     }
 
@@ -1398,7 +1455,15 @@ export function CodeMirrorMarkdownEditor({
               return true
             },
             keydown: (event, view) => {
+              if (event.key === 'Escape' && tagSuggestionMenuRef.current) {
+                closeSuggestionMenu()
+                event.preventDefault(); event.stopPropagation(); return true
+              }
               if (!isContextMenuKey(event)) return false
+              const selection = view.state.selection.main
+              if (openSuggestionMenu(view, selection.head, 'first')) {
+                event.preventDefault(); event.stopPropagation(); return true
+              }
               const coords = view.coordsAtPos(view.state.selection.main.head)
               if (!coords || !openSelectionMenu(view, coords.left, coords.bottom)) return false
               event.preventDefault(); event.stopPropagation(); return true
@@ -1407,33 +1472,20 @@ export function CodeMirrorMarkdownEditor({
               if (event.target instanceof Element && event.target.closest('.cm-md-table-widget')) return false
               const selection = view.state.selection.main
               const pos = view.posAtCoords({x:event.clientX,y:event.clientY})
+              if (pos !== null && openSuggestionMenu(view, pos, 'first', {x:event.clientX,y:event.clientY})) {
+                event.preventDefault(); event.stopPropagation(); return true
+              }
               if (pos === null || pos < selection.from || pos > selection.to) {setSelectionTagContextMenu(null); return false}
               if (!openSelectionMenu(view,event.clientX,event.clientY)) return false
               event.preventDefault(); event.stopPropagation(); return true
             },
             mousemove: (event, view) => {
+              if (paletteStateRef.current || (document.querySelector('.nn-context-menu') && !tagSuggestionMenuRef.current)) return false
+              if (tagSuggestionMenuRef.current?.initialFocus === 'first') return false
               const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-              const resolved =
-                typeof pos === 'number' ? findTagSuggestionAtPosition(view, pos, tagSuggestionsRef.current) : null
-              if (!resolved) {
-                return false
+              if (pos === null || !openSuggestionMenu(view, pos, 'none')) {
+                if (tagSuggestionMenuRef.current) delaySuggestionDismiss()
               }
-              const shellRect = shellRef.current?.getBoundingClientRect()
-              let coords: { left: number; right: number; top: number; bottom: number } | null = null
-              try {
-                coords = view.coordsAtPos(resolved.to)
-              } catch {
-                coords = null
-              }
-              const left = coords && shellRect ? coords.left - shellRect.left : event.clientX - (shellRect?.left ?? 0)
-              const top = coords && shellRect ? coords.bottom - shellRect.top + 8 : event.clientY - (shellRect?.top ?? 0) + 12
-              setHoveredTagSuggestion({
-                key: resolved.suggestion.key,
-                from: resolved.from,
-                to: resolved.to,
-                left,
-                top,
-              })
               return false
             },
             paste: (event, view) => {
@@ -1473,6 +1525,7 @@ export function CodeMirrorMarkdownEditor({
           themeCompartmentRef.current.of(buildCodeMirrorTheme(initialThemeRef.current)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) setSelectionTagContextMenu(null)
+            if (update.docChanged || update.selectionSet || update.startState.readOnly !== update.state.readOnly) closeSuggestionMenu()
             if (update.docChanged && !syncingRef.current) {
               scheduleOnChange(update.state.doc.toString())
             }
@@ -1535,7 +1588,7 @@ export function CodeMirrorMarkdownEditor({
       instance.destroy()
       editorRef.current = null
     }
-  }, [editorApiRef, flushQueuedOnChange, scheduleOnChange, openPreviewWikiLink, openPreviewTag])
+  }, [editorApiRef, flushQueuedOnChange, scheduleOnChange, openPreviewWikiLink, openPreviewTag, cancelSuggestionDismiss, closeSuggestionMenu, delaySuggestionDismiss])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -1908,9 +1961,6 @@ export function CodeMirrorMarkdownEditor({
     : undefined
   const activeCommandIndex = clampIndex(paletteState ? paletteState.selectedIndex : 0, paletteItems.length)
   const showSearchInput = paletteState ? paletteState.mode !== 'slash' : false
-  const hoveredSuggestion = hoveredTagSuggestion
-    ? tagSuggestions.find((item) => item.key === hoveredTagSuggestion.key) ?? null
-    : null
 
   useEffect(() => {
     if (!paletteMode || paletteMode === 'table-size' || paletteItems.length === 0) {
@@ -1928,9 +1978,7 @@ export function CodeMirrorMarkdownEditor({
     <div
       className={`code-editor-shell ${embeddedInScroll ? 'embedded-scroll' : ''} ${className}`.trim()}
       ref={shellRef}
-      onMouseLeave={() => {
-        setHoveredTagSuggestion(null)
-      }}
+      onMouseLeave={delaySuggestionDismiss}
     >
       <div className={`code-editor-host ${embeddedInScroll ? 'embedded-scroll' : ''}`.trim()} ref={hostRef} />
 
@@ -1957,49 +2005,29 @@ export function CodeMirrorMarkdownEditor({
         </ContextMenu>
       ) : null}
 
-      {hoveredSuggestion ? (
-        <div
-          className="editor-tag-suggestion-menu"
-          style={{ left: `${hoveredTagSuggestion?.left ?? 0}px`, top: `${hoveredTagSuggestion?.top ?? 0}px` }}
-          onMouseDown={(event) => {
-            event.preventDefault()
-          }}
-        >
-          <span className="editor-tag-suggestion-title">
-            {hoveredSuggestion.displayName} ({hoveredSuggestion.category})
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              const view = editorRef.current
-              const hover = hoveredTagSuggestion
-              if (view && hover) {
-                const syntax = `{tag:${hoveredSuggestion.category}/${hoveredSuggestion.slug}}`
-                view.dispatch({
-                  changes: { from: hover.from, to: hover.to, insert: syntax },
-                  selection: { anchor: hover.from + syntax.length },
-                  scrollIntoView: true,
-                  userEvent: 'input.type',
-                })
-                view.focus()
-              }
-              onToggleTagSuggestionRef.current?.(hoveredSuggestion.key)
-              setHoveredTagSuggestion(null)
-            }}
-          >
-            Uebernehmen
-          </button>
-          <button
-            type="button"
-            className="muted"
-            onClick={() => {
-              onRejectTagSuggestionRef.current?.(hoveredSuggestion.key)
-              setHoveredTagSuggestion(null)
-            }}
-          >
-            Verwerfen
-          </button>
-        </div>
+      {tagSuggestionMenu ? (
+        <ContextMenu anchor={tagSuggestionMenu} label={`Tagvorschlag: ${tagSuggestionMenu.suggestion.displayName}`}
+          heading={`${tagSuggestionMenu.suggestion.displayName} (${tagSuggestionMenu.suggestion.category})`}
+          initialFocus={tagSuggestionMenu.initialFocus} onClose={closeSuggestionMenu}
+          onPointerEnter={cancelSuggestionDismiss} onPointerLeave={delaySuggestionDismiss}>
+          <ContextMenuItem disabled={readOnly} onClick={() => {
+            const menu = tagSuggestionMenu
+            const view = editorRef.current
+            if (view !== menu.view || view.state.readOnly || view.state.doc !== menu.document || !tagSuggestionsRef.current.includes(menu.suggestion)) return
+            const syntax = `{tag:${menu.suggestion.category}/${menu.suggestion.slug}}`
+            view.dispatch({changes: {from: menu.from, to: menu.to, insert: syntax},
+              selection: {anchor: menu.from + syntax.length}, scrollIntoView: true,
+              userEvent: 'input.type', annotations: isolateHistory.of('full')})
+            view.focus()
+            onToggleTagSuggestionRef.current?.(menu.suggestion.key)
+          }}>Übernehmen</ContextMenuItem>
+          <ContextMenuItem disabled={readOnly} onClick={() => {
+            const menu = tagSuggestionMenu
+            const view = editorRef.current
+            if (view !== menu.view || view.state.readOnly || view.state.doc !== menu.document || !tagSuggestionsRef.current.includes(menu.suggestion)) return
+            onRejectTagSuggestionRef.current?.(menu.suggestion.key)
+          }}>Verwerfen</ContextMenuItem>
+        </ContextMenu>
       ) : null}
 
       {paletteState ? (

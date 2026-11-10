@@ -34,6 +34,24 @@ class PhaseEBackendTests(unittest.TestCase):
         if backend_api is not None:
             backend_api.state.close()
 
+    def test_capture_preview_returns_defined_tag_and_save_preserves_inline_reference(self) -> None:
+        backend_api.state.close()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/vault/open', json={'path': str(self.vault_path)}).status_code, 200)
+        self.assertEqual(client.post('/tag-groups/add-group', json={'groupId': 'ux-vorschlag', 'displayName': 'Vorschlag'}).status_code, 200)
+        self.assertEqual(client.post('/tag-groups/add-tag', json={'groupId': 'ux-vorschlag', 'tagId': 'synthese', 'displayName': 'Synthese'}).status_code, 200)
+        definitions = self.vault.tag_groups_path.read_text(encoding='utf-8')
+        preview = client.post('/capture/preview', json={'text': 'Vorher Synthese nachher.'})
+        self.assertEqual(preview.status_code, 200)
+        suggestion = next(item for item in preview.json()['suggestions'] if item['key'] == 'ux-vorschlag:synthese')
+        self.assertEqual(suggestion['displayName'], 'Synthese')
+        self.assertNotEqual(suggestion['source'], 'explicit')
+        self.assertEqual(self.vault.tag_groups_path.read_text(encoding='utf-8'), definitions)
+        text = 'Vorher {tag:ux-vorschlag/synthese} nachher.'
+        saved = client.post('/capture/save', json={'text': text, 'selectedTagKeys': []})
+        self.assertEqual(saved.status_code, 200)
+        self.assertIn(text, Path(saved.json()['notePath']).read_text(encoding='utf-8'))
+
     def test_task_completed_at_semantics_and_blocked_by_hygiene(self) -> None:
         now = datetime(2026, 4, 19, 9, 30, 0)
         task_id = "tk_phase_e_semantics"

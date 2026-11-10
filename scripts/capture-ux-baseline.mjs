@@ -21,9 +21,10 @@ const tags = process.argv.includes('--tags')
 const graph = process.argv.includes('--graph')
 const editorMenus = process.argv.includes('--editor-menus')
 const sidebarMenus = process.argv.includes('--sidebar-menus')
+const suggestionMenus = process.argv.includes('--suggestions')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -854,6 +855,146 @@ async function verifySidebarMenus() {
   report.checks.sidebarSortPreferenceSurvivesNoteBaseReopen=true
 }
 
+async function verifySuggestionMenus() {
+  await request('/tag-groups/add-group',{groupId:'ux-vorschlag',displayName:'Vorschlagsprüfung',color:'#81a1c1'})
+  await request('/tag-groups/add-tag',{groupId:'ux-vorschlag',tagId:'synthese',displayName:'Synthese'})
+  await request('/tag-groups/add-tag',{groupId:'ux-vorschlag',tagId:'verwerfenprobe',displayName:'Verwerfenprobe'})
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await openNote('Arbeitsnotiz')
+  await page.keyboard.press('Alt+q')
+  const editor=page.locator('.capture-markdown-editor .cm-content')
+  const text='Vorher Synthese nachher Verwerfenprobe.'
+  const menu=page.getByRole('menu',{name:'Tagvorschlag: Synthese',exact:true})
+  const read=()=>editor.evaluate(node=>{
+    const view=node.cmTile.root.view, selection=view.state.selection.main
+    return {doc:view.state.doc.toString(),from:selection.from,to:selection.to}
+  })
+  const atWord=async(targetEditor,offset=9)=>{
+    await targetEditor.focus(); await page.keyboard.press('Control+Home')
+    for(let index=0;index<offset;index++)await page.keyboard.press('ArrowRight')
+  }
+  await expect(editor).toBeFocused()
+  const initialPreview=page.waitForResponse(res=>res.url().endsWith('/capture/preview')&&res.request().postDataJSON()?.text===text)
+  await page.keyboard.press('Control+a'); await page.keyboard.type(text)
+  const response=await initialPreview
+  assert.equal(response.status(),200,JSON.stringify(await response.json()))
+  const mark=editor.locator('.cm-capture-tag-suggestion').filter({hasText:/^Synthese$/})
+  await expect(mark).toHaveCount(1)
+  await expect(editor).toHaveAttribute('aria-description',/Shift\+F10/)
+  await expect(editor).toBeFocused()
+  const beforeHover=await read()
+  await mark.hover(); await expect(menu).toBeVisible(); await expect(editor).toBeFocused()
+  assert.deepEqual(await read(),beforeHover)
+  await menu.getByRole('menuitem',{name:'Übernehmen',exact:true}).hover()
+  // Deliberately exceed the hover bridge duration; pointer entry must cancel it.
+  await page.waitForTimeout(240)
+  await expect(menu).toBeVisible(); await expect(editor).toBeFocused()
+  await capture('suggestion-hover-dark','Real capture preview after the hover bridge: editor focus and selection remain unchanged')
+  await page.keyboard.press('Escape'); await expect(menu).toHaveCount(0); await expect(editor).toBeFocused()
+  await atWord(editor)
+  const beforeKeyboard=await read()
+  await page.keyboard.press('Shift+F10'); await expect(menu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('End'); await expect(menu.getByRole('menuitem',{name:'Verwerfen',exact:true})).toBeFocused()
+  await capture('suggestion-keyboard-dark','Shift+F10 at the suggestion gives action focus; text and cursor remain in CodeMirror')
+  await expect(menu.getByRole('menuitem',{name:'Verwerfen',exact:true})).toBeFocused()
+  await page.keyboard.press('Escape'); await expect(editor).toBeFocused(); assert.deepEqual(await read(),beforeKeyboard)
+  await page.keyboard.press('ContextMenu'); await expect(menu.getByRole('menuitem').first()).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(menu).toHaveCount(0)
+  assert.equal(await page.evaluate(()=>document.activeElement===document.body),false)
+  await atWord(editor); await page.keyboard.press('Shift+F10')
+  await expect(menu).toBeVisible(); await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  await expect(menu).toHaveCount(0)
+  assert.equal((await read()).doc,text)
+  report.checks.suggestionHoverKeyboardAndDismissPreserveText=true
+
+  await atWord(editor); await mark.click({button:'right'})
+  await expect(menu.getByRole('menuitem').first()).toBeFocused(); await page.keyboard.press('Enter')
+  const inserted='Vorher {tag:ux-vorschlag/synthese} nachher Verwerfenprobe.'
+  await expect.poll(async()=>(await read()).doc).toBe(inserted)
+  await expect(editor).toBeFocused()
+  await page.keyboard.press('Control+z'); assert.equal((await read()).doc,text)
+  const preview=page.waitForResponse(res=>res.url().endsWith('/capture/preview')&&res.request().postDataJSON()?.text===inserted)
+  await page.keyboard.press('Control+y'); assert.equal((await read()).doc,inserted)
+  assert.equal((await preview).status(),200)
+  await expect(editor.locator('.cm-capture-tag-suggestion').filter({hasText:/^synthese$/i})).toHaveCount(0)
+  const rejectedMark=editor.locator('.cm-capture-tag-suggestion').filter({hasText:/^Verwerfenprobe$/})
+  await expect(rejectedMark).toHaveCount(1)
+  await rejectedMark.click({button:'right'})
+  const rejectedMenu=page.getByRole('menu',{name:'Tagvorschlag: Verwerfenprobe',exact:true})
+  await expect(rejectedMenu).toBeVisible()
+  await rejectedMenu.getByRole('menuitem',{name:'Verwerfen',exact:true}).click()
+  await expect(rejectedMark).toHaveCount(0); assert.equal((await read()).doc,inserted)
+  await expect(editor).toBeFocused()
+  const finalText=inserted+' Capture-Prüfung.'
+  const refresh=page.waitForResponse(res=>res.url().endsWith('/capture/preview')&&res.request().postDataJSON()?.text===finalText)
+  await page.keyboard.press('Control+End'); await page.keyboard.type(' Capture-Prüfung.')
+  assert.equal((await refresh).status(),200)
+  await expect(rejectedMark).toHaveCount(0)
+  const save=page.waitForResponse(res=>res.url().endsWith('/capture/save')&&res.request().method()==='POST')
+  await page.getByRole('button',{name:'Senden',exact:true}).click(); assert.equal((await save).status(),200)
+  await expect.poll(async()=>(await read()).doc).toBe('')
+  const dailyRoot=path.join(vaultPath,'daily')
+  const saved=fs.readdirSync(dailyRoot,{recursive:true}).filter(file=>file.endsWith('.md')).map(file=>fs.readFileSync(path.join(dailyRoot,file),'utf8'))
+  assert.ok(saved.some(content=>content.includes(finalText)),'Accepted tag and rejected plain word must reach daily Markdown')
+  report.checks.suggestionAcceptUndoRejectAndCaptureSave200=true
+
+  const fixtureUrl='/@fs/'+path.join(root,'scripts/fixtures/tag-suggestion.tsx').replaceAll('\\','/')
+  const dispose=await page.evaluateHandle(async url=>(await import(url)).mountTagSuggestionFixture(),fixtureUrl)
+  try {
+    const fixture=page.getByTestId('tag-suggestion-fixture'), field=fixture.locator('.cm-content')
+    await expect(field).toBeVisible()
+    await atWord(field); await page.keyboard.press('Shift+F10'); await expect(menu.getByRole('menuitem').first()).toBeFocused()
+    await fixture.getByRole('button',{name:'Vorschläge erneuern',exact:true}).evaluate(button=>button.click())
+    await expect(menu).toHaveCount(0); await expect(field).toBeFocused()
+    await expect(fixture.getByTestId('suggestion-actions')).toHaveText('0/0')
+    await atWord(field); await page.keyboard.press('Shift+F10'); await expect(menu).toBeVisible()
+    await fixture.getByRole('button',{name:'Schreibschutz wechseln',exact:true}).evaluate(button=>button.click())
+    await expect(menu).toHaveCount(0); await expect(field).toBeFocused()
+    await page.keyboard.press('Shift+F10'); await expect(menu).toBeVisible()
+    for(const item of await menu.getByRole('menuitem').all())await expect(item).toHaveAttribute('aria-disabled','true')
+    await page.keyboard.press('Enter'); await page.keyboard.press('End'); await page.keyboard.press('Space')
+    await expect(fixture.getByTestId('suggestion-actions')).toHaveText('0/0')
+    await capture('suggestion-readonly-fixture','Real editor component with read-only props: both actions are disabled and cannot mutate')
+    await page.keyboard.press('Escape')
+    await fixture.getByRole('button',{name:'Schreibschutz wechseln',exact:true}).click()
+    report.checks.suggestionNewPreviewAndReadonlyProtected=true
+
+    report.checks.suggestionFixtureCorners={}
+    for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+      // Synthetic fixture placement; real cursor coordinates and keyboard opening.
+      await fixture.evaluate((node,corner)=>{
+        const host=node.parentElement
+        Object.assign(host.style,{inset:'auto',width:'300px',height:'190px',boxSizing:'border-box',
+          left:corner.endsWith('right')?`${innerWidth-308}px`:'8px',top:corner.startsWith('bottom')?`${innerHeight-198}px`:'8px'})
+      },corner)
+      await atWord(field); await page.keyboard.press('Shift+F10'); await expect(menu).toBeVisible()
+      const anchor=await field.evaluate(node=>node.cmTile.root.view.coordsAtPos('Vorher Synthese'.length))
+      const bounds=await menu.boundingBox(), viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+      assert.ok(Math.abs(bounds.x-Math.max(8,Math.min(anchor.left,viewport.width-bounds.width-8)))<2)
+      assert.ok(Math.abs(bounds.y-Math.max(8,Math.min(anchor.bottom+8,viewport.height-bounds.height-8)))<2)
+      await capture(`suggestion-fixture-${corner}`,'Synthetic fixture at '+corner+'; genuine CodeMirror cursor anchor and menu clamping')
+      await page.keyboard.press('Escape'); await expect(field).toBeFocused()
+      report.checks.suggestionFixtureCorners[corner]=true
+    }
+    await fixture.evaluate(node=>Object.assign(node.parentElement.style,{inset:'8%',width:'auto',height:'auto'}))
+    await windowSize(1280,800,1.5)
+    await atWord(field); await page.keyboard.press('Shift+F10')
+    await capture('suggestion-zoom-dark','Shared tag suggestion actions at 150% app zoom')
+    await page.keyboard.press('Escape'); await windowSize(1280,800)
+    // The synthetic overlay must not cover the real settings controls.
+    await fixture.evaluate(node=>{node.parentElement.style.visibility='hidden'})
+    await theme('light')
+    await fixture.evaluate(node=>{node.parentElement.style.visibility='visible'})
+    await atWord(field); await page.keyboard.press('Shift+F10')
+    await capture('suggestion-light','Shared tag suggestion actions in the light theme')
+    await fixture.getByRole('button',{name:'Dokument extern ersetzen',exact:true}).evaluate(button=>button.click())
+    await expect(menu).toHaveCount(0); await expect(field).toContainText('Extern ersetzter Text.')
+    await expect(field).toBeFocused(); await expect(fixture.getByTestId('suggestion-actions')).toHaveText('0/0')
+    report.checks.suggestionExternalReplacementProtected=true
+  } finally {await dispose.evaluate(dispose=>dispose()); await dispose.dispose()}
+  await theme('dark'); await openNote('Arbeitsnotiz')
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -943,6 +1084,7 @@ try {
     if (graph) await verifyGraph()
     if (editorMenus) await verifyEditorMenus()
     if (sidebarMenus) await verifySidebarMenus()
+    if (suggestionMenus) await verifySuggestionMenus()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

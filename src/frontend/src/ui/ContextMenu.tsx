@@ -25,12 +25,14 @@ export function ContextMenuItem({disabled, onClick, role = 'menuitem', className
 }
 
 /** Flat action menu. Domain actions and their confirmation dialogs stay with the caller. */
-export function ContextMenu({anchor, label, heading, initialFocus = 'first', triggerToggles = false, onClose, children}: {
+export function ContextMenu({anchor, label, heading, initialFocus = 'first', triggerToggles = false, onPointerEnter, onPointerLeave, onClose, children}: {
   anchor: ContextMenuAnchor
   label: string
   heading?: string
-  initialFocus?: 'first' | 'last'
+  initialFocus?: 'first' | 'last' | 'none'
   triggerToggles?: boolean
+  onPointerEnter?: () => void
+  onPointerLeave?: () => void
   onClose: () => void
   children: ReactNode
 }) {
@@ -67,18 +69,32 @@ export function ContextMenu({anchor, label, heading, initialFocus = 'first', tri
     }
     place()
     const entries = menu.querySelectorAll<HTMLElement>(menuItemSelector)
-    entries[initialFocus === 'last' ? entries.length - 1 : 0]?.focus({preventScroll: true})
+    if (initialFocus !== 'none') entries[initialFocus === 'last' ? entries.length - 1 : 0]?.focus({preventScroll: true})
     const observer = new ResizeObserver(place)
     observer.observe(menu)
     window.addEventListener('resize', place)
     return () => {observer.disconnect(); window.removeEventListener('resize', place)}
   }, [anchor, initialFocus])
 
+  useLayoutEffect(() => {
+    const menu = ref.current
+    return () => {
+      // Restore after actual removal, not StrictMode's rehearsal cleanup.
+      if (menu?.contains(document.activeElement)) {
+        queueMicrotask(() => {
+          if (menu.isConnected || document.activeElement !== document.body) return
+          const target = anchor.trigger.isConnected ? anchor.trigger : anchor.fallback
+          target?.focus({preventScroll: true})
+        })
+      }
+    }
+  }, [anchor.trigger, anchor.fallback])
+
   useEffect(() => {
     const outside = (event: Event) => {
       // Explicit menu buttons own their toggle, including the pointer/focus before click.
       if (triggerToggles && event.type !== 'wheel' && event.target instanceof Node && anchor.trigger.contains(event.target)) return
-      if (event.target instanceof Node && !ref.current?.contains(event.target)) close()
+      if (event.target instanceof Node && ref.current && !ref.current.contains(event.target)) close()
     }
     const blur = () => close()
     document.addEventListener('pointerdown', outside, true)
@@ -115,9 +131,10 @@ export function ContextMenu({anchor, label, heading, initialFocus = 'first', tri
 
   return createPortal(<MenuActivation.Provider value={activate}><div ref={ref} role="menu" aria-label={label} className="nn-context-menu"
     style={{left: anchor.x, top: anchor.y}} onKeyDown={onKeyDown}
+    onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}
     onContextMenu={event => {event.preventDefault(); event.stopPropagation()}}
     onPointerMove={event => {
-      if (!event.movementX && !event.movementY) return
+      if (initialFocus === 'none' || (!event.movementX && !event.movementY)) return
       const item = (event.target as Element).closest<HTMLButtonElement>(menuItemSelector)
       if (item && ref.current?.contains(item)) item.focus({preventScroll: true})
     }}

@@ -107,11 +107,19 @@ sind benannte Radiogruppen mit `aria-checked` und visuellem Häkchen. Das Häkch
 gehört weder zum zugänglichen Namen noch zur Buchstabennavigation.
 NoteBase-Menüs nennen ihren Bezug; Entfernen aus der Historie und Löschen der
 Dateien bleiben klar getrennte Aktionen. Die bestehenden Bestätigungsdialoge
-bleiben erhalten. Tagvorschläge sowie weitere Dialoge und Tooltips folgen in
-weiteren POT-03-Schnitten.
+bleiben erhalten.
+Tagvorschläge in Quick Capture öffnen ihre gemeinsamen Aktionen beim Hover ohne
+Fokuswechsel. Der Pointer kann über einen kurzen Abstand ins Menü wechseln;
+beim Verlassen schließt die Hoveransicht mit kurzer Verzögerung. Am Cursor
+öffnen Shift+F10/Menütaste mit Aktionsfokus. Escape gibt den Editor frei, Tab
+verlässt die Aktionen. Neue Vorschlagsdaten oder Textänderungen schließen
+veraltete Aktionen und geben deren Tastaturfokus zurück. Übernehmen ist ein
+eigener Undo-Schritt, Verwerfen erhält den Text. Bereits eingefügte Tagreferenzen
+öffnen keine erneuten Wortvorschläge. Weitere Dialoge und Tooltips bleiben offen.
 
 Nachweise für Auswahl-/Tabellenaktionen: [Editormenüs](editor-menus-2026-11-10.md).
 Nachweise für Sortierung/NoteBase: [Seitenleistenmenüs](sidebar-menus-2026-11-10.md).
+Nachweise für Tagvorschläge: [Vorschlagsaktionen](tag-suggestions-2026-11-10.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).
