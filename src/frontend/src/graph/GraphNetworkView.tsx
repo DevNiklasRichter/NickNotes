@@ -1,7 +1,10 @@
 import cytoscape from 'cytoscape'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { Core, ElementDefinition, EventObject, NodeSingular, StylesheetStyle } from 'cytoscape'
 import type { GraphEdge, GraphNode, GraphNodePosition, GraphViewport } from '../app/AppShared'
+import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {isContextMenuKey} from '../ui/contextMenuAnchor'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 
 type GraphNetworkViewProps = {
   nodes: GraphNode[]
@@ -28,9 +31,7 @@ type SelectedGraphItem =
   | { kind: 'edge'; edge: GraphEdge; source?: GraphNode; target?: GraphNode }
   | null
 
-type GraphNodeContextMenu = {
-  x: number
-  y: number
+type GraphNodeContextMenu = ContextMenuAnchor & {
   node: GraphNode
 } | null
 
@@ -65,6 +66,7 @@ export function GraphNetworkView({
 }: GraphNetworkViewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const cyRef = useRef<Core | null>(null)
+  const keyboardHintId = useId()
   const [selected, setSelected] = useState<SelectedGraphItem>(null)
   const [hoverText, setHoverText] = useState('')
   const [initError, setInitError] = useState('')
@@ -106,6 +108,19 @@ export function GraphNetworkView({
   const positionsRef = useLatest(positions)
   const largeGraphRef = useLatest(largeGraph)
 
+  const selectGraphNode = useCallback((nodeId: string) => {
+    const cy = cyRef.current
+    const node = nodeByIdRef.current.get(nodeId)
+    if (!cy || !node) return
+    const connectedEdges = connectedEdgesByNodeRef.current.get(nodeId) ?? []
+    const neighbors = connectedEdges
+      .map(edge => nodeByIdRef.current.get(edge.source === nodeId ? edge.target : edge.source))
+      .filter((neighbor): neighbor is GraphNode => Boolean(neighbor))
+    applySelectionFocus(cy, nodeId, largeGraphRef.current)
+    setSelected({kind: 'node', node, connectedEdges, neighbors})
+    onSelectNodeRef.current?.(nodeId)
+  }, [connectedEdgesByNodeRef, largeGraphRef, nodeByIdRef, onSelectNodeRef])
+
   useEffect(() => {
     if (!hostRef.current || cyRef.current) {
       return
@@ -129,20 +144,8 @@ export function GraphNetworkView({
       applyZoomDensity(cy, false)
 
       cy.on('tap', 'node', (event) => {
-        const nodeId = event.target.id()
-        const node = nodeByIdRef.current.get(nodeId)
-        if (!node) {
-          setSelected(null)
-          return
-        }
-        const connectedEdges = connectedEdgesByNodeRef.current.get(nodeId) ?? []
-        const neighbors = connectedEdges
-          .map((edge) => nodeByIdRef.current.get(edge.source === nodeId ? edge.target : edge.source))
-          .filter((item): item is GraphNode => Boolean(item))
-        applySelectionFocus(cy, nodeId, largeGraphRef.current)
         setNodeContextMenu(null)
-        setSelected({ kind: 'node', node, connectedEdges, neighbors })
-        onSelectNodeRef.current?.(nodeId)
+        selectGraphNode(event.target.id())
       })
 
       cy.on('tap', 'edge', (event) => {
@@ -168,10 +171,17 @@ export function GraphNetworkView({
         if (!node) {
           return
         }
+        const host = hostRef.current
+        if (!host) return
         const originalEvent = event.originalEvent as MouseEvent | undefined
+        const bounds = host.getBoundingClientRect()
+        originalEvent?.preventDefault()
+        selectGraphNode(node.id)
+        host.focus({preventScroll: true})
         setNodeContextMenu({
-          x: originalEvent?.offsetX ?? event.renderedPosition.x,
-          y: originalEvent?.offsetY ?? event.renderedPosition.y,
+          x: originalEvent?.clientX ?? bounds.left + event.renderedPosition.x,
+          y: originalEvent?.clientY ?? bounds.top + event.renderedPosition.y,
+          trigger: host,
           node,
         })
       })
@@ -258,7 +268,7 @@ export function GraphNetworkView({
       }
       cyRef.current = null
     }
-  }, [connectedEdgesByNodeRef, edgeByIdRef, largeGraphRef, nodeByIdRef, onClearSelectionRef, onOpenNodePathRef, onPositionsChangeRef, onSelectNodeRef, onViewportChangeRef])
+  }, [connectedEdgesByNodeRef, edgeByIdRef, largeGraphRef, nodeByIdRef, onClearSelectionRef, onOpenNodePathRef, onPositionsChangeRef, onSelectNodeRef, onViewportChangeRef, selectGraphNode])
 
   useEffect(() => {
     const root = document.documentElement
@@ -322,21 +332,40 @@ export function GraphNetworkView({
       {initError ? <p className="graph-error">{initError}</p> : null}
       <div className={`graph-network-grid ${showDetails ? '' : 'graph-network-grid-full'}`}>
         <div className="graph-network-canvas-wrap">
-          <div ref={hostRef} className="graph-network-canvas" />
+          <div ref={hostRef} className="graph-network-canvas" tabIndex={0}
+            role="group" aria-label="Wissensgraph" aria-describedby={keyboardHintId}
+            onContextMenu={event => event.preventDefault()}
+            onKeyDown={event => {
+              if (event.target !== event.currentTarget || event.ctrlKey || event.metaKey || event.altKey) return
+              const index = selected?.kind === 'node' ? nodes.findIndex(node => node.id === selected.node.id) : -1
+              if (isContextMenuKey(event)) {
+                event.preventDefault(); event.stopPropagation()
+                const node = nodes[index < 0 ? 0 : index]
+                const position = node && cyRef.current?.getElementById(node.id).renderedPosition()
+                if (!node || !position) return
+                const bounds = event.currentTarget.getBoundingClientRect()
+                selectGraphNode(node.id)
+                setNodeContextMenu({x: bounds.left + position.x, y: bounds.top + position.y, trigger: event.currentTarget, node})
+              } else if (['ArrowDown','ArrowRight','ArrowUp','ArrowLeft','Home','End'].includes(event.key)) {
+                event.preventDefault(); event.stopPropagation()
+                if (!nodes.length) return
+                const backwards = event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? nodes.length - 1
+                  : index < 0 ? backwards ? nodes.length - 1 : 0 : (index + (backwards ? -1 : 1) + nodes.length) % nodes.length
+                selectGraphNode(nodes[next].id)
+              }
+            }} />
           <GraphLegend />
+          <p className="graph-keyboard-hint" id={keyboardHintId} role="status">
+            {selected?.kind === 'node' && nodeById.has(selected.node.id) ? `${nodeById.get(selected.node.id)?.label || selected.node.id}. ` : 'Kein Knoten ausgewählt. '}
+            Pfeile/Home/End: Knoten wählen. Shift+F10: Aktionen.
+          </p>
           {hoverText ? <div className="graph-network-hover">{hoverText}</div> : null}
           {nodeContextMenu ? (
             <GraphNodeContextMenu
               menu={nodeContextMenu}
               onClose={() => setNodeContextMenu(null)}
-              onFocus={(nodeId) => {
-                const cy = cyRef.current
-                if (cy) {
-                  applySelectionFocus(cy, nodeId, largeGraphRef.current)
-                }
-                onSelectNodeRef.current?.(nodeId)
-                setNodeContextMenu(null)
-              }}
+              onFocus={selectGraphNode}
               onReveal={(path) => {
                 onRevealNodePathRef.current?.(path)
                 setNodeContextMenu(null)
@@ -515,24 +544,18 @@ function GraphNodeContextMenu({
 }) {
   const canOpen = Boolean(menu.node.path && (menu.node.type === 'note' || menu.node.type === 'task'))
   return (
-    <div
-      className="graph-node-context-menu"
-      style={{ left: `${menu.x}px`, top: `${menu.y}px` }}
-      onClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.preventDefault()}
-    >
-      <strong>{menu.node.label || menu.node.id}</strong>
-      <button onClick={() => onFocus(menu.node.id)}>Knoten hervorheben</button>
-      <button onClick={() => menu.node.path && onReveal(menu.node.path)} disabled={!canOpen}>
-        Im Node Explorer anzeigen
-      </button>
-      <button onClick={() => onOpen(menu.node)} disabled={!canOpen}>
+    <ContextMenu anchor={menu} label={`Knotenaktionen: ${menu.node.label || menu.node.id}`} heading={menu.node.label || menu.node.id} onClose={onClose}>
+      <ContextMenuItem onClick={() => onFocus(menu.node.id)}>Knoten hervorheben</ContextMenuItem>
+      <ContextMenuItem onClick={() => menu.node.path && onReveal(menu.node.path)} disabled={!canOpen}>
+        Im Explorer anzeigen
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onOpen(menu.node)} disabled={!canOpen}>
         Im Editor oeffnen
-      </button>
-      <button className="muted" onClick={onClose}>
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onClose}>
         Schliessen
-      </button>
-    </div>
+      </ContextMenuItem>
+    </ContextMenu>
   )
 }
 

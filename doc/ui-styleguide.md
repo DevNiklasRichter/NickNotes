@@ -45,7 +45,7 @@ Benutzerprofile nutzen weiterhin die bestehenden Farbfelder in
 `.system/ui_settings.json`; keine neuen Profilfelder oder Migrationen.
 Der globale Fokusstil ist die Grundlage. Komponenten dürfen ihn nur durch einen
 mindestens gleich gut sichtbaren Fokus ersetzen. Menüfokus und vollständige
-Tastaturführung werden in POT-03 konsolidiert; Explorer, Tabs und Tags verwenden
+Tastaturführung werden in POT-03 konsolidiert; Explorer, Tabs, Tags und Graphknoten verwenden
 bereits `ui/ContextMenu.tsx` mit benannten Menüs und sichtbarem Eintragsfokus.
 
 ## Arbeitsfläche und CSS-Verantwortung
@@ -77,7 +77,7 @@ Zoom oder Fenstergröße schreiben keine Layoutpräferenzen zurück.
 - **Tooltip:** knappe Erläuterung bzw. Shortcut; kein notwendiger Bedienweg
   und kein Ersatz für den zugänglichen Namen eines Iconbuttons.
 
-Für Explorer-, Tab- und Tagaktionen gelten diese Regeln über `ContextMenu` und
+Für Explorer-, Tab-, Tag- und Graphknotenaktionen gelten diese Regeln über `ContextMenu` und
 `ContextMenuItem`: benanntes Menü im Body-Portal, Pfeile/Home/End, Enter/Leertaste,
 Escape mit Fokus-Rückgabe, Tab-Ausstieg und Öffnen mit Shift+F10 bzw. Menütaste.
 Deaktivierte Einträge sind mit `aria-disabled` erkennbar, per Pfeiltaste
@@ -89,7 +89,11 @@ ihn nach Abschluss zurück. Enter auf einem Button aktiviert ausschließlich
 diesen Button; Enter im Textfeld darf das Formular bestätigen. Auswahl- und
 Löschdialoge beginnen auf Abbrechen, Farbpalettenbuttons schließen den Dialog
 erst über eine ausdrückliche Abschlussaktion.
-Graph-/Editor-Menüs sowie weitere Dialoge und Tooltips erfüllen die Regeln
+Der Graphcanvas ist ein fokussierbarer Bereich: Pfeile/Home/End wählen sichtbare
+Knoten, Shift+F10/Menütaste öffnen deren Kontextmenü. Der Status benennt die
+Auswahl und den Tastaturweg. Der Menüanker verwendet Fensterkoordinaten;
+Canvas-relative Positionen müssen zuerst übersetzt werden.
+Editor-Menüs sowie weitere Dialoge und Tooltips erfüllen die Regeln
 noch nicht vollständig und folgen in weiteren POT-03-Schnitten.
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:

@@ -23,6 +23,7 @@ import {
 } from './graphModel'
 
 const DEFAULT_GRAPH_VIEWPORT: GraphViewport = { zoom: 1, pan: { x: 0, y: 0 } }
+const NO_SHARED_TAG_EDGES: GraphEdge[] = []
 
 import {GraphWorkspaceContext, type GraphWorkspaceValue} from './useGraphWorkspace'
 type GraphWorkspaceProviderProps = {
@@ -133,9 +134,10 @@ export function GraphWorkspaceProvider({
     }).catch(error => { if (!controller.signal.aborted) setError(String(error)) })
     return () => controller.abort()
   }, [backendUrl, enabled, focusNodeId, focusPath, filters.showSharedTagEdges, index?.updated_at])
-  const virtualEdges = useMemo(() => related.focus === focusNodeId && filters.showSharedTagEdges ? related.edges : [], [related, focusNodeId, filters.showSharedTagEdges])
+  const virtualEdges = useMemo(() => related.focus === focusNodeId && filters.showSharedTagEdges ? related.edges : NO_SHARED_TAG_EDGES, [related, focusNodeId, filters.showSharedTagEdges])
   const projected = useMemo(() => index ? {...index, edges: [...index.edges, ...virtualEdges]} : null, [index, virtualEdges])
-  const filtered = useMemo(() => filterGraph(projected, mode, filters, mode === 'focus' ? focusNodeId : ''), [filters, focusNodeId, projected, mode])
+  const filterFocusNodeId = mode === 'focus' ? focusNodeId : ''
+  const filtered = useMemo(() => filterGraph(projected, mode, filters, filterFocusNodeId), [filters, filterFocusNodeId, projected, mode])
   const nodeById = useMemo(() => new Map((index?.nodes ?? []).map((node) => [node.id, node])), [index])
   const fileCount = index ? Object.keys(index.files).length : 0
   const hiddenNodeCount = index ? Math.max(0, index.nodes.length - filtered.nodes.length) : 0

@@ -4897,6 +4897,29 @@
   height: 100%;
 }
 
+.graph-network-canvas:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.graph-keyboard-hint {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  max-width: calc(100% - 1rem);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-caption);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.graph-network-canvas:focus-visible ~ .graph-keyboard-hint { opacity: 1; }
+
 .graph-network-hover {
   max-width: min(420px, calc(100% - 1.4rem));
   position: absolute;
@@ -4923,42 +4946,6 @@
   margin: 0;
   color: var(--muted);
   pointer-events: none;
-}
-
-.graph-node-context-menu {
-  position: absolute;
-  z-index: 12;
-  min-width: 190px;
-  max-width: min(260px, calc(100% - 1rem));
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: var(--shadow);
-  padding: 0.28rem;
-  display: grid;
-  gap: 0.12rem;
-}
-
-.graph-node-context-menu strong {
-  min-width: 0;
-  padding: 0.28rem 0.38rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-label);
-}
-
-.graph-node-context-menu button {
-  border-radius: 6px;
-  text-align: left;
-  padding: 0.34rem 0.42rem;
-  background: transparent;
-  border-color: transparent;
-}
-
-.graph-node-context-menu button:hover {
-  background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
-  border-color: color-mix(in srgb, var(--line) 84%, transparent);
 }
 
 .graph-selection-panel {
@@ -6624,8 +6611,7 @@ button:disabled {
 .hover-menu,
 .tag-context-menu,
 .cm-md-table-context-menu,
-.editor-selection-context-menu,
-.graph-node-context-menu {
+.editor-selection-context-menu {
   width: max-content;
   max-width: calc(100vw - 18px);
   overflow-x: auto;
@@ -6633,16 +6619,14 @@ button:disabled {
 
 .hover-menu,
 .tag-context-menu,
-.editor-selection-context-menu,
-.graph-node-context-menu {
+.editor-selection-context-menu {
   z-index: 420;
 }
 
 .hover-menu button,
 .tag-context-menu button,
 .cm-md-table-context-menu button,
-.editor-selection-context-menu button,
-.graph-node-context-menu button {
+.editor-selection-context-menu button {
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
@@ -6651,16 +6635,14 @@ button:disabled {
 .hover-menu button,
 .tag-context-menu button,
 .cm-md-table-context-menu button,
-.editor-selection-context-menu button,
-.graph-node-context-menu button {
+.editor-selection-context-menu button {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
 }
 
 .cm-md-table-context-menu button span,
-.editor-selection-context-menu button span,
-.graph-node-context-menu button span {
+.editor-selection-context-menu button span {
   white-space: nowrap;
 }
 

@@ -176,7 +176,7 @@ Farbprofils nach Reload. Screenshots kommen aus Electrons Compositor, damit
 Zoomaufnahmen die vollstaendige Fensterflaeche zeigen; Layoutmesswerte bleiben
 in CSS-Pixeln. Nachweis: [Gestaltungsgrundlage](doc/ui-foundations-2026-11-10.md).
 
-`ui/ContextMenu.tsx` besitzt die flachen Explorer-, Tab- und Tagaktionsmenues:
+`ui/ContextMenu.tsx` besitzt die flachen Explorer-, Tab-, Tag- und Graphknotenmenues:
 Portal unter `document.body`, Fensterbegrenzung, Scrollen, Tastaturfokus und
 Dismiss-Verhalten. `ui/contextMenuAnchor.ts` beschreibt nur den fluechtigen
 Bildschirmanker samt Ausloeser und Fokusfallback, keine gespeicherten Daten.
@@ -186,7 +186,7 @@ koennen. Entfernte Ausloeser fallen auf Explorer bzw. Editorgruppe zurueck.
 Die globalen App-Shortcuts greifen nicht in fokussierte Kontextmenues ein.
 Der vorhandene Explorer-Eingabe-/Bestaetigungsdialog gibt beim Schliessen den
 Fokus zurueck, begrenzt die Tabfolge und loest sein Ergebnis ohne Timer auf.
-Bei Loeschbestaetigungen liegt der Standardfokus auf Abbrechen. Graph-/Editormenues
+Bei Loeschbestaetigungen liegt der Standardfokus auf Abbrechen. Editormenues
 und andere Overlays werden erst in weiteren Schnitten migriert.
 `npm run ux:baseline -- --foundations --menus` prueft zusaetzlich konkrete
 Menueaktionen, deaktivierte Eintraege, Tastatur-/Dialogfokus und sehr kleine
@@ -202,6 +202,18 @@ Die Identitaet des Dialogabschlusses steuert den Fokuseffekt, damit Eingaben
 nicht bei jedem Render ihren Fokus verlieren. `--tags` ergaenzt den UX-Runner
 um echte synthetische Tag-Saves, Abbruchschutz und den gemeinsamen Dirty-Dialog.
 Nachweise: [Tagmenues](doc/tag-menus-2026-11-10.md).
+`GraphNetworkView.tsx` uebersetzt Canvas-Knotenpositionen bzw. echte
+Clientkoordinaten in denselben Fensteranker. Der fokussierbare Canvas waehlt
+sichtbare Knoten per Pfeilen/Home/End und oeffnet deren Aktionen mit
+Shift+F10/Menuetaste. Auswahl, Hervorheben und die vorhandenen Dateiaktionen
+teilen dieselben Callbacks wie die Mausbedienung. Tagknoten besitzen weiterhin
+keine Dateiaktionen. Ein Statushinweis nennt Auswahl und Tastaturweg.
+Eine reine Auswahl baut bei unveraendertem Linkgraphen und abgeschalteten
+Shared-Tag-Kanten keine neue Filterprojektion auf; so bleiben Pan/Zoom erhalten.
+Tatsaechlich geaenderte Filter, Daten und Fokusgraphen behalten ihre vorhandene
+Neuberechnung. `--graph` prueft echte Canvas-Klicks/Pan/Zoom, Dateiaktionen und
+ausdruecklich synthetische Randkoordinaten. Die Graphprojektion und ihr
+Dateiformat bleiben unveraendert. Nachweise: [Graphmenues](doc/graph-menus-2026-11-10.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;

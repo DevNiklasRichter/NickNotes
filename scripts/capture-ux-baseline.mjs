@@ -18,9 +18,10 @@ const edgesOnly = process.argv.includes('--edges-only')
 const foundations = process.argv.includes('--foundations')
 const menus = process.argv.includes('--menus')
 const tags = process.argv.includes('--tags')
+const graph = process.argv.includes('--graph')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -93,10 +94,11 @@ async function capture(name, description) {
       }),
       palette: Object.fromEntries(['text','muted','surface','surface-strong','surface-contrast','bg-layer-1','accent-strong','editor-note-bg'].map(key => [key,getComputedStyle(document.documentElement).getPropertyValue('--'+key).trim()])),
       properties: rect('.note-properties-panel'), editor: rect('.note-body-editor .cm-scroller'),
+      graphCanvas: rect('.graph-network-canvas'),
       capture: rect('.capture-workspace-panel'),
       menus: [...document.querySelectorAll('.nn-context-menu,.explorer-context-menu,.editor-selection-context-menu')].map(node => {
         const {x, y, width, height} = node.getBoundingClientRect()
-        return {className: node.className, role: node.getAttribute('role'), x, y, width, height,
+        return {className: node.className, role: node.getAttribute('role'), label: node.getAttribute('aria-label'), x, y, width, height,
           scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, scrollTop: node.scrollTop,
           outsideViewport: x < 0 || y < 0 || x + width > innerWidth || y + height > innerHeight}
       }),
@@ -425,6 +427,152 @@ async function verifyTags() {
 }
 
 
+async function verifyGraph() {
+  await request('/tag-groups/add-group',{groupId:'ux-graph',displayName:'UX-Graph',color:'#81a1c1'})
+  await request('/tag-groups/add-tag',{groupId:'ux-graph',tagId:'thema',displayName:'UX-Graph Thema'})
+  const alphaPath = await createNote('UX-Graph Alpha','[[UX-Graph Beta]]\n\n{tag:ux-graph/thema}\n')
+  await createNote('UX-Graph Beta','[[UX-Graph Alpha]]\n')
+  await request('/graph-index/rebuild',{})
+  await page.locator('.activity-rail').getByRole('button',{name:'Graph',exact:true}).click()
+  await expect.poll(async()=>Number.parseInt(await page.locator('.graph-sidebar-metrics span').first().innerText())).toBeGreaterThan(0)
+  await page.getByRole('button',{name:'Graph oeffnen',exact:true}).click()
+  await page.locator('.graph-sidebar-search-input').fill('UX-Graph')
+  const canvas = page.getByRole('group',{name:'Wissensgraph',exact:true})
+  const menu = page.getByRole('menu',{name:/^Knotenaktionen:/})
+  // Read the installed renderer's positions only to locate genuine canvas hit targets.
+  const state = () => canvas.evaluate(host=>{
+    const cy=host._cyreg?.cy
+    return cy ? {nodes:cy.nodes().map(node=>({id:node.id(),label:node.data('label'),type:node.data('type'),point:node.renderedPosition()})),zoom:cy.zoom(),pan:cy.pan()} : null
+  })
+  await expect(canvas).toBeVisible()
+  await expect.poll(async()=>(await state())?.nodes.length).toBe(3)
+  await expect.poll(async()=>canvas.evaluate(async host=>{
+    const cy=host._cyreg?.cy, nodes=cy?.nodes()
+    if(!nodes?.length)return Infinity
+    const before=nodes.map(node=>node.renderedPosition())
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+    return Math.max(...nodes.map((node,i)=>Math.hypot(node.renderedPosition().x-before[i].x,node.renderedPosition().y-before[i].y)))
+  })).toBeLessThan(1)
+
+  await canvas.focus(); await page.keyboard.press('Home')
+  const first = (await state()).nodes[0]
+  await expect(page.locator('.graph-keyboard-hint')).toContainText(first.label)
+  await page.keyboard.press('End')
+  await expect(page.locator('.graph-keyboard-hint')).toContainText((await state()).nodes.at(-1).label)
+  await page.keyboard.press('ArrowRight'); await expect(page.locator('.graph-keyboard-hint')).toContainText(first.label)
+  await page.keyboard.press('Shift+F10')
+  await expect(menu.getByRole('menuitem').first()).toBeFocused()
+  await capture('graph-keyboard-menu-dark','Canvas node selection with Home/End/arrows and Shift+F10 opens the shared node menu')
+  await page.keyboard.press('Escape'); await expect(canvas).toBeFocused()
+  report.checks.graphKeyboardSelectionAndEscape = true
+
+  let snapshot=await state()
+  const alpha=snapshot.nodes.find(node=>node.label==='UX-Graph Alpha')
+  await canvas.click({button:'right',position:alpha.point})
+  await expect(menu).toHaveAttribute('aria-label','Knotenaktionen: UX-Graph Alpha')
+  await expect(menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true})).not.toHaveAttribute('aria-disabled','true')
+  const bounds=await canvas.boundingBox(), menuBounds=await menu.boundingBox()
+  const pointerViewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+  const expectedX=Math.max(8,Math.min(bounds.x+alpha.point.x,pointerViewport.width-menuBounds.width-8))
+  const expectedY=Math.max(8,Math.min(bounds.y+alpha.point.y,pointerViewport.height-menuBounds.height-8))
+  assert.ok(Math.abs(menuBounds.x-expectedX)<=3 && Math.abs(menuBounds.y-expectedY)<=3,'Canvas menu must use window coordinates with the shared viewport clamping')
+  report.checks.graphPointerAnchorMeasurement={clientX:bounds.x+alpha.point.x,clientY:bounds.y+alpha.point.y,menuX:menuBounds.x,menuY:menuBounds.y,canvasX:bounds.x,canvasY:bounds.y}
+  await capture('graph-pointer-menu-dark','Actual canvas right-click: node menu uses client coordinates beyond sidebar and toolbar offsets')
+  await page.keyboard.press('Escape')
+
+  // Pan and zoom through real pointer input, not renderer mutations.
+  const box=await canvas.boundingBox()
+  const beforePointer=await state()
+  await page.mouse.move(box.x+box.width-10,box.y+box.height-10)
+  await page.mouse.down(); await page.mouse.move(box.x+box.width-40,box.y+box.height-30,{steps:6}); await page.mouse.up()
+  await expect.poll(async()=>{const current=await state();return Math.hypot(beforePointer.pan.x-current.pan.x,beforePointer.pan.y-current.pan.y)}).toBeGreaterThan(10)
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.wheel(0,-80)
+  await expect.poll(async()=>Math.abs(beforePointer.zoom-(await state()).zoom)).toBeGreaterThan(.001)
+  const beforeSelect = await state()
+  await canvas.focus(); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ContextMenu')
+  await capture('graph-pan-zoom-menu-dark','Canvas node menu after genuine pan/zoom; selecting a node preserves the viewport')
+  const afterSelect=await state()
+  assert.ok(Math.abs(beforeSelect.zoom-afterSelect.zoom)<.02,'Selecting a node must not refit or reset graph zoom')
+  assert.ok(Math.hypot(beforeSelect.pan.x-afterSelect.pan.x,beforeSelect.pan.y-afterSelect.pan.y)<3,'Selecting a node must not reset pan')
+  report.checks.graphViewportMeasurement={before:{zoom:beforeSelect.zoom,pan:beforeSelect.pan},after:{zoom:afterSelect.zoom,pan:afterSelect.pan}}
+  await page.keyboard.press('Escape')
+  report.checks.graphPointerClientCoordinatesAndViewport = true
+
+  // Select the tag with genuine keyboard navigation; its file actions stay disabled.
+  snapshot=await state()
+  const tagIndex=snapshot.nodes.findIndex(node=>node.type==='tag')
+  await page.keyboard.press('Home')
+  for(let i=0;i<tagIndex;i++)await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+F10')
+  const reveal=menu.getByRole('menuitem',{name:'Im Explorer anzeigen',exact:true})
+  const open=menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true})
+  await expect(reveal).toHaveAttribute('aria-disabled','true'); await expect(open).toHaveAttribute('aria-disabled','true')
+  await open.focus(); await page.keyboard.press('Enter'); await expect(menu).toBeVisible()
+  await page.keyboard.press('Space'); await expect(menu).toBeVisible()
+  await capture('graph-tag-disabled-dark','Tag node actions: highlight remains available; file reveal/open cannot activate')
+  await page.keyboard.press('Home'); await page.keyboard.press('Enter')
+  await expect(menu).toHaveCount(0); await expect(canvas).toBeFocused()
+  report.checks.graphTagDisabledActionsAndHighlight = true
+
+  const search=page.locator('.graph-sidebar-search-input')
+  await page.keyboard.press('Shift+F10'); await search.click()
+  await expect(menu).toHaveCount(0); await expect(search).toBeFocused()
+  await search.fill('__keine_graph_treffer__')
+  await expect.poll(async()=>(await state())?.nodes.length).toBe(0)
+  await canvas.focus(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+F10')
+  await expect(menu).toHaveCount(0)
+  await expect(page.locator('.graph-keyboard-hint')).toContainText('Kein Knoten')
+  await search.fill('UX-Graph'); await expect.poll(async()=>(await state())?.nodes.length).toBe(3)
+  report.checks.graphOutsideFocusAndEmptyFilter = true
+
+  // All four window corners exercise the real Cytoscape cxttap adapter. Coordinates only are synthetic.
+  report.checks.graphMenuCorners={}
+  for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+    await canvas.evaluate((host,corner)=>{
+      const cy=host._cyreg.cy,node=cy.nodes().filter(node=>node.data('label')==='UX-Graph Alpha')[0]
+      const x=corner.endsWith('right')?innerWidth-2:2,y=corner.startsWith('bottom')?innerHeight-2:2
+      node.emit({type:'cxttap',originalEvent:new MouseEvent('contextmenu',{clientX:x,clientY:y}),renderedPosition:node.renderedPosition()})
+    },corner)
+    await expect(menu).toHaveAttribute('aria-label','Knotenaktionen: UX-Graph Alpha')
+    const viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight})), rect=await menu.boundingBox()
+    assert.ok(Math.abs(rect.x-(corner.endsWith('right')?viewport.width-rect.width-8:8))<2,'Graph client X must match the requested corner')
+    assert.ok(Math.abs(rect.y-(corner.startsWith('bottom')?viewport.height-rect.height-8:8))<2,'Graph client Y must match the requested corner')
+    await capture(`graph-edge-${corner}-dark`,`Cytoscape node handler with synthetic ${corner} client coordinates`)
+    await page.keyboard.press('Escape'); await expect(canvas).toBeFocused()
+    report.checks.graphMenuCorners[corner]=true
+  }
+  await windowSize(1280,800,1.5)
+  await canvas.focus(); await page.keyboard.press('Home'); await page.keyboard.press('Shift+F10')
+  await capture('graph-app-zoom-dark','Shared graph node menu at 150% app zoom')
+  await page.keyboard.press('Escape'); await windowSize(1280,800)
+  await theme('light')
+  await canvas.focus(); await page.keyboard.press('Shift+F10')
+  await capture('graph-menu-light','Shared graph node menu in the light theme')
+  await page.keyboard.press('Escape')
+  await theme('dark')
+
+  // Open and reveal the actual file through the existing domain actions.
+  snapshot=await state()
+  const alphaIndex=snapshot.nodes.findIndex(node=>node.label==='UX-Graph Alpha')
+  await canvas.focus(); await page.keyboard.press('Home')
+  for(let i=0;i<alphaIndex;i++)await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+F10')
+  await menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true}).click()
+  await expect(page.locator('.note-title-input').first()).toHaveValue('UX-Graph Alpha')
+  await page.locator('.tab-open').filter({hasText:'Graph'}).first().click()
+  await expect(canvas).toBeVisible(); await canvas.focus(); await page.keyboard.press('Home')
+  const afterOpen=(await state()).nodes.findIndex(node=>node.label==='UX-Graph Alpha')
+  for(let i=0;i<afterOpen;i++)await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+F10')
+  await menu.getByRole('menuitem',{name:'Im Explorer anzeigen',exact:true}).click()
+  const revealed=page.locator('.explorer-row').filter({hasText:path.basename(alphaPath,'.md')}).first()
+  await expect(revealed).toBeVisible(); await expect(revealed).toHaveClass(/selected/)
+  assert.ok(fs.existsSync(alphaPath))
+  report.checks.graphOpenAndRevealExistingFile = true
+  await openNote('Arbeitsnotiz')
+}
+
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -511,6 +659,7 @@ try {
     if (foundations) await verifyFoundations()
     if (menus) await verifyMenus()
     if (tags) await verifyTags()
+    if (graph) await verifyGraph()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

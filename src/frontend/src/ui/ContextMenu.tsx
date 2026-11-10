@@ -18,9 +18,10 @@ export function ContextMenuItem({disabled, onClick, className = '', ...props}: B
 }
 
 /** Flat action menu. Domain actions and their confirmation dialogs stay with the caller. */
-export function ContextMenu({anchor, label, onClose, children}: {
+export function ContextMenu({anchor, label, heading, onClose, children}: {
   anchor: ContextMenuAnchor
   label: string
+  heading?: string
   onClose: () => void
   children: ReactNode
 }) {
@@ -108,5 +109,7 @@ export function ContextMenu({anchor, label, onClose, children}: {
       const item = (event.target as Element).closest<HTMLButtonElement>('[role="menuitem"]')
       if (item && ref.current?.contains(item)) item.focus({preventScroll: true})
     }}
-    onClick={event => event.stopPropagation()}>{children}</div></MenuActivation.Provider>, document.body)
+    onClick={event => event.stopPropagation()}>
+    {heading ? <div className="nn-context-menu-heading" aria-hidden="true">{heading}</div> : null}
+    {children}</div></MenuActivation.Provider>, document.body)
 }
