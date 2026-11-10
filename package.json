@@ -43,6 +43,7 @@
     "smoke:commands": "node scripts/smoke-commands.mjs",
     "smoke:startup": "node scripts/smoke-startup.mjs",
     "smoke:updates": "node scripts/smoke-updates.mjs",
+    "ux:baseline": "node scripts/capture-ux-baseline.mjs",
     "benchmark:startup": "node scripts/measure-startup.mjs",
     "icons:generate": "node scripts/generate-icon-names.mjs",
     "icons:check": "node scripts/generate-icon-names.mjs --check",

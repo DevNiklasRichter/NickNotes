@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 9. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
+Stand: 10. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -153,6 +153,15 @@ Verspaetete Antworten einer alten NoteBase werden verworfen. OpenAPI/Pydantic
 erzeugen TypeScript-Transporttypen; `contracts:check` erkennt Drift. Graph,
 Einstellungen und der vollstaendige Iconkatalog werden verzoegert geladen.
 Vorhandene CSS-Tokens und Themes sind die gestalterische Grundlage.
+
+`npm run ux:baseline` erfasst die echte Entwicklungsoberflaeche mit eigenem
+Profil und synthetischer NoteBase unter `.tmp/`. Der Aufruf nutzt dieselbe
+Electron-/Playwright-Basis wie die vorhandenen Smokes und erzeugt Screenshots,
+Layoutmesswerte sowie Bediennachweise fuer Suche, Task-Save, Split und echten
+Revisionskonflikt. Recovery wird mit einem lokalen Testjournal dargestellt;
+Randkoordinatenproben sind ausdruecklich synthetisch. Das ist eine UX-Baseline,
+keine Installerabnahme oder vollstaendige Accessibilityfreigabe. Sichtpruefung,
+Nachweise und Grenzen: [UX-Baseline](doc/ux-baseline-2026-11-10.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
