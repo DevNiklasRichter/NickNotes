@@ -3115,42 +3115,6 @@
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 52%, transparent);
 }
 
-.cm-md-table-context-menu {
-  position: absolute;
-  z-index: 10000;
-  min-width: 190px;
-  display: grid;
-  gap: 0.12rem;
-  padding: 0.22rem;
-  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-contrast) 98%, transparent);
-  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
-}
-
-.cm-md-table-context-menu button {
-  width: 100%;
-  justify-content: flex-start;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  padding: 0.34rem 0.44rem;
-  color: var(--text);
-  font-size: 0.74rem;
-  text-align: left;
-}
-
-.cm-md-table-context-menu button:hover {
-  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
-  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
-  box-shadow: none;
-}
-
-.cm-md-table-context-menu button:disabled {
-  color: var(--muted);
-  opacity: 0.55;
-}
-
 .code-editor-host .cm-line.cm-md-quote-line {
   border-left: 3px solid color-mix(in srgb, var(--accent) 58%, transparent);
   border-radius: 8px;
@@ -4279,26 +4243,6 @@
   padding: 0.16rem 0.44rem;
   border-radius: 6px;
   font-size: var(--font-caption);
-}
-
-.editor-selection-context-menu {
-  position: absolute;
-  z-index: 26;
-  min-width: 172px;
-  padding: 0.24rem;
-  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-contrast) 97%, transparent);
-  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
-}
-
-.editor-selection-context-menu button {
-  width: 100%;
-  justify-content: flex-start;
-  border-radius: 6px;
-  padding: 0.34rem 0.46rem;
-  font-size: var(--font-label);
-  text-align: left;
 }
 
 .capture-input-wrap button {
@@ -6609,41 +6553,29 @@ button:disabled {
 }
 
 .hover-menu,
-.tag-context-menu,
-.cm-md-table-context-menu,
-.editor-selection-context-menu {
+.tag-context-menu {
   width: max-content;
   max-width: calc(100vw - 18px);
   overflow-x: auto;
 }
 
 .hover-menu,
-.tag-context-menu,
-.editor-selection-context-menu {
+.tag-context-menu {
   z-index: 420;
 }
 
 .hover-menu button,
-.tag-context-menu button,
-.cm-md-table-context-menu button,
-.editor-selection-context-menu button {
+.tag-context-menu button {
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
 }
 
 .hover-menu button,
-.tag-context-menu button,
-.cm-md-table-context-menu button,
-.editor-selection-context-menu button {
+.tag-context-menu button {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-}
-
-.cm-md-table-context-menu button span,
-.editor-selection-context-menu button span {
-  white-space: nowrap;
 }
 
 @media (max-width: 860px) {

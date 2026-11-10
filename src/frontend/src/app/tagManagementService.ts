@@ -179,7 +179,7 @@ export class TagManagementService {
 
   createTagFromEditorSelection = async (
     selectedText: string,
-    replaceSelection: (tagSyntax: string) => void
+    replaceSelection: (tagSyntax: string) => boolean
   ): Promise<void> => {
     const displayName = normalizeLabel(selectedText)
     if (!displayName) {
@@ -239,8 +239,8 @@ export class TagManagementService {
       const tagSyntax = `{tag:${groupId}/${tagId}}`
       const duplicateTag = existingGroup?.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
     if (duplicateTag && existingGroup) {
-      replaceSelection(tagSyntax)
-      this.writer.setMessage(`Bestehenden Tag eingefuegt: ${existingGroup.displayName} / ${duplicateTag.displayName}`)
+      const inserted = replaceSelection(tagSyntax)
+      this.writer.setMessage(inserted ? `Bestehenden Tag eingefuegt: ${existingGroup.displayName} / ${duplicateTag.displayName}` : 'Die Auswahl wurde inzwischen geändert. Der bestehende Tag wurde nicht eingefügt.')
       return
     }
 
@@ -275,8 +275,8 @@ export class TagManagementService {
       groupDisplayName = createdGroup?.displayName || groupDisplayName
       this.writer.setCustomTagGroups(normalizedGroups)
       this.writer.setFolderOpen?.(`tag-group-${groupId}`)
-      replaceSelection(tagSyntax)
-      this.writer.setMessage(`Tag angelegt und eingefuegt: ${groupDisplayName} / ${tagDisplayName}`)
+      const inserted = replaceSelection(tagSyntax)
+      this.writer.setMessage(inserted ? `Tag angelegt und eingefuegt: ${groupDisplayName} / ${tagDisplayName}` : `Tag angelegt: ${groupDisplayName} / ${tagDisplayName}. Die Auswahl wurde inzwischen geändert und nicht ersetzt.`)
       void this.context.emitMutation?.({
         kind: 'tag-mutated',
         refresh: {

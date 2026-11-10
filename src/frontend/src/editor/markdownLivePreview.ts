@@ -4,6 +4,26 @@ import { Facet, type EditorState, type Extension, StateField } from '@codemirror
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
 import { DEFAULT_TAG_GROUP_COLOR } from '../tags/tagColorPalette'
 import { buildTagLookup, findTagDefinition, type TagGroupDefinition, type TagLookup } from '../tags/tagTypes'
+import {contextMenuAnchor, isContextMenuKey} from '../ui/contextMenuAnchor'
+import {isolateHistory} from '@codemirror/commands'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
+
+export type MarkdownTableMenuRequest = {
+  anchor: ContextMenuAnchor
+  actions: Array<{label: string; run: () => void; disabled: boolean}>
+  dismiss: () => void
+}
+
+const tableWidgetLifecycle = new WeakMap<HTMLElement, {
+  widget: MarkdownTableWidget
+  close: () => void
+  flush: () => void
+  refreshContext: (context: MarkdownTableRenderContext) => void
+}>()
+
+export function flushMarkdownTableDrafts(view: EditorView): void {
+  view.dom.querySelectorAll<HTMLElement>('.cm-md-table-widget').forEach(dom => tableWidgetLifecycle.get(dom)?.flush())
+}
 
 type SelectionRange = {
   from: number
@@ -27,6 +47,7 @@ type DecorationEntry = {
 }
 
 type LivePreviewOptions = {
+  onTableContextMenu?: (request: MarkdownTableMenuRequest | null) => void
   notePath?: string
   backendUrl?: string
   linkTargets?: readonly MarkdownPreviewLinkTarget[]
@@ -410,7 +431,7 @@ function isMarkdownTableSeparator(lineText: string, expectedColumns: number): bo
 }
 
 function isPotentialMarkdownTableRow(lineText: string): boolean {
-  return lineText.includes('|') && splitMarkdownTableRow(lineText).length >= 2
+  return lineText.includes('|') && splitMarkdownTableRow(lineText).length >= 1
 }
 
 function decodeMarkdownTableCell(value: string): string {
@@ -491,13 +512,15 @@ function serializeMarkdownTable(
 }
 
 type MarkdownTableRenderContext = {
+  readOnly: boolean
+  onTableContextMenu?: (request: MarkdownTableMenuRequest | null) => void
   tagLookup: TagLookup
   linkTargets: readonly MarkdownPreviewLinkTarget[]
   onOpenWikiLink?: (target: string) => void
   onOpenTagReference?: (groupId: string, tagId: string) => void
 }
 
-type MarkdownTableOptions = Omit<MarkdownTableRenderContext, 'tagLookup'>
+type MarkdownTableOptions = Omit<MarkdownTableRenderContext, 'tagLookup' | 'readOnly'>
 
 type MarkdownTableInlineToken = {
   from: number
@@ -683,9 +706,11 @@ class MarkdownTableWidget extends WidgetType {
       other.from === this.from &&
       other.to === this.to &&
       other.context.tagLookup === this.context.tagLookup &&
+      other.context.readOnly === this.context.readOnly &&
       other.context.linkTargets === this.context.linkTargets &&
       other.context.onOpenWikiLink === this.context.onOpenWikiLink &&
       other.context.onOpenTagReference === this.context.onOpenTagReference &&
+      other.context.onTableContextMenu === this.context.onTableContextMenu &&
       JSON.stringify(other.headers) === JSON.stringify(this.headers) &&
       JSON.stringify(other.rows) === JSON.stringify(this.rows) &&
       JSON.stringify(other.columnWidths) === JSON.stringify(this.columnWidths) &&
@@ -693,16 +718,31 @@ class MarkdownTableWidget extends WidgetType {
     )
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    const lifecycle = tableWidgetLifecycle.get(dom)
+    const previous = lifecycle?.widget
+    if (!lifecycle || !previous || previous.from !== this.from || previous.to !== this.to ||
+        previous.context.readOnly !== this.context.readOnly ||
+        previous.hasColumnWidths !== this.hasColumnWidths ||
+        JSON.stringify(previous.headers) !== JSON.stringify(this.headers) ||
+        JSON.stringify(previous.rows) !== JSON.stringify(this.rows) ||
+        JSON.stringify(previous.columnWidths) !== JSON.stringify(this.columnWidths)) return false
+    lifecycle.widget = this
+    lifecycle.refreshContext(this.context)
+    return true
+  }
+
   toDOM(view: EditorView): HTMLElement {
     const wrapper = document.createElement('span')
     wrapper.className = 'cm-md-table-widget'
+    let renderContext = this.context
     wrapper.dataset.tableFrom = String(this.from)
     wrapper.dataset.tableTo = String(this.to)
 
     const table = document.createElement('table')
     const thead = document.createElement('thead')
     const headerRow = document.createElement('tr')
-    let activeContextMenu: HTMLElement | null = null
+    let menuOpen = false
     const columnCount = Math.max(1, this.headers.length)
     const draftHeaders = Array.from({ length: columnCount }, (_, index) => decodeMarkdownTableCell(this.headers[index] ?? ''))
     const draftRows = normalizeMarkdownTableRows(draftHeaders, this.rows)
@@ -733,7 +773,8 @@ class MarkdownTableWidget extends WidgetType {
 
     applyColumnWidths()
 
-    const commit = (selectionAnchor?: number) => {
+    const commit = (selectionAnchor?: number, isolate = false) => {
+      if (view.state.readOnly || !wrapper.isConnected) return
       const nextMarkdown = serializeMarkdownTable(draftHeaders, draftRows, draftColumnWidths, persistColumnWidths)
       const currentMarkdown = view.state.doc.sliceString(this.from, this.to)
       const requestedAnchor = typeof selectionAnchor === 'number' ? Math.max(0, Math.min(selectionAnchor, view.state.doc.length)) : null
@@ -763,40 +804,34 @@ class MarkdownTableWidget extends WidgetType {
         selection: safeAnchor !== null ? { anchor: safeAnchor, head: safeAnchor } : { anchor: this.from + nextMarkdown.length },
         scrollIntoView: safeAnchor !== null,
         userEvent: 'input.type',
+        annotations: isolate ? isolateHistory.of('full') : undefined,
       })
       if (safeAnchor !== null) {
         view.focus()
       }
     }
 
-    let contextMenuPointerCleanup = () => {}
-
     const closeContextMenu = () => {
-      activeContextMenu?.remove()
-      activeContextMenu = null
-      contextMenuPointerCleanup()
-      contextMenuPointerCleanup = () => {}
+      if (!menuOpen) return
+      menuOpen = false
+      renderContext.onTableContextMenu?.(null)
     }
+    tableWidgetLifecycle.set(wrapper, {widget: this, close: closeContextMenu, refreshContext: context => {
+      renderContext = context
+      tableControls.forEach(input => {
+        const display = displayByInput.get(input)
+        if (input.hidden && display) renderMarkdownTableCellContent(display, input.value, renderContext)
+      })
+    }, flush: () => {
+      const focused = wrapper.contains(document.activeElement)
+      closeContextMenu()
+      commit()
+      if (focused && !wrapper.isConnected && view.dom.isConnected) view.focus()
+    }})
 
     const commitStructureChange = () => {
       closeContextMenu()
-      commit()
-    }
-
-    const createMenuButton = (label: string, action: () => void, disabled = false): HTMLButtonElement => {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.textContent = label
-      button.disabled = disabled
-      button.addEventListener('mousedown', (event) => {
-        event.preventDefault()
-      })
-      button.addEventListener('click', () => {
-        if (!disabled) {
-          action()
-        }
-      })
-      return button
+      commit(undefined, true)
     }
 
     const insertRowAt = (index: number) => {
@@ -844,49 +879,39 @@ class MarkdownTableWidget extends WidgetType {
       commitStructureChange()
     }
 
-    const showCellContextMenu = (event: MouseEvent, rowIndex: number | null, columnIndex: number) => {
-      event.preventDefault()
+    const showCellContextMenu = (event: MouseEvent | KeyboardEvent, rowIndex: number | null, columnIndex: number) => {
+      const handler = renderContext.onTableContextMenu
+      if (!handler || !(event.currentTarget instanceof HTMLElement)) return
+      event.preventDefault(); event.stopPropagation()
       closeContextMenu()
-      const menu = document.createElement('div')
-      menu.className = 'cm-md-table-context-menu'
+      const trigger = event.currentTarget
+      const anchor = contextMenuAnchor(trigger, view.contentDOM)
       const rowTarget = rowIndex ?? 0
-      menu.appendChild(createMenuButton('Zeile darueber einfuegen', () => insertRowAt(rowTarget)))
-      menu.appendChild(createMenuButton('Zeile darunter einfuegen', () => insertRowAt(rowTarget + 1)))
-      menu.appendChild(createMenuButton('Spalte links einfuegen', () => insertColumnAt(columnIndex)))
-      menu.appendChild(createMenuButton('Spalte rechts einfuegen', () => insertColumnAt(columnIndex + 1)))
-      menu.appendChild(createMenuButton('Zeile loeschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1))
-      menu.appendChild(createMenuButton('Spalte loeschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1))
-      menu.style.left = '0px'
-      menu.style.top = '0px'
-      menu.addEventListener('mousedown', (menuEvent) => {
-        menuEvent.preventDefault()
+      const action = (label: string, run: () => void, disabled = false) => ({
+        label, disabled: disabled || view.state.readOnly,
+        run: () => {if (!view.state.readOnly && wrapper.isConnected) run()},
       })
-      document.body.appendChild(menu)
-      document.addEventListener('pointerdown', closeContextMenuFromPointer)
-      contextMenuPointerCleanup = () => {
-        document.removeEventListener('pointerdown', closeContextMenuFromPointer)
-      }
-      const menuRect = menu.getBoundingClientRect()
-      const viewportPadding = 8
-      const left = Math.min(
-        Math.max(viewportPadding, event.clientX),
-        Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding)
-      )
-      const top = Math.min(
-        Math.max(viewportPadding, event.clientY),
-        Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding)
-      )
-      menu.style.left = `${left}px`
-      menu.style.top = `${top}px`
-      activeContextMenu = menu
-    }
-
-    const closeContextMenuFromPointer = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof HTMLElement && target.closest('.cm-md-table-context-menu')) {
-        return
-      }
-      closeContextMenu()
+      menuOpen = true
+      handler({
+        anchor: event instanceof MouseEvent ? {...anchor, x: event.clientX, y: event.clientY} : anchor,
+        actions: [
+          action('Zeile darueber einfuegen', () => insertRowAt(rowTarget)),
+          action('Zeile darunter einfuegen', () => insertRowAt(rowTarget + 1)),
+          action('Spalte links einfuegen', () => insertColumnAt(columnIndex)),
+          action('Spalte rechts einfuegen', () => insertColumnAt(columnIndex + 1)),
+          action('Zeile loeschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1),
+          action('Spalte loeschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1),
+        ],
+        dismiss: () => {
+          closeContextMenu()
+          // Escape/action activation restores the cell first. Outside dismissal commits its draft.
+          const input = tableControls.find(control => !control.hidden)
+          if (input && !wrapper.contains(document.activeElement) && wrapper.isConnected) {
+            deactivateTableControl(input)
+            commit()
+          }
+        },
+      })
     }
 
     const tableControls: HTMLTextAreaElement[] = []
@@ -906,7 +931,7 @@ class MarkdownTableWidget extends WidgetType {
       if (!display) {
         return
       }
-      renderMarkdownTableCellContent(display, input.value, this.context)
+      renderMarkdownTableCellContent(display, input.value, renderContext)
       input.hidden = true
       display.hidden = false
     }
@@ -964,6 +989,11 @@ class MarkdownTableWidget extends WidgetType {
 
     const handleCellKeyDown = (event: KeyboardEvent) => {
       const input = event.currentTarget as HTMLTextAreaElement
+      if (isContextMenuKey(event)) {
+        const rowIndex = input.dataset.tableRow === 'header' ? null : Number(input.dataset.tableRow)
+        showCellContextMenu(event, rowIndex, Number(input.dataset.tableColumn))
+        return
+      }
       const controlIndex = tableControls.indexOf(input)
       if (event.key === 'Tab') {
         event.preventDefault()
@@ -1004,7 +1034,7 @@ class MarkdownTableWidget extends WidgetType {
     }
 
     const commitOnBlur = (event: FocusEvent) => {
-      if (navigatingInsideTable || suppressBlurCommit || skipNextBlurCommit) {
+      if (menuOpen || navigatingInsideTable || suppressBlurCommit || skipNextBlurCommit) {
         return
       }
       const input = event.currentTarget as HTMLTextAreaElement
@@ -1062,7 +1092,7 @@ class MarkdownTableWidget extends WidgetType {
     }
 
     const startColumnResize = (event: PointerEvent, columnIndex: number) => {
-      if (event.button !== 0) {
+      if (event.button !== 0 || view.state.readOnly) {
         return
       }
       event.preventDefault()
@@ -1138,12 +1168,16 @@ class MarkdownTableWidget extends WidgetType {
       display.className = 'cm-md-table-cell-value'
       display.tabIndex = 0
       display.setAttribute('role', 'textbox')
+      display.setAttribute('aria-readonly', String(view.state.readOnly))
       display.setAttribute('aria-label', ariaLabel)
-      renderMarkdownTableCellContent(display, value, this.context)
+      renderMarkdownTableCellContent(display, value, renderContext)
 
       const input = document.createElement('textarea')
       input.hidden = true
       input.value = value
+      input.readOnly = view.state.readOnly
+      input.dataset.tableRow = rowIndex === null ? 'header' : String(rowIndex)
+      input.dataset.tableColumn = String(columnIndex)
       input.ariaLabel = ariaLabel
       resizeTableInput(input)
 
@@ -1160,6 +1194,7 @@ class MarkdownTableWidget extends WidgetType {
         activateTableControl(tableControls.indexOf(input))
       })
       display.addEventListener('keydown', (event) => {
+        if (isContextMenuKey(event)) {showCellContextMenu(event,rowIndex,columnIndex); return}
         if (event.key !== 'Enter' && event.key !== 'F2') {
           return
         }
@@ -1203,6 +1238,7 @@ class MarkdownTableWidget extends WidgetType {
         resizeHandle.setAttribute('aria-orientation', 'vertical')
         resizeHandle.addEventListener('pointerdown', (event) => startColumnResize(event, columnIndex))
         resizeHandle.addEventListener('keydown', (event) => {
+          if (view.state.readOnly) return
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
             return
           }
@@ -1246,10 +1282,9 @@ class MarkdownTableWidget extends WidgetType {
     return wrapper
   }
 
-  destroy(): void {
-    document.querySelectorAll('.cm-md-table-context-menu').forEach((menu) => {
-      menu.remove()
-    })
+  destroy(dom: HTMLElement): void {
+    tableWidgetLifecycle.get(dom)?.close()
+    tableWidgetLifecycle.delete(dom)
   }
 
   ignoreEvent(): boolean {
@@ -1883,7 +1918,7 @@ function parseMarkdownTablesInState(state: EditorState, fromLine = 1, toLine = s
 
       if (separatorLine && isPotentialMarkdownTableRow(headerLine.text)) {
         const headers = splitMarkdownTableRow(headerLine.text)
-        if (headers.length >= 2 && isMarkdownTableSeparator(separatorLine.text, headers.length)) {
+        if (headers.length >= 1 && isMarkdownTableSeparator(separatorLine.text, headers.length)) {
           const rows: string[][] = []
           let lastLine = separatorLine
           let cursorLineNumber = separatorLine.number + 1
@@ -1928,9 +1963,11 @@ function getMarkdownTableRenderContext(state: EditorState): MarkdownTableRenderC
   const options = state.facet(markdownTableOptionsFacet)
   return {
     tagLookup: state.facet(markdownTagLookupFacet),
+    readOnly: state.readOnly,
     linkTargets: options.linkTargets,
     onOpenWikiLink: options.onOpenWikiLink,
     onOpenTagReference: options.onOpenTagReference,
+    onTableContextMenu: options.onTableContextMenu,
   }
 }
 
@@ -1964,7 +2001,7 @@ const markdownTableDecorationsField = StateField.define<DecorationSet>({
     const tagLookupChanged = transaction.startState.facet(markdownTagLookupFacet) !== transaction.state.facet(markdownTagLookupFacet)
     const tableOptionsChanged =
       transaction.startState.facet(markdownTableOptionsFacet) !== transaction.state.facet(markdownTableOptionsFacet)
-    return transaction.docChanged || tagLookupChanged || tableOptionsChanged ? buildMarkdownTableDecorations(transaction.state) : value.map(transaction.changes)
+    return transaction.docChanged || tagLookupChanged || tableOptionsChanged || transaction.startState.readOnly !== transaction.state.readOnly ? buildMarkdownTableDecorations(transaction.state) : value.map(transaction.changes)
   },
   provide: (field) => EditorView.decorations.from(field),
 })
@@ -2454,6 +2491,7 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
       linkTargets: options.linkTargets ?? EMPTY_LINK_TARGETS,
       onOpenWikiLink: options.onOpenWikiLink,
       onOpenTagReference: options.onOpenTagReference,
+      onTableContextMenu: options.onTableContextMenu,
     }),
     markdownTableDecorationsField,
     createMarkdownPreviewPlugin(options),

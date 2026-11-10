@@ -1,6 +1,10 @@
+import {ContextMenu, ContextMenuItem} from '../ui/ContextMenu'
+import {isContextMenuKey} from '../ui/contextMenuAnchor'
+import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
+import type {MarkdownTableMenuRequest} from './markdownLivePreview'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from 'react'
-import { defaultKeymap, history, historyKeymap, undo, redo, selectAll } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, undo, redo, selectAll, isolateHistory } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
@@ -30,7 +34,7 @@ import {
   type MarkdownCommandId,
 } from './editorCommands'
 import { markdownKeyBindings } from './markdownCommands'
-import { liveMarkdownPreview, markdownTagLookupExtension } from './markdownLivePreview'
+import { liveMarkdownPreview, markdownTagLookupExtension, flushMarkdownTableDrafts } from './markdownLivePreview'
 import { buildCodeMirrorTheme, markdownHighlightExtension } from './markdownTheme'
 import type { TagDefinition, TagGroupDefinition } from '../tags/tagTypes'
 
@@ -135,7 +139,7 @@ type CodeMirrorMarkdownEditorProps = {
   onSubmitShortcut?: (markdown: string) => void
   onToggleTagSuggestion?: (tagKey: string) => void
   onRejectTagSuggestion?: (tagKey: string) => void
-  onCreateTagFromSelection?: (selectedText: string, replaceSelection: (tagSyntax: string) => void) => void
+  onCreateTagFromSelection?: (selectedText: string, replaceSelection: (tagSyntax: string) => boolean) => void
   onInsertImageAsset?: (file: File) => Promise<string | null>
   onOpenWikiLink?: (target: string) => void
   onOpenTagReference?: (groupId: string, tagId: string) => void
@@ -164,12 +168,12 @@ type HoveredTagSuggestion = {
   top: number
 }
 
-type SelectionTagContextMenu = {
+type SelectionTagContextMenu = ContextMenuAnchor & {
+  view: EditorView
+  document: EditorState['doc']
   selectedText: string
   from: number
   to: number
-  left: number
-  top: number
 }
 
 type ResolvedTagSuggestion = {
@@ -707,6 +711,7 @@ export function CodeMirrorMarkdownEditor({
   const [paletteState, setPaletteState] = useState<PaletteState | null>(null)
   const [hoveredTagSuggestion, setHoveredTagSuggestion] = useState<HoveredTagSuggestion | null>(null)
   const [selectionTagContextMenu, setSelectionTagContextMenu] = useState<SelectionTagContextMenu | null>(null)
+  const [tableContextMenu, setTableContextMenu] = useState<MarkdownTableMenuRequest | null>(null)
   const paletteStateRef = useRef<PaletteState | null>(null)
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
@@ -837,6 +842,8 @@ export function CodeMirrorMarkdownEditor({
 
   const openWikiRef = useRef(onOpenWikiLink)
   const openTagRef = useRef(onOpenTagReference)
+  const openPreviewWikiLink = useCallback((target: string) => openWikiRef.current?.(target), [])
+  const openPreviewTag = useCallback((groupId: string, tagId: string) => openTagRef.current?.(groupId, tagId), [])
   useEffect(() => {openWikiRef.current=onOpenWikiLink;openTagRef.current=onOpenTagReference}, [onOpenWikiLink,onOpenTagReference])
 
   // Keep emitted snapshots until the parent acknowledges them. A slow render
@@ -855,6 +862,7 @@ export function CodeMirrorMarkdownEditor({
   }, [])
 
   const flushQueuedOnChange = useCallback((forceSnapshot = false) => {
+    if (forceSnapshot && editorRef.current) flushMarkdownTableDrafts(editorRef.current)
     if (onChangeFrameRef.current !== null) {
       window.cancelAnimationFrame(onChangeFrameRef.current)
       onChangeFrameRef.current = null
@@ -938,28 +946,6 @@ export function CodeMirrorMarkdownEditor({
     }
   }, [paletteState])
 
-  useEffect(() => {
-    if (!selectionTagContextMenu) {
-      return
-    }
-
-    const onPointerDown = (event: PointerEvent) => {
-      const shell = shellRef.current
-      if (!shell) {
-        return
-      }
-      const target = event.target as Node
-      if (shell.contains(target) && target instanceof HTMLElement && target.closest('.editor-selection-context-menu')) {
-        return
-      }
-      setSelectionTagContextMenu(null)
-    }
-
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-    }
-  }, [selectionTagContextMenu])
 
   useEffect(() => {
     const host = hostRef.current
@@ -1303,6 +1289,16 @@ export function CodeMirrorMarkdownEditor({
       return true
     }
 
+    const openSelectionMenu = (view: EditorView, x: number, y: number) => {
+      const selection = view.state.selection.main
+      const selectedText = view.state.doc.sliceString(selection.from, selection.to).trim()
+      if (!onCreateTagFromSelectionRef.current || view.state.readOnly || selection.empty || !selectedText) return false
+      setSelectionTagContextMenu({selectedText, from: selection.from, to: selection.to,
+        x, y, trigger: view.contentDOM, view, document: view.state.doc})
+      setPaletteState(null)
+      return true
+    }
+
     const instance = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -1335,11 +1331,12 @@ export function CodeMirrorMarkdownEditor({
           placeholder(initialPlaceholderTextRef.current),
           previewCompartmentRef.current.of(
             liveMarkdownPreview({
+              onTableContextMenu: setTableContextMenu,
               notePath: initialNotePathRef.current,
               backendUrl: initialBackendUrlRef.current,
               linkTargets: initialLinkTargetsRef.current,
-              onOpenWikiLink: target => openWikiRef.current?.(target),
-              onOpenTagReference: (groupId, tagId) => openTagRef.current?.(groupId, tagId),
+              onOpenWikiLink: openPreviewWikiLink,
+              onOpenTagReference: openPreviewTag,
             })
           ),
           readOnlyCompartmentRef.current.of([
@@ -1400,37 +1397,19 @@ export function CodeMirrorMarkdownEditor({
               }
               return true
             },
+            keydown: (event, view) => {
+              if (!isContextMenuKey(event)) return false
+              const coords = view.coordsAtPos(view.state.selection.main.head)
+              if (!coords || !openSelectionMenu(view, coords.left, coords.bottom)) return false
+              event.preventDefault(); event.stopPropagation(); return true
+            },
             contextmenu: (event, view) => {
-              const createFromSelection = onCreateTagFromSelectionRef.current
-              if (!createFromSelection || view.state.facet(EditorState.readOnly)) {
-                return false
-              }
+              if (event.target instanceof Element && event.target.closest('.cm-md-table-widget')) return false
               const selection = view.state.selection.main
-              if (selection.empty) {
-                setSelectionTagContextMenu(null)
-                return false
-              }
-              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-              if (typeof pos !== 'number' || pos < selection.from || pos > selection.to) {
-                setSelectionTagContextMenu(null)
-                return false
-              }
-              const selectedText = view.state.doc.sliceString(selection.from, selection.to).trim()
-              if (!selectedText) {
-                setSelectionTagContextMenu(null)
-                return false
-              }
-              event.preventDefault()
-              const shellRect = shellRef.current?.getBoundingClientRect()
-              setSelectionTagContextMenu({
-                selectedText,
-                from: selection.from,
-                to: selection.to,
-                left: shellRect ? event.clientX - shellRect.left : event.clientX,
-                top: shellRect ? event.clientY - shellRect.top : event.clientY,
-              })
-              setPaletteState(null)
-              return true
+              const pos = view.posAtCoords({x:event.clientX,y:event.clientY})
+              if (pos === null || pos < selection.from || pos > selection.to) {setSelectionTagContextMenu(null); return false}
+              if (!openSelectionMenu(view,event.clientX,event.clientY)) return false
+              event.preventDefault(); event.stopPropagation(); return true
             },
             mousemove: (event, view) => {
               const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
@@ -1493,6 +1472,7 @@ export function CodeMirrorMarkdownEditor({
           }),
           themeCompartmentRef.current.of(buildCodeMirrorTheme(initialThemeRef.current)),
           EditorView.updateListener.of((update) => {
+            if (update.docChanged) setSelectionTagContextMenu(null)
             if (update.docChanged && !syncingRef.current) {
               scheduleOnChange(update.state.doc.toString())
             }
@@ -1555,7 +1535,7 @@ export function CodeMirrorMarkdownEditor({
       instance.destroy()
       editorRef.current = null
     }
-  }, [editorApiRef, flushQueuedOnChange, scheduleOnChange])
+  }, [editorApiRef, flushQueuedOnChange, scheduleOnChange, openPreviewWikiLink, openPreviewTag])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -1612,15 +1592,16 @@ export function CodeMirrorMarkdownEditor({
     instance.dispatch({
       effects: previewCompartmentRef.current.reconfigure(
         liveMarkdownPreview({
+          onTableContextMenu: setTableContextMenu,
           notePath,
           backendUrl,
           linkTargets,
-          onOpenWikiLink,
-          onOpenTagReference,
+          onOpenWikiLink: openPreviewWikiLink,
+          onOpenTagReference: openPreviewTag,
         })
       ),
     })
-  }, [notePath, backendUrl, linkTargets, onOpenWikiLink, onOpenTagReference])
+  }, [notePath, backendUrl, linkTargets, openPreviewWikiLink, openPreviewTag])
 
   useEffect(() => {
     const instance = editorRef.current
@@ -1954,36 +1935,26 @@ export function CodeMirrorMarkdownEditor({
       <div className={`code-editor-host ${embeddedInScroll ? 'embedded-scroll' : ''}`.trim()} ref={hostRef} />
 
       {selectionTagContextMenu ? (
-        <div
-          className="editor-selection-context-menu"
-          style={{ left: `${selectionTagContextMenu.left}px`, top: `${selectionTagContextMenu.top}px` }}
-          onMouseDown={(event) => {
-            event.preventDefault()
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const menu = selectionTagContextMenu
-              onCreateTagFromSelectionRef.current?.(menu.selectedText, (tagSyntax) => {
-                const view = editorRef.current
-                if (!view) {
-                  return
-                }
-                view.dispatch({
-                  changes: { from: menu.from, to: menu.to, insert: tagSyntax },
-                  selection: { anchor: menu.from + tagSyntax.length },
-                  scrollIntoView: true,
-                  userEvent: 'input.type',
-                })
-                view.focus()
-              })
-              setSelectionTagContextMenu(null)
-            }}
-          >
-            Neuen Tag erstellen
-          </button>
-        </div>
+        <ContextMenu anchor={selectionTagContextMenu} label="Auswahlaktionen" onClose={() => setSelectionTagContextMenu(null)}>
+          <ContextMenuItem onClick={() => {
+            const menu = selectionTagContextMenu
+            if (editorRef.current !== menu.view || menu.view.state.readOnly || menu.view.state.doc !== menu.document) return
+            onCreateTagFromSelectionRef.current?.(menu.selectedText, tagSyntax => {
+              const view = editorRef.current
+              if (view !== menu.view || view.state.readOnly || view.state.doc !== menu.document) return false
+              view.dispatch({changes:{from:menu.from,to:menu.to,insert:tagSyntax},
+                selection:{anchor:menu.from+tagSyntax.length},scrollIntoView:true,userEvent:'input.type',annotations:isolateHistory.of('full')})
+              view.focus()
+              return true
+            })
+          }}>Neuen Tag erstellen</ContextMenuItem>
+        </ContextMenu>
+      ) : null}
+
+      {tableContextMenu ? (
+        <ContextMenu anchor={tableContextMenu.anchor} label="Tabellenaktionen" onClose={() => tableContextMenu.dismiss()}>
+          {tableContextMenu.actions.map(action => <ContextMenuItem key={action.label} disabled={action.disabled} onClick={action.run}>{action.label}</ContextMenuItem>)}
+        </ContextMenu>
       ) : null}
 
       {hoveredSuggestion ? (

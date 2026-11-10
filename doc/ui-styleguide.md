@@ -45,7 +45,7 @@ Benutzerprofile nutzen weiterhin die bestehenden Farbfelder in
 `.system/ui_settings.json`; keine neuen Profilfelder oder Migrationen.
 Der globale Fokusstil ist die Grundlage. Komponenten dürfen ihn nur durch einen
 mindestens gleich gut sichtbaren Fokus ersetzen. Menüfokus und vollständige
-Tastaturführung werden in POT-03 konsolidiert; Explorer, Tabs, Tags und Graphknoten verwenden
+Tastaturführung werden in POT-03 konsolidiert; Explorer, Tabs, Tags, Graphknoten und Editoraktionen verwenden
 bereits `ui/ContextMenu.tsx` mit benannten Menüs und sichtbarem Eintragsfokus.
 
 ## Arbeitsfläche und CSS-Verantwortung
@@ -77,7 +77,7 @@ Zoom oder Fenstergröße schreiben keine Layoutpräferenzen zurück.
 - **Tooltip:** knappe Erläuterung bzw. Shortcut; kein notwendiger Bedienweg
   und kein Ersatz für den zugänglichen Namen eines Iconbuttons.
 
-Für Explorer-, Tab-, Tag- und Graphknotenaktionen gelten diese Regeln über `ContextMenu` und
+Für Explorer-, Tab-, Tag-, Graphknoten- und Editoraktionen gelten diese Regeln über `ContextMenu` und
 `ContextMenuItem`: benanntes Menü im Body-Portal, Pfeile/Home/End, Enter/Leertaste,
 Escape mit Fokus-Rückgabe, Tab-Ausstieg und Öffnen mit Shift+F10 bzw. Menütaste.
 Deaktivierte Einträge sind mit `aria-disabled` erkennbar, per Pfeiltaste
@@ -93,8 +93,16 @@ Der Graphcanvas ist ein fokussierbarer Bereich: Pfeile/Home/End wählen sichtbar
 Knoten, Shift+F10/Menütaste öffnen deren Kontextmenü. Der Status benennt die
 Auswahl und den Tastaturweg. Der Menüanker verwendet Fensterkoordinaten;
 Canvas-relative Positionen müssen zuerst übersetzt werden.
-Editor-Menüs sowie weitere Dialoge und Tooltips erfüllen die Regeln
-noch nicht vollständig und folgen in weiteren POT-03-Schnitten.
+Im Editor bleibt die Textauswahl beim Menüöffnen erhalten. Shift+F10/Menütaste
+gehören dort dem fokussierten Editor bzw. Tabellenfeld. Escape führt dorthin
+zurück; Menüfokus darf einen Tabellenentwurf nicht vorzeitig abschließen.
+Tabellenstrukturaktionen sind einzeln rückgängig machbar; die letzte Spalte
+und letzte Datenzeile bleiben geschützt. Schreibgeschützte Tabellen zeigen
+deaktivierte Aktionen. Native Textbearbeitung in Eingabefeldern bleibt erhalten.
+Sortierauswahl, NoteBase-Aktionen, Tagvorschläge sowie weitere Dialoge und
+Tooltips folgen in weiteren POT-03-Schnitten.
+
+Nachweise für Auswahl-/Tabellenaktionen: [Editormenüs](editor-menus-2026-11-10.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

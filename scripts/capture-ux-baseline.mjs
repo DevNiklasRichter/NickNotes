@@ -19,9 +19,10 @@ const foundations = process.argv.includes('--foundations')
 const menus = process.argv.includes('--menus')
 const tags = process.argv.includes('--tags')
 const graph = process.argv.includes('--graph')
+const editorMenus = process.argv.includes('--editor-menus')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -573,6 +574,143 @@ async function verifyGraph() {
 }
 
 
+async function verifyEditorMenus() {
+  await request('/tag-groups/add-group',{groupId:'ux-editor',displayName:'Editorprüfung',color:'#81a1c1'})
+  const editorPath=await createNote('Editor Menüprobe','Auswahlwort\n\n| Kopf A | Kopf B |\n| --- | --- |\n| A | B |\n| C | D |\n\nNach der Tabelle.\n')
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await openNote('Editor Menüprobe')
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  const selectionMenu=page.getByRole('menu',{name:'Auswahlaktionen',exact:true})
+  const tableMenu=page.getByRole('menu',{name:'Tabellenaktionen',exact:true})
+  const dialog=page.locator('.tag-action-modal')
+  const read=()=>editor.evaluate(node=>{const view=node.cmTile.root.view;return {doc:view.state.doc.toString(),from:view.state.selection.main.from,to:view.state.selection.main.to,head:view.state.selection.main.head}})
+  await editor.click(); await page.keyboard.press('Control+Home'); await page.keyboard.press('Shift+End')
+  const selected=await read()
+  assert.equal(selected.doc.slice(selected.from,selected.to),'Auswahlwort')
+  await page.keyboard.press('Shift+F10'); await expect(selectionMenu.getByRole('menuitem')).toBeFocused()
+  assert.deepEqual(await read(),selected)
+  await capture('editor-selection-keyboard-dark','Selection menu opens from CodeMirror without changing the selected range or document')
+  await page.keyboard.press('Escape'); await expect(editor).toBeFocused(); assert.deepEqual(await read(),selected)
+  await page.keyboard.type('Probe'); assert.ok((await read()).doc.startsWith('Probe'))
+  await page.keyboard.press('Control+z'); await expect.poll(read).toEqual(selected)
+  report.checks.editorSelectionEscapeAndTypingPreserved=true
+
+  await page.keyboard.press('ContextMenu'); await expect(selectionMenu.getByRole('menuitem')).toBeFocused(); await page.keyboard.press('Enter')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0); await expect(editor).toBeFocused(); assert.deepEqual(await read(),selected)
+  await editor.locator('.cm-line').first().click({button:'right',position:{x:20,y:10}})
+  await expect(selectionMenu).toBeVisible(); await selectionMenu.getByRole('menuitem').click()
+  await dialog.locator('#tag-group-select').selectOption('ux-editor')
+  await dialog.locator('#tag-id').fill('auswahl-test')
+  await dialog.locator('#tag-display-name').fill('Auswahltest')
+  await capture('editor-selection-tag-dialog-dark','Existing tag dialog receives the preserved selection; submission creates and inserts the tag')
+  const tagSaved=page.waitForResponse(res=>res.url().endsWith('/tag-groups/add-tag')&&res.request().method()==='POST')
+  await page.keyboard.press('Enter'); assert.equal((await tagSaved).status(),200)
+  await expect(dialog).toHaveCount(0)
+  await expect.poll(async()=>(await read()).doc.startsWith('{tag:ux-editor/auswahl-test}')).toBe(true)
+  await page.keyboard.press('Control+z'); await expect.poll(async()=>(await read()).doc).toBe(selected.doc)
+  await page.keyboard.press('Control+y'); await expect.poll(async()=>(await read()).doc).toContain('{tag:ux-editor/auswahl-test}')
+  report.checks.editorTagReplacementAndUndoRedo=true
+
+  const table=editor.locator('.cm-md-table-widget').first()
+  await table.locator('.cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
+  await expect(tableMenu.getByRole('menuitem',{name:'Zeile loeschen',exact:true})).toHaveAttribute('aria-disabled','true')
+  const beforeHeader=await read()
+  await tableMenu.getByRole('menuitem',{name:'Zeile loeschen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await expect(tableMenu).toBeVisible(); assert.deepEqual(await read(),beforeHeader)
+  await page.keyboard.press('Escape')
+  await table.locator('tbody .cm-md-table-cell-value').first().click()
+  const input=table.locator('textarea:not([hidden])')
+  await input.fill('Zellentext bleibt erhalten')
+  const beforeCellMenu=await read()
+  const inputSelection=await input.evaluate(node=>({start:node.selectionStart,end:node.selectionEnd}))
+  await page.keyboard.press('Shift+F10')
+  await capture('editor-table-draft-menu-dark','Table menu keeps an uncommitted cell draft; its blur does not replace the widget')
+  assert.deepEqual(await read(),beforeCellMenu)
+  await page.keyboard.press('Escape'); await expect(input).toBeFocused(); await expect(input).toHaveValue('Zellentext bleibt erhalten')
+  assert.deepEqual(await input.evaluate(node=>({start:node.selectionStart,end:node.selectionEnd})),inputSelection)
+  const saved=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s'); assert.equal((await saved).status(),200)
+  assert.ok(fs.readFileSync(editorPath,'utf8').includes('Zellentext bleibt erhalten'))
+  report.checks.editorTableDraftEscapeAndSave200=true
+
+  await table.locator('tbody .cm-md-table-cell-value').first().click()
+  await input.fill('Zellentext bleibt erhalten + Außenklick')
+  await page.keyboard.press('Shift+F10'); await expect(tableMenu.getByRole('menuitem').first()).toBeFocused()
+  const outside=page.locator('.explorer-search-input').first()
+  await outside.click(); await expect(tableMenu).toHaveCount(0); await expect(outside).toBeFocused()
+  assert.ok((await read()).doc.includes('Zellentext bleibt erhalten + Außenklick'))
+  const outsideSave=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s'); assert.equal((await outsideSave).status(),200)
+  assert.ok(fs.readFileSync(editorPath,'utf8').includes('Zellentext bleibt erhalten + Außenklick'))
+  report.checks.editorTableOutsideDismissPreservesDraft=true
+
+  await table.locator('tbody .cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
+  await tableMenu.getByRole('menuitem',{name:'Zeile darunter einfuegen',exact:true}).click()
+  await expect(table.locator('tbody tr')).toHaveCount(3); await expect(editor).toBeFocused()
+  await page.keyboard.press('Control+z'); await expect(table.locator('tbody tr')).toHaveCount(2)
+  assert.ok((await read()).doc.includes('Zellentext bleibt erhalten'))
+  await page.keyboard.press('Control+y'); await expect(table.locator('tbody tr')).toHaveCount(3)
+  await table.locator('tbody .cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
+  await tableMenu.getByRole('menuitem',{name:'Spalte loeschen',exact:true}).click()
+  await expect(table.locator('thead th')).toHaveCount(1)
+  await table.locator('.cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
+  await expect(tableMenu.getByRole('menuitem',{name:'Spalte loeschen',exact:true})).toHaveAttribute('aria-disabled','true')
+  await page.keyboard.press('Escape'); await editor.focus(); await page.keyboard.press('Control+z')
+  await expect(table.locator('thead th')).toHaveCount(2); await expect(table.locator('tbody tr')).toHaveCount(3)
+  await page.keyboard.press('Control+z'); await expect(table.locator('tbody tr')).toHaveCount(2)
+  report.checks.editorTableStructureIndependentUndoRedo=true
+
+  report.checks.editorTableCorners={}
+  for(const corner of ['top-left','top-right','bottom-left','bottom-right']) {
+    await table.locator('tbody .cm-md-table-cell-value').first().evaluate((node,corner)=>{
+      node.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:corner.endsWith('right')?innerWidth-2:2,clientY:corner.startsWith('bottom')?innerHeight-2:2}))
+    },corner)
+    await expect(tableMenu).toBeVisible()
+    const viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight})), rect=await tableMenu.boundingBox()
+    assert.ok(Math.abs(rect.x-(corner.endsWith('right')?viewport.width-rect.width-8:8))<2)
+    assert.ok(Math.abs(rect.y-(corner.startsWith('bottom')?viewport.height-rect.height-8:8))<2)
+    await capture(`editor-table-edge-${corner}-dark`,`Actual table-cell handler with explicitly synthetic ${corner} pointer coordinates`)
+    await page.keyboard.press('Escape')
+    report.checks.editorTableCorners[corner]=true
+  }
+  await windowSize(1280,800,1.5)
+  await table.locator('tbody .cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
+  await capture('editor-table-zoom-dark','Shared table menu at 150% app zoom')
+  await page.keyboard.press('Escape'); await windowSize(1280,800)
+  await theme('light')
+  await table.locator('tbody .cm-md-table-cell-value').first().click({button:'right'})
+  await capture('editor-table-menu-light','Shared table menu in the light theme')
+  await page.keyboard.press('Escape'); await theme('dark')
+
+  const fixtureUrl='/@fs/'+path.join(root,'scripts/fixtures/editor-menu.tsx').replaceAll('\\','/')
+  const dispose=await page.evaluateHandle(async url=>(await import(url)).mountEditorMenuFixture(),fixtureUrl)
+  try {
+    const fixture=page.getByTestId('editor-menu-fixture')
+    const cell=fixture.locator('.cm-md-table-cell-value').first()
+    await cell.focus(); await page.keyboard.press('Shift+F10')
+    await expect(tableMenu.getByRole('menuitem')).toHaveCount(6)
+    for(const item of await tableMenu.getByRole('menuitem').all())await expect(item).toHaveAttribute('aria-disabled','true')
+    await page.keyboard.press('Enter'); await expect(tableMenu).toBeVisible()
+    await capture('editor-table-readonly-fixture','Standalone real editor component: read-only table actions stay disabled')
+    // Programmatic prop change while the menu owns focus verifies widget destruction cleanup.
+    await fixture.getByRole('button',{name:'Schreibschutz wechseln',exact:true}).evaluate(button=>button.click())
+    await expect(tableMenu).toHaveCount(0)
+    const fixtureEditor=fixture.locator('.cm-content')
+    await fixtureEditor.focus(); await page.keyboard.press('Control+Home'); await page.keyboard.press('Shift+End')
+    await page.keyboard.press('Shift+F10'); await selectionMenu.getByRole('menuitem').click()
+    await fixture.getByRole('button',{name:'Dokument extern ersetzen',exact:true}).click()
+    await expect(fixtureEditor).toContainText('Extern ersetzter Text.')
+    await fixture.getByRole('button',{name:'Verspätete Auswahl übernehmen',exact:true}).click()
+    await expect(fixture.getByTestId('late-selection-result')).toHaveText('false')
+    await expect(fixtureEditor).not.toContainText('{tag:test/alt}')
+    report.checks.editorReadonlyAndStaleReplacementProtected=true
+  } finally {await dispose.evaluate(dispose=>dispose()); await dispose.dispose()}
+  await openNote('Arbeitsnotiz')
+}
+
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -660,6 +798,7 @@ try {
     if (menus) await verifyMenus()
     if (tags) await verifyTags()
     if (graph) await verifyGraph()
+    if (editorMenus) await verifyEditorMenus()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
@@ -715,7 +854,7 @@ try {
     await page.keyboard.press('Control+Home')
     await page.keyboard.press('Shift+End')
     await editor.locator('.cm-line').first().click({button: 'right', position: {x: 60, y: 12}})
-    await expect(page.locator('.editor-selection-context-menu')).toBeVisible()
+    await expect(page.getByRole('menu',{name:'Auswahlaktionen',exact:true})).toBeVisible()
     await capture('editor-menu-dark', 'Editor context menu, dark, 1280×800')
     await page.keyboard.press('Escape')
 
@@ -775,6 +914,14 @@ try {
 } catch (error) {
   report.completed = false
   report.failure = String(error)
+  if (page) report.failureUi = await page.evaluate(() => ({
+    focus: {tag:document.activeElement?.tagName,label:document.activeElement?.getAttribute('aria-label')},
+    editors:[...document.querySelectorAll('.note-body-editor .cm-content')].map(node=>{
+      const view=node.cmTile?.root?.view
+      return view ? {doc:view.state.doc.toString(),selection:{from:view.state.selection.main.from,to:view.state.selection.main.to},readOnly:view.state.readOnly} : null
+    }),
+    menus:[...document.querySelectorAll('[role=menu]')].map(node=>node.getAttribute('aria-label')),
+  })).catch(()=>null)
   if (page) await page.screenshot({path: path.join(scratch, 'failure.png')}).catch(() => {})
   throw error
 } finally {
