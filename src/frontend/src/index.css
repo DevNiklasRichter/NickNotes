@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --text: #1f2328;
-  --muted: #6a727f;
+  --muted: #626b78;
   --surface: #f3f4f6;
   --editor-note-bg: #f6f7f9;
   --surface-strong: #eceef2;
@@ -41,33 +41,13 @@
   --radius-2xl: 10px;
   --radius-3xl: 12px;
   --radius-4xl: 16px;
-  --font-xs: 0.68rem;
-  --font-sm: 0.72rem;
-  --font-md: 0.74rem;
-  --font-lg: 0.78rem;
-  --font-xl: 0.8rem;
-  --font-2xl: 0.82rem;
-  --font-3xl: 0.86rem;
-  --font-4xl: 0.88rem;
-  --font-5xl: 0.92rem;
-  --font-6xl: 0.96rem;
-  --font-xl2: 0.98rem;
-  --spacing-xs: 0.2rem;
-  --spacing-sm: 0.25rem;
-  --spacing-md: 0.35rem;
   --layout-titlebar-height: 2.125rem;
   --layout-titlebar-pad-x: 0.62rem;
   --layout-titlebar-logo-size: 1.25rem;
   --layout-panel-gap: 0.35rem;
   --layout-panel-padding: 0.35rem;
-  --layout-panel-corner-radius: 16px;
-  --layout-panel-separator-gap: 0.5rem;
-  --layout-rail-width: 2.75rem;
-  --layout-rail-button-size: 1.875rem;
-  --layout-sidebar-width-min: 15rem;
-  --layout-sidebar-width-pref: 24vw;
-  --layout-sidebar-width-max: 22.5rem;
-  --layout-shell-pad: 0.45rem;
+  --layout-rail-width: 8rem;
+  --layout-rail-button-size: 2.25rem;
   --layout-launch-pad: 1.5rem;
   --layout-launch-card-padding: 1.2rem;
   --layout-launch-progress-track-height: 0.625rem;
@@ -75,11 +55,7 @@
   --layout-launch-progress-main-size: 0.8rem;
   --layout-launch-progress-gap: 0.4rem;
   --layout-launch-notify-pad-y: 0.55rem;
-  --layout-workbench-shell-2px: 2px;
-  --layout-workbench-shell-gap: 0.35rem;
-  --layout-activity-icon-size: 0.76rem;
   --layout-sidebar-inner-pad: 0.45rem;
-  --layout-sidebar-inner-gap: 0.42rem;
   --layout-note-sidebar-gap: 0.42rem;
   --layout-tree-gap: 0.4rem;
   --layout-tree-inline-gap: 0.35rem;
@@ -91,11 +67,11 @@
   --explorer-toolbar-min-height: 1.75rem;
   --explorer-section-header-pad-y: 0.32rem;
   --explorer-section-header-pad-x: 0.5rem;
-  --explorer-section-title-size: 0.72rem;
+  --explorer-section-title-size: var(--font-caption);
   --explorer-row-height: 1.75rem;
   --explorer-row-height-compact: 1.5rem;
 
-  font-family: 'Aptos', 'IBM Plex Sans', 'Segoe UI', 'Helvetica Neue', sans-serif;
+  font-family: var(--font-family-ui);
   line-height: 1.4;
   font-weight: 400;
   color: var(--text);
@@ -103,6 +79,21 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --font-family-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-caption: .75rem;
+  --font-label: .8125rem;
+  --font-ui: .875rem;
+  --font-section: 1rem;
+  --font-editor: .96875rem;
+  --font-note-title: clamp(2.08rem, 1.9rem + 0.58vw, 2.54rem);
+  --font-note-title-split: clamp(1.72rem, 1.58rem + 0.34vw, 1.96rem);
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --focus-ring: var(--accent-strong);
+  font-size: 16px;
 }
 
 :root[data-theme='dark'] {
@@ -139,65 +130,6 @@
   --graph-task: #d4ae61;
   --graph-tag: #c98989;
   --shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
-  --shadow-dark: 0 16px 34px rgba(0, 0, 0, 0.32);
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 7px;
-  --radius-xl: 8px;
-  --radius-2xl: 10px;
-  --radius-3xl: 12px;
-  --radius-4xl: 16px;
-  --font-xs: 0.68rem;
-  --font-sm: 0.72rem;
-  --font-md: 0.74rem;
-  --font-lg: 0.78rem;
-  --font-xl: 0.8rem;
-  --font-2xl: 0.82rem;
-  --font-3xl: 0.86rem;
-  --font-4xl: 0.88rem;
-  --font-5xl: 0.92rem;
-  --font-6xl: 0.96rem;
-  --font-xl2: 0.98rem;
-  --layout-titlebar-height: 2.125rem;
-  --layout-titlebar-pad-x: 0.62rem;
-  --layout-titlebar-logo-size: 1.25rem;
-  --layout-panel-gap: 0.35rem;
-  --layout-panel-padding: 0.35rem;
-  --layout-panel-corner-radius: 16px;
-  --layout-panel-separator-gap: 0.5rem;
-  --layout-rail-width: 2.75rem;
-  --layout-rail-button-size: 1.875rem;
-  --layout-sidebar-width-min: 15rem;
-  --layout-sidebar-width-pref: 24vw;
-  --layout-sidebar-width-max: 22.5rem;
-  --layout-shell-pad: 0.45rem;
-  --layout-launch-pad: 1.5rem;
-  --layout-launch-card-padding: 1.2rem;
-  --layout-launch-progress-track-height: 0.625rem;
-  --layout-launch-progress-strong-size: 0.88rem;
-  --layout-launch-progress-main-size: 0.8rem;
-  --layout-launch-progress-gap: 0.4rem;
-  --layout-launch-notify-pad-y: 0.55rem;
-  --layout-workbench-shell-gap: 0.35rem;
-  --layout-workbench-shell-2px: 2px;
-  --layout-activity-icon-size: 0.76rem;
-  --layout-sidebar-inner-pad: 0.45rem;
-  --layout-sidebar-inner-gap: 0.42rem;
-  --layout-note-sidebar-gap: 0.42rem;
-  --layout-tree-gap: 0.4rem;
-  --layout-tree-inline-gap: 0.35rem;
-  --layout-tree-action-size: 1.25rem;
-  --layout-row-inline-action-size: 1.25rem;
-  --explorer-toolbar-gap: 0.42rem;
-  --explorer-shell-gap: 0.35rem;
-  --explorer-shell-pad: 0.45rem;
-  --explorer-toolbar-min-height: 1.75rem;
-  --explorer-section-header-pad-y: 0.32rem;
-  --explorer-section-header-pad-x: 0.5rem;
-  --explorer-section-title-size: 0.72rem;
-  --explorer-row-height: 1.75rem;
-  --explorer-row-height-compact: 1.5rem;
 }
 
 * {
@@ -210,6 +142,9 @@ body {
   overflow: hidden;
   color: var(--text);
   background: var(--bg-layer-1);
+  font-family: var(--font-family-ui);
+  font-size: var(--font-ui);
+  line-height: 1.4;
 }
 
 body::before {
@@ -224,5 +159,5 @@ body::before {
 
 h1,
 h2 {
-  font-family: 'Aptos Display', 'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }

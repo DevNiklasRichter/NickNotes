@@ -1,0 +1,173 @@
+/* Shell geometry has one owner. Resizing never changes persisted panel preferences. */
+.workbench-shell {
+  position: relative;
+  height: 100%;
+  max-height: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: var(--layout-rail-width) minmax(0, min(var(--workspace-sidebar-width, 300px), 32vw)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  font-size: var(--font-ui);
+}
+
+.activity-rail {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--bg-layer-1);
+}
+
+.rail-header {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-header-title {
+  color: var(--muted);
+  font-size: var(--font-caption);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rail-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.activity-rail button {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: var(--layout-rail-button-size);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--font-label);
+  font-weight: 500;
+}
+
+.activity-rail button:hover {
+  background: var(--surface-contrast);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.activity-rail button.active {
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface-contrast));
+  border-color: color-mix(in srgb, var(--line) 65%, var(--accent));
+  color: var(--text);
+}
+
+.rail-glyph {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rail-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-spacer { flex: 1; }
+
+.left-sidebar {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  z-index: 2;
+  border-right: 1px solid var(--line);
+  background: var(--surface-contrast);
+}
+
+.sidebar-content {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sidebar-content h3,
+.sidebar-content h4 { margin: 0; }
+
+.sidebar-content h3 {
+  color: var(--muted);
+  font-size: var(--font-caption);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.main-region {
+  grid-column: 3;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.status-bar {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+
+.status-bar-left { flex: 1 1 16rem; }
+.status-bar-left .status-item { white-space: normal; overflow-wrap: anywhere; }
+.status-bar-right { flex-wrap: wrap; }
+
+/* At zoomed/narrow widths keep the same three areas, using a vertical icon rail. */
+@media (max-width: 1050px) {
+  .workbench-shell { --layout-rail-width: 3.5rem; }
+  .rail-header,
+  .rail-label { display: none; }
+  .activity-rail button { justify-content: center; padding: var(--space-1); }
+}

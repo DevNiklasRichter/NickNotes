@@ -2985,10 +2985,10 @@ function App() {
       {commandDialogs}
       <div className="window-content">
         <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
-        <div className="workbench-shell">
+        <div className="workbench-shell" style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
       <ActivityRail sidebarView={sidebarView} onOpenSidebarView={openSidebarView} onOpenSettings={openSettingsDialog}/>
 
-      {sidebarOpen ? (<aside className="left-sidebar" style={{ width: `${explorerWidth}px` }}>
+      {sidebarOpen ? (<aside className="left-sidebar">
           <WorkbenchSidebarContent sidebarView={sidebarView} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
                 void renameNoteBase();
             }} onDeleteNoteBase={() => {

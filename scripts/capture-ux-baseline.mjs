@@ -15,9 +15,10 @@ const scratch = fs.mkdtempSync(path.join(root, '.tmp', 'ux-baseline-'))
 const expect = baseExpect.configure({timeout: 20000})
 const review = process.argv.includes('--review')
 const edgesOnly = process.argv.includes('--edges-only')
+const foundations = process.argv.includes('--foundations')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -83,7 +84,12 @@ async function capture(name, description) {
       theme: document.documentElement.dataset.theme,
       documentOverflowX: document.documentElement.scrollWidth > innerWidth,
       focus: {tag: document.activeElement?.tagName, label: document.activeElement?.getAttribute('aria-label'), className: document.activeElement?.className},
-      navigation: rect('.activity-rail'), sidebar: rect('.left-sidebar'),
+      navigation: rect('.activity-rail'), sidebar: rect('.left-sidebar'), main: rect('.main-region'),
+      railButtons: [...document.querySelectorAll('.activity-rail button')].map(node => {
+        const {x,y,width,height} = node.getBoundingClientRect()
+        return {x,y,width,height}
+      }),
+      palette: Object.fromEntries(['text','muted','surface','surface-strong','surface-contrast','bg-layer-1','accent-strong','editor-note-bg'].map(key => [key,getComputedStyle(document.documentElement).getPropertyValue('--'+key).trim()])),
       properties: rect('.note-properties-panel'), editor: rect('.note-body-editor .cm-scroller'),
       capture: rect('.capture-workspace-panel'),
       menus: [...document.querySelectorAll('.explorer-context-menu,.editor-tab-context-menu,.editor-selection-context-menu')].map(node => {
@@ -93,7 +99,20 @@ async function capture(name, description) {
       }),
     }
   })
-  await page.screenshot({path: path.join(scratch, file), animations: 'disabled'})
+  if (metrics.main) {
+    assert.ok(Math.abs(metrics.main.x + metrics.main.width - metrics.viewport.width) <= 2, 'Workspace leaves unused columns on its right')
+    if (metrics.sidebar) assert.ok(metrics.sidebar.width > 0, 'An enabled sidebar must remain visible at zoomed widths')
+    for (let i=1;i<metrics.railButtons.length;i++) assert.ok(metrics.railButtons[i].y >= metrics.railButtons[i-1].y + metrics.railButtons[i-1].height, 'Navigation buttons overlap')
+  }
+  // Capture the compositor surface. CDP screenshots in Electron can crop a
+  // zoomed window to CSS viewport dimensions instead of its full pixel surface.
+  const pixels = await app.evaluate(async ({BrowserWindow}) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    const capture = await win.webContents.capturePage()
+    return {png: capture.toPNG().toString('base64'), size: capture.getSize()}
+  })
+  fs.writeFileSync(path.join(scratch, file), Buffer.from(pixels.png, 'base64'))
+  metrics.screenshotSize = pixels.size
   report.screenshots.push({file, description, ...metrics})
   writeReport()
   console.log(JSON.stringify({screenshot: path.join(scratch, file), description, viewport: metrics.viewport, theme: metrics.theme, menus: metrics.menus}))
@@ -127,6 +146,46 @@ async function createNote(title, body, noteType = 'note') {
   const document = await request('/notes/content?path=' + encodeURIComponent(note.notePath))
   await request('/notes/save', {path: note.notePath, content: document.content + '\n' + body, expectedRevision: document.revision})
   return note.notePath
+}
+
+async function verifyFoundations() {
+  const editor = page.locator('.note-body-editor .cm-content').first()
+  const marker = 'Layoutwechsel behält diesen Entwurf.'
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n'+marker)
+  await windowSize(1280,800,1.5)
+  await capture('note-zoom-150-dark','150% app zoom; all three workspace areas remain reachable')
+  await page.keyboard.press('Control+Shift+e')
+  await expect(page.locator('.left-sidebar')).toHaveCount(0)
+  await capture('note-sidebar-hidden-dark','150% app zoom with sidebar explicitly hidden; main fills remaining width')
+  await page.keyboard.press('Control+Shift+e')
+  await expect(page.locator('.left-sidebar')).toBeVisible()
+  await windowSize(1280,800)
+  await expect(editor).toContainText(marker)
+  const response = page.waitForResponse(res=>res.url().endsWith('/notes/save') && res.request().method()==='POST')
+  await page.keyboard.press('Control+s')
+  assert.equal((await response).status(),200)
+  assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  report.checks.resizeAndSidebarPreserveDraft = true
+
+  await page.locator('.activity-rail').getByRole('button',{name:'Einstellungen',exact:true}).click()
+  await page.getByRole('button',{name:'Darstellung',exact:true}).click()
+  await page.getByRole('button',{name:'Neues Theme',exact:true}).click()
+  for (const [label,value] of [['Text','#dcece2'],['Editor-Hintergrund','#1b2721']]) {
+    const field = page.locator('.theme-token-row').filter({has:page.getByText(label,{exact:true})}).locator('input:not([type="color"])')
+    await field.fill(value); await field.press('Tab')
+  }
+  const save = page.getByRole('dialog').getByRole('button',{name:'Speichern',exact:true})
+  await save.click(); await expect(save).toBeDisabled()
+  await page.getByRole('button',{name:'Einstellungen schliessen'}).click()
+  await capture('note-custom-profile','Custom profile with independent text/editor colours')
+  const stored = JSON.stringify(await request('/ui-settings'))
+  assert.ok(stored.includes('#dcece2') && stored.includes('#1b2721'))
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.style.getPropertyValue('--text'))).toBe('#dcece2')
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.style.getPropertyValue('--editor-note-bg'))).toBe('#1b2721')
+  report.checks.customProfileSurvivesReload = true
+  await openNote('Arbeitsnotiz')
+  await theme('dark')
 }
 
 async function captureTabMenuEdges() {
@@ -214,6 +273,7 @@ try {
     await capture('note-zoom-dark', 'Same note, dark, Electron zoom 125%, content size 1280×800')
     await windowSize(1280, 800)
 
+    if (foundations) await verifyFoundations()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

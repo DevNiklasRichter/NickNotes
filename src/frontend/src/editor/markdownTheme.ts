@@ -51,8 +51,8 @@ export function buildCodeMirrorTheme(mode: 'light' | 'dark'): Extension {
       },
       '.cm-scroller': {
         overflow: 'auto',
-        fontFamily: "'Aptos', 'IBM Plex Sans', 'Segoe UI', sans-serif",
-        fontSize: '15.5px',
+        fontFamily: 'var(--font-family-ui)',
+        fontSize: 'var(--font-editor)',
         lineHeight: '1.7',
         fontFeatureSettings: "'liga' 1, 'calt' 1",
       },

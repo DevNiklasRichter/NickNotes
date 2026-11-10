@@ -153,6 +153,14 @@ Verspaetete Antworten einer alten NoteBase werden verworfen. OpenAPI/Pydantic
 erzeugen TypeScript-Transporttypen; `contracts:check` erkennt Drift. Graph,
 Einstellungen und der vollstaendige Iconkatalog werden verzoegert geladen.
 Vorhandene CSS-Tokens und Themes sind die gestalterische Grundlage.
+`index.css` definiert gemeinsame Text-/Abstandsrollen und geometrische Tokens
+einmal; Themes und vorhandene Farbprofile liefern die Farben. Der
+[UI-Styleguide](doc/ui-styleguide.md) beschreibt deren Einsatz.
+`layout/WorkbenchShell.css` besitzt Shell-Raster, Navigation, Sidebar und
+Statusleiste. Die Breitenpraeferenz kommt als CSS-Variable aus `App.tsx`;
+Zoom verkleinert die Navigation und begrenzt die Sidebar, ohne gespeicherte
+Praeferenzen zu aendern. Explizite Gridspalten verhindern leere Restspalten
+bei ausgeblendeter Sidebar. Dokumenttypografie bleibt von UI-Textrollen getrennt.
 
 `npm run ux:baseline` erfasst die echte Entwicklungsoberflaeche mit eigenem
 Profil und synthetischer NoteBase unter `.tmp/`. Der Aufruf nutzt dieselbe
@@ -162,6 +170,11 @@ Revisionskonflikt. Recovery wird mit einem lokalen Testjournal dargestellt;
 Randkoordinatenproben sind ausdruecklich synthetisch. Das ist eine UX-Baseline,
 keine Installerabnahme oder vollstaendige Accessibilityfreigabe. Sichtpruefung,
 Nachweise und Grenzen: [UX-Baseline](doc/ux-baseline-2026-11-10.md).
+`npm run ux:baseline -- --foundations` prueft zusaetzlich 150 % Zoom,
+Sidebarwechsel mit ungespeichertem Entwurf und Persistenz eines eigenen
+Farbprofils nach Reload. Screenshots kommen aus Electrons Compositor, damit
+Zoomaufnahmen die vollstaendige Fensterflaeche zeigen; Layoutmesswerte bleiben
+in CSS-Pixeln. Nachweis: [Gestaltungsgrundlage](doc/ui-foundations-2026-11-10.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;

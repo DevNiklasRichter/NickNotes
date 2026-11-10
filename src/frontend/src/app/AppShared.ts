@@ -474,7 +474,7 @@ export const DEFAULT_LIGHT_COLOR_PROFILE: ColorProfile = {
     builtin: true,
     colors: {
         text: '#1f2328',
-        muted: '#6a727f',
+        muted: '#626b78',
         surface: '#f3f4f6',
         editorNoteBg: '#f6f7f9',
         surfaceStrong: '#eceef2',
