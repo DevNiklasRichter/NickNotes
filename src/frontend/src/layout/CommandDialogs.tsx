@@ -1,23 +1,12 @@
-import {Fragment, useEffect, useRef, useState, type KeyboardEvent} from 'react'
+import {Fragment, useEffect, useState, type KeyboardEvent} from 'react'
+import {trapDialogTab, useDialogFocus} from '../ui/useDialogFocus'
 import {apiRequest} from '../app/apiClient'
 import {COMMAND_GROUPS, COMMANDS, shortcutLabel} from '../app/commands'
 import type {SearchRow} from '../app/AppShared'
 
-function useDialogFocus() {
-  const root=useRef<HTMLDivElement>(null)
-  useEffect(()=>{
-    const previous=document.activeElement as HTMLElement|null
-    root.current?.querySelector<HTMLInputElement>('input')?.focus()
-    return()=>{if(previous?.isConnected)previous.focus()}
-  },[])
-  return root
-}
 function dialogKeys(event:KeyboardEvent<HTMLDivElement>,close:()=>void) {
   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close()}
-  if(event.key!=='Tab')return
-  const items=[...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),[tabindex="0"]')]
-  if(event.shiftKey&&document.activeElement===items[0]){event.preventDefault();items.at(-1)?.focus()}
-  else if(!event.shiftKey&&document.activeElement===items.at(-1)){event.preventDefault();items[0]?.focus()}
+  trapDialogTab(event)
 }
 
 export function QuickOpenDialog({backendUrl,vaultPath,onClose,onOpen}:{backendUrl:string;vaultPath:string;onClose:()=>void;onOpen:(path:string,title:string)=>Promise<void>}) {

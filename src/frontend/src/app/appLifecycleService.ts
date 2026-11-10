@@ -119,6 +119,7 @@ type AppLifecycleWriter = {
     setCreateNoteBaseDisplayName: (name: string) => void;
     setCreateNoteBaseName: (name: string) => void;
     setCreateNoteBasePending: (pending: boolean) => void;
+    setCreateNoteBaseError: (error: string) => void;
 };
 type AppLifecycleContext = {
     getBackendUrl: () => string;
@@ -359,6 +360,8 @@ export class AppLifecycleService {
         return true;
     };
     openCreateNoteBaseDialog = () => {
+        if (this.snapshot.isCreateNoteBasePending()) return;
+        this.writer.setCreateNoteBaseError('');
         const displayName = this.snapshot.getDisplayName();
         this.writer.setCreateNoteBaseParentPath(this.deriveParentDirectory(this.snapshot.getVaultPath()));
         this.writer.setCreateNoteBaseDisplayName(displayName);
@@ -372,8 +375,11 @@ export class AppLifecycleService {
         this.writer.setCreateNoteBaseDialogOpen(false);
     };
     chooseCreateNoteBaseParentDirectory = async () => {
+        if (this.snapshot.isCreateNoteBasePending()) return;
+        this.writer.setCreateNoteBasePending(true);
         try {
             this.writer.setError('');
+            this.writer.setCreateNoteBaseError('');
             const selectedPath = await this.context.pickDirectory();
             if (!selectedPath) {
                 return;
@@ -382,33 +388,42 @@ export class AppLifecycleService {
         }
         catch (caught) {
             this.writer.setError(String(caught));
+            this.writer.setCreateNoteBaseError(String(caught));
+        }
+        finally {
+            this.writer.setCreateNoteBasePending(false);
         }
     };
     submitCreateNoteBaseDialog = async () => {
+        if (this.snapshot.isCreateNoteBasePending()) return;
         const parentPath = normalizeLabel(this.snapshot.getCreateNoteBaseParentPath());
         const name = normalizeLabel(this.snapshot.getCreateNoteBaseName());
         const nextDisplayName = normalizeLabel(this.snapshot.getCreateNoteBaseDisplayName());
         if (!parentPath) {
             this.writer.setError('Bitte zuerst einen Speicherort fuer die neue NoteBase auswaehlen.');
+            this.writer.setCreateNoteBaseError('Bitte zuerst einen Speicherort für die neue NoteBase auswählen.');
             return;
         }
         if (!name) {
             this.writer.setError('Bitte einen Namen fuer die neue NoteBase eingeben.');
+            this.writer.setCreateNoteBaseError('Bitte einen Namen für die neue NoteBase eingeben.');
             return;
         }
         if (/[\\/]/.test(name) || name === '.' || name === '..') {
             this.writer.setError('Der NoteBase-Name darf keine Pfadtrenner enthalten.');
+            this.writer.setCreateNoteBaseError('Der NoteBase-Name darf weder Pfadtrenner noch "." oder ".." enthalten.');
             return;
         }
+        this.writer.setCreateNoteBasePending(true);
+        let created = false;
         try {
             this.writer.setError('');
+            this.writer.setCreateNoteBaseError('');
             const canSwitch = await this.context.requestSaveBeforeNoteBaseSwitch();
             if (!canSwitch) {
                 return;
             }
             beginSessionSwitch();
-            this.writer.setVaultLoaded(false);
-            this.writer.setCreateNoteBasePending(true);
             const response = await apiRequest<{
                 vaultPath: string;
                 noteBasePath?: string;
@@ -419,6 +434,7 @@ export class AppLifecycleService {
                 body: JSON.stringify({ parentPath, name }),
             });
             const loadedPath = response.noteBasePath ?? response.vaultPath;
+            created = true;
             this.context.resetWorkspaceForClosedVault();
             this.writer.setVaultPath(loadedPath);
             this.writer.setVaultLoaded(true);
@@ -430,15 +446,26 @@ export class AppLifecycleService {
                 this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups));
             }
             if (nextDisplayName) {
-                this.writer.setDisplayName(nextDisplayName);
+                try {
+                    // Persist before loading the new NoteBase's settings, which replace UI state.
+                    await this.saveUiSettingsPatch({app: {displayName: nextDisplayName}});
+                } catch {
+                    this.writer.setWarnMessage?.('Die NoteBase wurde erstellt, aber die Anrede konnte nicht gespeichert werden. Bitte in den Einstellungen erneut festlegen.');
+                }
             }
-            this.writer.setCreateNoteBaseDialogOpen(false);
-            this.writer.setMessage(`Neue NoteBase erstellt: ${loadedPath}`);
             await this.loadUiSettings();
             await this.context.refreshWorkspaceData(true);
+            this.writer.setCreateNoteBaseDialogOpen(false);
+            this.writer.setMessage(`Neue NoteBase erstellt: ${loadedPath}`);
         }
         catch (caught) {
-            this.writer.setError(String(caught));
+            if (created) {
+                this.writer.setCreateNoteBaseDialogOpen(false);
+                this.writer.setError(`Die NoteBase wurde erstellt, aber die Ansicht konnte nicht vollständig geladen werden: ${String(caught)}`);
+            } else {
+                this.writer.setError(String(caught));
+                this.writer.setCreateNoteBaseError(String(caught));
+            }
         }
         finally {
             this.writer.setCreateNoteBasePending(false);

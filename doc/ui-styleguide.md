@@ -121,5 +121,18 @@ Nachweise für Auswahl-/Tabellenaktionen: [Editormenüs](editor-menus-2026-11-10
 Nachweise für Sortierung/NoteBase: [Seitenleistenmenüs](sidebar-menus-2026-11-10.md).
 Nachweise für Tagvorschläge: [Vorschlagsaktionen](tag-suggestions-2026-11-10.md).
 
+Der NoteBase-Erstellungsdialog, Notizsuche und Shortcut-Hilfe verwenden gemeinsame
+Fokus-/Tabregeln aus `ui/useDialogFocus.ts`. Nach Abbruch kehrt der Fokus zum
+Auslöser zurück; ein Außenklick darf diese Rückgabe nicht nachträglich verlieren.
+Eine vorgeschaltete Speicherabfrage blendet das Formular vorübergehend aus,
+setzt es inert und übernimmt sichtbar den Fokus; Abbruch erhält alle Eingaben.
+Das Erstellungsformular hat einen zugänglichen Titel, eine Beschreibung und
+zugeordnete Feldlabels. Fehler stehen als Alert im Dialog. Während Ordnerwahl,
+Speicherabfrage und Erstellung sind seine Felder und Abschlussaktionen gesperrt;
+eine überlagerte Bestätigung ist der einzige aktive Dialog. Lange Formulare
+scrollen innerhalb des Fensters. Eingaben behalten Leerzeichen beim Tippen;
+die bestehende Fachvalidierung normalisiert erst beim Absenden.
+Nachweise: [NoteBase-Erstellung](create-notebase-dialog-2026-11-10.md).
+
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

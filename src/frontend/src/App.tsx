@@ -8,6 +8,7 @@ import {useAppCommands} from './app/useAppCommands';
 import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
+import {CreateNoteBaseDialog} from './layout/CreateNoteBaseDialog';
 import {flushSync} from 'react-dom';
 
 
@@ -122,6 +123,8 @@ function App() {
     const [createNoteBaseName, setCreateNoteBaseName] = useState('');
     const [createNoteBaseDisplayName, setCreateNoteBaseDisplayName] = useState(DEFAULT_NOTEBASE_NAME);
     const [createNoteBasePending, setCreateNoteBasePending] = useState(false);
+    const createNoteBasePendingRef = useRef(false);
+    const [createNoteBaseError, setCreateNoteBaseError] = useState('');
     const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS });
     const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS });
     const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS });
@@ -682,7 +685,7 @@ function App() {
             getExpandedFolders: () => expandedFolders,
             getWorkspaceLayoutMode: () => workspaceState.layoutMode,
             getWorkspaceSplitRatio: () => workspaceState.splitRatio,
-            isCreateNoteBasePending: () => createNoteBasePending,
+            isCreateNoteBasePending: () => createNoteBasePendingRef.current,
             getCreateNoteBaseParentPath: () => createNoteBaseParentPath,
             getCreateNoteBaseDisplayName: () => createNoteBaseDisplayName,
             getCreateNoteBaseName: () => createNoteBaseName,
@@ -734,7 +737,11 @@ function App() {
             setCreateNoteBaseParentPath,
             setCreateNoteBaseDisplayName,
             setCreateNoteBaseName,
-            setCreateNoteBasePending,
+            setCreateNoteBasePending: (pending) => {
+                createNoteBasePendingRef.current = pending;
+                setCreateNoteBasePending(pending);
+            },
+            setCreateNoteBaseError,
         },
         pickDirectory: async () => {
             if (!window.nicknotes?.selectDirectory) {
@@ -2610,64 +2617,12 @@ function App() {
     const workspaceGridStyle = {
         ...(showCaptureInline ? { '--capture-inline-height': `${captureInlineHeight}px` } : {}),
     } as CSSProperties;
-    const createNoteBaseDialog = createNoteBaseDialogOpen ? (<div className="modal-overlay" onClick={() => {
-            closeCreateNoteBaseDialog();
-        }}>
-      <aside className="create-notebase-modal" onClick={(event) => {
-            event.stopPropagation();
-        }} onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                closeCreateNoteBaseDialog();
-            }
-        }}>
-        <header className="sidebar-header-row">
-          <h3>Neue NoteBase erstellen</h3>
-        </header>
-        <p className="muted-copy">Lege Name, Speicherort und Anrede fuer die neue NoteBase fest.</p>
-        <form className="create-notebase-form" onSubmit={(event) => {
-            event.preventDefault();
-            void submitCreateNoteBaseDialog();
-        }}>
-          <label className="create-notebase-label" htmlFor="create-notebase-display-name">
-            Anrede
-          </label>
-          <input id="create-notebase-display-name" value={createNoteBaseDisplayName} onChange={(event) => {
-            setCreateNoteBaseDisplayName(normalizeLabel(event.target.value));
-        }} placeholder={`z. B. ${DEFAULT_DISPLAY_NAME}`} autoFocus/>
-
-          <label className="create-notebase-label" htmlFor="create-notebase-name">
-            NoteBase-Name
-          </label>
-          <input id="create-notebase-name" value={createNoteBaseName} onChange={(event) => {
-            setCreateNoteBaseName(normalizeLabel(event.target.value));
-        }} placeholder={`z. B. ${DEFAULT_NOTEBASE_NAME}`}/>
-
-          <label className="create-notebase-label" htmlFor="create-notebase-parent-path">
-            Speicherort
-          </label>
-          <div className="create-notebase-path-row">
-            <input id="create-notebase-parent-path" value={createNoteBaseParentPath} onChange={(event) => {
-            setCreateNoteBaseParentPath(event.target.value);
-        }} placeholder="Ordner fuer die neue NoteBase"/>
-            <button type="button" onClick={() => {
-            void chooseCreateNoteBaseParentDirectory();
-        }} disabled={createNoteBasePending}>
-              Ordner waehlen
-            </button>
-          </div>
-
-          <div className="create-notebase-modal-actions">
-            <button type="button" onClick={closeCreateNoteBaseDialog} disabled={createNoteBasePending}>
-              Abbrechen
-            </button>
-            <button type="submit" className="primary" disabled={createNoteBasePending}>
-              {createNoteBasePending ? 'Wird erstellt ...' : 'NoteBase erstellen'}
-            </button>
-          </div>
-        </form>
-      </aside>
-    </div>) : null;
+    const createNoteBaseDialog = createNoteBaseDialogOpen ? <CreateNoteBaseDialog
+      displayName={createNoteBaseDisplayName} name={createNoteBaseName} parentPath={createNoteBaseParentPath}
+      pending={createNoteBasePending} error={createNoteBaseError} suspended={Boolean(tagActionDialog)}
+      onDisplayNameChange={setCreateNoteBaseDisplayName} onNameChange={setCreateNoteBaseName}
+      onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
+      onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
     const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
     const renderTagMatchPreview = (match: TagMatchCandidate, mode: 'before' | 'after') => (<div className="tag-match-editor-preview">
       <span className="tag-match-context">{match.before}</span>

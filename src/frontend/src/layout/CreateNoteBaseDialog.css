@@ -1,0 +1,36 @@
+.create-notebase-overlay.is-suspended {visibility: hidden;}
+
+.create-notebase-modal {
+  box-sizing: border-box;
+  width: min(640px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.create-notebase-form {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.create-notebase-label {font-size: var(--font-label); color: var(--muted);}
+.create-notebase-path-row {display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2);}
+.create-notebase-form input {min-width: 0;}
+.create-notebase-modal-actions {display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1);}
+.create-notebase-modal-actions .primary {border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft);}
+.create-notebase-error {margin: 0; padding: var(--space-2); border: 1px solid var(--error-border); border-radius: var(--radius-sm); background: var(--error-bg); color: var(--error-text); overflow-wrap: anywhere;}
+
+@media (max-width: 720px) {
+  .create-notebase-path-row {grid-template-columns: minmax(0, 1fr);}
+}

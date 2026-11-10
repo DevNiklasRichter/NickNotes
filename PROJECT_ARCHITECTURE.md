@@ -271,6 +271,26 @@ Sessionzugriff dieses Helfers hatte nichtleere Capture-Vorschauen verhindert.
 `--suggestions` prueft echte Vorschau-/Capture-Saves und isolierte Propwechsel.
 Nachweise: [Tagvorschlags-Aktionen](doc/tag-suggestions-2026-11-10.md).
 
+`layout/CreateNoteBaseDialog.tsx` besitzt Darstellung und Tastaturbedienung der
+NoteBase-Neuanlage statt des bisherigen Inline-Dialogs in `App.tsx`. Formular-
+werte und Fehler liegen weiter in App/Lifecycle-Service. Der Dialog verwendet
+`ui/useDialogFocus.ts` gemeinsam mit Notizsuche und Shortcut-Hilfe: Initialfokus,
+Tabbegrenzung, Fokuscontainment und Rueckgabe nach tatsaechlichem Abbau und
+nativer Pointeraktion. Eine ueberlagerte Speicherabfrage setzt das Formular
+unsichtbar und inert; nur der oberste Dialog nimmt Fokus an. Bei inzwischen fokussierten
+Controls wird kein Fokus zurueckgestohlen, StrictMode bleibt aktiv.
+Der Lifecycle-Service sperrt Neuanlage und Ordnerwahl bereits vor ihren
+asynchronen Schritten ueber eine aktuelle Pending-Ref. Validierung und
+Requestfehler bleiben im Dialog sichtbar; die bisherige Ansicht wird vor
+erfolgreicher Neuanlage nicht abgebaut. Eine erfolgreiche Erstellung wird von
+nachfolgenden Settings-/Refreshfehlern unterschieden. Die Anrede wird ueber den
+vorhandenen UI-Settings-Pfad gespeichert, bevor die neuen Einstellungen geladen
+werden. Keine Formatmigration oder neue Schreibschnittstelle.
+`--create-dialog` prueft Start-/Workspace-Abbruch, echte Speicherabfragen,
+Directory-Picker-Stub, langsame Requests, echte Namensablehnung, Wiederholung
+und synthetische Neuanlage samt Anrede und Rueckkehr zur vorherigen NoteBase.
+Nachweise: [NoteBase-Erstellungsdialog](doc/create-notebase-dialog-2026-11-10.md).
+
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.

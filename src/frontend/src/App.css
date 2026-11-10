@@ -4342,60 +4342,6 @@
   z-index: 1201;
 }
 
-.create-notebase-modal {
-  width: min(640px, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 0.85rem;
-  display: grid;
-  gap: 0.7rem;
-  position: relative;
-  z-index: 1201;
-}
-
-.create-notebase-form {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.create-notebase-label {
-  font-size: var(--font-label);
-  color: var(--muted);
-}
-
-.create-notebase-path-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.45rem;
-}
-
-.create-notebase-path-row input {
-  min-width: 0;
-}
-
-.create-notebase-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.2rem;
-}
-
-.create-notebase-modal-actions .primary {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-@media (max-width: 720px) {
-  .create-notebase-path-row {
-    grid-template-columns: 1fr;
-  }
-}
-
 .tag-form-grid {
   display: grid;
   gap: 0.5rem;

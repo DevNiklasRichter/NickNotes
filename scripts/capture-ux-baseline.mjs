@@ -22,9 +22,10 @@ const graph = process.argv.includes('--graph')
 const editorMenus = process.argv.includes('--editor-menus')
 const sidebarMenus = process.argv.includes('--sidebar-menus')
 const suggestionMenus = process.argv.includes('--suggestions')
+const createDialog = process.argv.includes('--create-dialog')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -104,6 +105,11 @@ async function capture(name, description) {
         return {className: node.className, role: node.getAttribute('role'), label: node.getAttribute('aria-label'), x, y, width, height,
           scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, scrollTop: node.scrollTop,
           outsideViewport: x < 0 || y < 0 || x + width > innerWidth || y + height > innerHeight}
+      }),
+      dialogs: [...document.querySelectorAll('[role="dialog"]')].filter(node=>!node.closest('[aria-hidden="true"]')&&node.getClientRects().length).map(node=>{
+        const {x,y,width,height}=node.getBoundingClientRect()
+        return {label:node.getAttribute('aria-label')||document.getElementById(node.getAttribute('aria-labelledby'))?.textContent,
+          x,y,width,height,outsideViewport:x<0||y<0||x+width>innerWidth+1||y+height>innerHeight+1}
       }),
     }
   })
@@ -995,6 +1001,160 @@ async function verifySuggestionMenus() {
   await theme('dark'); await openNote('Arbeitsnotiz')
 }
 
+async function verifyCreateDialogLaunch() {
+  const trigger=page.getByRole('button',{name:'NoteBase erstellen',exact:true})
+  const dialog=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
+  const requests=()=>report.requests.filter(req=>req.endpoint==='/notebase/create').length
+  const before=requests()
+  await trigger.click(); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await expect(dialog).toHaveAttribute('aria-modal','true')
+  await page.keyboard.press('Shift+Tab'); await expect(dialog.getByRole('button',{name:'NoteBase erstellen',exact:true})).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('Probe mit Leerzeichen')
+  await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toHaveValue('Probe mit Leerzeichen')
+  await capture('create-dialog-launch-light','Accessible create dialog from the launcher: named fields, native form actions and contained focus')
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused(); assert.equal(requests(),before)
+  await trigger.click(); await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused()
+  await trigger.click(); await page.mouse.click(4,45); await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused()
+  report.checks.createDialogLaunchKeyboardAndCancel=true
+}
+
+async function verifyCreateDialog() {
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  const marker='NoteBase-Dialog schützt diesen Entwurf.'
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n'+marker)
+  await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
+  const trigger=page.locator('.notebase-sidebar-toolbar').getByRole('button',{name:'NoteBase erstellen',exact:true})
+  const dialog=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
+  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Aenderungen',exact:true})
+  const posts=()=>report.requests.filter(req=>req.endpoint==='/notebase/create'&&req.method==='POST').length
+  const before=posts()
+  await trigger.click(); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await expect(dialog.getByLabel('Speicherort',{exact:true})).toHaveValue(scratch)
+  await dialog.getByLabel('Anrede',{exact:true}).fill('Dialog Nutzer')
+  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('../Nicht erlaubt')
+  await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+  await expect(dialog.getByRole('alert')).toContainText('Pfadtrenner'); assert.equal(posts(),before)
+  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Dialog-Neu')
+  await capture('create-dialog-workspace-dark','Create form preserves entered values and displays validation at its source')
+  await page.keyboard.press('Control+n'); await expect(dialog).toBeVisible(); assert.equal(posts(),before)
+  await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+  await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await expect(dialog).toHaveCount(0) // The underlying form is inert and hidden from the accessibility tree.
+  await expect(page.locator('.create-notebase-modal')).toBeHidden()
+  await expect(confirm).toBeVisible()
+  await capture('create-dialog-dirty-confirm-dark','Existing save-before-switch confirmation is the only active dialog')
+  await page.keyboard.press('Enter'); await expect(confirm).toHaveCount(0)
+  await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toHaveValue('UX-Dialog-Neu')
+  await expect(editor).toContainText(marker); assert.equal(posts(),before)
+  await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(trigger).toBeFocused()
+  report.checks.createDialogDirtyCancelPreservesDraft=true
+
+  // Stub only the OS directory picker inside this disposable Electron instance.
+  await app.evaluate(({dialog})=>{
+    globalThis.__createDialogPickerOriginal=dialog.showOpenDialog
+    globalThis.__createDialogPickerCalls=0
+    dialog.showOpenDialog=()=>{globalThis.__createDialogPickerCalls++;return new Promise(resolve=>{globalThis.__createDialogPickerFinish=resolve})}
+  })
+  try {
+    await trigger.click()
+    await dialog.getByRole('button',{name:'Ordner wählen',exact:true}).focus(); await page.keyboard.press('Enter')
+    await expect(dialog).toHaveAttribute('aria-busy','true')
+    await page.keyboard.press('Escape'); await page.mouse.click(4,45); await expect(dialog).toBeVisible()
+    await dialog.locator('form').evaluate(form=>{form.requestSubmit();form.requestSubmit()})
+    assert.equal(posts(),before)
+    assert.equal(await app.evaluate(()=>globalThis.__createDialogPickerCalls),1)
+    await app.evaluate((_electron,path)=>globalThis.__createDialogPickerFinish({canceled:false,filePaths:[path]}),scratch)
+    await expect(dialog).not.toHaveAttribute('aria-busy','true')
+    await expect(dialog.getByLabel('Speicherort',{exact:true})).toHaveValue(scratch)
+  } finally {
+    await app.evaluate(({dialog})=>{
+      dialog.showOpenDialog=globalThis.__createDialogPickerOriginal
+      delete globalThis.__createDialogPickerOriginal;delete globalThis.__createDialogPickerFinish;delete globalThis.__createDialogPickerCalls
+    })
+  }
+  report.checks.createDialogDirectoryButtonDoesNotSubmit=true
+
+  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('CON')
+  await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
+  await expect(dialog.getByRole('alert')).toContainText(/reserved|reserviert/i)
+  await expect(dialog).not.toHaveAttribute('aria-busy','true')
+  await expect(editor).toContainText(marker); assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
+  await capture('create-dialog-request-error-dark','Real backend rejects a reserved name; existing NoteBase, note and form remain available')
+  report.checks.createDialogRequestErrorKeepsWorkspace=true
+
+  // Permit a genuinely narrow surface only in this disposable window. Otherwise
+  // Electron silently clamps the requested size to the product's normal minimum.
+  const minimum=await app.evaluate(({BrowserWindow})=>{
+    const win=BrowserWindow.getAllWindows()[0], previous=win.getMinimumSize()
+    win.setMinimumSize(240,240);return previous
+  })
+  try {
+    for(const [label,width,height,zoom] of [['zoom',1280,800,1.5],['narrow',640,500,1.5]]) {
+      await windowSize(width,height,zoom)
+      const rect=await dialog.boundingBox(), viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+      assert.ok(Math.abs(viewport.width-width/zoom)<2,'Requested narrow test viewport was not applied')
+      assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=viewport.width+1&&rect.y+rect.height<=viewport.height+1)
+      await dialog.getByLabel('Anrede',{exact:true}).focus(); await page.keyboard.press('Shift+Tab')
+      const submit=dialog.getByRole('button',{name:'NoteBase erstellen',exact:true})
+      await expect(submit).toBeFocused();await expect(submit).toBeInViewport()
+      await capture(`create-dialog-${label}-dark`,'Create form stays inside '+label+' viewport; final action remains keyboard reachable')
+    }
+  } finally {
+    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum)
+    await windowSize(1280,800)
+  }
+  await page.keyboard.press('Escape'); await expect(trigger).toBeFocused()
+  await theme('light'); await trigger.click()
+  await capture('create-dialog-light','Shared create form in the light theme')
+  await page.keyboard.press('Escape'); await theme('dark'); await trigger.click()
+  await dialog.getByLabel('Anrede',{exact:true}).fill('Dialog Nutzer')
+  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Dialog-Neu')
+  await dialog.getByLabel('Speicherort',{exact:true}).fill(scratch)
+  // Save any theme preferences through the existing switch confirmation first.
+  // Intercept only this request to exercise the in-flight guard, then forward it unchanged.
+  let release
+  const gate=new Promise(resolve=>{release=resolve})
+  let creates=0
+  const intercept=async route=>{
+    const payload=route.request().postDataJSON()
+    assert.equal(path.resolve(payload.parentPath),scratch); assert.equal(payload.name,'UX-Dialog-Neu')
+    creates++; await gate; await route.continue()
+  }
+  await page.route('**/notebase/create',intercept)
+  try {
+    await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+    // Theme settings may already be saved by theme(); only an actual dialog is handled.
+    await expect.poll(async()=>creates+(await confirm.count())).toBe(1)
+    if(await confirm.count())await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
+    await expect.poll(()=>creates).toBe(1)
+    await expect(dialog).toHaveAttribute('aria-busy','true')
+    await page.keyboard.press('Escape'); await page.mouse.click(4,45); await expect(dialog).toBeVisible()
+    await dialog.locator('form').evaluate(form=>{form.requestSubmit();form.requestSubmit()})
+    assert.equal(creates,1)
+    await capture('create-dialog-pending-dark','Deferred real create request locks the form and all dismissal paths; duplicate submission does not send another request')
+    release()
+    await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Dialog-Neu')
+    await expect(dialog).toHaveCount(0)
+  } finally {release(); await page.unroute('**/notebase/create',intercept)}
+  const newRoot=path.join(scratch,'UX-Dialog-Neu')
+  assert.ok(fs.existsSync(path.join(newRoot,'.system','config.json')))
+  assert.equal(JSON.parse(fs.readFileSync(path.join(newRoot,'.system','ui_settings.json'),'utf8')).app.displayName,'Dialog Nutzer')
+  await capture('create-dialog-created-dark','Genuine synthetic NoteBase created through the form with persisted display name')
+  const recent=page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true})
+  await recent.click()
+  await page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  await openNote('Arbeitsnotiz'); await expect(editor).toContainText(marker)
+  report.checks.createDialogSingleRequestSuccessAndSettingsPersisted=true
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -1042,6 +1202,7 @@ try {
   report.checks.launchToMenubarMs = Math.round(performance.now() - started)
   await windowSize(1280, 800)
   if (!edgesOnly) await capture('launch-light', 'Start without an open NoteBase, light, 1280×800')
+  if (createDialog && !edgesOnly) await verifyCreateDialogLaunch()
 
   const vault = await request('/notebase/create', {parentPath: scratch, name: 'UX-NoteBase'})
   vaultPath = path.resolve(vault.noteBasePath)
@@ -1085,6 +1246,7 @@ try {
     if (editorMenus) await verifyEditorMenus()
     if (sidebarMenus) await verifySidebarMenus()
     if (suggestionMenus) await verifySuggestionMenus()
+    if (createDialog) await verifyCreateDialog()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
