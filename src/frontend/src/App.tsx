@@ -9,6 +9,7 @@ import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
 import {CreateNoteBaseDialog} from './layout/CreateNoteBaseDialog';
+import {TagMatchDialog} from './tags/TagMatchDialog';
 import {flushSync} from 'react-dom';
 
 
@@ -171,7 +172,7 @@ function App() {
     const [tabContextMenu, setTabContextMenu] = useState<(ContextMenuAnchor & {tabId: string}) | null>(null);
     const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null);
     const tagActionDialogRef = useRef<TagActionDialogState | null>(null);
-    const { tagMatchWorkflow, visibleTagMatchItems, activeTagMatch, openTagMatchWorkflowLoading, resolveTagMatchWorkflowCandidates, stopTagMatchWorkflowLoading, closeTagMatchWorkflow, moveTagMatchCursor, skipTagMatch, setTagMatchApplying, removeAppliedTagMatches, } = useTagMatchWorkflowState();
+    const { tagMatchWorkflow, visibleTagMatchItems, activeTagMatch, openTagMatchWorkflowLoading, resolveTagMatchWorkflowCandidates, stopTagMatchWorkflowLoading, closeTagMatchWorkflow, moveTagMatchCursor, skipTagMatch, beginTagMatchApply, finishTagMatchApply, removeAppliedTagMatches, } = useTagMatchWorkflowState();
     const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({});
     const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({});
     const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({});
@@ -2326,19 +2327,20 @@ function App() {
         if (!vaultLoaded) {
             return;
         }
-        openTagMatchWorkflowLoading();
+        const signal = openTagMatchWorkflowLoading();
+        if (!signal) return;
         try {
             setError('');
             const response = await apiRequest<{
                 items: TagMatchCandidate[];
                 total: number;
-            }>(backendUrl, '/tag-groups/match-candidates');
-            resolveTagMatchWorkflowCandidates(response.items);
-            setMessage(response.total > 0 ? `${response.total} moegliche Tag-Fundstellen gefunden.` : 'Keine offenen Tag-Fundstellen gefunden.');
+            }>(backendUrl, '/tag-groups/match-candidates', {signal});
+            if (resolveTagMatchWorkflowCandidates(signal, response.items)) {
+                setMessage(response.total > 0 ? `${response.total} mögliche Tag-Fundstellen gefunden.` : 'Keine offenen Tag-Fundstellen gefunden.');
+            }
         }
         catch (caught) {
-            stopTagMatchWorkflowLoading();
-            setError(String(caught));
+            if (stopTagMatchWorkflowLoading(signal, String(caught))) setError(String(caught));
         }
     };
     const skipActiveTagMatch = () => {
@@ -2349,13 +2351,18 @@ function App() {
         if (uniqueMatches.length === 0) {
             return;
         }
+        if (!beginTagMatchApply()) return;
+        // Include buffered CodeMirror/table edits before inspecting the current drafts.
+        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
         const targetPathKeys = new Set(uniqueMatches.map((item) => normalizeFilePathKey(item.path)));
         const dirtyTargets = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty && targetPathKeys.has(normalizeFilePathKey(tab.path)));
         if (dirtyTargets.length > 0) {
-            setError('Bitte speichere offene geaenderte Notizen, bevor Tag-Fundstellen darin uebernommen werden.');
+            const message = 'Bitte speichere die geöffneten geänderten Notizen, bevor du Fundstellen darin übernimmst. Schließe dazu die Tag-Prüfung und suche nach dem Speichern erneut.';
+            finishTagMatchApply(message);
+            setError(message);
             return;
         }
-        setTagMatchApplying(true);
+        let applied = false;
         try {
             setError('');
             const response = await apiRequest<{
@@ -2368,6 +2375,14 @@ function App() {
                 method: 'POST',
                 body: JSON.stringify({ matches: uniqueMatches }),
             });
+            if (response.applied === 0) {
+                finishTagMatchApply('Die Fundstellen haben sich inzwischen geändert. Bitte erneut suchen, bevor du sie übernimmst.', '', true);
+                return;
+            }
+            applied = true;
+            const summary = `${response.applied} ${response.applied === 1 ? 'Fundstelle' : 'Fundstellen'} in ${response.notesUpdated} ${response.notesUpdated === 1 ? 'Notiz' : 'Notizen'} übernommen.`;
+            // Only a complete response identifies every requested item as applied.
+            if (response.applied === uniqueMatches.length) removeAppliedTagMatches(uniqueMatches);
             setCounts(response.counts);
             if (response.tagGroups) {
                 setCustomTagGroups(toStorageTagGroups(response.tagGroups));
@@ -2376,7 +2391,7 @@ function App() {
                 if (tab.kind !== 'note' || !response.paths.some((path) => normalizeFilePathKey(path) === normalizeFilePathKey(tab.path))) {
                     return tab;
                 }
-                return { ...tab, dirty: false, loading: true };
+                return tab.dirty ? tab : { ...tab, loading: true };
             }));
             await emitMutationEvent({
                 kind: 'notes-batch-updated',
@@ -2391,12 +2406,13 @@ function App() {
                 },
                 paths: response.paths,
             });
-            removeAppliedTagMatches(uniqueMatches);
-            setMessage(`${response.applied} Fundstellen in ${response.notesUpdated} Notizen uebernommen.`);
+            finishTagMatchApply(response.applied < uniqueMatches.length ? 'Einige Fundstellen haben sich geändert. Bitte erneut suchen.' : '', summary, response.applied < uniqueMatches.length);
+            setMessage(summary);
         }
         catch (caught) {
-            setTagMatchApplying(false);
-            setError(String(caught));
+            const message = applied ? `Fundstellen wurden übernommen, aber die Ansicht konnte nicht vollständig aktualisiert werden. Bitte erneut suchen. ${String(caught)}` : String(caught);
+            finishTagMatchApply(message, '', applied);
+            setError(message);
         }
     };
     const applyActiveTagMatch = () => {
@@ -2624,105 +2640,13 @@ function App() {
       onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
       onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
     const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
-    const renderTagMatchPreview = (match: TagMatchCandidate, mode: 'before' | 'after') => (<div className="tag-match-editor-preview">
-      <span className="tag-match-context">{match.before}</span>
-      {mode === 'before' ? (<mark className="tag-match-highlight">{match.matchedText}</mark>) : (<span className="cm-md-inline-tag-chip tag-match-chip" style={{ '--cm-md-tag-color': match.groupColor } as CSSProperties} title={`${match.groupDisplayName} / ${match.tagDisplayName}`}>
-          {match.tagDisplayName}
-        </span>)}
-      <span className="tag-match-context">{match.after}</span>
-    </div>);
-    const tagMatchWorkflowModal = tagMatchWorkflow.open ? (<div className="modal-overlay tag-match-overlay" onClick={() => {
-            closeTagMatchWorkflow();
-        }}>
-      <aside className="tag-match-modal" onClick={(event) => {
-            event.stopPropagation();
-        }} onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                closeTagMatchWorkflow();
-            }
-            if (event.key === 'ArrowRight') {
-                event.preventDefault();
-                moveTagMatchCursor(1);
-            }
-            if (event.key === 'ArrowLeft') {
-                event.preventDefault();
-                moveTagMatchCursor(-1);
-            }
-        }}>
-        <header className="tag-match-header">
-          <div>
-            <h3>Tag-Fundstellen pruefen</h3>
-            <p>
-              {tagMatchWorkflow.loading
-            ? 'NoteBase wird durchsucht ...'
-            : activeTagMatch
-                ? `${activeTagMatch.relativePath} - Zeile ${activeTagMatch.line}`
-                : 'Keine offenen Fundstellen.'}
-            </p>
-          </div>
-          <button className="icon-button compact muted" onClick={closeTagMatchWorkflow} title="Schliessen">
-            <LucideNamedIcon name="X" size={14}/>
-          </button>
-        </header>
-
-        {tagMatchWorkflow.loading ? <div className="tag-match-empty">Suche laeuft ...</div> : null}
-
-        {!tagMatchWorkflow.loading && activeTagMatch ? (<>
-            <div className="tag-match-summary-row">
-              <span>
-                Treffer {Math.min(tagMatchWorkflow.cursor + 1, visibleTagMatchItems.length)} von {visibleTagMatchItems.length}
-              </span>
-              <span>
-                {activeTagMatch.groupDisplayName} / {activeTagMatch.tagDisplayName}
-              </span>
-            </div>
-
-            <div className="tag-match-compare-grid">
-              <section>
-                <h4>Vorher</h4>
-                {renderTagMatchPreview(activeTagMatch, 'before')}
-              </section>
-              <section>
-                <h4>Nachher</h4>
-                {renderTagMatchPreview(activeTagMatch, 'after')}
-              </section>
-            </div>
-
-            <footer className="tag-match-actions">
-              <div className="tag-match-nav-actions">
-                <button type="button" onClick={() => moveTagMatchCursor(-1)} disabled={visibleTagMatchItems.length <= 1}>
-                  <LucideNamedIcon name="ChevronLeft" size={14}/>
-                </button>
-                <button type="button" onClick={() => moveTagMatchCursor(1)} disabled={visibleTagMatchItems.length <= 1}>
-                  <LucideNamedIcon name="ChevronRight" size={14}/>
-                </button>
-              </div>
-              <div className="tag-match-apply-actions">
-                <button type="button" onClick={skipActiveTagMatch} disabled={tagMatchWorkflow.applying}>
-                  Ueberspringen
-                </button>
-                <button type="button" onClick={applyActiveTagEverywhere} disabled={tagMatchWorkflow.applying}>
-                  Diesen Tag ueberall
-                </button>
-                <button type="button" onClick={applyAllTagMatches} disabled={tagMatchWorkflow.applying}>
-                  Alle uebernehmen
-                </button>
-                <button type="button" className="primary" onClick={applyActiveTagMatch} disabled={tagMatchWorkflow.applying}>
-                  Uebernehmen
-                </button>
-              </div>
-            </footer>
-          </>) : null}
-
-        {!tagMatchWorkflow.loading && !activeTagMatch ? (<div className="tag-match-empty">
-            <p>Keine Fundstellen mehr offen.</p>
-            <button type="button" onClick={closeTagMatchWorkflow}>
-              Fertig
-            </button>
-          </div>) : null}
-      </aside>
-    </div>) : null;
+    const tagMatchWorkflowModal = tagMatchWorkflow.open ? <TagMatchDialog
+      loading={tagMatchWorkflow.loading} applying={tagMatchWorkflow.applying}
+      error={tagMatchWorkflow.error} status={tagMatchWorkflow.status} needsRescan={tagMatchWorkflow.needsRescan}
+      match={activeTagMatch} position={tagMatchWorkflow.cursor + 1} total={visibleTagMatchItems.length}
+      onClose={closeTagMatchWorkflow} onSearch={openTagMatchWorkflow} onMove={moveTagMatchCursor}
+      onSkip={skipActiveTagMatch} onApply={applyActiveTagMatch} onApplyTag={applyActiveTagEverywhere}
+      onApplyAll={applyAllTagMatches} /> : null;
     // The service stores callbacks without mutating them; keep their manual memoization.
     /* eslint-disable react-hooks/preserve-manual-memoization */
     const explorerMutationService = useMemo(() => new ExplorerMutationService({

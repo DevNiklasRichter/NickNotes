@@ -1,0 +1,175 @@
+.tag-match-modal {
+  box-sizing: border-box;
+  width: min(1120px, calc(100vw - 2rem));
+  max-height: min(780px, calc(100vh - 2rem));
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tag-match-header,
+.tag-match-header-actions,
+.tag-match-summary-row,
+.tag-match-actions,
+.tag-match-nav-actions,
+.tag-match-apply-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tag-match-header {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  padding-bottom: 0.58rem;
+}
+
+.tag-match-header h3,
+.tag-match-header p,
+.tag-match-compare-grid h4,
+.tag-match-empty p {
+  margin: 0;
+}
+
+.tag-match-header h3 {
+  font-size: var(--font-ui);
+}
+
+.tag-match-header p,
+.tag-match-summary-row,
+.tag-match-empty {
+  color: var(--muted);
+  font-size: var(--font-label);
+}
+
+.tag-match-summary-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.tag-match-modal > * {flex-shrink: 0;}
+.tag-match-modal > p {margin: 0;}
+.tag-match-location {color: var(--muted); font-size: var(--font-label); overflow-wrap: anywhere;}
+.tag-match-status {font-size: var(--font-label); color: var(--muted);}
+.tag-match-status:empty {display: none;}
+.tag-match-error {padding: var(--space-2); border: 1px solid var(--error-border); border-radius: var(--radius-sm); background: var(--error-bg); color: var(--error-text); overflow-wrap: anywhere;}
+
+.tag-match-compare-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.tag-match-compare-grid section {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+  padding: 0.6rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.42rem;
+}
+
+.tag-match-compare-grid h4 {
+  color: var(--muted);
+  font-size: var(--font-caption);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tag-match-editor-preview {
+  min-height: min(280px, 25vh);
+  max-height: 440px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 1rem;
+  color: var(--text);
+  font-family: var(--font-family-ui);
+  font-size: 0.93rem;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tag-match-context {
+  color: color-mix(in srgb, var(--text) 86%, var(--muted));
+}
+
+.tag-match-highlight {
+  border-radius: 3px;
+  background: color-mix(in srgb, #f0c24f 42%, transparent);
+  color: var(--text);
+  padding: 0.04rem 0.14rem;
+}
+
+.tag-match-modal .tag-match-chip {
+  vertical-align: baseline;
+  cursor: default;
+  color: var(--text);
+}
+
+.tag-match-actions {
+  justify-content: space-between;
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  padding-top: 0.58rem;
+}
+
+.tag-match-nav-actions button {
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tag-match-apply-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tag-match-apply-actions .primary {border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft);}
+
+.tag-match-empty {
+  display: grid;
+  place-items: center;
+  gap: 0.55rem;
+  min-height: 220px;
+  text-align: center;
+}
+
+@media (max-width: 860px) {
+  .tag-match-modal {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+  }
+
+  .tag-match-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tag-match-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tag-match-apply-actions {
+    justify-content: stretch;
+  }
+
+  .tag-match-header-actions {flex-wrap: wrap;}
+}

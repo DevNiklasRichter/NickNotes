@@ -291,6 +291,29 @@ Directory-Picker-Stub, langsame Requests, echte Namensablehnung, Wiederholung
 und synthetische Neuanlage samt Anrede und Rueckkehr zur vorherigen NoteBase.
 Nachweise: [NoteBase-Erstellungsdialog](doc/create-notebase-dialog-2026-11-10.md).
 
+`tags/TagMatchDialog.tsx` besitzt die Tag-Matching-Vorschau samt komponentennahen
+Styles statt des bisherigen Inline-Modals. Dialogtitel, Vorher-/Nachherregionen,
+benannte Navigation und lokale Fehler-/Statusbereiche verwenden die gemeinsame
+Fokussteuerung. Tab bleibt im Dialog, Escape/Aussenklick geben den Fokus zurueck;
+Vorschauregionen behalten ihre eigene Pfeil-/Scrollbedienung. Kleine Fenster
+scrollen innerhalb der begrenzten Dialogflaeche.
+`app/tagMatchWorkflowState.ts` behaelt Treffer, Auswahl und uebersprungene IDs.
+Eine synchrone Operations-Ref sperrt doppelte Aufrufe vor dem naechsten Render.
+Suchanfragen besitzen einen AbortController; Schliessen bricht den Transport ab,
+und nur die weiterhin aktuelle Suche darf Ergebnisse oder Fehler uebernehmen.
+Schreibende Uebernahmen sperren Suche, Navigation und Abbruch bis zum Abschluss.
+App synchronisiert vor der Dirty-Pruefung beide Editorpuffer. Geaenderte
+Zielnotizen werden nicht ueberschrieben; ein inzwischen geaenderter Tab wird
+auch nach der Antwort nicht pauschal clean gesetzt. Der bestehende Apply-Endpunkt
+und das Ereignis `notes-batch-updated` bleiben fuer Datei-, Index-, Graph- und
+Ansichtsaktualisierung zustaendig. Null- und Teiluebernahmen verlangen eine
+erneute Suche statt unbestaetigte Treffer als erledigt zu entfernen. Eine
+bereits erfolgreiche Schreibung bleibt von einem nachfolgenden Refreshfehler
+unterscheidbar. Keine neue Fachpersistenz, Dependency oder Formatmigration.
+`--tag-matching` prueft den Dialog in einer eigenen synthetischen NoteBase mit
+verzoegerten echten Antworten, absichtlichen HTTP-Fehlern und realen Ersetzungen.
+Nachweise: [Tag-Matching-Dialog](doc/tag-matching-dialog-2026-11-10.md).
+
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.

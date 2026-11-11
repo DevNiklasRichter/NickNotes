@@ -311,6 +311,7 @@ export function TagSidebar({
               }}
               disabled={!vaultLoaded || groups.length === 0}
               title="NoteBase nach Tag-Fundstellen durchsuchen"
+              aria-label="NoteBase nach Tag-Fundstellen durchsuchen"
             >
               <LucideNamedIcon name="ScanSearch" className="row-action-icon" size={14} />
             </button>

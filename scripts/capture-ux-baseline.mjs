@@ -23,9 +23,10 @@ const editorMenus = process.argv.includes('--editor-menus')
 const sidebarMenus = process.argv.includes('--sidebar-menus')
 const suggestionMenus = process.argv.includes('--suggestions')
 const createDialog = process.argv.includes('--create-dialog')
+const tagMatching = process.argv.includes('--tag-matching')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1155,6 +1156,214 @@ async function verifyCreateDialog() {
   report.checks.createDialogSingleRequestSuccessAndSettingsPersisted=true
 }
 
+async function verifyTagMatching() {
+  const originalVault=vaultPath
+  const matchRoot=path.join(scratch,'UX-Tag-Matching')
+  await page.keyboard.press('Control+Shift+s')
+  await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
+  await page.locator('.notebase-sidebar-toolbar').getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+  const create=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
+  await create.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Tag-Matching')
+  await create.getByLabel('Speicherort',{exact:true}).fill(scratch)
+  await create.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
+  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Aenderungen',exact:true})
+  await expect.poll(async()=>await confirm.count()||+(await create.count()===0)).toBe(1)
+  if(await confirm.count())await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
+  await expect(create).toHaveCount(0)
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Tag-Matching')
+  vaultPath=matchRoot
+  try {
+    await request('/tag-groups/add-group',{groupId:'ux-match',displayName:'Prüfprojekte',color:'#81a1c1'})
+    await request('/tag-groups/add-tag',{groupId:'ux-match',tagId:'orionprobe',displayName:'Orionprobe'})
+    await request('/tag-groups/add-tag',{groupId:'ux-match',tagId:'vektorprobe',displayName:'Vektorprobe'})
+    const a=await createNote('Tag-Prüfung A','Orionprobe startet hier.\n\nOrionprobe steht erneut im Text.\n\nVektorprobe bleibt als zweite Kategorie.\n')
+    const b=await createNote('Tag-Prüfung B','Eine weitere Orionprobe steht in dieser Notiz.\n')
+    await page.reload();await expect(page.locator('.activity-rail')).toBeVisible()
+    await theme('dark');await openNote('Tag-Prüfung A')
+    await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+    const trigger=page.getByRole('button',{name:'NoteBase nach Tag-Fundstellen durchsuchen',exact:true})
+    const dialog=page.getByRole('dialog',{name:'Tag-Fundstellen prüfen',exact:true})
+    const close=()=>dialog.getByRole('button',{name:'Tag-Prüfung schließen',exact:true})
+    const retry=()=>dialog.getByRole('button',{name:'Erneut suchen',exact:true})
+    const apply=()=>dialog.getByRole('button',{name:'Übernehmen',exact:true})
+    const count=()=>dialog.locator('.tag-match-summary-row span').first()
+    const posts=()=>report.requests.filter(req=>req.method==='POST'&&req.endpoint==='/tag-groups/apply-matches').length
+    const initialA=fs.readFileSync(a,'utf8')
+    let initialB=fs.readFileSync(b,'utf8')
+    assert.equal((await request('/tag-groups/match-candidates')).total,4)
+    const open=async()=>{await trigger.click();await expect(retry()).toBeEnabled();await expect(count()).toHaveText('Treffer 1 von 4')}
+
+    // Hold one genuine scan response, cancel it, and open a second scan before
+    // allowing the first response to arrive. No product callback is substituted.
+    let releaseScan,scans=0,oldScanReady=false,oldScanFinished=false
+    const scanGate=new Promise(resolve=>{releaseScan=resolve})
+    const slowScan=async route=>{
+      if(++scans!==1){await route.continue();return}
+      const response=await route.fetch();oldScanReady=true;await scanGate
+      await route.fulfill({response}).catch(()=>{}) // A canceled transport may already be disposed.
+      oldScanFinished=true
+    }
+    await page.route('**/tag-groups/match-candidates',slowScan)
+    try {
+      await trigger.click();await expect(dialog).toHaveAttribute('aria-busy','true')
+      await expect(dialog).toBeFocused()
+      await expect.poll(()=>oldScanReady).toBe(true)
+      await capture('tag-matching-loading-dark','Cancelable genuine scan; named dialog owns focus while loading')
+      await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+      const previous=await request('/notes/content?path='+encodeURIComponent(b))
+      await request('/notes/save',{path:b,content:previous.content+'\nOrionprobe als fünfte Fundstelle.\n',expectedRevision:previous.revision})
+      await trigger.click();await expect(count()).toHaveText('Treffer 1 von 5')
+      releaseScan();await expect.poll(()=>oldScanFinished).toBe(true);await expect(count()).toHaveText('Treffer 1 von 5')
+      await expect(dialog.getByRole('alert')).toHaveCount(0)
+      const current=await request('/notes/content?path='+encodeURIComponent(b))
+      await request('/notes/save',{path:b,content:initialB,expectedRevision:current.revision})
+      initialB=fs.readFileSync(b,'utf8') // The intentional save updates its timestamp.
+    } finally {releaseScan();await page.unroute('**/tag-groups/match-candidates',slowScan)}
+    await close().focus();await page.keyboard.press('Enter');await expect(trigger).toBeFocused()
+    report.checks.tagMatchingCanceledScanDoesNotReplaceNewDialog=true
+
+    const failedScan=route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'Synthetischer Suchfehler',code:'ux.scan.failed'}})})
+    await page.route('**/tag-groups/match-candidates',failedScan)
+    try {
+      await trigger.click();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Suchfehler')
+      await expect(dialog.getByText('Keine Fundstellen mehr offen.',{exact:true})).toHaveCount(0)
+      await capture('tag-matching-search-error-dark','Scan error is distinct from an empty result and offers retry')
+    } finally {await page.unroute('**/tag-groups/match-candidates',failedScan)}
+    await retry().click();await expect(count()).toHaveText('Treffer 1 von 4');await expect(retry()).toBeFocused()
+    const before=posts()
+    await page.keyboard.press('Shift+Tab');await expect(apply()).toBeFocused()
+    await page.keyboard.press('Tab');await expect(retry()).toBeFocused()
+    await page.keyboard.press('ArrowRight');await expect(count()).toHaveText('Treffer 2 von 4')
+    await dialog.getByRole('button',{name:'Vorherige Fundstelle',exact:true}).click()
+    await expect(count()).toHaveText('Treffer 1 von 4')
+    await dialog.getByRole('region',{name:'Vorher',exact:true}).focus()
+    await page.keyboard.press('ArrowRight');await expect(count()).toHaveText('Treffer 1 von 4')
+    await dialog.getByRole('button',{name:'Überspringen',exact:true}).click()
+    await expect(count()).toHaveText('Treffer 1 von 3')
+    assert.equal(posts(),before);assert.equal(fs.readFileSync(a,'utf8'),initialA);assert.equal(fs.readFileSync(b,'utf8'),initialB)
+    await capture('tag-matching-preview-dark','Before/after comparison, named navigation and non-writing skip action')
+    await page.keyboard.press('Control+n');await expect(dialog).toBeVisible()
+    await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+    await open();await page.mouse.click(4,45);await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+    report.checks.tagMatchingKeyboardSkipAndDismissPreserveFiles=true
+
+    const editor=page.locator('.note-body-editor .cm-content').first(),marker='Dieser ungespeicherte Entwurf bleibt erhalten.'
+    await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+marker)
+    await open();await apply().click()
+    await expect(dialog.getByRole('alert')).toContainText('geöffneten geänderten Notizen')
+    assert.equal(posts(),before);assert.equal(fs.readFileSync(a,'utf8'),initialA)
+    await capture('tag-matching-dirty-guard-dark','Buffered editor draft blocks replacement and explains how to continue')
+    await page.keyboard.press('Escape');await expect(editor).toContainText(marker)
+    await page.keyboard.press('Control+s');await expect.poll(()=>fs.readFileSync(a,'utf8')).toContain(marker)
+    await open()
+    report.checks.tagMatchingDirtyTargetDoesNotSendApply=true
+
+    const failedApply=route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'Synthetischer Übernahmefehler',code:'ux.apply.failed'}})})
+    await page.route('**/tag-groups/apply-matches',failedApply)
+    try {
+      await apply().click();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Übernahmefehler')
+      await expect(count()).toHaveText('Treffer 1 von 4');await expect(apply()).toBeEnabled()
+      assert.equal(fs.readFileSync(a,'utf8').includes('{tag:ux-match/'),false)
+      await capture('tag-matching-apply-error-dark','Failed mutation keeps its candidate and permits retry')
+    } finally {await page.unroute('**/tag-groups/apply-matches',failedApply)}
+    report.checks.tagMatchingApplyFailureRetainsCandidate=true
+
+    let releaseApply,applies=0
+    const applyGate=new Promise(resolve=>{releaseApply=resolve})
+    const slowApply=async route=>{applies++;await applyGate;await route.continue()}
+    await page.route('**/tag-groups/apply-matches',slowApply)
+    try {
+      await apply().click();await expect.poll(()=>applies).toBe(1);await expect(dialog).toHaveAttribute('aria-busy','true')
+      await page.keyboard.press('Escape');await page.mouse.click(4,45);await expect(dialog).toBeVisible()
+      await expect(close()).toBeDisabled();await expect(retry()).toBeDisabled()
+      await expect(dialog.getByRole('button',{name:'Nächste Fundstelle',exact:true})).toBeDisabled()
+      await dialog.locator('button').evaluateAll(buttons=>buttons.forEach(button=>button.click()))
+      assert.equal(applies,1)
+      await capture('tag-matching-pending-dark','Deferred real apply locks dismissal, navigation and mutation controls')
+      releaseApply();await expect(count()).toHaveText('Treffer 1 von 3');await expect(apply()).toBeEnabled()
+    } finally {releaseApply();await page.unroute('**/tag-groups/apply-matches',slowApply)}
+    assert.equal((fs.readFileSync(a,'utf8').match(/\{tag:ux-match\/orionprobe\}/g)||[]).length,1)
+    assert.equal(fs.readFileSync(b,'utf8'),initialB)
+    report.checks.tagMatchingSingleApply200AndDoubleSubmitProtected=true
+
+    // The previous replacement shifts later offsets in this same file. The real
+    // backend rejects that stale location with applied=0, without rewriting it.
+    const beforeStale=fs.readFileSync(a,'utf8')
+    await apply().click();await expect(dialog.getByRole('alert')).toContainText('inzwischen geändert')
+    await expect(count()).toHaveText('Treffer 1 von 3');await expect(apply()).toBeDisabled()
+    assert.equal(fs.readFileSync(a,'utf8'),beforeStale)
+    await capture('tag-matching-stale-dark','Real zero-apply response preserves stale candidates and requires a fresh scan')
+    report.checks.tagMatchingZeroApplyIsNotReportedAsCompleted=true
+
+    await retry().click();await expect(count()).toHaveText('Treffer 1 von 3')
+    await dialog.getByRole('button',{name:'Diesen Tag überall',exact:true}).click()
+    await expect(count()).toHaveText('Treffer 1 von 1');await expect(apply()).toBeEnabled()
+    assert.equal((fs.readFileSync(a,'utf8').match(/\{tag:ux-match\/orionprobe\}/g)||[]).length,2)
+    assert.equal((fs.readFileSync(b,'utf8').match(/\{tag:ux-match\/orionprobe\}/g)||[]).length,1)
+    await retry().click();await expect(count()).toHaveText('Treffer 1 von 1')
+
+    const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+    try {
+      for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
+        await windowSize(width,height,1.5)
+        const rect=await dialog.boundingBox(),view=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+        assert.ok(Math.abs(view.width-width/1.5)<2)
+        assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
+        await retry().focus();await page.keyboard.press('Shift+Tab');await expect(apply()).toBeFocused();await expect(apply()).toBeInViewport()
+        await capture(`tag-matching-${label}-dark`,'Comparison scrolls inside actual '+label+' viewport; final action remains reachable')
+      }
+    } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+    await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+    await theme('light');await trigger.click();await expect(count()).toHaveText('Treffer 1 von 1')
+    await capture('tag-matching-light','Tag matching comparison and action labels in the light theme')
+    await dialog.getByRole('button',{name:'Alle übernehmen',exact:true}).click()
+    await expect(dialog.getByText('Keine Fundstellen mehr offen.',{exact:true})).toBeVisible()
+    await expect(dialog.getByRole('status')).toContainText('1 Fundstelle in 1 Notiz übernommen.')
+    assert.ok(fs.readFileSync(a,'utf8').includes('{tag:ux-match/vektorprobe}'))
+    assert.ok(fs.readFileSync(a,'utf8').includes(marker))
+    assert.equal((await request('/tag-groups/match-candidates')).total,0)
+    // A real partial batch must not mark its unconfirmed candidates as done.
+    const c=await createNote('Tag-Prüfung C','Orionprobe wird zuerst geprüft.\n\nOrionprobe steht auch weiter unten.\n')
+    const d=await createNote('Tag-Prüfung D','Orionprobe wird außerhalb der Vorschau verschoben.\n')
+    await retry().click();await expect(count()).toHaveText('Treffer 1 von 3')
+    const external=await request('/notes/content?path='+encodeURIComponent(d))
+    await request('/notes/save',{path:d,content:external.content.replace('Orionprobe','Vorher verschoben. Orionprobe'),expectedRevision:external.revision})
+    const untouchedD=fs.readFileSync(d,'utf8')
+    await dialog.getByRole('button',{name:'Diesen Tag überall',exact:true}).click()
+    await expect(dialog.getByRole('alert')).toContainText('Einige Fundstellen haben sich geändert')
+    await expect(dialog.getByRole('status')).toContainText('2 Fundstellen in 1 Notiz übernommen.')
+    await expect(count()).toHaveText('Treffer 1 von 3');await expect(apply()).toBeDisabled()
+    assert.equal((fs.readFileSync(c,'utf8').match(/\{tag:ux-match\/orionprobe\}/g)||[]).length,2)
+    assert.equal(fs.readFileSync(d,'utf8'),untouchedD)
+    await capture('tag-matching-partial-light','Real partial batch writes two confirmed positions and retains unconfirmed candidates until rescan')
+    await retry().click();await expect(count()).toHaveText('Treffer 1 von 1')
+    await dialog.getByRole('button',{name:'Alle übernehmen',exact:true}).click()
+    await expect(dialog.getByText('Keine Fundstellen mehr offen.',{exact:true})).toBeVisible()
+    await expect(dialog.getByRole('status')).toContainText('1 Fundstelle in 1 Notiz übernommen.')
+    assert.ok(fs.readFileSync(d,'utf8').includes('{tag:ux-match/orionprobe}'))
+    assert.equal((await request('/tag-groups/match-candidates')).total,0)
+    report.checks.tagMatchingPartialApplyRetainsUnconfirmedCandidates=true
+    const graph=JSON.parse(fs.readFileSync(path.join(matchRoot,'.system','graph-index.json'),'utf8'))
+    for(const file of [a,b,c,d]) {
+      const entry=graph.files[path.relative(matchRoot,file).replaceAll('\\','/')]
+      assert.ok(entry.tags.includes('ux-match:orionprobe'))
+      assert.ok(graph.edges.some(edge=>edge.type==='tagUsage'&&edge.source===entry.id&&edge.target==='tag:ux-match/orionprobe'))
+    }
+    const indexed=await request('/search?tag='+encodeURIComponent('ux-match:orionprobe'))
+    for(const file of [a,b,c,d])assert.ok(indexed.items.some(item=>path.resolve(item.path)===path.resolve(file)))
+    const vector=await request('/search?tag='+encodeURIComponent('ux-match:vektorprobe'))
+    assert.equal(vector.items.length,1);assert.equal(path.resolve(vector.items[0].path),path.resolve(a))
+    await capture('tag-matching-complete-light','Real single, per-tag and all-match writes completed; index and graph refreshed')
+    await dialog.getByRole('button',{name:'Fertig',exact:true}).focus();await page.keyboard.press('Enter');await expect(trigger).toBeFocused()
+    report.checks.tagMatchingBatchApplyMarkdownIndexAndGraph=true
+  } finally {vaultPath=originalVault}
+  await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
+  await page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).click()
+  await page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
+  await theme('dark');await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -1247,6 +1456,7 @@ try {
     if (sidebarMenus) await verifySidebarMenus()
     if (suggestionMenus) await verifySuggestionMenus()
     if (createDialog) await verifyCreateDialog()
+    if (tagMatching) await verifyTagMatching()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

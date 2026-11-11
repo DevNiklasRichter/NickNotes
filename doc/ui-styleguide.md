@@ -134,5 +134,19 @@ scrollen innerhalb des Fensters. Eingaben behalten Leerzeichen beim Tippen;
 die bestehende Fachvalidierung normalisiert erst beim Absenden.
 Nachweise: [NoteBase-Erstellung](create-notebase-dialog-2026-11-10.md).
 
+Die Tag-Matching-Prüfung verwendet dieselben Fokus-/Tabregeln. Vorher und Nachher
+sind benannte, per Tastatur scrollbar erreichbare Regionen; ihre Pfeiltasten
+wechseln nicht ungewollt die Fundstelle. Außerhalb der Vorschau wechseln ←/→
+die Fundstelle; die Navigationsbuttons tragen eindeutige Labels. Überspringen
+ändert keine Datei und gilt nur für den aktuellen Prüfdurchlauf. Erneut suchen
+beginnt einen neuen Durchlauf einschließlich übersprungener Fundstellen.
+Suchfehler bleiben von einer leeren Liste unterscheidbar. Suche darf abgebrochen
+werden; eine laufende Schreibung sperrt alle Abschluss-/Mutationsaktionen.
+Veraltete oder nur teilweise übernommene Fundstellen fordern zur erneuten Suche
+auf. Fehler, Fortschritt und Ergebnis stehen direkt im Dialog.
+Vorschauchips teilen die vorhandene Tagdarstellung, verwenden für lesbare
+Beschriftungen jedoch die normale Textfarbe. Gruppenfarben bleiben in Rahmen
+und Hintergrund erhalten. [Nachweise](tag-matching-dialog-2026-11-10.md).
+
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).
