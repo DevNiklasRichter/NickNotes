@@ -1,6 +1,6 @@
 # NickNotes Gestaltungsgrundlage
 
-Stand: 10. November 2026, POT-02 / IMP-024. Verbindliche Quelle sind die
+Stand: 11. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
 CSS-Tokens in `src/frontend/src/index.css`, die Farbprofile in
 `src/frontend/src/app/AppShared.ts` und die jeweiligen Komponentenstyles.
 Dieser Leitfaden beschreibt ihren Einsatz; er ist kein zweites Themesystem.
@@ -147,6 +147,15 @@ auf. Fehler, Fortschritt und Ergebnis stehen direkt im Dialog.
 Vorschauchips teilen die vorhandene Tagdarstellung, verwenden für lesbare
 Beschriftungen jedoch die normale Textfarbe. Gruppenfarben bleiben in Rahmen
 und Hintergrund erhalten. [Nachweise](tag-matching-dialog-2026-11-10.md).
+
+Einstellungen verwenden dieselbe Dialogführung. Bereichsbuttons nennen die
+aktive Rubrik und lassen sich mit Pfeilen sowie Home/End bedienen. Änderungen
+werden vor dem Schließen über Speichern, Verwerfen oder Abbrechen abgeschlossen;
+nur die oberste Bestätigung ist aktiv. Speicherfehler stehen unmittelbar bei
+den Aktionen, ein laufender Save sperrt die Controls. Strg+S übernimmt zuvor
+das aktive Theme-Feld. Nach Verwerfen liegt der Fokus sichtbar auf der aktuellen
+Rubrik, bei unverändertem Strg+S bleibt der Feldfokus erhalten. Kleine Fenster
+scrollen innerhalb der Dialoggrenzen. [Nachweise](settings-dialog-2026-11-11.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

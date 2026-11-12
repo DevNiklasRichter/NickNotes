@@ -24,9 +24,10 @@ const sidebarMenus = process.argv.includes('--sidebar-menus')
 const suggestionMenus = process.argv.includes('--suggestions')
 const createDialog = process.argv.includes('--create-dialog')
 const tagMatching = process.argv.includes('--tag-matching')
+const settingsDialog = process.argv.includes('--settings-dialog')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1364,6 +1365,163 @@ async function verifyTagMatching() {
   await theme('dark');await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
 }
 
+async function verifySettingsDialog() {
+  const trigger=page.locator('.activity-rail').getByRole('button',{name:'Einstellungen',exact:true})
+  const dialog=page.getByRole('dialog',{name:'Einstellungen',exact:true})
+  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Einstellungen',exact:true})
+  const nav=()=>dialog.getByRole('navigation',{name:'Einstellungsbereiche',exact:true})
+  const section=name=>nav().getByRole('button',{name,exact:true})
+  const name=()=>dialog.getByLabel('Anrede',{exact:true})
+  const save=()=>dialog.getByRole('button',{name:'Speichern',exact:true})
+  const discard=()=>dialog.getByRole('button',{name:'Verwerfen',exact:true})
+  const close=()=>dialog.getByRole('button',{name:'Einstellungen schliessen',exact:true})
+  const fullSave=route=>route.request().method()==='POST'&&Object.hasOwn(route.request().postDataJSON()?.app??{},'displayName')
+  const settingsFile=path.join(vaultPath,'.system','ui_settings.json')
+  const saved=()=>JSON.parse(fs.readFileSync(settingsFile,'utf8')).app
+  const open=async()=>{await trigger.click();await expect(name()).toBeFocused()}
+  await open()
+  if(await save().isEnabled()){await save().click();await expect(close()).toBeEnabled()}
+  const originalName=await name().inputValue()
+  const originalTheme=saved().activeThemeId
+  await capture('settings-dialog-general-dark','Shared focus lifecycle and accessible setting fields in the existing settings dialog')
+  await section('Allgemein').focus();await page.keyboard.press('End')
+  await expect(section('Tasks')).toBeFocused();await expect(section('Tasks')).toHaveAttribute('aria-current','page')
+  await page.keyboard.press('Home');await expect(section('Allgemein')).toBeFocused()
+  await page.keyboard.press('ArrowDown');await expect(section('Darstellung')).toBeFocused()
+  await page.keyboard.press('ArrowUp');await expect(section('Allgemein')).toBeFocused()
+  await name().fill('Ada mit Leerzeichen');await expect(name()).toHaveValue('Ada mit Leerzeichen')
+  await section('Allgemein').focus();await page.keyboard.press('Shift+Tab');await expect(save()).toBeFocused()
+  await page.keyboard.press('Tab');await expect(section('Allgemein')).toBeFocused()
+  await page.keyboard.press('Control+n');await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape');await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await expect(page.locator('.settings-modal')).toBeHidden();await expect(dialog).toHaveCount(0)
+  await capture('settings-dialog-close-confirm-dark','Only the existing save/discard/cancel confirmation is visible and active')
+  await page.keyboard.press('Control+s');assert.equal(saved().displayName,originalName)
+  await page.keyboard.press('Enter');await expect(name()).toHaveValue('Ada mit Leerzeichen');await expect(name()).toBeFocused()
+  await close().click();await expect(confirm).toBeVisible();await confirm.getByRole('button',{name:'Abbrechen',exact:true}).click()
+  await page.mouse.click(4,45);await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
+  await confirm.getByRole('button',{name:'Verwerfen',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  assert.equal(saved().displayName,originalName)
+  await open();await expect(name()).toHaveValue(originalName)
+  await name().fill('Wird verworfen');await discard().click();await expect(name()).toHaveValue(originalName);await expect(save()).toBeDisabled()
+  await expect(section('Allgemein')).toBeFocused()
+  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  await open();await close().focus();await page.keyboard.press('Enter');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  await open();await page.keyboard.press('Control+s');await expect(name()).toBeFocused();await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+  await open();await page.mouse.click(4,45);await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  report.checks.settingsDialogKeyboardDirtyCancelDiscardAndFocus=true
+
+  await open();await name().fill('Fehler-Entwurf')
+  const failed=async route=>{
+    if(!fullSave(route)){await route.continue();return}
+    await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'Synthetischer Einstellungsfehler',code:'ux.settings.failed'}})})
+  }
+  await page.route('**/ui-settings',failed)
+  try {
+    await save().click();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Einstellungsfehler')
+    await expect(name()).toHaveValue('Fehler-Entwurf');await expect(save()).toBeEnabled()
+    assert.equal(saved().displayName,originalName)
+    await capture('settings-dialog-save-error-dark','Failed real save path retains draft, shows an inline error and enables retry')
+    await close().click();await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
+    await expect(dialog).toBeVisible();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Einstellungsfehler')
+    await expect(name()).toHaveValue('Fehler-Entwurf');assert.equal(saved().displayName,originalName)
+  } finally {await page.unroute('**/ui-settings',failed)}
+  report.checks.settingsDialogFailedSaveKeepsDraftAndDialog=true
+
+  await name().fill('Ada gespeichert')
+  let release,saves=0
+  const gate=new Promise(resolve=>{release=resolve})
+  const slow=async route=>{
+    if(!fullSave(route)){await route.continue();return}
+    saves++;assert.equal(route.request().postDataJSON().app.displayName,'Ada gespeichert')
+    await gate;await route.continue()
+  }
+  await page.route('**/ui-settings',slow)
+  try {
+    await name().focus();await page.keyboard.press('Control+s');await expect.poll(()=>saves).toBe(1)
+    await expect(dialog).toHaveAttribute('aria-busy','true');await expect(name()).toBeDisabled();await expect(close()).toBeDisabled()
+    await page.keyboard.press('Escape');await page.mouse.click(4,45);await expect(dialog).toBeVisible();await expect(confirm).toHaveCount(0)
+    await page.keyboard.press('Control+s');await page.keyboard.press('Control+s')
+    await dialog.locator('button').evaluateAll(buttons=>buttons.forEach(button=>button.click()))
+    assert.equal(saves,1);assert.equal(saved().displayName,originalName)
+    await capture('settings-dialog-pending-dark','Deferred genuine save locks settings and dismissal; repeated shortcuts do not write again')
+    release();await expect(name()).toBeEnabled();await expect(save()).toBeDisabled()
+    await expect.poll(()=>saved().displayName).toBe('Ada gespeichert')
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    assert.equal(saves,1)
+  } finally {release();await page.unroute('**/ui-settings',slow)}
+  report.checks.settingsDialogSingleSaveAcrossQueuedShortcuts=true
+
+  await name().fill('Über den Abschluss gespeichert');await close().click()
+  await confirm.getByRole('button',{name:'Speichern',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  assert.equal(saved().displayName,'Über den Abschluss gespeichert')
+  await open();await name().fill(originalName);await save().click();await expect(close()).toBeEnabled()
+  await section('Import').click()
+  await app.evaluate(({dialog})=>{
+    globalThis.__settingsPickerOriginal=dialog.showOpenDialog
+    globalThis.__settingsPickerCalls=0
+    dialog.showOpenDialog=()=>{globalThis.__settingsPickerCalls++;return new Promise(resolve=>{globalThis.__settingsPickerFinish=resolve})}
+  })
+  try {
+    const picker=dialog.getByRole('button',{name:'Dateien waehlen',exact:true})
+    await picker.focus();await page.keyboard.press('Enter');await expect(dialog).toHaveAttribute('aria-busy','true')
+    await expect(close()).toBeDisabled();await page.keyboard.press('Escape');await page.mouse.click(4,45)
+    await expect(dialog).toBeVisible();await expect(confirm).toHaveCount(0)
+    assert.equal(await app.evaluate(()=>globalThis.__settingsPickerCalls),1)
+    await expect(dialog.getByRole('status')).toContainText('Dateiauswahl ist geöffnet')
+    await expect(dialog.locator('.launch-progress')).toHaveCount(0)
+    await capture('settings-dialog-import-picker-dark','Only the isolated OS picker is stubbed; settings remain locked until it returns')
+    await app.evaluate(()=>globalThis.__settingsPickerFinish({canceled:true,filePaths:[]}))
+    await expect(close()).toBeEnabled();await expect(dialog.getByRole('button',{name:'Import starten',exact:true})).toBeDisabled()
+  } finally {
+    await app.evaluate(({dialog})=>{
+      dialog.showOpenDialog=globalThis.__settingsPickerOriginal
+      delete globalThis.__settingsPickerOriginal;delete globalThis.__settingsPickerFinish;delete globalThis.__settingsPickerCalls
+    })
+  }
+  report.checks.settingsDialogPickerWaitBlocksDismissal=true
+  await section('Darstellung').click();await dialog.getByRole('button',{name:'Neues Theme',exact:true}).click()
+  const customId=await dialog.getByRole('combobox',{name:'Theme',exact:true}).inputValue()
+  const profileName=dialog.getByLabel('Theme-Name',{exact:true})
+  await profileName.fill('Tastatur Theme');await page.keyboard.press('Control+s')
+  await expect(close()).toBeEnabled();await expect(save()).toBeDisabled()
+  assert.equal(saved().themes.find(profile=>profile.id===saved().activeThemeId).name,'Tastatur Theme')
+  const textColor=dialog.getByLabel('Text als Farbwert',{exact:true})
+  await textColor.fill('#dcece2');await page.keyboard.press('Control+s')
+  await expect(close()).toBeEnabled();await expect(save()).toBeDisabled()
+  assert.equal(saved().themes.find(profile=>profile.id===saved().activeThemeId).colors.text,'#dcece2')
+  await capture('settings-dialog-theme-keyboard-dark','Ctrl+S commits the still-focused theme name and colour through existing blur handlers')
+  await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+  await page.reload();await expect(trigger).toBeVisible();await open();await section('Darstellung').click()
+  await expect(profileName).toHaveValue('Tastatur Theme');await expect(textColor).toHaveValue('#dcece2')
+  report.checks.settingsDialogThemeDraftShortcutAndReload=true
+
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  try {
+    for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
+      await windowSize(width,height,1.5)
+      const rect=await dialog.boundingBox(),view=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+      assert.ok(Math.abs(view.width-width/1.5)<2)
+      assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
+      await section('Allgemein').focus();await page.keyboard.press('Shift+Tab')
+      const focused=page.locator(':focus');await expect(focused).toHaveAttribute('aria-label',/als Farbwert$/);await expect(focused).toBeInViewport()
+      await section('Allgemein').click();await name().fill('Viewport-Entwurf')
+      await section('Allgemein').focus();await page.keyboard.press('Shift+Tab');await expect(save()).toBeFocused();await expect(save()).toBeInViewport()
+      await capture(`settings-dialog-${label}-dark`,'Settings remain within actual '+label+' viewport; final enabled action reachable by keyboard')
+      await discard().click();await expect(section('Allgemein')).toBeFocused();await expect(section('Allgemein')).toBeInViewport();await section('Darstellung').click()
+    }
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  await dialog.getByRole('combobox',{name:'Theme',exact:true}).selectOption(customId)
+  // Delete only the test profile by its active custom identity, then restore the original theme.
+  await dialog.getByRole('button',{name:'Theme loeschen',exact:true}).click()
+  await dialog.getByRole('combobox',{name:'Theme',exact:true}).selectOption(originalTheme)
+  await save().click();await expect(close()).toBeEnabled()
+  await page.keyboard.press('Escape');await theme('light');await open()
+  await capture('settings-dialog-light','General settings, live save status and area navigation in the light theme')
+  await page.keyboard.press('Escape');await theme('dark')
+  await openNote('Arbeitsnotiz')
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -1457,6 +1615,7 @@ try {
     if (suggestionMenus) await verifySuggestionMenus()
     if (createDialog) await verifyCreateDialog()
     if (tagMatching) await verifyTagMatching()
+    if (settingsDialog) await verifySettingsDialog()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
@@ -1557,6 +1716,14 @@ try {
     }))
     await page.locator('.activity-rail').getByRole('button', {name: 'Einstellungen', exact: true}).click()
     await expect(page.getByRole('heading', {name: 'Unterbrochene Aenderungen pruefen'})).toBeVisible()
+    if(settingsDialog) {
+      const summary=page.locator('.settings-modal summary').first()
+      await summary.focus();await page.keyboard.press('Tab')
+      await expect(page.getByRole('button',{name:'Vorherigen Stand wiederherstellen',exact:true})).toBeFocused()
+      await page.keyboard.press('Shift+Tab');await expect(summary).toBeFocused()
+      await page.keyboard.press('Enter');await expect(summary.locator('..')).toHaveAttribute('open','')
+      report.checks.settingsDialogRecoveryDetailsNativeKeyboard=true
+    }
     await capture('recovery-light', 'Real recovery UI with a deliberately staged local journal; no crash simulated')
 
     await page.getByRole('button', {name: 'Einstellungen schliessen'}).click()

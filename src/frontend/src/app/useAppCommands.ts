@@ -39,7 +39,8 @@ export function useAppCommands(commands:AppCommand[], onError:(message:string)=>
     const command=commandForKey(event)
     if(!command||command.native)return // Let the focused editor/input handle normal text editing.
     event.preventDefault()
-    if(document.querySelector('.modal-overlay,[aria-modal="true"]') && !(settingsOpen&&command.id==='save'))return
+    const settingsOwnsFocus=settingsOpen&&event.target instanceof Element&&event.target.closest('.settings-modal')&&!event.target.closest('[inert]')
+    if(document.querySelector('.modal-overlay,[aria-modal="true"]') && !(settingsOwnsFocus&&command.id==='save'))return
     execute(command.id)
   })
   useEffect(()=>{

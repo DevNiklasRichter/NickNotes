@@ -1,4 +1,5 @@
 import { type Dispatch, type SetStateAction } from 'react'
+import {flushSync} from 'react-dom'
 import type { ColorProfile, StatusBarPrefs, TaskFeatureSettings, ThemeMode } from './AppShared'
 import type { ExplorerOptions } from '../explorer/types'
 import { normalizeLabel, toThemeMode } from './AppShared'
@@ -51,6 +52,14 @@ type AppSettingsContext = {
   snapshot: AppSettingsSnapshot
   writer: AppSettingsWriter
   isVaultLoaded: () => boolean
+  isSettingsDirty: () => boolean
+  getSavePromise: () => Promise<boolean> | null
+  setSavePromise: (promise: Promise<boolean> | null) => void
+  isClosePending: () => boolean
+  setClosePending: (pending: boolean) => void
+  setSaving: (saving: boolean) => void
+  setSaveError: (message: string) => void
+  askCloseChoice: () => Promise<string | null>
   setSettingsDialogOpen: (open: boolean) => void
   saveUiSettingsPatch: (patch: UiSettingsPatch) => Promise<void>
   buildFullAppUiSettings: () => Record<string, unknown>
@@ -75,42 +84,74 @@ export class AppSettingsService {
     profiles.map((profile) => ({ ...profile, colors: { ...profile.colors } }))
 
   openSettingsDialog = () => {
+    this.context.setSaveError('')
     this.context.setSettingsDialogOpen(true)
   }
 
-  closeSettingsDialog = () => {
-    this.context.setSettingsDialogOpen(false)
+  closeSettingsDialog = async () => {
+    if (this.context.getSavePromise() || this.context.isClosePending()) return
+    if (!this.context.isSettingsDirty()) {
+      this.context.setSettingsDialogOpen(false)
+      return
+    }
+    this.context.setClosePending(true)
+    try {
+      const choice = await this.context.askCloseChoice()
+      if (choice === 'save' && await this.saveSettings()) this.context.setSettingsDialogOpen(false)
+      else if (choice === 'discard') {
+        this.discardSettings()
+        this.context.setSettingsDialogOpen(false)
+      }
+    } finally {this.context.setClosePending(false)}
   }
 
-  saveSettings = async (): Promise<boolean> => {
+  saveSettings = (): Promise<boolean> => {
+    const existing = this.context.getSavePromise()
+    if (existing) return existing
+    if (!this.context.isSettingsDirty()) return Promise.resolve(true)
+    this.context.setSaving(true)
+    this.context.setSaveError('')
+    const pending = this.persistSettings().finally(() => {
+      this.context.setSavePromise(null)
+      this.context.setSaving(false)
+    })
+    this.context.setSavePromise(pending)
+    return pending
+  }
+
+  private persistSettings = async (): Promise<boolean> => {
     try {
+      const displayName = normalizeLabel(this.snapshot.getDisplayName()) || 'Mein Wissen'
       if (this.context.isVaultLoaded()) {
         await this.context.saveUiSettingsPatch({
-          app: this.context.buildFullAppUiSettings(),
+          app: {...this.context.buildFullAppUiSettings(), displayName},
         })
       }
-      this.writer.setSavedTheme(this.snapshot.getTheme())
-      this.writer.setSavedActiveColorProfileId(this.snapshot.getActiveColorProfileId())
-      this.writer.setSavedColorProfiles(this.cloneColorProfiles(this.snapshot.getColorProfiles()))
-      this.writer.setSavedDisplayName(this.snapshot.getDisplayName())
-      this.writer.setSavedSidebarOpen(this.snapshot.isSidebarOpen())
-      this.writer.setSavedStatusBarPrefs({ ...this.snapshot.getStatusBarPrefs() })
-      this.writer.setSavedTaskFeatureSettings({ ...this.snapshot.getTaskFeatureSettings() })
-      this.writer.setSavedExplorerOptions({ ...this.snapshot.getExplorerOptions() })
+      // Publish the saved baseline before a queued shortcut or close request continues.
+      flushSync(() => {
+        this.writer.setSavedTheme(this.snapshot.getTheme())
+        this.writer.setSavedActiveColorProfileId(this.snapshot.getActiveColorProfileId())
+        this.writer.setSavedColorProfiles(this.cloneColorProfiles(this.snapshot.getColorProfiles()))
+        this.writer.setDisplayName(displayName)
+        this.writer.setSavedDisplayName(displayName)
+        this.writer.setSavedSidebarOpen(this.snapshot.isSidebarOpen())
+        this.writer.setSavedStatusBarPrefs({ ...this.snapshot.getStatusBarPrefs() })
+        this.writer.setSavedTaskFeatureSettings({ ...this.snapshot.getTaskFeatureSettings() })
+        this.writer.setSavedExplorerOptions({ ...this.snapshot.getExplorerOptions() })
+      })
       this.writer.setMessage('Einstellungen gespeichert.')
       this.writer.setError('')
       return true
     } catch (caught) {
+      this.context.setSaveError(String(caught))
       this.writer.setError(String(caught))
       return false
     }
   }
 
-  requestSaveSettings = () => {
-    void this.saveSettings()
-  }
-
   discardSettings = () => {
+    if (this.context.getSavePromise()) return
+    this.context.setSaveError('')
     this.writer.setTheme(this.snapshot.getSavedTheme())
     this.writer.setActiveColorProfileId(this.snapshot.getSavedActiveColorProfileId())
     this.writer.setColorProfiles(this.cloneColorProfiles(this.snapshot.getSavedColorProfiles()))
@@ -123,7 +164,7 @@ export class AppSettingsService {
   }
 
   setDisplayName = (nextRawValue: string) => {
-    this.writer.setDisplayName(normalizeLabel(nextRawValue) || 'Mein Wissen')
+    this.writer.setDisplayName(nextRawValue)
   }
 
   setThemeMode = (nextMode: ThemeMode) => {

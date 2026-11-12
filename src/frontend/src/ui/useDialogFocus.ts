@@ -2,7 +2,7 @@ import {useEffectEvent, useLayoutEffect, useRef} from 'react'
 import type {KeyboardEvent} from 'react'
 
 function dialogControls(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex]')]
+  return [...root.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],summary,[tabindex]')]
     .filter(node => !node.matches(':disabled,[hidden],[tabindex="-1"]') && !node.closest('[inert]') && node.getClientRects().length > 0)
 }
 

@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 10. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
+Stand: 11. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -313,6 +313,35 @@ unterscheidbar. Keine neue Fachpersistenz, Dependency oder Formatmigration.
 `--tag-matching` prueft den Dialog in einer eigenen synthetischen NoteBase mit
 verzoegerten echten Antworten, absichtlichen HTTP-Fehlern und realen Ersetzungen.
 Nachweise: [Tag-Matching-Dialog](doc/tag-matching-dialog-2026-11-10.md).
+
+`settings/SettingsEditorPanel.tsx` verwendet dieselbe Dialogfokussteuerung.
+Bereichsbuttons besitzen einen aktiven Zustand und Pfeil-/Home-/End-Navigation;
+Inhalte bleiben als benannte Region erreichbar. Eigene Styles werden zusammen
+mit der bereits verzoegert geladenen Komponente geladen. Kleine Fenster und
+Zoom verwenden eine begrenzte Scrollflaeche statt einer festen Mindesthoehe.
+Die bisherige globale Escape-Behandlung ist entfernt. Bei der gemeinsamen
+Speichern-/Verwerfen-/Abbrechen-Abfrage ist der untere Dialog unsichtbar und
+inert. Verwerfen setzt den Fokus auf die aktuelle Rubrik, bevor sein eigener
+Button deaktiviert wird.
+`AppSettingsService` behaelt den bestehenden UI-Settings-Schreibweg. Eine in App
+gehaltene gemeinsame Save-Promise sperrt Doppelaufrufe und erlaubt anderen
+Save-/Close-Auftraegen, den tatsaechlichen Abschluss abzuwarten. Gespeicherte
+Vergleichswerte werden vor der Freigabe wartender Befehle synchron veroeffentlicht;
+unveraenderte Einstellungen erzeugen keinen erneuten Save. Fehler bleiben im
+Dialog sichtbar und lassen den Entwurf stehen. App synchronisiert das aktive
+Theme-Feld ueber seinen bisherigen Blur-Commit und verwendet danach den im
+Layout-Effect aktualisierten Service. So speichern Buttons, Strg+S und der
+Schliessen-Abschluss denselben aktuellen Stand. Die Anrede behaelt Leerzeichen
+beim Tippen und wird erst beim Speichern normalisiert. Strg+S gilt waehrend
+eines Modals nur fuer den aktiv fokussierten, nicht inerten Einstellungsdialog.
+OneNote-Picker/-Vorschau/-Import verhindern waehrend ihres Wartens den Dialogabbau;
+die Wartephase unterscheidet diese Vorgaenge und fragt Importfortschritt nur
+waehrend eines tatsaechlichen Imports ab. Native `summary`-Elemente gehoeren
+zur gemeinsamen Tabfolge, auch im bestehenden Recovery-Bereich.
+Import, Recovery und Agentenfreigaben behalten ihre vorhandenen Fachpfade.
+Keine neue Persistenz, Backend- oder Formatmigration. `--settings-dialog` prueft
+die Dialog- und Speicherwege ausschliesslich im isolierten Testprofil.
+Nachweise: [Einstellungsdialog](doc/settings-dialog-2026-11-11.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;

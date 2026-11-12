@@ -1,6 +1,9 @@
 import {RecoveryPanel} from './RecoveryPanel';
 import { AgentConnections } from './AgentConnections';
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {createPortal} from 'react-dom';
+import {trapDialogTab, useDialogFocus} from '../ui/useDialogFocus';
+import './SettingsEditorPanel.css';
 import { DEFAULT_DARK_COLOR_PROFILE, DEFAULT_LIGHT_COLOR_PROFILE, THEME_COLOR_TOKEN_GROUPS, THEME_COLOR_TOKEN_LABELS, apiRequest, normalizeCssColor, normalizeLabel, type ColorProfile, type NoteGroup, type ThemeColorToken, type VaultCounts } from '../app/AppShared';
 import type { ExplorerOptions } from '../explorer/types';
 import { LucideNamedIcon } from '../icons/lucideCatalog';
@@ -66,6 +69,9 @@ type SettingsEditorPanelProps = {
     statusBarPrefs: StatusBarPrefs;
     taskFeatureSettings: TaskFeatureSettings;
     settingsDirty: boolean;
+    saving: boolean;
+    saveError: string;
+    suspended: boolean;
     onClose: () => void;
     setSidebarOpen: Dispatch<SetStateAction<boolean>>;
     setExplorerOptions: Dispatch<SetStateAction<ExplorerOptions>>;
@@ -137,12 +143,24 @@ const SETTINGS_SECTIONS: Array<{
         icon: 'ListChecks',
     }
 ];
-export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, colorProfiles, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onDisplayNameChange, onActiveColorProfileChange, onColorProfilesChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
+export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, colorProfiles, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, saving, saveError, suspended, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onDisplayNameChange, onActiveColorProfileChange, onColorProfilesChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
     const [activeSectionId, setActiveSectionId] = useState<SettingsSectionId>('general');
     const [oneNoteSourcePaths, setOneNoteSourcePaths] = useState<string[]>([]);
     const [oneNoteTargetFolder, setOneNoteTargetFolder] = useState('');
     const [oneNotePreview, setOneNotePreview] = useState<OneNoteImportPreview | null>(null);
-    const [oneNotePending, setOneNotePending] = useState(false);
+    const [oneNoteOperation, setOneNoteOperation] = useState<'picker' | 'preview' | 'import' | null>(null);
+    const oneNotePending = oneNoteOperation !== null;
+    const oneNotePendingRef = useRef(false);
+    const setImportPending = (operation: typeof oneNoteOperation) => {oneNotePendingRef.current = operation !== null; setOneNoteOperation(operation);};
+    const busy = saving || oneNotePending;
+    const root = useDialogFocus({active: !suspended, busy});
+    const sectionBody = useRef<HTMLDivElement>(null);
+    const close = () => {if (!saving && !oneNotePendingRef.current && !suspended) onClose();};
+    const selectSection = (sectionId: SettingsSectionId) => {
+        if (busy) return;
+        setActiveSectionId(sectionId);
+        sectionBody.current?.scrollTo(0, 0);
+    };
     const [oneNoteMessage, setOneNoteMessage] = useState('');
     const [oneNoteError, setOneNoteError] = useState('');
     const [oneNoteImportStatus, setOneNoteImportStatus] = useState<OneNoteImportStatus | null>(null);
@@ -179,7 +197,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
         return 'Unbekannter Fehler.';
     };
     useEffect(() => {
-        if (!oneNotePending) {
+        if (oneNoteOperation !== 'import') {
             return;
         }
         let cancelled = false;
@@ -200,43 +218,38 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
             cancelled = true;
             window.clearInterval(timer);
         };
-    }, [backendUrl, oneNotePending]);
-    useEffect(() => {
-        const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                onClose();
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-        };
-    }, [onClose]);
+    }, [backendUrl, oneNoteOperation]);
     const chooseOneNoteSources = async () => {
-        const selected = await window.nicknotes?.selectImportSources?.();
-        if (!selected || selected.length === 0) {
-            return;
-        }
-        setOneNoteSourcePaths((prev) => {
-            const merged = [...prev];
-            for (const path of selected) {
-                if (!merged.includes(path)) {
-                    merged.push(path);
-                }
+        if (saving || oneNotePendingRef.current) return;
+        setImportPending('picker');
+        setOneNoteImportStatus(null);
+        try {
+            const selected = await window.nicknotes?.selectImportSources?.();
+            if (!selected || selected.length === 0) {
+                return;
             }
-            return merged;
-        });
-        setOneNotePreview(null);
-        setOneNoteMessage('');
-        setOneNoteError('');
+            setOneNoteSourcePaths((prev) => {
+                const merged = [...prev];
+                for (const path of selected) {
+                    if (!merged.includes(path)) {
+                        merged.push(path);
+                    }
+                }
+                return merged;
+            });
+            setOneNotePreview(null);
+            setOneNoteMessage('');
+            setOneNoteError('');
+        } catch (caught) {setOneNoteError(formatOneNoteImportError(caught));}
+        finally {setImportPending(null);}
     };
     const previewOneNoteImport = async () => {
+        if (saving || oneNotePendingRef.current) return;
         if (!oneNoteSourcePaths.length) {
             setOneNoteError('Bitte mindestens eine .onepkg-Datei auswaehlen.');
             return;
         }
-        setOneNotePending(true);
+        setImportPending('preview');
         setOneNoteImportStatus(null);
         setOneNoteError('');
         setOneNoteMessage('');
@@ -257,10 +270,11 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
             setOneNoteError(formatOneNoteImportError(caught));
         }
         finally {
-            setOneNotePending(false);
+            setImportPending(null);
         }
     };
     const startOneNoteImport = async () => {
+        if (saving || oneNotePendingRef.current) return;
         if (!oneNoteSourcePaths.length) {
             setOneNoteError('Bitte mindestens eine .onepkg-Datei auswaehlen.');
             return;
@@ -272,7 +286,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
                 return;
             }
         }
-        setOneNotePending(true);
+        setImportPending('import');
         setOneNoteImportStatus({
             active: true,
             done: false,
@@ -321,7 +335,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
                 : null);
         }
         finally {
-            setOneNotePending(false);
+            setImportPending(null);
         }
     };
     const oneNoteHasPackageSource = oneNoteSourcePaths.some((path) => path.toLowerCase().endsWith('.onepkg'));
@@ -422,19 +436,36 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
         }
         updateCustomColorProfile(profileId, (profile) => ({ ...profile, name: nextName }));
     };
-    return (<div className="modal-overlay settings-overlay" role="presentation" onMouseDown={(event) => {
+    return createPortal(<div className={`modal-overlay settings-overlay${suspended ? ' is-suspended' : ''}`} role="presentation" inert={suspended || undefined} aria-hidden={suspended || undefined} onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-                onClose();
+                event.preventDefault();
+                close();
             }
         }}>
-      <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+      <div className="settings-modal" ref={root} role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" aria-busy={busy || undefined} tabIndex={-1}
+        onKeyDown={event => {
+            event.stopPropagation();
+            if (event.key === 'Escape') {event.preventDefault(); close(); return;}
+            trapDialogTab(event);
+        }}>
+        <fieldset className="settings-controls" disabled={busy}>
         <aside className="settings-nav" aria-label="Einstellungsbereiche">
           <div className="settings-nav-heading">
             <span>Optionen</span>
             <strong id="settings-modal-title">Einstellungen</strong>
           </div>
-          <nav>
-            {SETTINGS_SECTIONS.map((section) => (<button key={section.id} type="button" className={section.id === activeSectionId ? 'active' : ''} onClick={() => setActiveSectionId(section.id)}>
+          <nav aria-label="Einstellungsbereiche" onKeyDown={event => {
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || busy) return;
+              const direction = ['ArrowDown','ArrowRight'].includes(event.key) ? 1 : ['ArrowUp','ArrowLeft'].includes(event.key) ? -1 : 0;
+              if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+              event.preventDefault();
+              const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
+              const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + direction + buttons.length) % buttons.length;
+              buttons[next]?.click(); buttons[next]?.focus();
+          }}>
+            {SETTINGS_SECTIONS.map((section) => (<button key={section.id} type="button" className={section.id === activeSectionId ? 'active' : ''}
+              aria-current={section.id === activeSectionId ? 'page' : undefined} aria-controls="settings-section-panel" onClick={() => selectSection(section.id)}>
                 <LucideNamedIcon name={section.icon} size={15}/>
                 <span>{section.title}</span>
               </button>))}
@@ -448,12 +479,12 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
               <h3>{activeSection.title}</h3>
               <p>{activeSection.description}</p>
             </div>
-            <button className="icon-button compact muted" onClick={onClose} title="Einstellungen schliessen" aria-label="Einstellungen schliessen">
+            <button type="button" className="icon-button compact muted" onClick={close} title="Einstellungen schliessen" aria-label="Einstellungen schliessen">
               <LucideNamedIcon name="X" size={16}/>
             </button>
           </header>
 
-          <div className="settings-section-body">
+          <div className="settings-section-body" ref={sectionBody} id="settings-section-panel" role="region" aria-label={activeSection.title} tabIndex={0}>
             {vaultLoaded && activeSectionId === 'general' && <RecoveryPanel backendUrl={backendUrl} />}
             {activeSectionId === 'agents' && <AgentConnections key={backendUrl + String(vaultLoaded)} backendUrl={backendUrl} vaultLoaded={vaultLoaded} />}
             {activeSectionId === 'general' ? (<section className="settings-block">
@@ -472,7 +503,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
                     <h4>Theme</h4>
                     <p className="muted-copy">Farben fuer die gesamte App.</p>
                   </div>
-                  <select value={selectedColorProfile?.id ?? theme} onChange={(event) => onActiveColorProfileChange(event.target.value)}>
+                  <select aria-label="Theme" value={selectedColorProfile?.id ?? theme} onChange={(event) => onActiveColorProfileChange(event.target.value)}>
                     {colorProfiles.map((profile) => (<option key={profile.id} value={profile.id}>
                         {profile.name}
                       </option>))}
@@ -513,7 +544,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
                         const colorInputValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000';
                         return (<label key={token} className="theme-token-row">
                                 <span>{THEME_COLOR_TOKEN_LABELS[token]}</span>
-                                <input type="color" value={colorInputValue} disabled={!selectedThemeEditable} onChange={(event) => {
+                                <input type="color" aria-label={`${THEME_COLOR_TOKEN_LABELS[token]} als Farbauswahl`} value={colorInputValue} disabled={!selectedThemeEditable} onChange={(event) => {
                                 const nextColor = event.target.value;
                                 setThemeColorDrafts((prev) => ({
                                     ...prev,
@@ -525,7 +556,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
                             }} onBlur={(event) => {
                                 commitThemeColor(selectedColorProfile.id, token, event.currentTarget.value);
                             }}/>
-                                <input value={value} disabled={!selectedThemeEditable} onChange={(event) => {
+                                <input aria-label={`${THEME_COLOR_TOKEN_LABELS[token]} als Farbwert`} value={value} disabled={!selectedThemeEditable} onChange={(event) => {
                                 const nextColor = event.target.value;
                                 setThemeColorDrafts((prev) => ({
                                     ...prev,
@@ -589,7 +620,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
               Vorschau
             </button>
             <button className="primary" onClick={() => void startOneNoteImport()} disabled={!vaultLoaded || oneNotePending || oneNoteSourcePaths.length === 0}>
-              {oneNotePending ? 'Bitte warten ...' : 'Import starten'}
+              {oneNoteOperation === 'import' ? 'Wird importiert …' : 'Import starten'}
             </button>
           </div>
 
@@ -731,13 +762,16 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
           </div>
 
           <footer className="settings-modal-actions">
-            <span>
-              {settingsDirty
-            ? 'Nicht gespeicherte Aenderungen'
-            : 'Alle Einstellungen gespeichert'}
-            </span>
+            <div className="settings-save-feedback">
+              {saveError ? <p role="alert">{saveError}</p> : null}
+              <span role="status">{saving ? 'Einstellungen werden gespeichert …' : oneNoteOperation === 'picker' ? 'Dateiauswahl ist geöffnet …' : oneNoteOperation === 'preview' ? 'Importvorschau wird geladen …' : oneNoteOperation === 'import' ? 'Import läuft. Bitte warten …' : settingsDirty
+                ? 'Nicht gespeicherte Änderungen' : 'Alle Einstellungen gespeichert'}</span>
+            </div>
             <div>
-              <button onClick={onDiscard} disabled={!settingsDirty}>
+              <button onClick={() => {
+                  onDiscard();
+                  root.current?.querySelector<HTMLButtonElement>('.settings-nav button[aria-current="page"]')?.focus();
+              }} disabled={!settingsDirty}>
                 Verwerfen
               </button>
               <button className="primary" onClick={onSave} disabled={!settingsDirty}>
@@ -746,6 +780,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
             </div>
           </footer>
         </main>
+        </fieldset>
       </div>
-    </div>);
+    </div>, document.body);
 }

@@ -119,6 +119,11 @@ function App() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [displayName, setDisplayName] = useState(DEFAULT_DISPLAY_NAME);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+    const [settingsSaving, setSettingsSaving] = useState(false);
+    const [settingsSaveError, setSettingsSaveError] = useState('');
+    const settingsSavePromiseRef = useRef<Promise<boolean> | null>(null);
+    const settingsClosePendingRef = useRef(false);
+    const settingsActionsRef = useRef<AppSettingsService | null>(null);
     const [createNoteBaseDialogOpen, setCreateNoteBaseDialogOpen] = useState(false);
     const [createNoteBaseParentPath, setCreateNoteBaseParentPath] = useState('');
     const [createNoteBaseName, setCreateNoteBaseName] = useState('');
@@ -859,18 +864,43 @@ function App() {
             setError,
         },
         isVaultLoaded: () => vaultLoaded,
+        isSettingsDirty: () => settingsDirtyRef.current,
+        getSavePromise: () => settingsSavePromiseRef.current,
+        setSavePromise: (promise) => {settingsSavePromiseRef.current = promise;},
+        isClosePending: () => settingsClosePendingRef.current,
+        setClosePending: (pending) => {settingsClosePendingRef.current = pending;},
+        setSaving: setSettingsSaving,
+        setSaveError: setSettingsSaveError,
+        askCloseChoice: () => askTagChoice('Ungespeicherte Einstellungen', 'Möchtest du die Änderungen vor dem Schließen speichern?', [
+            {id: 'save', label: 'Speichern', tone: 'primary'},
+            {id: 'discard', label: 'Verwerfen', tone: 'danger'},
+        ]),
         setSettingsDialogOpen,
         saveUiSettingsPatch,
         buildFullAppUiSettings,
     });
-    const saveSettings = appSettingsService.saveSettings;
+    useLayoutEffect(() => {settingsActionsRef.current = appSettingsService;});
+    const commitFocusedSettingsField = () => {
+        const field = document.activeElement;
+        if (field instanceof HTMLInputElement && field.closest('.settings-modal')) {
+            flushSync(() => field.blur());
+            if (field.isConnected && !field.disabled && !field.closest('[inert]')) field.focus({preventScroll: true});
+        }
+    };
+    const saveSettings = async () => {
+        commitFocusedSettingsField();
+        return await settingsActionsRef.current?.saveSettings() ?? false;
+    };
     const discardSettings = appSettingsService.discardSettings;
-    const requestSaveSettings = appSettingsService.requestSaveSettings;
+    const requestSaveSettings = () => {void saveSettings();};
     const setSettingsDisplayName = appSettingsService.setDisplayName;
     const setSettingsColorProfiles = appSettingsService.setColorProfiles;
     const handleActiveColorProfileChange = appSettingsService.handleActiveColorProfileChange;
     const openSettingsDialog = appSettingsService.openSettingsDialog;
-    const closeSettingsDialog = appSettingsService.closeSettingsDialog;
+    const closeSettingsDialog = () => {
+        commitFocusedSettingsField();
+        void settingsActionsRef.current?.closeSettingsDialog();
+    };
     const toggleThemeMode = appSettingsService.toggleThemeMode;
   const persistLayout = useEffectEvent(() => saveUiSettingsPatch({ app: buildLayoutUiSettings() }));
   useEffect(() => {
@@ -2639,7 +2669,7 @@ function App() {
       onDisplayNameChange={setCreateNoteBaseDisplayName} onNameChange={setCreateNoteBaseName}
       onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
       onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
-    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
+    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
     const tagMatchWorkflowModal = tagMatchWorkflow.open ? <TagMatchDialog
       loading={tagMatchWorkflow.loading} applying={tagMatchWorkflow.applying}
       error={tagMatchWorkflow.error} status={tagMatchWorkflow.status} needsRescan={tagMatchWorkflow.needsRescan}
