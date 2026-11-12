@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
+import {MultiSelectFilter, type MultiSelectFilterOption} from '../ui/MultiSelectFilter'
 import {ContextMenuItem} from '../ui/ContextMenu'
 import {MenuButton} from '../ui/MenuButton'
 import { ExplorerSidebar } from '../explorer/ExplorerSidebarFlatV3'
@@ -116,34 +117,11 @@ type TodoTagOption = {
   color: string
 }
 
-type TodoMultiSelectOption = {
-  value: string
-  label: string
-  color?: string
-}
-
 type TodoDropdownKey = 'status' | 'tag_groups' | 'tags' | 'promotions'
 type TaskDropdownKey = 'status' | 'priority' | 'due' | 'tag_groups' | 'tags' | 'related'
 
 function noteBasePathKey(path: string): string {
   return path.trim().replace(/\//g, '\\').toLowerCase()
-}
-
-function summarizeTodoSelection(selectedValues: string[], allOptions: TodoMultiSelectOption[], fallbackAllLabel: string): string {
-  if (allOptions.length === 0) {
-    return 'Keine Optionen'
-  }
-  if (selectedValues.length === 0) {
-    return fallbackAllLabel
-  }
-  if (selectedValues.length === allOptions.length) {
-    return fallbackAllLabel
-  }
-  if (selectedValues.length === 1) {
-    const selected = allOptions.find((option) => option.value === selectedValues[0])
-    return selected?.label || selectedValues[0]
-  }
-  return `${selectedValues.length} ausgewaehlt`
 }
 
 export function WorkbenchSidebarContent({
@@ -234,37 +212,6 @@ export function WorkbenchSidebarContent({
     onFocusFiltersChange({ ...focusFilters, ...patch })
   }
   const noteBaseShellRef = useRef<HTMLDivElement | null>(null)
-  const [taskOpenDropdown, setTaskOpenDropdown] = useState<TaskDropdownKey | null>(null)
-  const [taskDropdownQueries, setTaskDropdownQueries] = useState<Record<TaskDropdownKey, string>>({
-    status: '',
-    priority: '',
-    due: '',
-    tag_groups: '',
-    tags: '',
-    related: '',
-  })
-  const [taskDropdownActiveIndex, setTaskDropdownActiveIndex] = useState<Record<TaskDropdownKey, number>>({
-    status: 0,
-    priority: 0,
-    due: 0,
-    tag_groups: 0,
-    tags: 0,
-    related: 0,
-  })
-  const [todoOpenDropdown, setTodoOpenDropdown] = useState<TodoDropdownKey | null>(null)
-  const [todoDropdownQueries, setTodoDropdownQueries] = useState<Record<TodoDropdownKey, string>>({
-    status: '',
-    tag_groups: '',
-    tags: '',
-    promotions: '',
-  })
-  const [todoDropdownActiveIndex, setTodoDropdownActiveIndex] = useState<Record<TodoDropdownKey, number>>({
-    status: 0,
-    tag_groups: 0,
-    tags: 0,
-    promotions: 0,
-  })
-
   const todoTagOptions = useMemo<TodoTagOption[]>(() => {
     const byKey = new Map<string, TodoTagOption>()
     for (const group of mergedTagGroups) {
@@ -294,8 +241,8 @@ export function WorkbenchSidebarContent({
     })
   }, [mergedTagGroups])
 
-  const todoTagGroups = useMemo<TodoMultiSelectOption[]>(() => {
-    const byId = new Map<string, TodoMultiSelectOption>()
+  const todoTagGroups = useMemo<MultiSelectFilterOption[]>(() => {
+    const byId = new Map<string, MultiSelectFilterOption>()
     for (const group of mergedTagGroups) {
       const groupId = group.id.trim().toLowerCase()
       if (!groupId || byId.has(groupId)) {
@@ -310,7 +257,7 @@ export function WorkbenchSidebarContent({
     return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label, 'de', { sensitivity: 'base' }))
   }, [mergedTagGroups])
 
-  const statusOptions = useMemo<TodoMultiSelectOption[]>(
+  const statusOptions = useMemo<MultiSelectFilterOption[]>(
     () => [
       { value: 'open', label: 'Open' },
       { value: 'done', label: 'Done' },
@@ -318,7 +265,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const promotionOptions = useMemo<TodoMultiSelectOption[]>(
+  const promotionOptions = useMemo<MultiSelectFilterOption[]>(
     () => [
       { value: 'promoted', label: 'Promoted' },
       { value: 'unpromoted', label: 'Unpromoted' },
@@ -326,7 +273,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskStatusOptions = useMemo<TodoMultiSelectOption[]>(
+  const taskStatusOptions = useMemo<MultiSelectFilterOption[]>(
     () =>
       TASK_STATUS_OPTIONS.map((entry) => ({
         value: entry.value,
@@ -336,7 +283,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskPriorityOptions = useMemo<TodoMultiSelectOption[]>(
+  const taskPriorityOptions = useMemo<MultiSelectFilterOption[]>(
     () =>
       TASK_PRIORITY_OPTIONS.map((entry) => ({
         value: entry.value,
@@ -346,7 +293,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskDueOptions = useMemo<TodoMultiSelectOption[]>(
+  const taskDueOptions = useMemo<MultiSelectFilterOption[]>(
     () => [
       { value: 'overdue', label: 'Ueberfaellig' },
       { value: 'tomorrow', label: 'Morgen' },
@@ -357,8 +304,8 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskTagGroups = useMemo<TodoMultiSelectOption[]>(() => {
-    const byId = new Map<string, TodoMultiSelectOption>()
+  const taskTagGroups = useMemo<MultiSelectFilterOption[]>(() => {
+    const byId = new Map<string, MultiSelectFilterOption>()
     for (const group of mergedTagGroups) {
       const groupId = group.id.trim().toLowerCase()
       if (!groupId || byId.has(groupId)) {
@@ -429,8 +376,8 @@ export function WorkbenchSidebarContent({
     return taskTagOptions.filter((option) => selectedGroups.has(option.groupId.toLowerCase()))
   }, [taskFilters.tagGroups, taskTagOptions])
 
-  const taskRelatedOptions = useMemo<TodoMultiSelectOption[]>(() => {
-    const byValue = new Map<string, TodoMultiSelectOption>()
+  const taskRelatedOptions = useMemo<MultiSelectFilterOption[]>(() => {
+    const byValue = new Map<string, MultiSelectFilterOption>()
     for (const task of tasks) {
       for (const rawRelated of task.related || []) {
         const normalized = normalizeRelatedCandidate(rawRelated)
@@ -543,92 +490,6 @@ export function WorkbenchSidebarContent({
     }
   }, [onTaskFiltersChange, taskDueOptions, taskFilters, taskPriorityOptions, taskRelatedOptions, taskStatusOptions, taskTagGroups, taskTagOptions])
 
-  useEffect(() => {
-    if (!taskOpenDropdown) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof HTMLElement && target.closest('.todo-multiselect')) {
-        return
-      }
-      setTaskOpenDropdown(null)
-      setTaskDropdownQueries({
-        status: '',
-        priority: '',
-        due: '',
-        tag_groups: '',
-        tags: '',
-        related: '',
-      })
-      setTaskDropdownActiveIndex({
-        status: 0,
-        priority: 0,
-        due: 0,
-        tag_groups: 0,
-        tags: 0,
-        related: 0,
-      })
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-    }
-  }, [taskOpenDropdown])
-
-  useEffect(() => {
-    if (!taskOpenDropdown) {
-      return
-    }
-    const menu = document.querySelector<HTMLElement>(`.todo-multiselect-menu[data-dropdown-key="task_${taskOpenDropdown}"]`)
-    const active = menu?.querySelector<HTMLElement>('.todo-multiselect-option.is-active')
-    if (!active) {
-      return
-    }
-    active.scrollIntoView({ block: 'nearest' })
-  }, [taskDropdownActiveIndex, taskDropdownQueries, taskOpenDropdown])
-
-  useEffect(() => {
-    if (!todoOpenDropdown) {
-      return
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof HTMLElement && target.closest('.todo-multiselect')) {
-        return
-      }
-      setTodoOpenDropdown(null)
-      setTodoDropdownQueries({
-        status: '',
-        tag_groups: '',
-        tags: '',
-        promotions: '',
-      })
-      setTodoDropdownActiveIndex({
-        status: 0,
-        tag_groups: 0,
-        tags: 0,
-        promotions: 0,
-      })
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-    }
-  }, [todoOpenDropdown])
-
-  useEffect(() => {
-    if (!todoOpenDropdown) {
-      return
-    }
-    const menu = document.querySelector<HTMLElement>(`.todo-multiselect-menu[data-dropdown-key="${todoOpenDropdown}"]`)
-    const active = menu?.querySelector<HTMLElement>('.todo-multiselect-option.is-active')
-    if (!active) {
-      return
-    }
-    active.scrollIntoView({ block: 'nearest' })
-  }, [todoDropdownActiveIndex, todoDropdownQueries, todoOpenDropdown])
-
   const toggleMultiSelection = (key: 'statuses' | 'tagGroups' | 'tags' | 'promotions', value: string) => {
     const current = [...(todoFilters[key] as string[])]
     const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value]
@@ -673,372 +534,19 @@ export function WorkbenchSidebarContent({
     setTaskFilter({ dueBuckets: next as TaskDashboardFilters['dueBuckets'] })
   }
 
-  const renderTodoMultiSelect = (
-    dropdownKey: TodoDropdownKey,
-    selectedValues: string[],
-    allOptions: TodoMultiSelectOption[],
-    fallbackAllLabel: string,
-    onToggleValue: (value: string) => void
-  ) => {
-    const open = todoOpenDropdown === dropdownKey
-    const optionQuery = (todoDropdownQueries[dropdownKey] || '').trim().toLowerCase()
-    const filteredOptions = optionQuery
-      ? allOptions.filter(
-          (option) =>
-            option.label.toLowerCase().includes(optionQuery) || option.value.toLowerCase().includes(optionQuery)
-        )
-      : allOptions
-    const currentActive = todoDropdownActiveIndex[dropdownKey] ?? 0
-    const activeIndex =
-      filteredOptions.length === 0 ? -1 : Math.max(0, Math.min(currentActive, filteredOptions.length - 1))
-    const summary = summarizeTodoSelection(selectedValues, allOptions, fallbackAllLabel)
-    return (
-      <div className={`todo-multiselect ${open ? 'open' : ''}`}>
-        <button
-          type="button"
-          className="todo-multiselect-trigger"
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            setTodoDropdownActiveIndex((previous) => ({...previous, [dropdownKey]: 0}))
-            setTodoOpenDropdown((current) => {
-              const next = current === dropdownKey ? null : dropdownKey
-              if (next === null) {
-                setTodoDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-              }
-              return next
-            })
-          }}
-        >
-          <span className="todo-multiselect-summary">{summary}</span>
-          <LucideNamedIcon name={open ? 'ChevronUp' : 'ChevronDown'} size={13} />
-        </button>
-        {open ? (
-          <div className="todo-multiselect-menu" data-dropdown-key={dropdownKey}>
-            <div className="todo-multiselect-search-wrap">
-              <div className="explorer-search-input-wrap todo-multiselect-search-field">
-                <LucideNamedIcon name="Search" className="explorer-search-icon" size={13} />
-                <input
-                  className="explorer-search-input"
-                  autoFocus
-                  value={todoDropdownQueries[dropdownKey] || ''}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    setTodoDropdownQueries((prev) => ({ ...prev, [dropdownKey]: next }))
-                    setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown') {
-                      event.preventDefault()
-                      if (filteredOptions.length === 0) {
-                        return
-                      }
-                      setTodoDropdownActiveIndex((prev) => ({
-                        ...prev,
-                        [dropdownKey]: ((prev[dropdownKey] ?? 0) + 1 + filteredOptions.length) % filteredOptions.length,
-                      }))
-                      return
-                    }
-                    if (event.key === 'ArrowUp') {
-                      event.preventDefault()
-                      if (filteredOptions.length === 0) {
-                        return
-                      }
-                      setTodoDropdownActiveIndex((prev) => ({
-                        ...prev,
-                        [dropdownKey]: ((prev[dropdownKey] ?? 0) - 1 + filteredOptions.length) % filteredOptions.length,
-                      }))
-                      return
-                    }
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      const selectedOption = activeIndex >= 0 ? filteredOptions[activeIndex] : null
-                      if (!selectedOption) {
-                        return
-                      }
-                      onToggleValue(selectedOption.value)
-                      setTodoOpenDropdown(null)
-                      setTodoDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                      return
-                    }
-                    if (event.key === 'Escape') {
-                      event.preventDefault()
-                      setTodoOpenDropdown(null)
-                      setTodoDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                    }
-                  }}
-                  placeholder="Search"
-                  title="Option suchen"
-                />
-                {(todoDropdownQueries[dropdownKey] || '').length > 0 ? (
-                  <button
-                    type="button"
-                    className="explorer-search-clear"
-                    onPointerDown={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      setTodoDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                    }}
-                    aria-label="Suche leeren"
-                    title="Suche leeren"
-                  >
-                    <LucideNamedIcon name="X" size={12} />
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            {filteredOptions.length === 0 ? <p className="empty-copy">Keine Optionen</p> : null}
-            {filteredOptions.map((option, index) => {
-              const isSelected = selectedValues.includes(option.value)
-              const isActive = index === activeIndex
-              return (
-                <label
-                  key={`${dropdownKey}-${option.value}`}
-                  className={`todo-multiselect-option ${isActive ? 'is-active' : ''}`}
-                  onMouseEnter={() => {
-                    setTodoDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: index }))
-                  }}
-                >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => {
-                    onToggleValue(option.value)
-                  }}
-                />
-                {option.color ? (
-                  <span
-                    className="todo-multiselect-color-dot"
-                    style={{ '--todo-option-color': option.color } as CSSProperties}
-                    aria-hidden="true"
-                  />
-                ) : null}
-                <span>{option.label}</span>
-                <span className={`todo-multiselect-hint-check ${isActive && !isSelected ? 'visible' : ''}`} aria-hidden="true">
-                  <LucideNamedIcon name="Check" size={12} />
-                </span>
-              </label>
-              )
-            })}
-          </div>
-        ) : null}
-      </div>
-    )
+  const renderTodoMultiSelect = (key: TodoDropdownKey, selected: string[], options: MultiSelectFilterOption[], allLabel: string, onToggle: (value: string) => void) => {
+    const names: Record<TodoDropdownKey, string> = {status: 'Status', tag_groups: 'Tag-Gruppe', tags: 'Tags', promotions: 'Promotion'}
+    return <MultiSelectFilter key={`todo-${key}`} label={`To-dos: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
   }
-
-  const renderTaskMultiSelect = (
-    dropdownKey: TaskDropdownKey,
-    selectedValues: string[],
-    allOptions: TodoMultiSelectOption[],
-    fallbackAllLabel: string,
-    onToggleValue: (value: string) => void
-  ) => {
-    const open = taskOpenDropdown === dropdownKey
-    const optionQuery = (taskDropdownQueries[dropdownKey] || '').trim().toLowerCase()
-    const filteredOptions = optionQuery
-      ? allOptions.filter(
-          (option) =>
-            option.label.toLowerCase().includes(optionQuery) || option.value.toLowerCase().includes(optionQuery)
-        )
-      : allOptions
-    const currentActive = taskDropdownActiveIndex[dropdownKey] ?? 0
-    const activeIndex =
-      filteredOptions.length === 0 ? -1 : Math.max(0, Math.min(currentActive, filteredOptions.length - 1))
-    const summary = summarizeTodoSelection(selectedValues, allOptions, fallbackAllLabel)
-    return (
-      <div className={`todo-multiselect ${open ? 'open' : ''}`}>
-        <button
-          type="button"
-          className="todo-multiselect-trigger"
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            setTaskDropdownActiveIndex((previous) => ({...previous, [dropdownKey]: 0}))
-            setTaskOpenDropdown((current) => {
-              const next = current === dropdownKey ? null : dropdownKey
-              if (next === null) {
-                setTaskDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-              }
-              return next
-            })
-          }}
-        >
-          <span className="todo-multiselect-summary">{summary}</span>
-          <LucideNamedIcon name={open ? 'ChevronUp' : 'ChevronDown'} size={13} />
-        </button>
-        {open ? (
-          <div className="todo-multiselect-menu" data-dropdown-key={`task_${dropdownKey}`}>
-            <div className="todo-multiselect-search-wrap">
-              <div className="explorer-search-input-wrap todo-multiselect-search-field">
-                <LucideNamedIcon name="Search" className="explorer-search-icon" size={13} />
-                <input
-                  className="explorer-search-input"
-                  autoFocus
-                  value={taskDropdownQueries[dropdownKey] || ''}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    setTaskDropdownQueries((prev) => ({ ...prev, [dropdownKey]: next }))
-                    setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown') {
-                      event.preventDefault()
-                      if (filteredOptions.length === 0) {
-                        return
-                      }
-                      setTaskDropdownActiveIndex((prev) => ({
-                        ...prev,
-                        [dropdownKey]: ((prev[dropdownKey] ?? 0) + 1 + filteredOptions.length) % filteredOptions.length,
-                      }))
-                      return
-                    }
-                    if (event.key === 'ArrowUp') {
-                      event.preventDefault()
-                      if (filteredOptions.length === 0) {
-                        return
-                      }
-                      setTaskDropdownActiveIndex((prev) => ({
-                        ...prev,
-                        [dropdownKey]: ((prev[dropdownKey] ?? 0) - 1 + filteredOptions.length) % filteredOptions.length,
-                      }))
-                      return
-                    }
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      const selectedOption = activeIndex >= 0 ? filteredOptions[activeIndex] : null
-                      if (!selectedOption) {
-                        return
-                      }
-                      onToggleValue(selectedOption.value)
-                      setTaskOpenDropdown(null)
-                      setTaskDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                      return
-                    }
-                    if (event.key === 'Escape') {
-                      event.preventDefault()
-                      setTaskOpenDropdown(null)
-                      setTaskDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                    }
-                  }}
-                  placeholder="Search"
-                  title="Option suchen"
-                />
-                {(taskDropdownQueries[dropdownKey] || '').length > 0 ? (
-                  <button
-                    type="button"
-                    className="explorer-search-clear"
-                    onPointerDown={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      setTaskDropdownQueries((prev) => ({ ...prev, [dropdownKey]: '' }))
-                      setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: 0 }))
-                    }}
-                    aria-label="Suche leeren"
-                    title="Suche leeren"
-                  >
-                    <LucideNamedIcon name="X" size={12} />
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            {filteredOptions.length === 0 ? <p className="empty-copy">Keine Optionen</p> : null}
-            {filteredOptions.map((option, index) => {
-              const isSelected = selectedValues.includes(option.value)
-              const isActive = index === activeIndex
-              return (
-                <label
-                  key={`task-${dropdownKey}-${option.value}`}
-                  className={`todo-multiselect-option ${isActive ? 'is-active' : ''}`}
-                  onMouseEnter={() => {
-                    setTaskDropdownActiveIndex((prev) => ({ ...prev, [dropdownKey]: index }))
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => {
-                      onToggleValue(option.value)
-                    }}
-                  />
-                  {option.color ? (
-                    <span
-                      className="todo-multiselect-color-dot"
-                      style={{ '--todo-option-color': option.color } as CSSProperties}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <span>{option.label}</span>
-                  <span className={`todo-multiselect-hint-check ${isActive && !isSelected ? 'visible' : ''}`} aria-hidden="true">
-                    <LucideNamedIcon name="Check" size={12} />
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        ) : null}
-      </div>
-    )
+  const renderTaskMultiSelect = (key: TaskDropdownKey, selected: string[], options: MultiSelectFilterOption[], allLabel: string, onToggle: (value: string) => void) => {
+    const names: Record<TaskDropdownKey, string> = {status: 'Status', priority: 'Priorität', due: 'Fälligkeit', tag_groups: 'Tag-Gruppe', tags: 'Tags', related: 'Verknüpfungen'}
+    return <MultiSelectFilter key={`task-${key}`} label={`Tasks: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
   }
-
   const resetTodoFilters = () => {
-    onTodoFiltersChange({
-      ...todoFilters,
-      query: '',
-      statuses: [],
-      tagGroups: [],
-      tags: [],
-      promotions: [],
-    })
-    setTodoOpenDropdown(null)
-    setTodoDropdownQueries({
-      status: '',
-      tag_groups: '',
-      tags: '',
-      promotions: '',
-    })
-    setTodoDropdownActiveIndex({
-      status: 0,
-      tag_groups: 0,
-      tags: 0,
-      promotions: 0,
-    })
+    onTodoFiltersChange({...todoFilters, query: '', statuses: [], tagGroups: [], tags: [], promotions: []})
   }
-
   const resetTaskFilters = () => {
-    onTaskFiltersChange({
-      ...taskFilters,
-      query: '',
-      statuses: [...DEFAULT_TASK_DASHBOARD_FILTERS.statuses],
-      priorities: [...DEFAULT_TASK_DASHBOARD_FILTERS.priorities],
-      dueBuckets: [...DEFAULT_TASK_DASHBOARD_FILTERS.dueBuckets],
-      tagGroups: [],
-      tags: [],
-      related: [],
-    })
-    setTaskOpenDropdown(null)
-    setTaskDropdownQueries({
-      status: '',
-      priority: '',
-      due: '',
-      tag_groups: '',
-      tags: '',
-      related: '',
-    })
-    setTaskDropdownActiveIndex({
-      status: 0,
-      priority: 0,
-      due: 0,
-      tag_groups: 0,
-      tags: 0,
-      related: 0,
-    })
+    onTaskFiltersChange({...taskFilters, query: '', statuses: [...DEFAULT_TASK_DASHBOARD_FILTERS.statuses], priorities: [...DEFAULT_TASK_DASHBOARD_FILTERS.priorities], dueBuckets: [...DEFAULT_TASK_DASHBOARD_FILTERS.dueBuckets], tagGroups: [], tags: [], related: []})
   }
 
   const focusSectionOptions: Array<{ value: 'tasks' | 'todos' | 'notes'; label: string }> = [

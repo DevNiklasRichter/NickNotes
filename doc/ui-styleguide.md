@@ -1,6 +1,6 @@
 # NickNotes Gestaltungsgrundlage
 
-Stand: 11. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
+Stand: 12. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
 CSS-Tokens in `src/frontend/src/index.css`, die Farbprofile in
 `src/frontend/src/app/AppShared.ts` und die jeweiligen Komponentenstyles.
 Dieser Leitfaden beschreibt ihren Einsatz; er ist kein zweites Themesystem.
@@ -156,6 +156,18 @@ den Aktionen, ein laufender Save sperrt die Controls. Strg+S übernimmt zuvor
 das aktive Theme-Feld. Nach Verwerfen liegt der Fokus sichtbar auf der aktuellen
 Rubrik, bei unverändertem Strg+S bleibt der Feldfokus erhalten. Kleine Fenster
 scrollen innerhalb der Dialoggrenzen. [Nachweise](settings-dialog-2026-11-11.md).
+
+Mehrfachfilter für Tasks und To-dos verwenden `ui/MultiSelectFilter.tsx`:
+benannter nichtmodaler Popover mit Suchfeld und echten Checkboxen. Maus,
+Enter und Leertaste ändern die Auswahl, ohne die Liste zu schließen. Pfeile
+sowie Home/End navigieren fokussierte Optionen; im Suchfeld behalten Home/End
+ihre Textfunktion. Escape und Fertig geben den Fokus zurück, Tab verlässt die
+Auswahl. Außenklick oder Fokuswechsel schließen; nur ein Filter ist geöffnet.
+Lange Labels umbrechen, Listen scrollen und bleiben innerhalb des Fensters.
+Eine leere Datenquelle unterscheidet sich von einer Suche ohne Treffer.
+Der Auslöser nennt Filter und Auswahl; reine Filterbedienung speichert keine
+Notiz. Bestehende Optionen und Filterregeln bleiben beim jeweiligen Aufrufer.
+[Nachweise](multiselect-filters-2026-11-12.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

@@ -25,9 +25,10 @@ const suggestionMenus = process.argv.includes('--suggestions')
 const createDialog = process.argv.includes('--create-dialog')
 const tagMatching = process.argv.includes('--tag-matching')
 const settingsDialog = process.argv.includes('--settings-dialog')
+const filters = process.argv.includes('--filters')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -65,11 +66,25 @@ async function request(endpoint, body) {
 }
 
 async function windowSize(width, height, zoom = 1) {
+  const before=await app.evaluate(({BrowserWindow})=>{
+    const win=BrowserWindow.getAllWindows()[0]
+    const state={maximized:win.isMaximized(),fullscreen:win.isFullScreen(),contentSize:win.getContentSize(),zoom:win.webContents.getZoomFactor()}
+    if(state.fullscreen)win.setFullScreen(false)
+    if(state.maximized)win.unmaximize()
+    return state
+  })
+  await expect.poll(()=>app.evaluate(({BrowserWindow})=>{
+    const win=BrowserWindow.getAllWindows()[0]
+    return win.isFullScreen()||win.isMaximized()
+  })).toBe(false)
   await app.evaluate(({BrowserWindow}, {width, height, zoom}) => {
     const win = BrowserWindow.getAllWindows()[0]
     win.webContents.setZoomFactor(zoom)
     win.setContentSize(width, height)
   }, {width, height, zoom})
+  await expect.poll(()=>page.evaluate(({width,height,zoom})=>Math.abs(innerWidth-width/zoom)<2&&Math.abs(innerHeight-height/zoom)<2,{width,height,zoom})).toBe(true)
+  report.checks.windowSetups ??= []
+  report.checks.windowSetups.push({width,height,zoom,before,viewport:await page.evaluate(()=>({width:innerWidth,height:innerHeight}))})
 }
 
 async function capture(name, description) {
@@ -150,7 +165,7 @@ async function openNote(title) {
 async function theme(mode) {
   await page.locator('.activity-rail').getByRole('button', {name: 'Einstellungen', exact: true}).click()
   await page.getByRole('button', {name: 'Darstellung', exact: true}).click()
-  await page.getByRole('combobox').first().selectOption(mode)
+  await page.locator('.settings-modal').getByRole('combobox').first().selectOption(mode)
   await expect(page.locator('html')).toHaveAttribute('data-theme', mode)
   const save = page.getByRole('dialog').getByRole('button', {name: 'Speichern', exact: true})
   if (await save.isEnabled()) {await save.click(); await expect(save).toBeDisabled()}
@@ -1522,6 +1537,140 @@ async function verifySettingsDialog() {
   await openNote('Arbeitsnotiz')
 }
 
+async function verifyFilters() {
+  await request('/tag-groups/add-group',{groupId:'ux-filter',displayName:'Filterprojekte',color:'#81a1c1'})
+  await request('/tag-groups/add-group',{groupId:'ux-filter-zweit',displayName:'Zweite Filtergruppe',color:'#a3be8c'})
+  await request('/tag-groups/add-tag',{groupId:'ux-filter-zweit',tagId:'zweites',displayName:'Zweites Tag'})
+  const definitionsPath=path.join(vaultPath,'.system','tag_groups.json')
+  const definitions=JSON.parse(fs.readFileSync(definitionsPath,'utf8'))
+  definitions.groups.find(group=>group.id==='ux-filter').tags=Array.from({length:26},(_,i)=>({id:`tag-${String(i).padStart(2,'0')}`,displayName:`Lange Filteroption ${String(i).padStart(2,'0')} mit ausreichend Beschreibung zum Umbruch im kleinen Fenster`}))
+  fs.writeFileSync(definitionsPath,JSON.stringify(definitions,null,2))
+  const fixture=[]
+  for(const [title,status,priority,tag] of [['Filtertask Offen','open','high','ux-filter/tag-00'],['Filtertask Erledigt','done','low','ux-filter/tag-25'],['Filtertask Wartet','on_hold','medium','ux-filter-zweit/zweites']]) {
+    const file=await createNote(title,`Synthetische Filterprobe {tag:${tag}}.\n`,'task')
+    const source=await request('/notes/content?path='+encodeURIComponent(file))
+    await request('/notes/save',{path:file,content:source.content.replace(/^status:.*$/m,`status: ${status}`).replace(/^priority:.*$/m,`priority: ${priority}`),expectedRevision:source.revision})
+    fixture.push(file)
+  }
+  fixture.push(await createNote('Filtertodo Quelle','- [ ] Filtertodo offen {tag:ux-filter/tag-00}\n- [x] Filtertodo fertig {tag:ux-filter/tag-25}\n'))
+  await request('/notebase/reindex',{})
+  await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
+  const editor=page.locator('.note-body-editor .cm-content').first(),marker='Filterbedienung erhält diesen Entwurf.'
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+marker)
+  const snapshots=new Map([...fixture,notePath].map(file=>[file,fs.readFileSync(file,'utf8')]))
+  const writes=()=>report.requests.filter(req=>req.method==='POST'&&(req.endpoint==='/notes/save'||req.endpoint==='/note-groups/add-note')).length
+  const before=writes()
+  const popup=label=>page.getByRole('dialog',{name:label,exact:true})
+  const trigger=label=>page.locator('.left-sidebar').getByRole('button',{name:new RegExp('^'+label+':')})
+  const opened=page.locator('.nn-filter-popover:popover-open')
+  const taskLabel='Tasks: Status',taskPopup=popup(taskLabel),taskTrigger=trigger(taskLabel)
+  const taskShell=page.locator('.todo-explorer-shell')
+  const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
+  const titles=()=>page.locator('.task-canvas .task-title-with-tags').allTextContents().then(items=>items.map(text=>text.trim()).sort())
+  await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click()
+  await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
+  await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen','Filtertask Wartet'])
+  await taskTrigger.focus();await page.keyboard.press('Enter')
+  const search=taskPopup.getByRole('searchbox',{name:taskLabel+' durchsuchen',exact:true})
+  await expect(search).toBeFocused();await expect(taskTrigger).toHaveAttribute('aria-expanded','true')
+  await search.fill('open');await page.keyboard.press('ArrowDown');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).toBeFocused()
+  await page.keyboard.press('Space');await expect(taskPopup).toBeVisible();await expect.poll(titles).toEqual(['Filtertask Offen'])
+  await page.keyboard.press('Enter');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).not.toBeChecked()
+  await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen','Filtertask Wartet'])
+  await page.keyboard.press('Space');await search.fill('done');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter')
+  await expect(taskPopup.getByRole('checkbox',{name:'Done',exact:true})).toBeChecked()
+  await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen'])
+  await capture('filter-task-multiple-dark','Native checkbox selection stays open for keyboard and pointer; dashboard reflects both selected statuses')
+  await page.keyboard.press('Control+n');await page.keyboard.press('Control+s');assert.equal(writes(),before)
+  await page.keyboard.press('Escape');await expect(taskPopup).toHaveCount(0);await expect(taskTrigger).toBeFocused()
+  await taskTrigger.click();await expect(search).toHaveValue('');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).toBeChecked()
+  await search.fill('keine passende suchoption');await expect(taskPopup.getByText('Keine passenden Optionen.',{exact:true})).toBeVisible()
+  await capture('filter-search-empty-dark','Search has its own empty state without clearing the selected filter values')
+  await taskPopup.getByRole('button',{name:'Filtersuche leeren',exact:true}).focus();await page.keyboard.press('Enter');await expect(search).toHaveValue('');await expect(search).toBeFocused()
+  await taskPopup.getByRole('button',{name:'Fertig',exact:true}).focus();await page.keyboard.press('Tab')
+  const priorityTrigger=trigger('Tasks: Priorität'),priorityPopup=popup('Tasks: Priorität')
+  await expect(taskPopup).toHaveCount(0);await expect(priorityTrigger).toBeFocused()
+  await page.keyboard.press('ArrowUp');await expect(priorityPopup.getByRole('checkbox').last()).toBeFocused()
+  await page.keyboard.press('Space');await expect(priorityPopup.getByRole('checkbox',{name:'High',exact:true})).toBeChecked();await expect.poll(titles).toEqual(['Filtertask Offen'])
+  await page.keyboard.press('Home');await expect(priorityPopup.getByRole('checkbox').first()).toBeFocused()
+  await page.keyboard.press('End');await expect(priorityPopup.getByRole('checkbox').last()).toBeFocused()
+  await page.keyboard.press('Escape');await expect(priorityTrigger).toBeFocused();await resetTasks()
+  report.checks.filtersKeyboardMultipleSelectionAndRealHits=true
+
+  await priorityTrigger.click();await taskTrigger.click();await expect(opened).toHaveCount(1);await expect(taskPopup).toBeVisible()
+  await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).focus();await expect(opened).toHaveCount(0)
+  await taskTrigger.click();await expect(search).toBeFocused();await taskTrigger.click();await expect(opened).toHaveCount(0);await expect(taskTrigger).toHaveAttribute('aria-expanded','false')
+  await taskTrigger.dblclick();await expect(opened).toHaveCount(0);await expect(taskTrigger).toHaveAttribute('aria-expanded','false')
+  await taskTrigger.click();await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).click();await expect(opened).toHaveCount(0)
+  report.checks.filtersNativeToggleExclusivityAndOutsideFocus=true
+
+  const tagsLabel='Tasks: Tags',tagsPopup=popup(tagsLabel),tagsTrigger=trigger(tagsLabel)
+  await tagsTrigger.click();await tagsPopup.getByRole('searchbox').fill('lange filteroption')
+  await expect(tagsPopup.getByRole('checkbox')).toHaveCount(26)
+  await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await expect(tagsPopup.getByRole('checkbox').last()).toBeFocused()
+  await page.keyboard.press('Space');await expect.poll(titles).toEqual(['Filtertask Erledigt'])
+  await capture('filter-long-options-dark','Long tag labels wrap and the last real option can be selected without sidebar clipping')
+  await page.keyboard.press('Escape');await expect(tagsTrigger).toBeFocused()
+  await trigger('Tasks: Tag-Gruppe').click();const groups=popup('Tasks: Tag-Gruppe')
+  await groups.getByRole('checkbox',{name:'Zweite Filtergruppe',exact:true}).check();await page.keyboard.press('Escape')
+  await expect(tagsTrigger).toHaveAccessibleName('Tasks: Tags: Alle')
+  await expect.poll(titles).toEqual(['Filtertask Wartet'])
+  await tagsTrigger.click();await expect(tagsPopup.getByRole('checkbox')).toHaveCount(1)
+  await expect(tagsPopup.getByRole('checkbox',{name:'Zweites Tag',exact:true})).not.toBeChecked()
+  await page.keyboard.press('Escape');await resetTasks()
+  await trigger('Tasks: Verknüpfungen').click();await expect(popup('Tasks: Verknüpfungen').getByText('Keine Optionen verfügbar.',{exact:true})).toBeVisible()
+  await capture('filter-no-options-dark','An empty source is distinguishable from a search without matches')
+  await page.keyboard.press('Escape')
+  report.checks.filtersGroupChangePrunesUnavailableTags=true
+
+  await taskTrigger.click();await page.locator('.activity-rail').getByRole('button',{name:'Todos',exact:true}).click()
+  await expect(opened).toHaveCount(0)
+  const todoShell=page.locator('.todo-explorer-shell')
+  await todoShell.locator('.todo-open-dashboard-button').click()
+  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await todoShell.getByTitle('Todos durchsuchen',{exact:true}).fill('Filtertodo')
+  await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
+  const todoLabel='To-dos: Status',todoPopup=popup(todoLabel),todoTrigger=trigger(todoLabel)
+  await todoTrigger.click();await todoPopup.getByRole('checkbox',{name:'Done',exact:true}).check()
+  await expect(page.locator('.todo-canvas-line')).toHaveCount(1);await expect(page.locator('.todo-canvas-line-text')).toContainText('Filtertodo fertig')
+  await todoPopup.getByRole('checkbox',{name:'Open',exact:true}).focus();await page.keyboard.press('Enter')
+  await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
+  await capture('filter-todo-multiple-dark','The same component filters checkbox to-dos with matching pointer and keyboard behavior')
+  await page.keyboard.press('Escape');await expect(todoTrigger).toBeFocused()
+  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click()
+  for(const [file,content] of snapshots)assert.equal(fs.readFileSync(file,'utf8'),content)
+  assert.equal(writes(),before)
+  report.checks.filtersDoNotWriteMarkdownOrLoseEditorDraft=true
+
+  await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click();await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,200);return old})
+  try {
+    for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500],['short',640,240]]) {
+      await windowSize(width,height,1.5)
+      await tagsTrigger.click();await tagsPopup.getByRole('searchbox').fill('lange filteroption')
+      await page.keyboard.press('ArrowDown');await page.keyboard.press('End')
+      await expect(tagsPopup.getByRole('checkbox').last()).toBeFocused();await expect(tagsPopup.getByRole('checkbox').last()).toBeInViewport()
+      const rect=await tagsPopup.boundingBox(),view=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+      assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
+      report.checks.filtersViewports ??= {}
+      report.checks.filtersViewports[label]={surface:rect,viewport:view,lastOptionReachable:true}
+      await capture(`filter-${label}-dark`,'Native top-layer filter fits '+label+' viewport; long final option remains reachable')
+      await page.keyboard.press('Escape');await expect(tagsTrigger).toBeFocused()
+      await tagsTrigger.click();await expect(tagsPopup.getByRole('searchbox')).toBeFocused();await expect(tagsPopup.getByRole('searchbox')).toBeInViewport()
+      await page.keyboard.press('Escape')
+    }
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  report.checks.filtersViewportAndReopenFocus=true
+  await theme('light');await taskTrigger.click();await expect(taskPopup.getByRole('searchbox')).toBeFocused()
+  await capture('filter-light','Shared filter surface in the light theme')
+  await page.keyboard.press('Escape');await resetTasks();await theme('dark')
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
+  await expect(editor).toContainText(marker)
+  const response=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s');assert.equal((await response).status(),200)
+  assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  report.checks.filtersDraftSavedAfterExplicitSave=true
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -1616,6 +1765,7 @@ try {
     if (createDialog) await verifyCreateDialog()
     if (tagMatching) await verifyTagMatching()
     if (settingsDialog) await verifySettingsDialog()
+    if (filters) await verifyFilters()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

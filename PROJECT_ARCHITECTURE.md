@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 11. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
+Stand: 12. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -342,6 +342,22 @@ Import, Recovery und Agentenfreigaben behalten ihre vorhandenen Fachpfade.
 Keine neue Persistenz, Backend- oder Formatmigration. `--settings-dialog` prueft
 die Dialog- und Speicherwege ausschliesslich im isolierten Testprofil.
 Nachweise: [Einstellungsdialog](doc/settings-dialog-2026-11-11.md).
+
+`ui/MultiSelectFilter.tsx` besitzt die gemeinsame Mehrfachauswahl der To-do- und
+Taskfilter: benannter nichtmodaler HTML-Popover im Body-Portal, echte Checkboxen,
+Suche, Tastaturnavigation und Fokusabschluss. Chromiums Popover-API uebernimmt
+Top-Layer, exklusives Oeffnen und Aussenklick. Die Fensterbegrenzung teilen
+Filter und Kontextmenues ueber `ui/placeFloatingSurface.ts`. Lange Optionen
+umbrechen; kleine Fenster scrollen, ohne die Sidebar als Begrenzung zu verwenden.
+Tab verlaesst die Auswahl, Escape/Fertig fuehren zum Ausloeser zurueck.
+Globale Appbefehle greifen nicht in fokussierte offene Popover ein.
+`WorkbenchSidebarContent.tsx` liefert weiterhin Optionen, ausgewaehlte Werte und
+die vorhandenen Filtercallbacks. Gruppenauswahl bereinigt Tags weiterhin ueber
+denselben Fachpfad; der gemeinsame Baustein besitzt keine Filterengine oder
+Persistenz. Doppelte Renderer, Suchzustaende, Listener und Popupstyles sind
+entfernt. `--filters` prueft echte Dashboardtreffer, unveraenderte Markdown-
+Dateien und erhaltene Editorentwuerfe im isolierten Testprofil.
+Nachweise: [Mehrfachfilter](doc/multiselect-filters-2026-11-12.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;

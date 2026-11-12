@@ -2,6 +2,7 @@ import {createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, u
 import type {ButtonHTMLAttributes, KeyboardEvent, ReactNode} from 'react'
 import {createPortal} from 'react-dom'
 import type {ContextMenuAnchor} from './contextMenuAnchor'
+import {placeFloatingSurface} from './placeFloatingSurface'
 import './ContextMenu.css'
 
 const MenuActivation = createContext<((action: () => void) => void) | null>(null)
@@ -62,10 +63,7 @@ export function ContextMenu({anchor, label, heading, initialFocus = 'first', tri
     const menu = ref.current
     if (!menu) return
     const place = () => {
-      const {width, height} = menu.getBoundingClientRect()
-      const edge = 8
-      menu.style.left = `${Math.max(edge, Math.min(anchor.x, window.innerWidth - width - edge))}px`
-      menu.style.top = `${Math.max(edge, Math.min(anchor.y, window.innerHeight - height - edge))}px`
+      placeFloatingSurface(menu, anchor.x, anchor.y)
     }
     place()
     const entries = menu.querySelectorAll<HTMLElement>(menuItemSelector)
