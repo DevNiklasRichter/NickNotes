@@ -536,14 +536,14 @@ class BackendApiService:
                 vault_id=str(vault_path),
             )
         runtime = self.state
-        with runtime.load_lock:
-            if runtime.load_status.active:
+        with runtime.load.lock:
+            if runtime.load.status.active:
                 raise ConflictDomainError(
                     "A NoteBase is already being loaded.",
                     operation="start_notebase_open",
                     vault_id=str(vault_path),
                 )
-        runtime.reset_load_status("NoteBase wird vorbereitet ...")
+        runtime.load.reset("NoteBase wird vorbereitet ...")
         thread = threading.Thread(
             target=self._open_notebase_background,
             args=(SimpleNamespace(path=str(vault_path)),),
@@ -555,7 +555,7 @@ class BackendApiService:
 
     def _open_notebase_background(self, req: Any) -> None:
         def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-            self.state.update_load_status(
+            self.state.load.update(
                 phase=phase,
                 processed=processed,
                 total=total,
@@ -564,20 +564,20 @@ class BackendApiService:
 
         try:
             result = self._open_vault_impl(req, progress_callback=update_progress)
-            self.state.update_load_status(
+            self.state.load.update(
                 phase="NoteBase ist bereit.",
                 done=True,
                 error=None,
                 result=result,
             )
         except DomainError as exc:
-            self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
+            self.state.load.update(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
         except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Could not open NoteBase in background.")
-            self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
+            self.state.load.update(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
 
     def get_notebase_open_status(self) -> dict[str, Any]:
-        return self.state.get_load_status()
+        return self.state.load.snapshot()
 
     @coordinated
     def create_vault(self, req: VaultCreateRequest) -> dict[str, Any]:
@@ -646,7 +646,7 @@ class BackendApiService:
         return StartOneNoteImportUseCase().execute(self, req)
 
     def get_onenote_import_status(self) -> dict[str, Any]:
-        return self.state.get_import_status()
+        return self.state.imports.snapshot()
 
     @coordinated(mutation=True, lifecycle=True)
     def rename_notebase(self, req: NoteBaseRenameRequest) -> dict[str, Any]:

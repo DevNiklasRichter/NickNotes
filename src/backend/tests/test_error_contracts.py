@@ -10,7 +10,7 @@ from src.backend.errors import DomainError
 
 class ApiErrorContractTests(unittest.TestCase):
     def setUp(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
 
     def test_validation_domain_error_is_standardized(self) -> None:
         client = TestClient(backend_api.app)

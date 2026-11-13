@@ -25,7 +25,7 @@ class VaultFilePolicyTests(unittest.TestCase):
         backend_api.state.start_session(vault=self.vault, indexer=self.indexer)
 
     def tearDown(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         shutil.rmtree(self.test_root, ignore_errors=True)
 
     def test_note_content_allows_files_inside_loaded_vault(self) -> None:

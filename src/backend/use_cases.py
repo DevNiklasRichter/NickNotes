@@ -426,10 +426,10 @@ class StartOneNoteImportUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        service.state.reset_import_status("Import wird vorbereitet ...")
+        service.state.imports.reset("Import wird vorbereitet ...")
 
         def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-            service.state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
+            service.state.imports.update(phase=phase, processed=processed, total=total, current_path=current_path)
 
         try:
             logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
@@ -439,7 +439,7 @@ class StartOneNoteImportUseCase:
             )
         except OneNoteImportError as exc:
             payload = exc.payload()
-            service.state.update_import_status(
+            service.state.imports.update(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=exc.message,
@@ -473,7 +473,7 @@ class StartOneNoteImportUseCase:
             except OSError:
                 pass
             detail = f"Unerwarteter Fehler beim OneNote-Import: {exc}"
-            service.state.update_import_status(
+            service.state.imports.update(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=detail,
@@ -489,7 +489,7 @@ class StartOneNoteImportUseCase:
                 details={"exception": str(exc)},
             ) from exc
 
-        service.state.update_import_status(
+        service.state.imports.update(
             phase="NoteBase wird aktualisiert ...",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),
@@ -510,7 +510,7 @@ class StartOneNoteImportUseCase:
             "groups": vault.list_note_groups(),
             "graphStatus": graph_status,
         }
-        service.state.update_import_status(
+        service.state.imports.update(
             phase="Import abgeschlossen.",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),
