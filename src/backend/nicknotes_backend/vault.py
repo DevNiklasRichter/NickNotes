@@ -475,17 +475,8 @@ class VaultManager:
     def ensure_structure(self) -> None:
         from .source_journal import SourceJournal, active_journal
         self.validate_roots()
+        self._reject_unsupported_layout()
         validate_configuration(self)
-        if self.system_root_name != '.system':
-            # Rename the metadata directory before creating a journal inside it.
-            # This is one same-volume directory rename; source contents stay intact.
-            target=self.vault_path/'.system'
-            if target.exists():
-                raise ValueError('Das Ziel .system ist bereits belegt.')
-            previous=self.system_path
-            previous.rename(target)
-            self._configure_root_paths()
-            atomic_write_text(self.system_path/'migrations'/'system-root-v2.json',json.dumps({'from':previous.name,'to':'.system'}))
         if active_journal.get() is not None:
             return self._ensure_structure()
         with SourceJournal(self, 'ensure-structure-migration'):
@@ -494,16 +485,9 @@ class VaultManager:
     def _ensure_structure(self) -> None:
         self.validate_roots()
         migrate_configuration(self)
-        self.daily_root_path = self._ensure_root_directory("daily", "01_daily")
-        self.tag_root_path = self._ensure_root_directory("tags", "02_tags")
-        self.tasks_root_path = self._ensure_root_directory("tasks", "03_tasks")
-        self.media_root_path = self.vault_path / ".media"
-        self.system_path = self._ensure_system_directory()
-        self._configure_root_paths()
-
+        for path in (self.daily_root_path, self.tag_root_path, self.tasks_root_path, self.media_root_path, self.system_path):
+            path.mkdir(parents=True, exist_ok=True)
         self._ensure_task_status_folders()
-        self.media_root_path.mkdir(parents=True, exist_ok=True)
-        self.system_path.mkdir(parents=True, exist_ok=True)
 
         if not self.config_path.exists():
             atomic_write_text(self.config_path, json.dumps({'format_version': 2, 'vault_id': str(uuid.uuid4())}, indent=2), encoding='utf-8')
@@ -523,11 +507,11 @@ class VaultManager:
         self._migrate_legacy_inbox()
 
     def _configure_root_paths(self) -> None:
-        self.daily_root_name = self._pick_root_name("daily", "01_daily")
-        self.tag_root_name = self._pick_root_name("tags", "02_tags")
-        self.tasks_root_name = self._pick_root_name("tasks", "03_tasks")
+        self.daily_root_name = "daily"
+        self.tag_root_name = "tags"
+        self.tasks_root_name = "tasks"
         self.media_root_name = ".media"
-        self.system_root_name = self._pick_system_root_name()
+        self.system_root_name = ".system"
 
         self.daily_root_path = self.vault_path / self.daily_root_name
         self.tag_root_path = self.vault_path / self.tag_root_name
@@ -590,53 +574,23 @@ class VaultManager:
         self.system_path.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self.task_status_links_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
-    def _pick_root_name(self, preferred: str, legacy: str) -> str:
-        if (self.vault_path / preferred).is_dir():
-            return preferred
-        if (self.vault_path / legacy).is_dir():
-            return legacy
-        return preferred
-
-    def _ensure_root_directory(self, preferred: str, legacy: str) -> Path:
-        preferred_path = self.vault_path / preferred
-        legacy_path = self.vault_path / legacy
-
-        if preferred_path.exists():
-            preferred_path.mkdir(parents=True, exist_ok=True)
-            return preferred_path
-
-        if legacy_path.exists():
-            try:
-                _rename_path_with_retry(legacy_path, preferred_path)
-                return preferred_path
-            except OSError:
-                legacy_path.mkdir(parents=True, exist_ok=True)
-                return legacy_path
-
-        preferred_path.mkdir(parents=True, exist_ok=True)
-        return preferred_path
-
-    def _pick_system_root_name(self) -> str:
-        for candidate in (".system", "system", "99_system"):
-            if (self.vault_path / candidate).is_dir():
-                return candidate
-        return ".system"
-
-    def _ensure_system_directory(self) -> Path:
-        path=self.vault_path/'.system'
-        path.mkdir(parents=True,exist_ok=True)
-        return path
+    def _reject_unsupported_layout(self) -> None:
+        """Stop before writing when the folder still uses a pre-2.1 metadata directory."""
+        if (self.system_path / "config.json").exists():
+            return
+        for name in ("system", "99_system"):
+            if (self.vault_path / name / "config.json").is_file():
+                raise ValueError(
+                    f'Diese NoteBase verwendet noch den alten Systemordner "{name}". '
+                    "Oeffne sie einmal mit NickNotes 2.1.0-rc.4 oder benenne den Ordner in \".system\" um. "
+                    "Es wurde nichts veraendert."
+                )
 
     def list_note_groups(self) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
         favorites = set(self._read_favorite_folders())
         for child in self._sorted_dirs(self.vault_path):
-            if (
-                self._is_system_name(child.name)
-                or child.name == "02_entities"
-                or child.name == self.media_root_name
-                or self._is_hidden_legacy_root(child.name)
-            ):
+            if child.name in {self.system_root_name, self.media_root_name}:
                 continue
             groups.extend(self._collect_custom_group_payloads(child, favorites))
         return groups
@@ -3406,21 +3360,7 @@ class VaultManager:
         return sorted(dirs, key=lambda item: item.name.lower())
 
     def _is_system_name(self, name: str) -> bool:
-        return name in {"99_system", "system", ".system"}
-
-    def _is_hidden_legacy_root(self, name: str) -> bool:
-        normalized = name.strip().lower()
-        if normalized == "system" and (self.vault_path / ".system").is_dir():
-            return True
-        if normalized == "01_daily" and (self.vault_path / "daily").is_dir():
-            return True
-        if normalized == "02_tags" and (self.vault_path / "tags").is_dir():
-            return True
-        if normalized == "03_tasks" and (self.vault_path / "tasks").is_dir():
-            return True
-        if normalized == "99_system" and ((self.vault_path / "system").is_dir() or (self.vault_path / ".system").is_dir()):
-            return True
-        return False
+        return name == self.system_root_name
 
     def _is_system_path(self, directory: Path) -> bool:
         try:
@@ -3436,13 +3376,6 @@ class VaultManager:
             self.tag_root_name,
             self.tasks_root_name,
             self.media_root_name,
-            "01_daily",
-            "02_tags",
-            "03_tasks",
-            "daily",
-            "tags",
-            "tasks",
-            ".media",
         }
 
     def _resolve_note_file(self, note_path: str) -> Path:
@@ -3587,12 +3520,6 @@ class VaultManager:
             clean = raw.replace("\\", "/").strip().strip("/")
             if not clean:
                 continue
-            if clean == "01_daily" and (self.vault_path / "daily").is_dir():
-                clean = "daily"
-            if clean == "02_tags" and (self.vault_path / "tags").is_dir():
-                clean = "tags"
-            if clean == "03_tasks" and (self.vault_path / "tasks").is_dir():
-                clean = "tasks"
             target = self.vault_path / clean
             try:
                 if not target.exists() or not target.is_dir():

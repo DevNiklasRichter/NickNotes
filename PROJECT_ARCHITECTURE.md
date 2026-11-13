@@ -103,9 +103,13 @@ Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
 einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
 im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.
 
-Alte Konfigurationen und Systemordner werden gezielt migriert. Widerspruechliche
-Tagquellen und unbekannte kuenftige Formate brechen vor inhaltlichen Aenderungen
-ab. Downgrade auf alte Fassungen ist nicht unterstuetzt.
+Die Ordnernamen `daily`, `tags`, `tasks`, `.media` und `.system` sind fest. Die
+frueheren Namen (`system`, `99_system`, `01_daily`, `02_tags`, `03_tasks`) werden
+nicht mehr erkannt: Eine NoteBase mit altem Systemordner wird vor jeder Aenderung
+mit einem Hinweis abgelehnt, gleichnamige eigene Ordner sind normale Ordner.
+Alte Konfigurationen (`config.json` vor Formatversion 2) werden weiterhin gezielt
+migriert. Widerspruechliche Tagquellen und unbekannte kuenftige Formate brechen
+vor inhaltlichen Aenderungen ab. Downgrade ist nicht unterstuetzt.
 
 ## Schreiben und Projektionen
 

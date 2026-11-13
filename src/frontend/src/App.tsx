@@ -222,7 +222,7 @@ function App() {
     }, []);
     const isTagOverviewPath = (path: string): boolean => {
         const normalized = normalizePath(path).toLowerCase();
-        return /\/(tags|02_tags)\//.test(normalized) && normalized.endsWith('/overview.md');
+        return /\/tags\//.test(normalized) && normalized.endsWith('/overview.md');
     };
     const isTagIndexFrontmatter = (content: string): boolean => {
         const normalized = content.replace(/^\uFEFF/, '');

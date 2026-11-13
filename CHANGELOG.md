@@ -9,6 +9,11 @@ Signierung auf dem Release-Laptop noch aus.
 - NoteBase löschen verschiebt in den Windows-Papierkorb und verlangt eine NickNotes-Kennung.
 - Tag-Übernahme und Task-Abschluss sind durch das Schreibjournal abgesichert.
 - Per MCP angelegte To-dos verwenden dieselbe stabile Referenz wie die Oberfläche.
+- Die alten Ordnernamen `system`, `99_system`, `01_daily`, `02_tags` und `03_tasks`
+  werden nicht mehr unterstützt. NoteBases mit altem Systemordner vorher einmal mit
+  2.1.0-rc.4 öffnen.
+- Die API-Routen `/vault/open`, `/vault/create` und `/vault/reindex` entfallen;
+  `/notebase/*` bleibt.
 
 ## [2.1.0-rc.4] - 2026-11-09
 

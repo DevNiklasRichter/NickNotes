@@ -125,14 +125,26 @@ class RuntimeIntegrityTests(unittest.TestCase):
                 self.assertEqual(vault.graph_index_path.stat().st_mtime_ns,graph_time)
             finally:service.state.dispose_session()
 
-    def test_legacy_system_root_moves_before_journal_creation(self):
+    def test_pre_2_1_system_root_is_rejected_without_touching_the_folder(self):
         from src.backend.nicknotes_backend.vault import VaultManager
         import json
+        for name in ('system','99_system'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)/'Legacy';system=root/name;system.mkdir(parents=True)
+                (system/'config.json').write_text(json.dumps({'custom':{'kept':True}}),encoding='utf-8')
+                (root/'Notiz.md').write_text('Inhalt',encoding='utf-8')
+                before=sorted(path.relative_to(root).as_posix() for path in root.rglob('*'))
+                with self.assertRaisesRegex(ValueError,'alten Systemordner'):
+                    VaultManager(root).ensure_structure()
+                self.assertEqual(sorted(path.relative_to(root).as_posix() for path in root.rglob('*')),before)
+
+    def test_a_user_folder_named_system_is_an_ordinary_folder(self):
+        from src.backend.nicknotes_backend.vault import VaultManager
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)/'Legacy';system=root/'system';system.mkdir(parents=True)
-            (system/'config.json').write_text(json.dumps({'custom':{'kept':True}}),encoding='utf-8')
+            root=Path(directory)/'Base'
+            (root/'system').mkdir(parents=True)
+            (root/'system'/'Betrieb.md').write_text('Inhalt',encoding='utf-8')
             vault=VaultManager(root);vault.ensure_structure()
-            self.assertTrue((root/'.system/config.json').exists())
-            self.assertFalse((root/'system').exists())
-            self.assertTrue(vault.read_config()['custom']['kept'])
-            self.assertEqual(pending_recovery(vault),[])
+            self.assertIn('system',[group['key'] for group in vault.list_note_groups()])
+            from src.backend.nicknotes_backend.inventory import markdown_sources
+            self.assertIn(root.resolve()/'system'/'Betrieb.md',markdown_sources(root))

@@ -112,12 +112,7 @@ class BackendApiService:
                 operation=operation,
                 vault_id=str(resolved),
             )
-        config_markers = (
-            resolved / ".system" / "config.json",
-            resolved / "system" / "config.json",
-            resolved / "99_system" / "config.json",
-        )
-        if not any(marker.exists() for marker in config_markers):
+        if not (resolved / ".system" / "config.json").exists():
             raise ValidationDomainError(
                 "Target folder is not a NickNotes NoteBase.",
                 operation=operation,
@@ -491,7 +486,7 @@ class BackendApiService:
             )
 
         relative = file_path.relative_to(vault_root)
-        if any(part.startswith(".") or part.lower() in {"system", "99_system"} for part in relative.parts):
+        if any(part.startswith(".") for part in relative.parts):
             raise ValidationDomainError("Internal files are not accessible as notes.")
         if file_path.suffix.lower() not in {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".toml", ".log"}:
             raise ValidationDomainError("Unsupported document type.")
@@ -1004,11 +999,6 @@ class BackendApiService:
         vault, _indexer = self.require_loaded()
         items: list[dict[str, Any]] = []
         root = vault.vault_path.resolve()
-        hide_legacy_daily = (root / "daily").is_dir()
-        hide_legacy_tags = (root / "tags").is_dir()
-        hide_legacy_tasks = (root / "tasks").is_dir()
-        hide_dot_system = (root / ".system").is_dir()
-        hide_legacy_system = (root / "system").is_dir()
         text_extensions = {
             ".md",
             ".txt",
@@ -1041,17 +1031,7 @@ class BackendApiService:
             except (OSError, ValueError):
                 continue
             top = relative.split("/", 1)[0]
-            if top in {".system", "system", "99_system", "02_entities", ".media"}:
-                continue
-            if hide_legacy_daily and top == "01_daily":
-                continue
-            if hide_legacy_tags and top == "02_tags":
-                continue
-            if hide_legacy_tasks and top == "03_tasks":
-                continue
-            if hide_dot_system and top == "system":
-                continue
-            if hide_legacy_system and top == "99_system":
+            if top in {".system", ".media"}:
                 continue
 
             extension = file_path.suffix.lower()
