@@ -49,6 +49,8 @@ export const COMMANDS = [
 ] as const
 
 export type CommandId = typeof COMMANDS[number]['id']
+const navigationIcons:Partial<Record<CommandId,string>>={notes:'FileText',todos:'ListTodo',tasks:'CheckSquare',focus:'Crosshair',tags:'Tag',review:'BarChart3',graph:'Network',vault:'LayoutGrid'}
+export const commandIcon=(id:CommandId):string=>navigationIcons[id]??'Circle'
 export type CommandGroup = typeof COMMANDS[number]['group']
 export type CommandSpec = {id:CommandId; label:string; group:CommandGroup; shortcut?:string; aliases?:readonly string[]; native?:boolean}
 export type AppCommand = CommandSpec & {enabled:boolean; disabledReason?:string; checked?:boolean; run:()=>unknown}

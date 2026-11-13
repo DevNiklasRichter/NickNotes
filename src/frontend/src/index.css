@@ -1,4 +1,5 @@
 :root {
+  --motion-fast: 140ms;
   color-scheme: light;
   --text: #1f2328;
   --muted: #626b78;

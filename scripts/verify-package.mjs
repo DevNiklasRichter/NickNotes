@@ -21,13 +21,24 @@ for(const pkg of runtime){
 }
 assert.ok(runtime.some(pkg=>pkg.name==='electron-updater'))
 assert.ok(files.includes('desktop/main.mjs'));assert.ok(files.includes('frontend/index.html'));assert.ok(files.includes('THIRD_PARTY_NOTICES.txt'))
-function walk(folder){return fs.readdirSync(folder,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?walk(path.join(folder,entry.name)):[path.join(folder,entry.name)])}
+const symlinks=[]
+function walk(folder){return fs.readdirSync(folder,{withFileTypes:true}).flatMap(entry=>{
+ const file=path.join(folder,entry.name)
+ if(entry.isSymbolicLink()){
+  const resolved=fs.realpathSync(file)
+  assert.ok(resolved.startsWith(path.resolve(base)+path.sep),`Package symlink escapes its payload: ${file}`)
+  symlinks.push({path:path.relative(base,file).replaceAll('\\','/'),target:fs.readlinkSync(file)})
+  return []
+ }
+ return entry.isDirectory()?walk(file):[file]
+})}
 const installed=walk(base).map(file=>({path:path.relative(base,file).replaceAll('\\','/'),bytes:fs.statSync(file).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}))
 for(const file of installed)assert.ok(!/(^|\/)(\.venv|__pycache__|tests)(\/|$)|asterion/i.test(file.path),`Unexpected installed file: ${file.path}`)
 assert.ok(installed.some(file=>file.path==='resources/backend/nicknotes-backend.exe'))
-const manifest={version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,fileCount:installed.length,installedBytes:installed.reduce((sum,file)=>sum+file.bytes,0),asarFiles:files.length,largestFiles:[...installed].sort((a,b)=>b.bytes-a.bytes).slice(0,12),files:installed}
+const manifest={platform:process.platform,arch:process.arch,version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,fileCount:installed.length,installedBytes:installed.reduce((sum,file)=>sum+file.bytes,0),asarFiles:files.length,largestFiles:[...installed].sort((a,b)=>b.bytes-a.bytes).slice(0,12),files:installed}
 const installer=path.join(root,'dist/installers',`NickNotes-Setup-${manifest.version}-x64.exe`)
-manifest.installerBytes=fs.existsSync(installer)?fs.statSync(installer).size:null
+manifest.symlinks=symlinks
+manifest.installerBytes=!process.argv.includes('--runtime-only')&&fs.existsSync(installer)?fs.statSync(installer).size:null
 manifest.budgets={installerBytes:200*1024*1024,installedBytes:500*1024*1024}
 manifest.budgetWarnings=[]
 for(const [metric,budget] of Object.entries(manifest.budgets))if(manifest[metric]>budget)manifest.budgetWarnings.push(`${metric}: ${manifest[metric]} exceeds investigation threshold ${budget}`)

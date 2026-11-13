@@ -1191,6 +1191,28 @@ export interface components {
              */
             write: boolean;
         };
+        /** BackendChangeEvent */
+        BackendChangeEvent: {
+            /**
+             * Version
+             * @default 0
+             */
+            version: number;
+            /**
+             * Operation
+             * @default
+             */
+            operation: string;
+            /** Paths */
+            paths: string[];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         /** BackendStateResponse */
         BackendStateResponse: {
             /**
@@ -1222,6 +1244,7 @@ export interface components {
             changeVersion: number;
             /** Pendingrecovery */
             pendingRecovery: string[];
+            lastChange: components["schemas"]["BackendChangeEvent"];
         } & {
             [key: string]: unknown;
         };

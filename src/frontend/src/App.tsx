@@ -4,7 +4,7 @@ import type {ContextMenuAnchor} from './ui/contextMenuAnchor';
 import {useNoteDocuments} from './workspace/useNoteDocuments';
 import {useExternalChanges} from './app/useExternalChanges';
 import {useCaptureDraft} from './app/useCaptureDraft';
-import {COMMANDS, commandTitle, shortcutLabel, type AppCommand, type CommandId} from './app/commands';
+import {COMMANDS, commandIcon, commandTitle, shortcutLabel, type AppCommand, type CommandId} from './app/commands';
 import {useAppCommands} from './app/useAppCommands';
 import {connectionEpoch} from './app/apiClient';
 import {AppMenuBar} from './layout/AppMenuBar';
@@ -24,6 +24,8 @@ import { parseNoteDocument, extractAutoTags, extractRelatedLinks, type ParsedNot
 import { LucideNamedIcon } from './icons/lucideCatalog';
 import { ActivityRail } from './layout/ActivityRail';
 import { StatusBar } from './layout/StatusBar';
+import {NotificationCenter} from './layout/NotificationCenter';
+import {SaveProgress} from './workspace/SaveProgress';
 import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent';
 const SettingsEditorPanel = lazy(() => import('./settings/SettingsEditorPanel').then(module => ({default: module.SettingsEditorPanel})));
 import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas';
@@ -45,7 +47,7 @@ import { ExplorerMutationService } from './app/explorerMutationService';
 import { TagManagementService } from './app/tagManagementService';
 import { useOperatorNotifications } from './app/operatorNotifications';
 import { useTagMatchWorkflowState, type TagMatchCandidate } from './app/tagMatchWorkflowState';
-import type { AppMutationEvent, MutationRefreshPlan } from './app/mutationEvents';
+import {useMutationRefresh} from './app/useMutationRefresh';
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
 import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, DEFAULT_LIGHT_COLOR_PROFILE, DEFAULT_DARK_COLOR_PROFILE, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, applyColorProfileToDocument, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areColorProfilesEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
@@ -190,7 +192,8 @@ function App() {
     const rightEditorRef = useRef<MarkdownEditorApi | null>(null);
     const captureEditorRef = useRef<MarkdownEditorApi | null>(null);
     const propertyDraftCommitters = useRef(new Map<string, () => boolean>());
-    const { latestOperatorNotification, launchOperatorNotifications, setMessage, setWarnMessage, setError, setCriticalMessage, } = useOperatorNotifications();
+    const { latestOperatorNotification, operatorNotifications, clearOperatorNotification, setMessage, setWarnMessage, setError, setCriticalMessage, } = useOperatorNotifications();
+    const [pendingNoteSaves,setPendingNoteSaves]=useState(0);
     const flushNoteInputs = (includeEditors = true) => {
         let valid = true;
         flushSync(() => {
@@ -368,8 +371,8 @@ function App() {
         return map;
     }, [openTabs]);
     const {saveTab, openNoteInTab, refreshOpenTabsFromDisk} = useNoteDocuments({
- workspaceStateRef, leftEditorRef, rightEditorRef, flushNoteInputs, findTabByPath, setMessage, setError, backendUrl, setCounts, setCustomTagGroups,
- setLatestGraphStatus, setGraphUpdateToken, remapOpenNotePaths:(from,to)=>remapOpenNotePaths(from,to), setOpenTabs, emitMutationEvent:event=>emitMutationEvent(event), toNoteId,
+ onSavingChange:delta=>setPendingNoteSaves(count=>count+delta), workspaceStateRef, leftEditorRef, rightEditorRef, flushNoteInputs, findTabByPath, setMessage, setError, backendUrl, setCounts, setCustomTagGroups,
+ remapOpenNotePaths:(from,to)=>remapOpenNotePaths(from,to), setOpenTabs, emitMutationEvent:event=>emitMutationEvent(event), toNoteId,
  confirmCloseTab:(id)=>confirmCloseTab(id), openTabsRef, isTagOverviewPath, dispatchWorkspace, setEditorPanelOpen, createTabId, isTagOverviewReadOnly,
 });
 
@@ -458,179 +461,16 @@ function App() {
     const refreshReview = useCallback((force = false) => backendDataService.refreshReview(force), [backendDataService]);
     const refreshFocusAggregate = useCallback((force = false) => backendDataService.refreshFocusAggregate(force), [backendDataService]);
     const refreshNoteGroups = useCallback((force = false) => backendDataService.refreshNoteGroups(force), [backendDataService]);
+    const refreshTagGroups = useCallback((force = false) => backendDataService.refreshTagGroups(force), [backendDataService]);
     const refreshExplorerSidebarData = useCallback((force = false) => backendDataService.refreshExplorerSidebarData(force), [backendDataService]);
     const refreshWorkspaceData = useCallback((force = false) => backendDataService.refreshWorkspaceData(searchQuery, force), [backendDataService, searchQuery]);
-    const emitMutationEvent = useCallback(async (event: AppMutationEvent): Promise<void> => {
-        if (!vaultLoaded) {
-            return;
-        }
-        const defaultRefresh: MutationRefreshPlan = (() => {
-            if (event.refresh) {
-                return event.refresh;
-            }
-            switch (event.kind) {
-                case 'note-saved':
-                    return {
-                        search: true,
-                        tasks: event.noteType === 'task',
-                        todos: true,
-                        review: true,
-                        noteGroups: true,
-                        explorerSidebar: true,
-                    };
-                case 'note-created':
-                case 'note-renamed':
-                case 'note-moved':
-                case 'note-deleted':
-                    return {
-                        search: true,
-                        tasks: true,
-                        todos: true,
-                        review: true,
-                        noteGroups: true,
-                        explorerSidebar: true,
-                    };
-                case 'note-group-mutated':
-                    return {
-                        search: true,
-                        noteGroups: true,
-                        explorerSidebar: true,
-                    };
-                case 'notes-batch-updated':
-                    return {
-                        search: true,
-                        tasks: true,
-                        todos: true,
-                        review: true,
-                        explorerSidebar: true,
-                    };
-                case 'tag-mutated':
-                    return {
-                        search: true,
-                        review: true,
-                    };
-                case 'capture-saved':
-                    return {
-                        search: true,
-                        todos: true,
-                        review: true,
-                        noteGroups: true,
-                        explorerSidebar: true,
-                    };
-                case 'todo-updated':
-                    return {
-                        search: true,
-                        tasks: true,
-                        todos: true,
-                        review: true,
-                    };
-                case 'focus-updated':
-                    return {
-                        focusAggregate: true,
-                        review: true,
-                    };
-                case 'import-completed':
-                    return {
-                        search: true,
-                        tasks: true,
-                        todos: true,
-                        review: true,
-                        noteGroups: true,
-                        explorerSidebar: true,
-                    };
-                default:
-                    return {};
-            }
-        })();
-        const shouldRefreshGraph = (() => {
-            if (event.graphStatus) {
-                return true;
-            }
-            switch (event.kind) {
-                case 'note-saved':
-                case 'note-created':
-                case 'note-renamed':
-                case 'note-moved':
-                case 'note-deleted':
-                case 'note-group-mutated':
-                case 'notes-batch-updated':
-                case 'tag-mutated':
-                case 'capture-saved':
-                case 'import-completed':
-                    return true;
-                default:
-                    return false;
-            }
-        })();
-        if (shouldRefreshGraph) {
-            if (event.graphStatus) {
-                setLatestGraphStatus(event.graphStatus);
-            }
-            setGraphUpdateToken((current) => current + 1);
-        }
-        const refreshTasksList: Promise<unknown>[] = [];
-        const pushRefresh = (refresh: () => Promise<void> | void) => {
-            const next = refresh();
-            if (next && typeof (next as Promise<unknown>).then === 'function') {
-                refreshTasksList.push(next as Promise<unknown>);
-            }
-        };
-        const refresh = {
-            search: defaultRefresh.search ?? false,
-            tasks: defaultRefresh.tasks ?? false,
-            todos: defaultRefresh.todos ?? false,
-            review: defaultRefresh.review ?? false,
-            noteGroups: defaultRefresh.noteGroups ?? false,
-            explorerSidebar: defaultRefresh.explorerSidebar ?? false,
-            focusAggregate: defaultRefresh.focusAggregate ?? false,
-        };
-        if (refresh.search) {
-            pushRefresh(() => runSearch(searchQuery));
-        }
-        if (refresh.tasks) {
-            pushRefresh(() => refreshTasks());
-        }
-        if (refresh.todos) {
-            pushRefresh(() => refreshTodos());
-        }
-        if (refresh.review) {
-            pushRefresh(() => refreshReview());
-        }
-        if (refresh.noteGroups) {
-            pushRefresh(() => refreshNoteGroups());
-        }
-        if (refresh.focusAggregate) {
-            pushRefresh(() => refreshFocusAggregate());
-        }
-        if (refresh.explorerSidebar) {
-            pushRefresh(() => refreshExplorerSidebarData());
-        }
-        const normalizedPaths = Array.from(new Set((event.paths ?? []).map(normalizeFilePathKey).filter(Boolean)));
-        if (normalizedPaths.length > 0) {
-            const byPath = new Map<string, string>();
-            for (const value of event.paths ?? []) {
-                const normalizedPath = normalizeFilePathKey(value);
-                if (normalizedPath && !byPath.has(normalizedPath)) {
-                    byPath.set(normalizedPath, value);
-                }
-            }
-            pushRefresh(() => refreshOpenTabsFromDisk(Array.from(byPath.values())));
-        }
-        if (refreshTasksList.length > 0) {
-            await Promise.allSettled(refreshTasksList);
-        }
-    }, [
-        refreshExplorerSidebarData,
-        refreshFocusAggregate,
-        refreshNoteGroups,
-        refreshOpenTabsFromDisk,
-        refreshReview,
-        refreshTasks,
-        refreshTodos,
-        runSearch,
-        searchQuery,
-        vaultLoaded
-    ]);
+    const refreshAllNotes = useCallback((force=false)=>backendDataService.refreshAllNotes(force),[backendDataService]);
+    const refreshExplorerFiles = useCallback((force=false)=>backendDataService.refreshExplorerFiles(force),[backendDataService]);
+    const emitMutationEvent = useMutationRefresh({vaultLoaded, searchQuery, runSearch,
+        refreshTasks, refreshTodos, refreshReview, refreshNoteGroups, refreshFocusAggregate,
+        refreshAllNotes,
+        refreshExplorerFiles,
+        refreshOpenTabsFromDisk, setLatestGraphStatus, setGraphUpdateToken, warn:setWarnMessage});
     const clearAppStateForClosedNoteBase = () => {
         setCounts({ notes: 0, openTasks: 0, doneTasks: 0 });
         setTasks([]);
@@ -1134,19 +974,19 @@ function App() {
     const resolveNoteTabIconName = (tab: NoteTab): string => {
         if (tab.kind !== 'note') {
             if (tab.kind === 'todo_dashboard') {
-                return 'ListTodo';
+                return commandIcon('todos');
             }
             if (tab.kind === 'task_dashboard') {
-                return 'LayoutDashboard';
+                return commandIcon('tasks');
             }
             if (tab.kind === 'focus_dashboard') {
-                return 'Target';
+                return commandIcon('focus');
             }
             if (tab.kind === 'review_dashboard') {
-                return 'BarChart3';
+                return commandIcon('review');
             }
             if (tab.kind === 'graph_dashboard') {
-                return 'Network';
+                return commandIcon('graph');
             }
             return 'Circle';
         }
@@ -2419,7 +2259,7 @@ function App() {
     useExternalChanges({backendUrl, vaultLoaded, tabs: openTabsRef, setTabs: setOpenTabs, setCounts,
         warn: setWarnMessage,
         refresh: async () => {
-            setGraphUpdateToken(current => current + 1);
+            await refreshTagGroups();
             await emitMutationEvent({kind: 'note-saved', refresh: {search: true, tasks: true, todos: true, review: true, noteGroups: true, explorerSidebar: true, focusAggregate: true}});
         },
     });
@@ -2795,6 +2635,7 @@ function App() {
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
       <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span><kbd>{shortcutLabel('openNote')}</kbd></button>
       <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
+      <NotificationCenter items={operatorNotifications} onDismiss={clearOperatorNotification}/>
     </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;
     const noteBaseProgressProcessed = noteBaseOpenStatus?.processed ?? 0;
@@ -2847,11 +2688,6 @@ function App() {
                   {noteBaseProgressPath ? <p className="launch-progress-path">{noteBaseProgressPath}</p> : null}
                 </div>) : null}
 
-              {launchOperatorNotifications.length > 0 ? (<div className="launch-notifications">
-                  {launchOperatorNotifications.map((notification) => (<p key={notification.id} className={`launch-notification ${notification.severity}`}>
-                      {notification.message}
-                    </p>))}
-                </div>) : null}
             </div>
           </div>
         </div>
@@ -3013,7 +2849,7 @@ function App() {
           </ContextMenuItem>
         </ContextMenu>) : null}
 
-      <StatusBar prefs={statusBarPrefs} notification={latestOperatorNotification} noteBaseName={noteBaseName} counts={counts} dueTodayCount={dueTodayCount}/>
+      <StatusBar progress={<SaveProgress pending={pendingNoteSaves>0}/>} prefs={statusBarPrefs} notification={latestOperatorNotification} noteBaseName={noteBaseName} counts={counts} dueTodayCount={dueTodayCount}/>
 
       <TagActionDialogModal dialog={tagActionDialog} colorPresets={TAG_COLOR_PRESETS} setDialog={setTagActionDialog} onClose={closeTagActionDialog}/>
       {tagMatchWorkflowModal}

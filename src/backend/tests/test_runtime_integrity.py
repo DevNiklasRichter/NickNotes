@@ -11,6 +11,29 @@ from src.backend.application_services import BackendApiService
 from src.backend.commands import VaultCreateRequest,NoteCreateRequest,VaultOpenRequest
 
 class RuntimeIntegrityTests(unittest.TestCase):
+    def test_explicit_mutation_journals_a_non_prefix_operation_and_rolls_back_failure(self):
+        from src.backend.session import coordinated
+        class Service(BackendApiService):
+            @coordinated(mutation=True)
+            def revise_document(self, path, fail=False):
+                atomic_write_text(path, 'changed')
+                if fail:
+                    raise RuntimeError('synthetic failure')
+        with tempfile.TemporaryDirectory() as directory:
+            service=Service()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Explicit'))
+                file=service.state.vault.vault_path/'Explicit.md'
+                atomic_write_text(file,'original')
+                before=service.state.change_version
+                with self.assertRaises(RuntimeError):service.revise_document(file,fail=True)
+                self.assertEqual(file.read_text(),'original')
+                self.assertEqual(service.state.change_version,before)
+                service.revise_document(file)
+                self.assertEqual(file.read_text(),'changed')
+                self.assertEqual(service.state.change_version,before+1)
+                self.assertEqual(service.state.last_change['operation'],'revise_document')
+            finally:service.state.dispose_session()
     def test_view_preferences_do_not_invalidate_note_content(self):
         from src.backend.commands import UiSettingsUpdateRequest
         with tempfile.TemporaryDirectory() as directory:

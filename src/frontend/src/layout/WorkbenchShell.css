@@ -171,6 +171,7 @@
 }
 
 .status-bar-left { flex: 1 1 16rem; }
+.save-progress:not(:empty) {margin-right:var(--space-3);color:var(--text);}
 .status-bar-left .status-item { white-space: normal; overflow-wrap: anywhere; }
 .status-bar-right { flex-wrap: wrap; }
 

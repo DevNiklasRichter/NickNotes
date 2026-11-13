@@ -10,7 +10,7 @@ import type {
   VaultCounts,
 } from '../app/AppShared'
 import type { TagGroupDefinition } from '../tags/tagTypes'
-import { apiRequest, toLocalIsoDate, toStorageTagGroups } from '../app/AppShared'
+import { apiRequest, normalizeFilePathKey, toLocalIsoDate, toStorageTagGroups } from '../app/AppShared'
 
 type ReviewWindow = ReviewDashboardFilters['window']
 
@@ -43,6 +43,7 @@ type BackendStateWriter = {
 }
 
 export class BackendDataService {
+  private searchRequest = 0
   private readonly context: {
     getBackendUrl: () => string
     isVaultLoaded: () => boolean
@@ -70,7 +71,7 @@ export class BackendDataService {
       if (!row.path) {
         continue
       }
-      next.add(row.path.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase())
+      next.add(normalizeFilePathKey(row.path.replace(/\/+$/g, '')))
     }
     return next
   }
@@ -112,32 +113,28 @@ export class BackendDataService {
     }
 
     const cleanQuery = query.trim()
+    const request = ++this.searchRequest
     try {
       const response = await apiRequest<{ items: SearchRow[] }>(
         this.backendUrl,
         `/search?query=${encodeURIComponent(query)}`
       )
+      if(request!==this.searchRequest)return
       this.writers.setSearchResults(response.items)
       if (!cleanQuery) {
         this.writers.setAllNotes(response.items)
         return
       }
 
-      void apiRequest<{ items: SearchRow[] }>(this.backendUrl, '/search?query=')
-        .then((allResponse) => {
-          this.writers.setAllNotes(allResponse.items)
-        })
-        .catch(() => {
-          // Best effort refresh for wikilinks.
-        })
     } catch (caught) {
+      if(request!==this.searchRequest)return
       this.writers.setError(String(caught))
-      if (!cleanQuery) {
+      if (!cleanQuery && request===this.searchRequest) {
         this.writers.setSearchResults([])
         this.writers.setAllNotes([])
       }
     } finally {
-      if (!cleanQuery) {
+      if (!cleanQuery && request===this.searchRequest) {
         await this.refreshExplorerFiles(force)
       }
     }
@@ -257,12 +254,12 @@ export class BackendDataService {
       return
     }
     await Promise.allSettled([
-      this.refreshTasks(force),
       this.refreshFocusAggregate(force),
       this.runSearch(searchQuery, force),
       this.refreshReview(force),
       this.refreshTagGroups(force),
-      this.refreshExplorerSidebarData(force),
+      this.refreshNoteGroups(force),
+      ...(searchQuery.trim() ? [this.refreshExplorerFiles(force)] : []),
     ])
   }
 }

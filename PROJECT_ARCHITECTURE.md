@@ -101,7 +101,11 @@ und passende Programmfassung verwenden.
 
 ## Schreiben und Projektionen
 
-Mutationen laufen unter gemeinsamer Sperre und Sessionpruefung. Dokument-Saves
+Mutationen laufen unter gemeinsamer Sperre und Sessionpruefung. Schreiboperationen
+deklarieren ihre Wirkung am Application-Service mit `@coordinated(mutation=True)`;
+Ansichtseinstellungen verwenden zusaetzlich `invalidate=False`, eigenstaendige
+NoteBase-Lifecycleoperationen `lifecycle=True`. Methodennamen entscheiden nicht
+mehr ueber Schreibschutz, Journal oder Aenderungsversion. Dokument-Saves
 verwenden erwartete Inhaltsrevisionen. Ein veralteter Stand wird nicht still
 ueberschrieben. Einzeldateien werden ueber Nachbardatei, fsync und atomaren
 Replace geschrieben. Mehrdateioperationen sichern Originale vor dem ersten
@@ -130,12 +134,25 @@ Details und Messwerte: [Graph](doc/graph-feature.md).
 Ein einfacher Polling-Watcher verarbeitet externe Aenderungen unter derselben
 Sperre, buendelt SQLite-/Graph-Updates und meldet eine Aenderungsversion.
 Fehler bleiben sichtbar; ein manuelles Reindex ist weiterhin moeglich.
+`BackendChangeEvent` ist der additive Pydantic-/OpenAPI-Vertrag fuer Version,
+Operation, betroffene Pfade und Trunkierung. Der Renderer verwendet Pfade nur bei
+einer vollstaendigen, unmittelbar aufeinanderfolgenden Version; Luecken und
+unvollstaendige Ereignisse loesen weiter den vollstaendigen Dokumentabgleich aus.
 
 ## Frontend
 
 `App.tsx` komponiert die Shell. Dokument-/Taboperationen liegen in
 `workspace/useNoteDocuments.ts`, reine Draft-Uebergaenge in `documentState.ts`.
 Jeder Tab besitzt Inhalt, eigene gespeicherte Revision und Dirty-Zustand.
+`app/useMutationRefresh.ts` besitzt die Ansichtsaktualisierung anhand des
+vorhandenen Ereigniskatalogs in `mutationEvents.ts`. Ueberlappende Sidebar-,
+Such- und Dashboardplaene werden einmal expandiert; das Fokusaggregat liefert
+Tasks/To-dos bereits mit. Ein voller Workspace-Refresh braucht sechs statt zehn
+Projektionsabfragen (synthetischer Transportvergleich, keine Latenzzusage).
+Suchantworten duerfen nur ihre aktuelle Anfrage aktualisieren; Eingaben lesen
+nicht jedes Mal erneut den gesamten Notizkatalog. Externe Abgleiche arbeiten in
+Gruppen von acht Requests, beruecksichtigen Abbruch/Sessionwechsel und laden auch
+die Tagdefinitionen nach.
 Speichern laesst zwischenzeitliche Eingaben stehen; externe Aenderungen
 aktualisieren saubere Tabs und markieren Konflikte bei Dirty-Tabs.
 Der Save-Abgleich vergleicht das aktuelle geparste Dokument mit dem tatsaechlich
@@ -435,6 +452,20 @@ spaete Uebernahmen. Fehler bleiben mit Wiederholung im Dialog. Die gemeinsamen
 Dialogfokusregeln und eigene begrenzte Ergebnisflaeche gelten fuer beide Modi.
 Nachweise: [Suche und App-Befehle](doc/search-commands-2026-11-13.md).
 
+`operatorNotifications.ts` behaelt Fehler und kritische Hinweise bis zur
+ausdruecklichen Bestaetigung; leere Statussetter und spaetere Erfolge loeschen sie
+nicht. Identische wiederholte Fehler werden zusammengefasst. `NotificationCenter`
+zeigt einen immer erreichbaren Titelzeileneinstieg, einen Alert ausserhalb der
+abschaltbaren Statusmeldung und lesbare Details im gemeinsamen Dialogfokus.
+Es gibt keine automatische Schreibwiederholung. Die vorhandenen lokalen
+Requestfehler/Wiederholungen bleiben bei ihren Formularen. `SaveProgress` meldet
+einen noch laufenden Save erst nach 400 ms; der Dokumententwurf bleibt editierbar.
+Save und Refreshfehler werden unterschieden. Die alte Launcher-Sonderdarstellung
+ist entfernt. `public/motion.css` gilt bereits fuer Startansicht und React:
+140-ms-Farbuebergaenge, keine neuen Layoutanimationen, gemeinsame reduzierte
+Bewegung. Navigationsicons kommen aus dem Katalog, Standardicons bleiben im
+kleinen Core. Nachweise: [Restmodernisierung](doc/remaining-modernization-2026-11-13.md).
+
 `layout/ActivityRail.tsx` gruppiert Schreiben, Aufgaben und Wissen, benennt die
 aktive NoteBase und unterscheidet Checkbox-To-dos in Notizen von eigenstaendigen
 Task-Dateien. Sichtbare Zielnamen stammen aus dem Befehlskatalog. Dashboardziele
@@ -557,7 +588,10 @@ Details: [Startverhalten](doc/startup-and-recovery.md) und
   Der Paket-Smoke haelt einen Notiz-Leseaufruf gezielt zurueck und wartet danach
   auf den geladenen Notiz-Editor. Er prueft Speichern bis in die Markdown-Datei
   sowie die tatsaechlichen HTTP-Antworten 200 bzw. 409 bei einem Revisionskonflikt.
-- Windows-CI baut und prueft Kandidaten. Stabile, zur Paketversion passende Tags
+- Windows-CI trennt Aenderungsauswahl, Qualitaetspruefung und Paketbau. Reine
+  Dokumentation startet keine teuren Tests oder Pakete; Testskriptaenderungen
+  brauchen keinen Installer. Tags/manuelle Laeufe werden vollstaendig geprueft.
+  Stabile, zur Paketversion passende Tags
   auf `main` erzeugen nach bestandenen Pruefungen einen leeren Release-Entwurf.
   Die Signierung erfolgt auf Wunsch des Benutzers ausschliesslich auf seinem
   anderen Laptop. `package:release`, `release:verify` und `release:draft` sind
@@ -576,7 +610,10 @@ und Downloads im selben oeffentlichen GitHub-Repository vorgesehen. Signierte
 Assets werden erst nach Pruefung an den Entwurf angehaengt; die Veroeffentlichung
 bleibt eine ausdrueckliche Aktion in GitHub. Main-Pushes veroeffentlichen nichts.
 App-ID und Profilpfad bleiben stabil. Installer-/Upgradeabnahme bleibt beim Benutzer.
-Linux/macOS und eigene Synchronisation benoetigen spaeter eigene Abnahme.
+macOS-/Linux-Entwicklung ist auf Wunsch des Benutzers vom 13. November
+zurueckgestellt. Dieser Stand fuehrt keine nativen Buildziele oder Pipelines ein.
+Die verbesserte Windows-Paketpruefung erfasst interne Symlinks im Manifest und
+kann reine Laufzeitbauten mit `--runtime-only` von einem Installer unterscheiden.
 
 `update-service.mjs` koordiniert ausschliesslich veroeffentlichte stabile Updates
 im Hauptprozess. Import und automatische Pruefung erfolgen erst nach dem Start

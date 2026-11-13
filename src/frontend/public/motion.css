@@ -1,0 +1,12 @@
+/* Only color/border feedback moves; editor and workspace geometry stay still. */
+button, input, select, textarea, summary {
+  transition: background-color var(--motion-fast,140ms) ease, border-color var(--motion-fast,140ms) ease, color var(--motion-fast,140ms) ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -81,6 +81,16 @@ Sidebar/Capture beendet den Modus. Er wird nicht über Sessions gespeichert.
 
 ## Dialog, Popover und Menü
 
+Der Meldungseinstieg in der Titelleiste bleibt auch bei ausgeblendeter
+Statusmeldung erreichbar. Fehler werden als Alert angezeigt und erst durch
+Bestätigen entfernt; spätere Erfolge ersetzen ihre Details nicht. Fehlgeschlagene
+Schreibaktionen werden bewusst am ursprünglichen Vorgang wiederholt. Langsame
+Saves zeigen ab 400 ms einen Textstatus, während der Editor weiter nutzbar bleibt.
+`public/motion.css` ergänzt ausschließlich 140-ms-Farb-/Randübergänge. Die
+Startansicht und React respektieren `prefers-reduced-motion`; Layout und
+Editorinhalte bekommen keine neuen Bewegungen. Navigationsicons und Tabicons
+teilen die Katalognamen und die gemeinsame dekorative Lucide-Darstellung.
+
 - **Dialog:** zusammenhängende Eingabe oder Entscheidung, etwa Einstellungen
   oder Umbenennen. Klarer Titel, primäre Aktion und sichtbares Schließen;
   Fokus hinein und beim Schließen zum Auslöser zurückführen.

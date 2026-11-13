@@ -164,46 +164,6 @@
   }
 }
 
-.launch-notification,
-.launch-notification.warn,
-.launch-notification.info,
-.launch-notification.error,
-.launch-notification.critical {
-  margin: 0;
-  border-radius: 10px;
-  padding: 0.55rem 0.7rem;
-}
-
-.launch-notifications {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.launch-notification.info {
-  background: var(--ok-bg);
-  color: var(--ok-text);
-  border: 1px solid var(--ok-border);
-}
-
-.launch-notification.warn {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: color-mix(in srgb, var(--warning) 84%, var(--text));
-  border: 1px solid color-mix(in srgb, var(--warning) 56%, var(--line));
-}
-
-.launch-notification.error {
-  background: var(--error-bg);
-  color: var(--error-text);
-  border: 1px solid var(--error-border);
-}
-
-.launch-notification.critical {
-  background: color-mix(in srgb, var(--error-bg) 65%, transparent);
-  color: var(--error-text);
-  border: 1px solid var(--danger);
-  border-width: 2px;
-}
-
 .muted-label,
 .muted-copy {
   margin: 0;

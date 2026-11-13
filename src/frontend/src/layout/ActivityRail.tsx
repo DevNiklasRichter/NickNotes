@@ -1,5 +1,5 @@
 import {LucideNamedIcon} from '../icons/lucideCatalog'
-import {commandSpec, commandTitle} from '../app/commands'
+import {commandIcon, commandSpec, commandTitle} from '../app/commands'
 
 type SidebarView = 'vault' | 'notes' | 'todos' | 'tasks' | 'focus' | 'tags' | 'review' | 'graph'
 type ActivityRailProps = {
@@ -9,9 +9,9 @@ type ActivityRailProps = {
   onOpenSettings: () => void
 }
 const groups = [
-  {label:'Schreiben',items:[{id:'notes',icon:'FileText'}]},
-  {label:'Aufgaben',items:[{id:'todos',icon:'ListTodo',detail:'In Notizen'},{id:'tasks',icon:'CheckSquare',detail:'Eigene Dateien'},{id:'focus',icon:'Crosshair'}]},
-  {label:'Wissen',items:[{id:'tags',icon:'Tag'},{id:'graph',icon:'Network'},{id:'review',icon:'BarChart3'}]},
+  {label:'Schreiben',items:[{id:'notes'}]},
+  {label:'Aufgaben',items:[{id:'todos',detail:'In Notizen'},{id:'tasks',detail:'Eigene Dateien'},{id:'focus'}]},
+  {label:'Wissen',items:[{id:'tags'},{id:'graph'},{id:'review'}]},
 ] as const
 
 export function ActivityRail({sidebarView,noteBaseName,onOpenSidebarView,onOpenSettings}:ActivityRailProps) {
@@ -29,7 +29,7 @@ export function ActivityRail({sidebarView,noteBaseName,onOpenSidebarView,onOpenS
           const detail='detail' in item?item.detail:''
           return <button type="button" key={item.id} className={sidebarView===item.id?'active':''} aria-label={commandSpec(item.id).label}
             aria-current={sidebarView===item.id?'page':undefined} data-tooltip={`${commandTitle(item.id)}${detail?'\n'+detail:''}`} onClick={()=>onOpenSidebarView(item.id)}>
-            <span className="rail-glyph"><LucideNamedIcon name={item.icon} size={16}/></span>
+            <span className="rail-glyph"><LucideNamedIcon name={commandIcon(item.id)} size={16}/></span>
             <span className="rail-label"><span>{commandSpec(item.id).label}</span>{detail?<small>{detail}</small>:null}</span>
           </button>
         })}

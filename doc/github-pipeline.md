@@ -1,6 +1,6 @@
 # Die GitHub-Pipeline einfach erklaert
 
-Stand: 8. November 2026. Grundlage: [windows.yml](../.github/workflows/windows.yml).
+Stand: 13. November 2026. Grundlage: [windows.yml](../.github/workflows/windows.yml).
 Diese Anleitung beschreibt den lokalen Quellstand einschliesslich der neuen
 Start- und Menuepruefungen. Sie ist kein Nachweis eines erfolgreichen GitHub-Laufs.
 Lokale Aenderungen wirken dort erst nach Commit und Push. `npm run dev` startet
@@ -14,8 +14,21 @@ GitHub nennt den gesamten Ablauf **Workflow**, eine Arbeitsgruppe **Job** und
 einen einzelnen Schritt **Step**. YAML beschreibt die Reihenfolge; die Arbeit
 erledigen die referenzierten Repository-Skripte und Build-Werkzeuge.
 
-NickNotes hat den Workflow **Windows release candidate** und darin einen Job
-**windows**. Er erzeugt einen pruefbaren Windows-Installationskandidaten.
+Der Workflow **Windows release candidate** trennt jetzt vier Jobs:
+
+- **changes:** prüft geänderte Pfade. Dokumentation benötigt keine teuren Tests;
+  reine Testskriptänderungen keinen Installer. Tags und manuelle Läufe prüfen alles.
+- **quality:** Verträge, Icons, Tests, Lint, Build, echte Bedien-/Start-/Update-
+  Smokes, Feedback/Schreibmodus, Graphstichprobe und Audits.
+- **package:** baut erst nach grüner Qualität mit eigener sauberer Umgebung
+  das Paket und prüft die gepackte Laufzeit.
+- **release-draft:** legt bei einem passenden stabilen Tag nach grüner
+  Paketprüfung den bestehenden leeren Entwurf für den Signierlaptop an.
+
+macOS-/Linux-Entwicklung folgt auf Benutzerwunsch später.
+Die Workflowänderung ist lokal vorbereitet; ein erfolgreicher Remote-Lauf ist
+damit noch nicht nachgewiesen. Falls Branchregeln den früheren Jobnamen `windows`
+als Pflichtprüfung verwenden, müssen sie auf die neuen Prüfjobs angepasst werden.
 
 ## Wann und auf welchem Rechner laeuft er?
 
@@ -77,7 +90,7 @@ dem jeweiligen Benutzerrechner.
 | Dependency Audit | Sucht bekannte gemeldete Sicherheitsluecken: npm ab Schweregrad `moderate`, Python-Laufzeit mit `pip-audit`. Neue Sicherheitsmeldungen koennen diesen Schritt auch ohne Codeaenderung rot werden lassen. |
 | Package offline Windows installer | Baut Frontend, isoliertes Python-Backend und den Windows-Installer. |
 | Payload / Runtime smoke | Prueft Dateien und Groessen; startet die gebuendelte EXE aus fremdem Arbeitsordner mit eingeschraenktem PATH. Prueft Editor, Konflikte, Entwuerfe, Dashboards, Themes und MCP. Erzeugt SHA-256-Pruefsummen. |
-| Upload artifact | `actions/upload-artifact` 7.0.0 mit Node 24, auf einen festen Commit gepinnt: Speichert Installer, Manifest, Pruefsummen und Test-/Graphberichte als `NickNotes-Windows-candidate` fuer 14 Tage bei GitHub. |
+| Upload artifact | Gepinntes `actions/upload-artifact` 7.0.0: Qualitätsberichte und UI-Nachweise liegen 14 Tage unter `NickNotes-Windows-quality`; Installer, Manifest, Prüfsummen und Paket-Smoke unter `NickNotes-Windows-candidate`. |
 
 Windows-Befehle laufen standardmaessig in PowerShell. Die ausdruecklichen
 `$LASTEXITCODE`-Pruefungen verhindern, dass ein spaeter erfolgreicher Befehl einen

@@ -2,7 +2,7 @@ import {useLayoutEffect, useMemo, useRef, type RefObject, type Dispatch, type Se
 import type {WorkspaceState, WorkspaceAction} from './workspaceState'
 import type {AppMutationEvent} from '../app/mutationEvents'
 import type {TagGroupDefinition} from '../tags/tagTypes'
-import type {GraphIndexStatus, VaultCounts} from '../app/AppShared'
+import type {VaultCounts} from '../app/AppShared'
 import type {MarkdownEditorApi} from '../editor/CodeMirrorMarkdownEditor'
 import {mergeSavedTab, mergeExternalDocument} from '../workspace/documentState'
 import type {NoteSaveResponse} from '../contracts/apiContracts'
@@ -10,8 +10,10 @@ import {parseNoteDocument, serializeNoteDocument} from '../editor/noteDocument'
 import {findPaneByTabId, findOpenTabByNoteId, getActiveTabIdForPane, type PaneId} from '../workspace/workspaceState'
 import {apiRequest, getFileName, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, toStorageTagGroups} from '../app/AppShared'
 import type {NoteTab} from '../app/AppShared'
+import {connectionEpoch} from '../app/apiClient'
 
 type NoteDocumentContext = {
+ onSavingChange:(delta:number)=>void
  flushNoteInputs:(includeEditors?:boolean)=>boolean
  backendUrl:string
  workspaceStateRef:RefObject<WorkspaceState>; openTabsRef:RefObject<NoteTab[]>
@@ -19,7 +21,6 @@ type NoteDocumentContext = {
  findTabByPath:(path:string,tabs?:NoteTab[])=>NoteTab|null
  setMessage:(value:string)=>void; setError:(value:string)=>void
  setCounts:Dispatch<SetStateAction<VaultCounts>>; setCustomTagGroups:Dispatch<SetStateAction<TagGroupDefinition[]>>
- setLatestGraphStatus:Dispatch<SetStateAction<GraphIndexStatus|null>>; setGraphUpdateToken:Dispatch<SetStateAction<number>>
  remapOpenNotePaths:(from:string,to:string)=>void
  setOpenTabs:Dispatch<SetStateAction<NoteTab[]>>
  emitMutationEvent:(event:AppMutationEvent)=>Promise<void>
@@ -59,6 +60,8 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
         const nextDocument = liveBody !== null ? { ...baseDocument, body: liveBody } : baseDocument;
         const liveContent = serializeNoteDocument(nextDocument);
         const submittedTab = { ...targetTab, content: liveContent, parsedDocument: nextDocument };
+        const startedEpoch=connectionEpoch();
+        context.onSavingChange(1);
         try {
             context.setError('');
             const response = await apiRequest<NoteSaveResponse>(context.backendUrl, '/notes/save', {
@@ -68,10 +71,6 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
             context.setCounts(response.counts);
             if (response.tagGroups) {
                 context.setCustomTagGroups(toStorageTagGroups(response.tagGroups));
-            }
-            if (response.graphStatus) {
-                context.setLatestGraphStatus(response.graphStatus);
-                context.setGraphUpdateToken((current) => current + 1);
             }
             const savedPath = (response.path || targetTab.path || '').trim();
             if (savedPath && savedPath !== targetTab.path) {
@@ -101,9 +100,10 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
             return true;
         }
         catch (caught) {
-            context.setError(String(caught));
+            if(startedEpoch===connectionEpoch())context.setError(`Speichern fehlgeschlagen: ${String(caught)} Dein Entwurf bleibt erhalten. Prüfe den Fehler und versuche erneut zu speichern.`);
             return false;
         }
+        finally {context.onSavingChange(-1)}
     };
 
 const saveTab = async (path: string): Promise<boolean> => {
@@ -301,6 +301,7 @@ export function useNoteDocuments(context:NoteDocumentContext) {
  const latest=useRef(context)
  useLayoutEffect(()=>{latest.current=context})
  return useMemo(()=>createActions({
+get onSavingChange(){return latest.current.onSavingChange},
 get workspaceStateRef(){return latest.current.workspaceStateRef},
 get leftEditorRef(){return latest.current.leftEditorRef},
 get rightEditorRef(){return latest.current.rightEditorRef},
@@ -311,8 +312,6 @@ get setError(){return latest.current.setError},
 get backendUrl(){return latest.current.backendUrl},
 get setCounts(){return latest.current.setCounts},
 get setCustomTagGroups(){return latest.current.setCustomTagGroups},
-get setLatestGraphStatus(){return latest.current.setLatestGraphStatus},
-get setGraphUpdateToken(){return latest.current.setGraphUpdateToken},
 get remapOpenNotePaths(){return latest.current.remapOpenNotePaths},
 get setOpenTabs(){return latest.current.setOpenTabs},
 get emitMutationEvent(){return latest.current.emitMutationEvent},

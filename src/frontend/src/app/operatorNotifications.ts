@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OperatorNotification } from './AppShared'
 
 type AppOperatorNotification = Pick<OperatorNotification, 'id' | 'message' | 'severity'> & {
@@ -90,10 +90,9 @@ export function useOperatorNotifications() {
           })
         : current
 
-      return [
-        ...retained,
-        { id, message: normalized, severity, autoClearMs },
-      ]
+      // Repeated polling errors stay one actionable notice, not an unbounded log.
+      if (retained.some(entry => entry.message === normalized && entry.severity === severity)) return retained
+      return [...retained, { id, message: normalized, severity, autoClearMs }]
     })
 
     if (typeof autoClearMs === 'number') {
@@ -125,27 +124,25 @@ export function useOperatorNotifications() {
   const setError = useCallback((message: string) => {
     const normalized = String(message ?? '').trim()
     if (!normalized) {
-      clearOperatorNotificationsBySeverity(['error', 'critical'])
       return
     }
     pushOperatorNotification(normalized, 'error')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+  }, [pushOperatorNotification])
 
   const setCriticalMessage = useCallback((message: string) => {
     const normalized = String(message ?? '').trim()
     if (!normalized) {
-      clearOperatorNotificationsBySeverity(['critical'])
       return
     }
     pushOperatorNotification(normalized, 'critical')
-  }, [clearOperatorNotificationsBySeverity, pushOperatorNotification])
+  }, [pushOperatorNotification])
 
   const latestOperatorNotification = operatorNotifications[operatorNotifications.length - 1] ?? null
-  const launchOperatorNotifications = useMemo(() => operatorNotifications.slice(-3), [operatorNotifications])
 
   return {
     latestOperatorNotification,
-    launchOperatorNotifications,
+    operatorNotifications,
+    clearOperatorNotification,
     setMessage,
     setWarnMessage,
     setError,

@@ -31,9 +31,10 @@ const properties = process.argv.includes('--properties')
 const tooltips = process.argv.includes('--tooltips')
 const searchCommands = process.argv.includes('--search-commands')
 const writing = process.argv.includes('--writing-mode')
+const feedback = process.argv.includes('--feedback')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1823,6 +1824,59 @@ async function verifyProperties() {
   await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
 }
 
+async function verifyFeedback() {
+  const oldSettings=(await request('/ui-settings')).settings
+  await request('/ui-settings',{app:{...oldSettings.app,statusBarPrefs:{...oldSettings.app.statusBarPrefs,showStateMessage:false}}})
+  await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await theme('dark');await openNote('Arbeitsnotiz')
+  const editor=page.locator('.note-body-editor .cm-content').first(),marker='Fehlgeschlagener Save behält diesen Entwurf.'
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+marker)
+  const before=fs.readFileSync(notePath,'utf8')
+  let rejected=0
+  const reject=async route=>{rejected++;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{code:'synthetic.feedback',message:'Synthetischer Dateizugriff vorübergehend nicht möglich.'}})})}
+  await page.route('**/notes/save',reject)
+  try {
+    await page.keyboard.press('Control+s');await expect(page.locator('.notification-attention')).toContainText('Speichern fehlgeschlagen')
+    assert.equal(rejected,1);assert.equal(fs.readFileSync(notePath,'utf8'),before);await expect(editor).toContainText(marker)
+    await capture('feedback-error-dark','A real rejected save keeps the draft and shows its error even with status messages disabled')
+  }finally{await page.unroute('**/notes/save',reject)}
+  const save=async()=>{const pending=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST');await page.keyboard.press('Control+s');const result=await pending;assert.equal(result.status(),200);await result.finished()}
+  const retryRequests=report.requests.length
+  await editor.click();await save();assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  await expect(page.locator('.notification-attention')).toContainText('Speichern fehlgeschlagen')
+  await page.getByRole('button',{name:/^Meldungen/}).click()
+  const dialog=page.getByRole('dialog',{name:'Meldungen',exact:true})
+  await expect(dialog).toContainText('Synthetischer Dateizugriff');await expect(dialog).toContainText('Notiz gespeichert')
+  await capture('feedback-retained-error-dark','Successful retry does not erase the earlier failure; its details remain readable and explicitly acknowledgeable')
+  await dialog.locator('li.error').getByRole('button',{name:'Bestätigen',exact:true}).click();await expect(dialog.locator('li.error')).toHaveCount(0)
+  await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Meldungen',exact:true})).toBeFocused();await expect(page.locator('.notification-attention')).toHaveCount(0)
+  report.checks.feedbackFailureRetryAndAcknowledgement={rejectedRequests:rejected,refreshRequests:report.requests.slice(retryRequests).filter(entry=>entry.method==='GET')}
+
+  let release,held=false
+  const gate=new Promise(resolve=>release=resolve)
+  const hold=async route=>{const response=await route.fetch();assert.equal(response.status(),200);held=true;await gate;await route.fulfill({response})}
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\nLangsamer bestätigter Save.')
+  await page.route('**/notes/save',hold)
+  try{
+    await page.keyboard.press('Control+s');await expect.poll(()=>held).toBe(true);await expect(page.locator('.save-progress')).toHaveText('Wird gespeichert …')
+    await page.keyboard.type('\nWährend des Saves weitergeschrieben.');await expect(editor).toContainText('weitergeschrieben')
+    await capture('feedback-slow-save-dark','Pending save is announced after a quiet delay; editing remains available and no premature completion is shown')
+    release();await expect(page.locator('.save-progress')).toHaveText('');await expect(page.locator('.tab-dirty-dot')).toHaveCount(1)
+    await expect(editor).toContainText('weitergeschrieben')
+  }finally{release();await page.unroute('**/notes/save',hold)}
+  await save();assert.ok(fs.readFileSync(notePath,'utf8').includes('weitergeschrieben'))
+  report.checks.feedbackSlowSaveRetainsLaterTyping=true
+
+  await page.emulateMedia({reducedMotion:'reduce'})
+  const motion=await page.getByRole('button',{name:'Schreibmodus starten',exact:true}).evaluate(node=>({duration:getComputedStyle(node).transitionDuration,query:matchMedia('(prefers-reduced-motion: reduce)').matches}))
+  assert.equal(motion.query,true);assert.ok(motion.duration.split(',').every(value=>parseFloat(value)===0))
+  await page.keyboard.press('Control+o');await capture('feedback-reduced-motion-dark','Shared motion policy disables transitions when the operating system requests reduced movement');await page.keyboard.press('Escape')
+  await page.emulateMedia({reducedMotion:'no-preference'});await theme('light')
+  await page.getByRole('button',{name:'Meldungen',exact:true}).click();await expect(dialog).toBeVisible();await capture('feedback-light','The same notification center in the light theme')
+  await page.keyboard.press('Escape');await theme('dark')
+  await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
+  report.checks.feedbackReducedMotionAndThemes=true
+}
+
 async function verifyWritingMode() {
   await windowSize(1280,800);await theme('dark');await openNote('Arbeitsnotiz')
   const rail=page.locator('.activity-rail'),shell=page.locator('.workbench-shell')
@@ -2282,6 +2336,7 @@ try {
     if (properties) await verifyProperties()
     if (tooltips) await verifyTooltips()
     if (searchCommands) await verifySearchCommands()
+    if (feedback) await verifyFeedback()
     if (writing) await verifyWritingMode()
 
     await page.locator('.note-body-editor .cm-content').first().click()

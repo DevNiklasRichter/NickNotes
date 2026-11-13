@@ -348,7 +348,7 @@ class BackendApiService:
                     )
         return matches
 
-    @coordinated
+    @coordinated(mutation=True)
     def apply_tag_matches(self, vault: Any, raw_matches: list[dict[str, Any]]) -> tuple[int, list[Path]]:
         by_path: dict[Path, list[dict[str, Any]]] = {}
         for item in raw_matches:
@@ -694,7 +694,7 @@ class BackendApiService:
             ) from exc
         return self.open_vault(SimpleNamespace(path=str(vault_path)))
 
-    @coordinated
+    @coordinated(mutation=True)
     def reindex_vault(self) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -734,14 +734,14 @@ class BackendApiService:
     def preview_onenote_import(self, req: OneNoteImportPreviewRequest) -> dict[str, Any]:
         return PreviewOneNoteImportUseCase().execute(self, req)
 
-    @coordinated
+    @coordinated(mutation=True)
     def start_onenote_import(self, req: OneNoteImportRequest) -> dict[str, Any]:
         return StartOneNoteImportUseCase().execute(self, req)
 
     def get_onenote_import_status(self) -> dict[str, Any]:
         return self.state.get_import_status()
 
-    @coordinated
+    @coordinated(mutation=True, lifecycle=True)
     def rename_notebase(self, req: NoteBaseRenameRequest) -> dict[str, Any]:
         raw_path = str(getattr(req, "path", "") or "").strip()
         if raw_path:
@@ -805,7 +805,7 @@ class BackendApiService:
             "counts": self.counts(indexer) if indexer else {},
         }
 
-    @coordinated
+    @coordinated(mutation=True, lifecycle=True)
     def delete_notebase(self, req: NoteBaseDeleteRequest) -> dict[str, Any]:
         raw_path = str(getattr(req, "path", "") or "").strip()
         if raw_path:
@@ -851,7 +851,7 @@ class BackendApiService:
             },
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def save_capture(self, req: CaptureSaveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         text = str(req.text).strip()
@@ -884,7 +884,7 @@ class BackendApiService:
             "mitIds": state["mit_ids"],
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def save_focus_mit(self, req: FocusMitUpdateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         state = vault.set_daily_mit(day_iso=req.date, mit_ids=req.mit_ids, indexer=indexer)
@@ -896,7 +896,7 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def quick_capture_focus_todo(self, req: FocusQuickCaptureRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -916,7 +916,7 @@ class BackendApiService:
             "counts": self.counts(indexer),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def open_or_create_daily(self, date: str | None = None) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         day_iso = date
@@ -943,7 +943,7 @@ class BackendApiService:
         _vault, indexer = self.require_loaded()
         return {"items": indexer.list_todos()}
 
-    @coordinated
+    @coordinated(mutation=True)
     def toggle_todo(self, todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -956,7 +956,7 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-    @coordinated
+    @coordinated(mutation=True)
     def promote_todo(self, todo_id: str = '') -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -969,7 +969,7 @@ class BackendApiService:
                 internal_message=str(exc),
             ) from exc
 
-    @coordinated
+    @coordinated(mutation=True)
     def mark_task_done(self, task_id: str = '') -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         rows = [row for row in indexer.list_tasks(include_done=True) if row["id"] == task_id]
@@ -1158,11 +1158,11 @@ class BackendApiService:
         content = file_path.read_bytes()
         return {"path": str(file_path), "content": content.decode('utf-8'), "revision": hashlib.sha256(content).hexdigest()}
 
-    @coordinated
+    @coordinated(mutation=True)
     def save_note_content(self, req: NoteSaveRequest) -> Any:
         return SaveNoteContentUseCase().execute(self, req)
 
-    @coordinated
+    @coordinated(mutation=True)
     def add_note_media_asset(self, req: NoteMediaAddRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         try:
@@ -1261,7 +1261,7 @@ class BackendApiService:
         vault, _indexer = self.require_loaded()
         return {"settings": vault.read_ui_settings()}
 
-    @coordinated
+    @coordinated(mutation=True, invalidate=False)
     def update_ui_settings(self, req: UiSettingsUpdateRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         settings = vault.update_ui_settings(app_settings=req.app, explorer_settings=req.explorer)
@@ -1304,7 +1304,7 @@ class BackendApiService:
         vault, _indexer = self.require_loaded()
         return {"state": read_graph_state(vault.graph_state_path)}
 
-    @coordinated
+    @coordinated(mutation=True, invalidate=False)
     def update_graph_state(self, state_payload: dict[str, Any] | None = None) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         state_payload = state_payload or {}
@@ -1329,19 +1329,19 @@ class BackendApiService:
             "title": str(result["title"]),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def add_tag_group(self, req: TagGroupRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         groups = vault.add_tag_group(req.group_id, req.display_name, req.color, indexer)
         return {"groups": groups}
 
-    @coordinated
+    @coordinated(mutation=True)
     def add_tag(self, req: TagCreateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         groups = vault.add_tag_to_group(req.group_id, req.tag_id, req.display_name, indexer)
         return {"groups": groups, "graphStatus": self.rebuild_graph_projection(vault)}
 
-    @coordinated
+    @coordinated(mutation=True)
     def rename_tag_group(self, req: TagGroupRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1362,7 +1362,7 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    @coordinated
+    @coordinated(mutation=True)
     def delete_tag_group(self, req: TagGroupDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1380,7 +1380,7 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    @coordinated
+    @coordinated(mutation=True)
     def rename_tag(self, req: TagRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1401,7 +1401,7 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    @coordinated
+    @coordinated(mutation=True)
     def move_tag(self, req: TagMoveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1421,7 +1421,7 @@ class BackendApiService:
             ) from exc
         return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
 
-    @coordinated
+    @coordinated(mutation=True)
     def delete_tag(self, req: TagDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1449,7 +1449,7 @@ class BackendApiService:
             "total": len(matches),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def apply_tag_match_candidates(self, req: TagMatchApplyRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         applied, touched_paths = self.apply_tag_matches(vault, req.matches)
@@ -1473,7 +1473,7 @@ class BackendApiService:
         vault, _indexer = self.require_loaded()
         return {"groups": vault.list_note_groups()}
 
-    @coordinated
+    @coordinated(mutation=True)
     def add_note_group(self, req: NoteGroupCreateRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         try:
@@ -1487,7 +1487,7 @@ class BackendApiService:
             ) from exc
         return {"group": created, "groups": vault.list_note_groups()}
 
-    @coordinated
+    @coordinated(mutation=True)
     def rename_note_group(self, req: NoteGroupRenameRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1507,7 +1507,7 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def delete_note_group(self, req: NoteGroupDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1527,7 +1527,7 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def move_note_group(self, req: NoteGroupMoveRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1547,7 +1547,7 @@ class BackendApiService:
             "linkRewrite": vault.consume_last_link_rewrite_result(),
         }
 
-    @coordinated
+    @coordinated(mutation=True, invalidate=False)
     def favorite_note_group(self, req: FavoriteFolderRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         try:
@@ -1561,7 +1561,7 @@ class BackendApiService:
             ) from exc
         return {"favorites": favorites, "groups": vault.list_note_groups()}
 
-    @coordinated
+    @coordinated(mutation=True, invalidate=False)
     def unfavorite_note_group(self, req: FavoriteFolderRequest) -> dict[str, Any]:
         vault, _indexer = self.require_loaded()
         try:
@@ -1575,7 +1575,7 @@ class BackendApiService:
             ) from exc
         return {"favorites": favorites, "groups": vault.list_note_groups()}
 
-    @coordinated
+    @coordinated(mutation=True)
     def add_note(self, req: NoteCreateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:
@@ -1603,11 +1603,11 @@ class BackendApiService:
             "graphStatus": self.rebuild_graph_projection(vault),
         }
 
-    @coordinated
+    @coordinated(mutation=True)
     def rename_note(self, req: NoteFileRenameRequest) -> dict[str, Any]:
         return RenameNoteUseCase().execute(self, req)
 
-    @coordinated
+    @coordinated(mutation=True)
     def delete_note(self, req: NoteFileDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         note_path = self._resolve_note_request_path(vault=vault, raw_path=req.path)
@@ -1645,11 +1645,11 @@ class BackendApiService:
             lock_projection=True,
         )
 
-    @coordinated
+    @coordinated(mutation=True)
     def move_note(self, req: NoteFileMoveRequest) -> dict[str, Any]:
         return MoveNoteUseCase().execute(self, req)
 
-    @coordinated
+    @coordinated(mutation=True)
     def move_notes_batch(self, req: NoteFileMoveBatchRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
         try:

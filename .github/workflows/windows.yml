@@ -7,8 +7,29 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
-  windows:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      package: ${{ steps.scope.outputs.package }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24.14.1'
+      - id: scope
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/ci-scope.mjs
+  quality:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -69,6 +90,8 @@ jobs:
         run: npm run check
       - name: Verify development startup, menus and keyboard commands
         run: npm run smoke:commands
+      - name: Verify feedback, reduced motion and writing mode
+        run: npm run ux:baseline -- --feedback --writing-mode
       - name: Verify real npm cold start, early capture and startup recovery
         run: npm run smoke:startup
       - name: Reject corrupt and unsigned update downloads
@@ -80,6 +103,63 @@ jobs:
           npm audit --audit-level=moderate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .venv/Scripts/python -m pip_audit -r requirements.txt
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: NickNotes-Windows-quality
+          path: |
+            .tmp/commands-smoke-result.json
+            .tmp/startup-smoke-result.json
+            .tmp/update-smoke-result.json
+            .tmp/graph-benchmark.json
+            .tmp/ux-baseline-*/result.json
+            .tmp/ux-baseline-*/*.png
+          retention-days: 14
+  package:
+    needs: [changes, quality]
+    if: needs.changes.outputs.package == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24.14.1'
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install locked dependencies
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .venv/Scripts/python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci
+      - name: Install locked Electron runtime
+        timeout-minutes: 5
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Installing locked Electron runtime (attempt $attempt/3)"
+            node node_modules/electron/install.js
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'Electron runtime installation failed after 3 attempts.' }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          if (-not (Test-Path -LiteralPath 'node_modules/electron/dist/electron.exe' -PathType Leaf)) {
+            throw 'Electron runtime installer did not produce electron.exe.'
+          }
+          $expectedVersion = (Get-Content -LiteralPath 'node_modules/electron/package.json' -Raw | ConvertFrom-Json).version
+          $installedVersion = (Get-Content -LiteralPath 'node_modules/electron/dist/version' -Raw).Trim() -replace '^v', ''
+          if ($installedVersion -ne $expectedVersion) {
+            throw "Electron runtime version mismatch: expected $expectedVersion, found $installedVersion."
+          }
       - name: Package offline Windows installer
         run: npm run package:win
       - name: Check payload and run installed-runtime smoke
@@ -101,14 +181,10 @@ jobs:
             dist/installers/LICENSE
             dist/installers/THIRD_PARTY_NOTICES.txt
             .tmp/desktop-smoke-result.json
-            .tmp/commands-smoke-result.json
-            .tmp/startup-smoke-result.json
-            .tmp/update-smoke-result.json
-            .tmp/graph-benchmark.json
           retention-days: 14
   release-draft:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: windows
+    needs: package
     runs-on: windows-latest
     permissions:
       contents: write

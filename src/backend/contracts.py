@@ -18,6 +18,7 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "VaultCounts": "VaultCounts",
     "HealthResponse": "HealthResponse",
     "BackendStateResponse": "BackendStateResponse",
+    "BackendChangeEvent": "BackendChangeEvent",
     "VaultOpenResponse": "VaultOpenResponse",
     "ReindexResponse": "ReindexResponse",
     "NoteBaseOpenStartResponse": "NoteBaseOpenStartResponse",
@@ -90,6 +91,13 @@ class HealthResponse(_ContractModel):
     capabilities: dict[str, str] = Field(default_factory=dict)
 
 
+class BackendChangeEvent(_ContractModel):
+    version: int = 0
+    operation: str = ""
+    paths: list[str] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class BackendStateResponse(_ContractModel):
     vaultLoaded: bool = False
     vaultPath: str | None = None
@@ -98,6 +106,7 @@ class BackendStateResponse(_ContractModel):
     sessionId: str = ""
     changeVersion: int = 0
     pendingRecovery: list[str] = Field(default_factory=list)
+    lastChange: BackendChangeEvent = Field(default_factory=BackendChangeEvent)
 
 
 class VaultOpenResponse(_ContractModel):

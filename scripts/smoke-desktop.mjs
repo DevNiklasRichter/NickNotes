@@ -128,10 +128,9 @@ try {
  if(await saveSettings.isEnabled()){await saveSettings.click();await expect(saveSettings).toBeDisabled()}
  await page.getByRole('button',{name:'Einstellungen schliessen'}).click()
  // Exercise the existing dashboards and split layout through their visible controls.
- const dashboards=[['Todos','.todo-canvas'],['Tasks','.task-canvas'],['Focus','.focus-canvas'],['Review','.review-canvas'],['Graph','.graph-editor-canvas-shell']]
+ const dashboards=[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Review','.review-canvas'],['Wissensgraph','.graph-editor-canvas-shell']]
  for(const [title,selector] of dashboards){
   await page.locator('.activity-rail').getByRole('button',{name:title,exact:true}).click()
-  await page.locator('.left-sidebar .todo-open-dashboard-button').click()
   await expect(page.locator(selector).first()).toBeVisible({timeout:15000})
  }
  await page.getByRole('button',{name:'Split an',exact:true}).click()
@@ -155,7 +154,7 @@ try {
  const revoked=await page.evaluate(async token=>{const base=await window.nicknotes.getBackendUrl();return(await fetch(base+'/mcp/',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:'{}'})).status},grant.token)
  assert.equal(revoked,401)
  assert.deepEqual(errors,[])
- const report={version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,executablePath,coldReadyMs,warmReadyMs,startupRuns,pendingCaptureRestored:true,pendingCaptureCommitted:true,pendingCaptureAcrossProcessRestart:true,vault:vault.noteBasePath,profile,foreignWorkingDirectory:foreign,developerToolsInRuntimePath:false,delayedNoteLoad:true,noteEditorScoped:true,uiSaveStatus:200,conflictSaveStatus:409,uiEditSaved:true,dirtyDraftPreserved:true,externalRevisionConflict:true,dashboardsOpened:dashboards.map(([name])=>name),splitLayout:true,themeSwitch:true,unauthorized,revoked,mcp:client,mcpAfterRestart:restartedClient,pageErrors:errors}
+ const report={platform:process.platform,arch:process.arch,version:JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version,executablePath,coldReadyMs,warmReadyMs,startupRuns,pendingCaptureRestored:true,pendingCaptureCommitted:true,pendingCaptureAcrossProcessRestart:true,vault:vault.noteBasePath,profile,foreignWorkingDirectory:foreign,developerToolsInRuntimePath:false,delayedNoteLoad:true,noteEditorScoped:true,uiSaveStatus:200,conflictSaveStatus:409,uiEditSaved:true,dirtyDraftPreserved:true,externalRevisionConflict:true,dashboardsOpened:dashboards.map(([name])=>name),splitLayout:true,themeSwitch:true,unauthorized,revoked,mcp:client,mcpAfterRestart:restartedClient,pageErrors:errors}
  fs.writeFileSync(path.join(root,'.tmp/desktop-smoke-result.json'),JSON.stringify(report,null,2))
  console.log(JSON.stringify(report,null,2))
 }catch(error){

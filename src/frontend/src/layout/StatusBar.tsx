@@ -1,4 +1,5 @@
 import type { OperatorNotification } from '../app/AppShared'
+import type {ReactNode} from 'react'
 
 type StatusBarPrefs = {
   showNoteBaseName: boolean
@@ -9,6 +10,7 @@ type StatusBarPrefs = {
 }
 
 type StatusBarProps = {
+  progress?: ReactNode
   prefs: StatusBarPrefs
   notification: OperatorNotification | null
   noteBaseName: string
@@ -19,7 +21,7 @@ type StatusBarProps = {
   dueTodayCount: number
 }
 
-export function StatusBar({ prefs, notification, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
+export function StatusBar({ progress, prefs, notification, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
   const statusClass =
     notification?.severity === 'warn'
       ? 'warn'
@@ -35,8 +37,9 @@ export function StatusBar({ prefs, notification, noteBaseName, counts, dueTodayC
   return (
     <footer className="status-bar">
       <div className="status-bar-left">
+        {progress}
         {prefs.showStateMessage ? (
-          <span className={`status-item${statusClass ? ` ${statusClass}` : ''}`}>{statusText}</span>
+          <span role="status" aria-live="polite" className={`status-item${statusClass ? ` ${statusClass}` : ''}`}>{statusText}</span>
         ) : (
           <span className="status-item">&nbsp;</span>
         )}

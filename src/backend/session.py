@@ -16,7 +16,10 @@ from .nicknotes_backend.source_journal import SourceJournal, active_journal, pen
 
 expected_session: ContextVar[str | None] = ContextVar("nicknotes_expected_session", default=None)
 
-def coordinated(function):
+def coordinated(function=None, *, mutation: bool = False, invalidate: bool = True, lifecycle: bool = False):
+    """Coordinate transport-independent operations; writes declare their effects explicitly."""
+    if function is None:
+        return lambda target: coordinated(target, mutation=mutation, invalidate=invalidate, lifecycle=lifecycle)
     @wraps(function)
     @snapshot_operation
     def invoke(self, *args, **kwargs):
@@ -34,10 +37,7 @@ def coordinated(function):
                     dirty.unlink(missing_ok=True)
                 finally:
                     self.state.repairing = False
-            mutating = function.__name__.startswith(('save_', 'add_', 'rename_', 'move_', 'delete_', 'apply_', 'toggle_', 'promote_', 'mark_', 'quick_')) or function.__name__ == 'open_or_create_daily'
-            lifecycle = function.__name__ in {'rename_notebase', 'delete_notebase'}
-            mutating = mutating or function.__name__ in {'update_ui_settings', 'update_graph_state', 'save_focus_mit', 'start_onenote_import', 'reindex_vault'}
-            if vault and mutating and not lifecycle:
+            if vault and mutation and not lifecycle:
                 vault.validate_roots()
                 if active_journal.get() is not None:
                     return function(self, *args, **kwargs)
@@ -46,7 +46,7 @@ def coordinated(function):
                 with SourceJournal(vault, function.__name__) as journal:
                     result = function(self, *args, **kwargs)
                 # View preferences do not invalidate Markdown, search or open drafts.
-                if function.__name__ not in {'update_ui_settings', 'update_graph_state', 'favorite_note_group', 'unfavorite_note_group'}:
+                if invalidate:
                     self.state.record_change(function.__name__, list(journal.before))
                 return result
             return function(self, *args, **kwargs)
