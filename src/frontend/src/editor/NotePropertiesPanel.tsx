@@ -26,7 +26,6 @@ type NotePropertiesPanelProps = {
   taskFieldErrors?: { estimate_minutes?: string; follow_up_date?: string }
   formatTimestamp: (value: string) => string
   onTitleChange: (next: string) => void
-  onTitleBlur: (next: string) => void
   onTypeChange: (next: 'note' | 'task') => void
   onStatusChange: (next: TaskStatus) => void
   onPriorityChange: (next: TaskPriority) => void
@@ -63,7 +62,6 @@ export function NotePropertiesPanel({
   taskFieldErrors,
   formatTimestamp,
   onTitleChange,
-  onTitleBlur,
   onTypeChange,
   onStatusChange,
   onPriorityChange,
@@ -178,7 +176,6 @@ export function NotePropertiesPanel({
           }}
           onBlur={(event) => {
             if (event.currentTarget.value !== document.frontmatter.title) onTitleChange(event.currentTarget.value)
-            onTitleBlur(event.currentTarget.value)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {

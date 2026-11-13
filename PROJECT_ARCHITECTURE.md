@@ -406,6 +406,11 @@ Ein Save ordnet seine Antwort ueber die stabile Workspace-Tab-ID zu. Ein vorher
 erfolgtes Pfadremapping mit anderer Windows-Slashschreibweise darf weder die neue
 Revision noch den Schutz inzwischen weiterbearbeiteter Entwuerfe auslassen.
 Backend-Normalisierung, Link-Rewrite und Projektionen bleiben zustaendig.
+Ein Titel-Blur uebernimmt nur den lokalen Dokumententwurf. Dateiname und Links
+werden beim revisiongesicherten Save normalisiert. Der zusaetzliche Blur-Rename
+ist entfernt: Fokussieren/Verlassen eines unveraenderten Titels darf keine
+Markdown-Datei schreiben oder ihre Revision entwerten. Explizites Umbenennen
+im Explorer bleibt ein eigener bestaetigter Nutzerauftrag.
 `--properties` prueft reale Saves, verzögerte Titel-Saves mit Pfadwechsel,
 Tag-/Related-Projektionen und native Close-Abfrage ausschliesslich synthetisch.
 Nachweise: [Editor-Eigenschaften](doc/editor-properties-2026-11-12.md).
@@ -413,6 +418,22 @@ Nachweise: [Editor-Eigenschaften](doc/editor-properties-2026-11-12.md).
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;
 `layout/AppMenuBar.tsx` stellt das per Tastatur bedienbare Fenstermenue dar.
+`layout/CommandDialogs.tsx` erweitert denselben Quick-Open-Dialog um den
+`>`-Befehlsmodus. Die Titelleiste besitzt einen sichtbaren Sucheinstieg,
+Strg+O bleibt Notizsuche, Strg+P oeffnet App-Befehle. Die Markdown-Palette behaelt
+Strg+K und Strg+Umschalt+P. Notiztreffer kommen weiterhin aus `/search`; bis zu
+acht bereits geoeffnete Notizen sind eine eigene Gruppe aus den vorhandenen Tabs,
+aktuelle zuerst. Keine neue fachliche Datenquelle oder gespeicherte History.
+Befehle verwenden exakt dieselben `AppCommand`s samt Freigabe und Sperrgrund
+wie das Menue. Der Dialog wird vor ihrer Ausfuehrung synchron abgebaut und der
+urspruengliche Eingabefokus wiederhergestellt. Der Mausausloeser erhaelt dazu wie
+die Menueleiste den vorherigen Feld-/Editorfokus. Der bestehende Command-Runner
+besitzt weiterhin Fachaktionen, Fehler, Saves und Schutzabfragen.
+Suchantworten sind an Query, NoteBase und Verbindungsgeneration gebunden;
+Abbruch und sofortiges Ausblenden alter Treffer verhindern stale Enter und
+spaete Uebernahmen. Fehler bleiben mit Wiederholung im Dialog. Die gemeinsamen
+Dialogfokusregeln und eigene begrenzte Ergebnisflaeche gelten fuer beide Modi.
+Nachweise: [Suche und App-Befehle](doc/search-commands-2026-11-13.md).
 Speichern und Alle speichern teilen eine Warteschlange fuer Menue, Tasten und
 das Speicher-Icon. Jeder Auftrag behaelt seinen angeforderten Dokumentkontext;
 weitere Saves werden waehrend eines laufenden Saves nicht still verworfen.

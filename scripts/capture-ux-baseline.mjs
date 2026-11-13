@@ -29,9 +29,10 @@ const settingsDialog = process.argv.includes('--settings-dialog')
 const filters = process.argv.includes('--filters')
 const properties = process.argv.includes('--properties')
 const tooltips = process.argv.includes('--tooltips')
+const searchCommands = process.argv.includes('--search-commands')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1742,7 +1743,12 @@ async function verifyProperties() {
   const holdTitle=async route=>{const result=await route.fetch();titleSaveReady=true;await titleGate;await route.fulfill({response:result})}
   await page.route('**/notes/save',holdTitle)
   try {
-    await title.fill('Eigenschaftstask mit geändertem Titel');const pendingSave=save()
+    const beforeTitleBlur=fs.readFileSync(task,'utf8'),renamesBefore=report.requests.filter(req=>req.method==='POST'&&req.endpoint==='/notes/rename').length
+    await title.fill('Eigenschaftstask mit geändertem Titel');await title.press('Tab')
+    assert.equal(fs.readFileSync(task,'utf8'),beforeTitleBlur);assert.equal(report.requests.filter(req=>req.method==='POST'&&req.endpoint==='/notes/rename').length,renamesBefore)
+    await capture('properties-title-draft-dark','Leaving the edited title changes only its draft; the revision-protected save owns path normalization')
+    report.checks.propertiesTitleBlurDoesNotWrite=true
+    await title.focus();const pendingSave=save()
     await expect.poll(()=>titleSaveReady).toBe(true);await title.fill('Eigenschaftstask')
     releaseTitleSave();await pendingSave;await expect(title).toHaveValue('Eigenschaftstask');await expect(title).toBeFocused()
     assert.equal(saved().title,'Eigenschaftstask mit geändertem Titel')
@@ -1804,6 +1810,144 @@ async function verifyProperties() {
   await theme('light');await linksButton.click();await expect(linksPopup.getByRole('searchbox')).toBeFocused()
   await capture('properties-light','Shared property picker and task fields in the light theme');await page.keyboard.press('Escape');await theme('dark')
   await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
+}
+
+function searchCommand(label) {
+  return page.getByRole('option').filter({has:page.getByText(label,{exact:true})})
+}
+
+async function verifySearchCommandsLaunch() {
+  const trigger=page.getByRole('button',{name:'Notizen und Befehle suchen',exact:true})
+  await trigger.focus();await trigger.click()
+  const field=page.getByRole('combobox',{name:'Befehl suchen',exact:true})
+  await expect(field).toBeFocused();await field.fill('>speichern')
+  const save=searchCommand('Speichern')
+  await expect(save).toHaveAttribute('aria-disabled','true');await expect(save).toContainText('Zuerst eine NoteBase öffnen.')
+  // Bypass only Playwright's aria-disabled actionability check to probe the real pointer guard.
+  await save.click({force:true});await expect(field).toBeFocused();await expect(field).toBeVisible()
+  await capture('search-launch-disabled-light','Unified search from the launcher: disabled actions explain their context and cannot execute')
+  await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+  await page.keyboard.press('Control+p');await expect(field).toBeFocused();await field.fill('>Tastenkürzel und Bedienung')
+  await page.keyboard.press('Enter');await expect(page.getByRole('heading',{name:'Tastenkürzel und Bedienung',exact:true})).toBeVisible()
+  await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+  report.checks.searchLauncherCommandsAndDisabledReason=true
+}
+
+async function verifySearchCommands() {
+  await windowSize(1280,800);await theme('dark');await openNote('Arbeitsnotiz')
+  const trigger=page.getByRole('button',{name:'Notizen und Befehle suchen',exact:true})
+  const dialog=page.getByRole('dialog',{name:'Notizen und Befehle',exact:true})
+  const noteField=page.getByRole('combobox',{name:'Notiz suchen',exact:true})
+  const commandField=page.getByRole('combobox',{name:'Befehl suchen',exact:true})
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  const before=fs.readFileSync(notePath,'utf8'),marker='Die gemeinsame Suche bewahrt diesen Entwurf.'
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+marker)
+  await trigger.click();await expect(noteField).toBeFocused()
+  const opened=page.getByRole('group',{name:'Geöffnete Notizen',exact:true})
+  await expect(opened.getByRole('option').first()).toContainText('Arbeitsnotiz')
+  await capture('search-open-targets-dark','Opened note targets share the existing note search; current draft remains local')
+  await page.keyboard.press('Control+p');await expect(commandField).toBeFocused();await commandField.fill('>Editorgruppe wechseln')
+  await expect(searchCommand('Editorgruppe wechseln')).toHaveAttribute('aria-disabled','true')
+  await page.keyboard.press('Enter');await expect(dialog).toBeVisible();await expect(commandField).toBeFocused()
+  await capture('search-disabled-context-dark','Commands come from the live catalog; single-pane mode explains the unavailable pane switch')
+  await commandField.fill('>Speichern');const saveResponse=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await searchCommand('Speichern').click();const saved=await saveResponse;assert.equal(saved.status(),200);await saved.finished()
+  await expect(dialog).toHaveCount(0);assert.ok(fs.readFileSync(notePath,'utf8').includes(marker));assert.ok(!before.includes(marker))
+  report.checks.searchDraftAndExistingSaveCommand=true
+
+  // Native editing must target the original CodeMirror selection, never the search field.
+  const undoMarker='Natives Undo aus der App-Befehlssuche.'
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+undoMarker)
+  await page.keyboard.press('Control+p');await commandField.fill('>Rückgängig');await page.keyboard.press('Enter')
+  await expect(dialog).toHaveCount(0);await expect(editor).not.toContainText(undoMarker);await expect(editor).toBeFocused()
+  await page.keyboard.press('Control+y');await expect(editor).toContainText(undoMarker)
+  const redoSave=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s');const redoSaved=await redoSave;assert.equal(redoSaved.status(),200);await redoSaved.finished()
+  await page.keyboard.press('Control+k');await expect(page.getByRole('listbox',{name:'Markdown-Befehle',exact:true})).toBeVisible();await page.keyboard.press('Escape')
+  await page.keyboard.press('Control+Shift+p');await expect(page.getByRole('listbox',{name:'Markdown-Befehle',exact:true})).toBeVisible();await page.keyboard.press('Escape')
+  await page.keyboard.press('Control+p');await commandField.fill('>Aktuelle Datei löschen');await page.keyboard.press('Enter')
+  const confirm=page.getByRole('dialog',{name:'Datei löschen',exact:true})
+  await expect(confirm).toBeVisible();assert.ok(fs.existsSync(notePath))
+  await capture('search-delete-confirm-dark','File deletion from the palette still requires the existing confirmation')
+  await page.keyboard.press('Escape');await expect(confirm).toHaveCount(0);assert.ok(fs.existsSync(notePath))
+  report.checks.searchNativeUndoMarkdownShortcutsAndDeleteConfirmation=true
+
+  await createNote('Suchalpha','Synthetisches Suchziel Alpha.\n');await createNote('Suchbeta','Synthetisches Suchziel Beta.\n')
+  const pattern='**/search?**'
+  const holdSearch=async text=>{
+    let release,finish,started=false
+    const gate=new Promise(resolve=>release=resolve),done=new Promise(resolve=>finish=resolve)
+    const intercept=async route=>{
+      if(new URL(route.request().url()).searchParams.get('query')!==text){await route.continue();return}
+      started=true
+      try{const response=await route.fetch();await gate;await route.fulfill({response})}catch{/* Aborted browser requests cannot consume the held response. */}finally{finish()}
+    }
+    await page.route(pattern,intercept)
+    return {wait:()=>expect.poll(()=>started).toBe(true),release:async()=>{release();if(started)await done;await page.unroute(pattern,intercept)}}
+  }
+  await page.keyboard.press('Control+o');await noteField.fill('Suchbeta');await expect(page.getByRole('option')).toHaveCount(1)
+  const delayed=await holdSearch('Suchalpha')
+  try {
+    await noteField.fill('Suchalpha');await delayed.wait();await expect(page.getByRole('option')).toHaveCount(0)
+    await expect(noteField).not.toHaveAttribute('aria-activedescendant',/./)
+    await page.keyboard.press('Enter');await expect(dialog).toBeVisible();await expect(page.locator('.note-title-input').first()).toHaveValue('Arbeitsnotiz')
+    await capture('search-pending-dark','A changed query immediately removes old results; Enter cannot open the previous selection')
+    await noteField.fill('Suchbeta');await expect(page.getByRole('option')).toHaveCount(1);await expect(page.getByRole('option')).toContainText('Suchbeta')
+    await delayed.release();await expect(page.getByRole('option')).toContainText('Suchbeta')
+    await page.keyboard.press('Enter');await expect(page.locator('.note-title-input').first()).toHaveValue('Suchbeta')
+  } finally {await delayed.release()}
+  report.checks.searchLatestQueryAndStaleEnter=true
+
+  let failures=0
+  const failOnce=async route=>{
+    if(new URL(route.request().url()).searchParams.get('query')==='Suchfehler'&&failures++===0)await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'Synthetischer Suchfehler.'}})})
+    else await route.continue()
+  }
+  await page.route(pattern,failOnce)
+  try {
+    await page.keyboard.press('Control+o');await noteField.fill('Suchfehler');await expect(dialog.getByRole('alert')).toHaveText('Synthetischer Suchfehler.')
+    await expect(page.getByRole('option')).toHaveCount(0);await capture('search-error-dark','A transport failure is visible with retry and no stale result options')
+    await dialog.getByRole('button',{name:'Erneut suchen',exact:true}).click();await expect(dialog.getByRole('status')).toHaveText('Keine passenden Notizen gefunden.')
+    await noteField.focus();await noteField.fill('>Editor teilen');await page.keyboard.press('Enter');await expect(page.locator('.editor-workspace-split')).toBeVisible()
+    await page.keyboard.press('F8');await expect(page.locator('.editor-workspace-single')).toBeVisible()
+  } finally {await page.unroute(pattern,failOnce)}
+  report.checks.searchErrorRetryAndCommandMode=true
+
+  await openNote('Arbeitsnotiz')
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  try {
+    for(const [label,w,h,z,mode]of[['zoom-dark',1280,800,1.5,'dark'],['small-dark',640,420,1,'dark'],['light',1280,800,1,'light']]){
+      await windowSize(w,h,z);if(mode==='light')await theme('light')
+      await expect(trigger).toBeInViewport();await trigger.focus();await trigger.click();await noteField.fill('>');await expect(commandField).toBeFocused()
+      await commandField.press('ArrowUp');await expect(page.getByRole('option').last()).toHaveAttribute('aria-selected','true');await expect(page.getByRole('option').last()).toBeInViewport()
+      const box=await dialog.boundingBox(),view=await page.evaluate(()=>({w:innerWidth,h:innerHeight}));assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=view.w+1&&box.y+box.height<=view.h+1)
+      await capture('search-'+label,'Grouped app commands remain reachable with keyboard and inside '+label+' viewport')
+      await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(commandField).toBeFocused()
+      await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+    }
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  report.checks.searchThemesZoomSmallWindowAndFocus=true
+
+  // A real UI NoteBase switch follows cancellation of a held response from the old base.
+  await theme('dark');await page.keyboard.press('Control+o');const cancelled=await holdSearch('Suchalpha')
+  try {
+    await noteField.fill('Suchalpha');await cancelled.wait();await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0)
+    await page.keyboard.press('Control+p');await commandField.fill('>NoteBase erstellen');await page.keyboard.press('Enter')
+    const create=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
+    await expect(create).toBeVisible();await create.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Suchwechsel');await create.getByLabel('Speicherort',{exact:true}).fill(scratch)
+    await create.getByRole('button',{name:'NoteBase erstellen',exact:true}).click();await expect(create).toHaveCount(0)
+    await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
+    await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Suchwechsel')
+    await cancelled.release();await page.keyboard.press('Control+o');await noteField.fill('Suchalpha')
+    await expect(dialog.getByRole('status')).toHaveText('Keine passenden Notizen gefunden.');await expect(page.getByRole('group',{name:'Geöffnete Notizen',exact:true})).toHaveCount(0)
+    await capture('search-notebase-switch','New NoteBase has no old opened targets or late search results from the cancelled request')
+    await page.keyboard.press('Escape')
+    const recent=page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true});await recent.click()
+    await page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+    await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
+    await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz');await expect(editor).toContainText(marker)
+  } finally {await cancelled.release()}
+  report.checks.searchCancellationAndNoteBaseSwitch=true
 }
 
 async function verifyTooltips() {
@@ -1965,6 +2109,7 @@ try {
   report.checks.launchToMenubarMs = Math.round(performance.now() - started)
   await windowSize(1280, 800)
   if (!edgesOnly) await capture('launch-light', 'Start without an open NoteBase, light, 1280×800')
+  if (searchCommands && !edgesOnly) await verifySearchCommandsLaunch()
   if (createDialog && !edgesOnly) await verifyCreateDialogLaunch()
 
   const vault = await request('/notebase/create', {parentPath: scratch, name: 'UX-NoteBase'})
@@ -2015,6 +2160,7 @@ try {
     if (filters) await verifyFilters()
     if (properties) await verifyProperties()
     if (tooltips) await verifyTooltips()
+    if (searchCommands) await verifySearchCommands()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

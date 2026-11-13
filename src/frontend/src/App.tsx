@@ -4,8 +4,9 @@ import type {ContextMenuAnchor} from './ui/contextMenuAnchor';
 import {useNoteDocuments} from './workspace/useNoteDocuments';
 import {useExternalChanges} from './app/useExternalChanges';
 import {useCaptureDraft} from './app/useCaptureDraft';
-import {COMMANDS, commandTitle, type AppCommand, type CommandId} from './app/commands';
+import {COMMANDS, commandTitle, shortcutLabel, type AppCommand, type CommandId} from './app/commands';
 import {useAppCommands} from './app/useAppCommands';
+import {connectionEpoch} from './app/apiClient';
 import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
@@ -168,7 +169,7 @@ function App() {
     const [graphUpdateToken, setGraphUpdateToken] = useState(0);
     const [latestGraphStatus, setLatestGraphStatus] = useState<GraphIndexStatus | null>(null);
     const [openTabs, setOpenTabs] = useState<NoteTab[]>([]);
-    const [quickOpen, setQuickOpen] = useState(false);
+    const [quickOpen, setQuickOpen] = useState<{initialQuery:string;vaultPath:string;epoch:number;trigger:HTMLElement|null}|null>(null);
     const [shortcutHelp, setShortcutHelp] = useState(false);
     const [updatesOpen,setUpdatesOpen]=useState(false);
     const openTabsRef = useRef<NoteTab[]>([]);
@@ -1969,8 +1970,6 @@ function App() {
             .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }));
         return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
                 updateNoteTitleByPath(tabPath, nextTitle);
-            }} onTitleBlur={(nextTitle) => {
-                void syncNotePathWithTitle(tabPath, nextTitle);
             }} onTypeChange={(nextType) => {
                 updateNoteTypeByPath(tabPath, nextType);
             }} onStatusChange={(nextStatus) => {
@@ -2000,23 +1999,6 @@ function App() {
             }} onAddTag={(value) => addNoteTagByPath(tabPath, value)} onRemoveRelated={(related) => {
                 removeNoteRelatedByPath(tabPath, related);
             }} onAddRelated={(value) => addNoteRelatedByPath(tabPath, value)}/>);
-    };
-    const syncNotePathWithTitle = async (tabPath: string, rawTitleOverride?: string) => {
-        const tab = openTabsRef.current.find((entry) => entry.path === tabPath && entry.kind === 'note');
-        if (!tab || tab.loading) {
-            return;
-        }
-        const document = tab.parsedDocument ?? parseNoteDocument(tab.content, tab.title || toNoteDisplayName(tab.path));
-        const typedTitle = normalizeLabel(rawTitleOverride ?? document.frontmatter.title);
-        const targetTitle = typedTitle || 'Untitled';
-        if (!typedTitle) {
-            updateNoteTitleByPath(tabPath, targetTitle);
-        }
-        const currentStem = normalizeLabel(toNoteDisplayName(tab.path));
-        if (currentStem.toLowerCase() === targetTitle.toLowerCase()) {
-            return;
-        }
-        await renameExplorerFile(tab.path, targetTitle);
     };
     const uploadImageForNote = async (notePath: string, file: File): Promise<string | null> => {
         if (!notePath || !file) {
@@ -2750,9 +2732,10 @@ function App() {
     };
     const showSidebar = (view:SidebarView) => {setSidebarView(view);setSidebarOpen(true)};
     const focusCapture = () => {setCapturePinned(true);setCapturePanelOpen(true);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>captureEditorRef.current?.focus()))};
+    const openSearch = (initialQuery='') => setQuickOpen({initialQuery,vaultPath,epoch:connectionEpoch(),trigger:document.activeElement instanceof HTMLElement?document.activeElement:null});
     const commandHandlers:Record<CommandId,()=>unknown> = {
         newNote:()=>createDocument('note'),newTask:()=>createDocument('task'),
-        openNote:()=>vaultLoaded?setQuickOpen(true):pickAndOpenVault(),openVault:pickAndOpenVault,newVault:createVault,daily:openOrCreateTodayDaily,
+        openNote:()=>vaultLoaded?openSearch():pickAndOpenVault(),commandPalette:()=>openSearch('>'),openVault:pickAndOpenVault,newVault:createVault,daily:openOrCreateTodayDaily,
         save:()=>settingsDialogOpen?saveSettings():activeTab?saveTab(activeTab.path):undefined,saveAll:saveAllDocuments,deleteNote:deleteCurrentDocument,
         closeTab:()=>activeTab?closeEditorTab(activeTab.id):undefined,settings:openSettingsDialog,
         quit:()=>{flushNoteInputs();window.nicknotes?.setUnsavedChanges?.(settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.dirty));return window.nicknotes?.windowAction?.('close')},
@@ -2769,7 +2752,7 @@ function App() {
     };
     const appCommands:AppCommand[]=COMMANDS.map(spec=>{
         let enabled=vaultLoaded;
-        if(['openNote','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
+        if(['openNote','commandPalette','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
         if(['quit','fullscreen','help','updates'].includes(spec.id))enabled=true;
         if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
         if(spec.id==='closeAll')enabled=openTabs.length>0;
@@ -2778,14 +2761,32 @@ function App() {
         if(spec.id==='saveAll')enabled=settingsDirty||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
         if(spec.id==='deleteNote')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
         if(['find','format'].includes(spec.id))enabled=Boolean(activeTab?.kind==='note'&&editorPanelOpen)||capturePanelOpen&&vaultLoaded;
+        let disabledReason:string|undefined;
+        if(!enabled){
+            if(noteBaseOpenStatus?.active)disabledReason='Die NoteBase wird gerade geladen.';
+            else if(!vaultLoaded)disabledReason='Zuerst eine NoteBase öffnen.';
+            else if(spec.id==='switchPane')disabledReason='Zuerst den Editor teilen.';
+            else if(['closeTab','closeOthers','closeAll','nextTab','previousTab'].includes(spec.id))disabledReason='Keine Ansicht geöffnet.';
+            else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Quick Capture öffnen.';
+            else if(activeTab?.loading)disabledReason='Die Notiz wird noch geladen.';
+            else if(activeTab?.readOnly)disabledReason='Diese Notiz ist schreibgeschützt.';
+            else disabledReason='Eine bearbeitbare Notiz öffnen.';
+        }
         const checked=spec.id==='split'?workspaceState.layoutMode==='split':spec.id==='capture'?capturePanelOpen:spec.id==='sidebar'?sidebarOpen:spec.id==='editor'?editorPanelOpen:undefined;
-        return {...spec,enabled,checked,run:commandHandlers[spec.id]};
+        return {...spec,enabled,disabledReason,checked,run:commandHandlers[spec.id]};
     });
     const executeCommand=useAppCommands(appCommands,setError,settingsDialogOpen);
-    const commandDialogs=<>{quickOpen&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultPath} onClose={()=>setQuickOpen(false)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}}/>}{shortcutHelp&&<ShortcutHelpDialog onClose={()=>setShortcutHelp(false)}/>}</>;
+    const openedSearchNotes=openTabs.filter(tab=>tab.kind==='note'&&!tab.loading).slice().reverse().sort((a,b)=>Number(b.id===activeTab?.id)-Number(a.id===activeTab?.id)).slice(0,8).map(tab=>({path:tab.path,title:tab.title}));
+    const commandDialogs=<>{quickOpen&&quickOpen.vaultPath===vaultPath&&quickOpen.epoch===connectionEpoch()&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultLoaded?vaultPath:''} initialQuery={quickOpen.initialQuery} openedNotes={vaultLoaded?openedSearchNotes:[]} commands={appCommands} onClose={()=>setQuickOpen(null)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}} onExecute={id=>{
+        const trigger=quickOpen.trigger;
+        flushSync(()=>setQuickOpen(null));
+        if(trigger?.isConnected)trigger.focus({preventScroll:true});
+        void executeCommand(id);
+    }}/>}{shortcutHelp&&<ShortcutHelpDialog onClose={()=>setShortcutHelp(false)}/>}</>;
     const windowTitlebar = (<div className="window-titlebar">
       <div className="window-titlebar-brand" aria-label="NickNotes"><span className="window-titlebar-logo">NN</span><span className="window-titlebar-title">NickNotes</span></div>
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
+      <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span><kbd>{shortcutLabel('openNote')}</kbd></button>
       <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
     </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;

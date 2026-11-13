@@ -17,6 +17,12 @@ test('common aliases, platform modifier and non-US physical split key work',()=>
   expect(commandForKey(key(' ',{ctrlKey:true,shiftKey:true}))?.id).toBe('capture')
   expect(matchesShortcut(key('unknown',{ctrlKey:true,code:'Backslash'}),'Mod+\\')).toBe(true)
 })
+
+test('app search has its own shortcut while Markdown palette shortcuts keep their owner',()=>{
+  expect(commandForKey(key('p',{ctrlKey:true}))?.id).toBe('commandPalette')
+  expect(commandForKey(key('P',{ctrlKey:true,shiftKey:true}))?.id).toBe('format')
+  expect(commandForKey(key('k',{ctrlKey:true}))).toBeUndefined()
+})
 test('every menu/tool hint comes from an unambiguous command catalog',()=>{
   expect(new Set(COMMANDS.map(command=>command.id)).size).toBe(COMMANDS.length)
   const shortcuts=(COMMANDS as readonly CommandSpec[]).flatMap(command=>[command.shortcut,...command.aliases??[]].filter(Boolean))

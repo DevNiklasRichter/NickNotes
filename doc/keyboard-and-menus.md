@@ -1,6 +1,6 @@
 # Menues, Tastatur und Entwicklungsstart
 
-Stand: 8. November 2026, Kandidat 2.1.0-rc.2.
+Stand: 13. November 2026, Kandidat 2.1.0-rc.4.
 
 ## Bedienung
 
@@ -14,6 +14,7 @@ keine weiteren Betriebssystemfenster.
 | --- | --- |
 | Neue Notiz / neuer Task | Strg+N / Strg+Umschalt+N |
 | Notiz suchen und oeffnen | Strg+O |
+| App-Befehle suchen und ausfuehren | Strg+P |
 | Andere NoteBase oeffnen | Strg+Umschalt+O |
 | Heutige Tagesnotiz | Strg+Alt+D |
 | Speichern / alle speichern | Strg+S / Strg+Umschalt+S |
@@ -52,6 +53,15 @@ fokussiert, damit unmittelbar weitergetippt werden kann.
 Strg+O durchsucht Titel und Inhalt mit der vorhandenen Suche. Pfeiltasten waehlen,
 Eingabe oeffnet, Esc bricht ab. Ohne geladene NoteBase bietet Strg+O zuerst deren
 Auswahl an. Die Trefferliste ist auf 50 Eintraege begrenzt.
+Die Titelleiste bietet denselben Dialog sichtbar an. Ohne Suchtext nennt er
+zusaetzlich bis zu acht geoeffnete Notizen, die aktuelle zuerst. Mit `>` oder
+Strg+P wechselt er zu den App-Befehlen aus demselben Menuekatalog. Die beiden
+Bereichsbuttons und Strg+O/Strg+P wechseln auch innerhalb des Dialogs den Modus.
+Gesperrte Befehle nennen ihren Grund und fuehren nichts aus. Eingabe und Klick
+verwenden bestehende Aktionen samt Speicher-/Loeschschutz. Alte Suchanfragen
+werden abgebrochen; Fehler besitzen eine Wiederholung. Escape gibt den Fokus
+zurueck. Markdown-Kuerzel Strg+K und Strg+Umschalt+P bleiben unveraendert.
+Aktuelle Nachweise: [Suche und App-Befehle](search-commands-2026-11-13.md).
 
 Alle speichern betrifft die geoeffneten Notiz-/Task-Drafts und geaenderte
 Einstellungen; Quick Capture wird dadurch nicht abgeschickt. Vor Save und Close
@@ -114,7 +124,7 @@ Nullzeit-Timer kuenstlich verzoegert. Der Befehl muss trotzdem sofort erneut
 verfuegbar sein; erst die folgende Bestaetigung darf die Testdatei loeschen.
 Das ist keine Installer-Installation oder VM-Abnahme; diese bleibt beim Benutzer.
 
-Lokal bestanden: 87 Backendtests, elf Frontendtests, Build sowie Contract-/
+Historischer Nachweis vom 8. November: 87 Backendtests, elf Frontendtests, Build sowie Contract-/
 Iconpruefung. ESLint meldet null Fehler und die 13 schon vorhandenen Hinweise.
 Der echte Entwicklungstest besteht alle genannten Interaktionen einschliesslich
 automatischem Wiedereroeffnen nach Neustart. In jeweils 8,5 Sekunden Leerlauf

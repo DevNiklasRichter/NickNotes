@@ -3,6 +3,7 @@ export const COMMANDS = [
   {id:'newNote', label:'Neue Notiz', group:'Datei', shortcut:'Mod+N'},
   {id:'newTask', label:'Neuer Task', group:'Datei', shortcut:'Mod+Shift+N'},
   {id:'openNote', label:'Notiz öffnen …', group:'Datei', shortcut:'Mod+O'},
+  {id:'commandPalette', label:'App-Befehle suchen …', group:'Bearbeiten', shortcut:'Mod+P'},
   {id:'openVault', label:'NoteBase öffnen …', group:'Datei', shortcut:'Mod+Shift+O'},
   {id:'newVault', label:'NoteBase erstellen …', group:'Datei'},
   {id:'daily', label:'Heutige Tagesnotiz', group:'Datei', shortcut:'Mod+Alt+D'},
@@ -49,7 +50,7 @@ export const COMMANDS = [
 export type CommandId = typeof COMMANDS[number]['id']
 export type CommandGroup = typeof COMMANDS[number]['group']
 export type CommandSpec = {id:CommandId; label:string; group:CommandGroup; shortcut?:string; aliases?:readonly string[]; native?:boolean}
-export type AppCommand = CommandSpec & {enabled:boolean; checked?:boolean; run:()=>unknown}
+export type AppCommand = CommandSpec & {enabled:boolean; disabledReason?:string; checked?:boolean; run:()=>unknown}
 export const COMMAND_GROUPS: CommandGroup[] = ['Datei','Bearbeiten','Ansicht','Hilfe']
 export const commandSpec = (id:CommandId):CommandSpec => COMMANDS.find(command=>command.id===id)!
 export function shortcutLabel(id:CommandId):string {

@@ -1,0 +1,27 @@
+.window-search-button {display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); flex: 0 1 350px; min-width: 28px; max-width: 350px; margin-left: auto; padding: 3px var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--muted); font-size: var(--font-caption); -webkit-app-region: no-drag;}
+.window-search-button > svg {flex-shrink: 0;}
+.window-search-button > span {overflow: hidden; white-space: nowrap; text-overflow: ellipsis;}
+.window-search-button kbd {margin-left: auto; white-space: nowrap; font: inherit;}
+.quick-open-dialog {display: flex; flex-direction: column; gap: var(--space-3); box-sizing: border-box; min-height: 0; max-height: calc(100vh - 32px); padding: var(--space-4);}
+.quick-open-dialog .command-dialog-header {margin: 0; flex-shrink: 0;}
+.quick-open-dialog > input {flex-shrink: 0;}
+.quick-open-modes {display: flex; flex-wrap: wrap; gap: var(--space-2); flex-shrink: 0;}
+.quick-open-modes button {display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-md); background: transparent; color: var(--muted); font-size: var(--font-label);}
+.quick-open-modes button[aria-pressed="true"] {border-color: var(--accent); color: var(--text); background: var(--accent-soft);}
+.quick-open-modes kbd, .quick-open-results kbd {font: inherit; font-size: var(--font-caption); color: var(--muted); white-space: nowrap;}
+.quick-open-dialog .quick-open-results {display: grid; gap: var(--space-1); min-height: 0; margin: 0; overflow: auto; flex: 1 1 auto;}
+.quick-open-group-heading {margin: var(--space-2) 0 var(--space-1); color: var(--muted); font-size: var(--font-label); font-weight: 500;}
+.quick-open-dialog .quick-open-results button {display: flex; align-items: center; gap: var(--space-3); width: 100%; box-sizing: border-box; border: 1px solid transparent; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text); text-align: left; font-size: var(--font-ui);}
+.quick-open-results button[aria-selected="true"] {border-color: var(--accent); background: var(--surface-contrast);}
+.quick-open-option-icon {flex-shrink: 0; color: var(--muted);}
+.quick-open-option-copy {display: block; flex: 1 1 auto; min-width: 0;}
+.quick-open-option-copy strong {font-weight: 500; overflow-wrap: anywhere;}
+.quick-open-dialog .quick-open-results small {display: block; color: var(--muted); white-space: normal; overflow-wrap: anywhere; font-size: var(--font-label); margin-top: 2px;}
+.quick-open-results button[aria-disabled="true"] strong {color: var(--muted);}
+.quick-open-status, .quick-open-error p, .quick-open-dialog > .muted-copy {margin: 0; font-size: var(--font-label); overflow-wrap: anywhere;}
+.quick-open-error {display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--error-text);}
+.quick-open-error p {flex: 1 1 240px;}
+.quick-open-dialog > .muted-copy {flex-shrink: 0;}
+@media (max-width: 1000px) {.window-search-button {flex: 0 0 28px; justify-content: center; padding: 3px; margin-left: auto;} .window-search-button > span, .window-search-button kbd {display: none;}}
+@media (max-width: 700px) {.window-titlebar-title {display: none;} .app-menu-bar {margin-left: var(--space-2);} .app-menu-root > button {padding-inline: 6px;}}
+@media (max-height: 320px) {.quick-open-dialog {display: block; overflow: auto;} .quick-open-dialog > * + * {margin-top: var(--space-2);} .quick-open-dialog .quick-open-results {overflow: visible;}}

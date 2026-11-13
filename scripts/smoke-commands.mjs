@@ -13,11 +13,23 @@ const vite=spawn(process.execPath,[path.join(root,'node_modules/vite/bin/vite.js
 let viteLog='';vite.stdout.on('data',data=>viteLog+=data);vite.stderr.on('data',data=>viteLog+=data)
 let app,page
 const errors=[],requests=[]
+const saveTrace=[],saveIds=new WeakMap()
+let nextSaveId=0
 async function launch(){
   app=await electron.launch({executablePath:electronBinary,args:[root],cwd:root,env:{...process.env,NICKNOTES_USER_DATA:path.join(scratch,'profile'),NICKNOTES_PORT:'18767'},timeout:90_000})
   page=await app.firstWindow();page.setDefaultTimeout(15000)
   page.on('pageerror',error=>errors.push(error.message))
-  page.on('request',req=>{if(req.url().startsWith('http://127.0.0.1:18767'))requests.push({path:new URL(req.url()).pathname,method:req.method()})})
+  page.on('request',req=>{
+    if(req.url().startsWith('http://127.0.0.1:18767'))requests.push({path:new URL(req.url()).pathname,method:req.method()})
+    if(req.method()==='POST'&&req.url().endsWith('/notes/save')){
+      const payload=req.postDataJSON(),id=++nextSaveId;saveIds.set(req,id)
+      saveTrace.push({id,event:'request',path:payload.path,expectedRevision:payload.expectedRevision,tail:payload.content.slice(-160)})
+    }
+  })
+  page.on('response',response=>{
+    const id=saveIds.get(response.request());if(!id)return
+    void response.json().then(value=>saveTrace.push({id,event:'response',status:response.status(),path:value.path,revision:value.revision,error:value.error})).catch(()=>{})
+  })
   await expect(page.getByRole('menubar')).toBeVisible({timeout:60000})
 }
 async function request(endpoint,body){
@@ -260,7 +272,7 @@ try{
   await expect.poll(async()=>JSON.stringify(await request('/search?query=immediately'))).toContain('Neue Notiz')
   const firstNote=(await request('/search?query=immediately')).items.find(item=>item.title==='Neue Notiz')
   assert.ok(fs.readFileSync(firstNote.path,'utf8').includes('Saved immediately after typing.'))
-  await expect(page.getByRole('button',{name:'Speichern',exact:true})).toHaveAttribute('title',/Strg\+S/)
+  await expect(page.getByRole('button',{name:'Speichern',exact:true})).toHaveAttribute('data-tooltip',/Strg\+S/)
   await page.keyboard.press('Control+Shift+n')
   await expect.poll(async()=>JSON.stringify(await request('/tasks?include_done=true'))).toContain('Neuer Task')
   await expect(await bodyEditor('Neuer Task')).toBeFocused();await page.keyboard.type('Task draft for save all')
@@ -272,8 +284,21 @@ try{
   await expect(page.getByRole('dialog').getByRole('option')).toHaveCount(1)
   await page.keyboard.press('Enter');await expect(page.getByRole('dialog')).toHaveCount(0)
   await bodyEditor('Neue Notiz')
+  // Palette editing restores the original native input before trusted edit IPC.
+  const titleField=page.getByRole('textbox',{name:'Notiztitel',exact:true}).first()
+  const beforeNativeTitle=fs.readFileSync(firstNote.path,'utf8')
+  for(const entry of ['keyboard','pointer']){
+    await titleField.focus();await titleField.press('End')
+    if(entry==='keyboard')await page.keyboard.press('Control+p')
+    else await page.getByRole('button',{name:'Notizen und Befehle suchen',exact:true}).click()
+    const appCommand=page.getByRole('combobox',{name:entry==='keyboard'?'Befehl suchen':'Notiz suchen',exact:true})
+    await expect(appCommand).toBeFocused();await appCommand.fill('>Alles auswählen');await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog')).toHaveCount(0);await expect(titleField).toBeFocused()
+    await expect.poll(()=>titleField.evaluate(field=>field.selectionStart===0&&field.selectionEnd===field.value.length)).toBe(true)
+  }
   // Menu editing uses CodeMirror history, including the last buffered keystroke.
   await (await bodyEditor()).click();await page.keyboard.press('Control+End');await page.keyboard.type(' undo-marker')
+  assert.equal(fs.readFileSync(firstNote.path,'utf8'),beforeNativeTitle,'Focusing and leaving an unchanged title must never mutate Markdown')
   await menu('Bearbeiten','undo')
   await expect(await bodyEditor()).not.toContainText('undo-marker')
   await menu('Bearbeiten','redo')
@@ -358,10 +383,14 @@ try{
   await verifyNativeClose()
   assert.deepEqual(errors,[])
   const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,queuedSaveExecuted:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,nativeCloseBufferedDraftProtected:true,nativeCloseSaveBeforeExit:true,pageErrors:errors}
+  report.paletteNativeInputFocus=true;report.saveTrace=saveTrace
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){
   if(page)await page.screenshot({path:path.join(root,'.tmp/commands-failure.png')}).catch(()=>{})
+  const ui=page?await page.evaluate(()=>[...document.querySelectorAll('.note-editor-shell')].map(node=>({path:node.getAttribute('data-note-path'),revision:node.getAttribute('data-note-revision'),body:node.querySelector('.cm-content')?.textContent}))).catch(()=>null):null
+  const failure=path.join(scratch,'failure.json')
+  fs.writeFileSync(failure,JSON.stringify({failure:String(error),saveTrace,ui,pageErrors:errors},null,2));console.log(JSON.stringify({failureReport:failure}))
   throw error
 }finally{
   if(app){await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>1}).catch(()=>{});await app.close()}

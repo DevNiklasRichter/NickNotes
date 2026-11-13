@@ -185,6 +185,18 @@ eingabe; Enter übernimmt ein einzeiliges Feld und bleibt in Textareas eine Text
 Titelentwürfe überstehen die tatsächliche Dateiumbenennung und weitere Eingaben
 während einer Speicherantwort. [Nachweise](editor-properties-2026-11-12.md).
 
+Der Sucheinstieg in der Titelleiste öffnet einen gemeinsamen Dialog für Notizen
+und App-Befehle. Ein Suchfeld, zwei benannte Bereiche und das `>`-Präfix lassen
+den Modus sichtbar wechseln. Ergebnisgruppen unterscheiden bereits geöffnete
+Notizen, NoteBase-Suchtreffer und Befehlsgruppen. Der aktive Eintrag bleibt mit
+`aria-activedescendant` am Suchfeld; Optionen bilden keine zusätzliche Tabfolge.
+Gesperrte Befehle bleiben auswählbar, erklären ihren Grund und führen nichts aus.
+Die Ergebnisliste scrollt innerhalb des Fensters. Laden, Fehler mit Wiederholung
+und leere Ergebnisse bleiben unterscheidbar; neue Eingaben entfernen sofort
+die vorherigen Treffer. Der originale Editor-/Feldfokus wird vor Befehlen wieder
+hergestellt. Titel-Blur ändert nur den Entwurf; erst Save benennt Dateien um.
+[Nachweise](search-commands-2026-11-13.md).
+
 Tooltips verwenden die gemeinsame `ui/TooltipLayer.tsx` und bestehende Farb-,
 Text-, Rahmen- und Schattenrollen. Ein Control liefert seinen Hinweis über
 `data-tooltip` und behält einen unabhängigen zugänglichen Namen. Aktionen gehören

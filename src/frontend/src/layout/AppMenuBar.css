@@ -13,9 +13,5 @@
 .command-dialog-header {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;}
 .command-dialog-header h2 {margin:0;font-size:var(--font-ui);}
 .command-dialog input {width:100%;box-sizing:border-box;}
-.quick-open-results {display:grid;gap:4px;margin-top:10px;max-height:50vh;overflow:auto;}
-.quick-open-results button {text-align:left;border:1px solid transparent;background:transparent;padding:9px;color:var(--text);}
-.quick-open-results button[aria-selected=true] {border-color:var(--accent);background:var(--surface-contrast);}
-.quick-open-results small {display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .shortcut-reference {display:grid;grid-template-columns:1fr auto;gap:6px 20px;}
 .shortcut-reference h3 {grid-column:1/-1;margin:14px 0 4px;}
