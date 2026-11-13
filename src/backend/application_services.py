@@ -7,7 +7,6 @@ import base64
 import binascii
 import json
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -50,7 +49,9 @@ from .errors import (
     ValidationDomainError,
 )
 from .operation_context import get_operation_context
-from .nicknotes_backend.source_journal import pending_recovery
+from .nicknotes_backend.source_journal import active_journal, pending_recovery
+from .nicknotes_backend.file_io import atomic_write_text
+from .nicknotes_backend.trash import move_to_trash
 
 """Application layer entry points for NickNotes backend API controllers."""
 
@@ -399,7 +400,7 @@ class BackendApiService:
                 applied += 1
                 changed = True
             if changed:
-                note_file.write_text(next_markdown, encoding="utf-8")
+                atomic_write_text(note_file, next_markdown)
                 touched.append(note_file)
         return applied, touched
 
@@ -813,6 +814,19 @@ class BackendApiService:
         else:
             vault, _indexer = self.require_loaded()
             target = vault.vault_path.resolve()
+        # Removal needs the identity NickNotes itself wrote; a folder that merely
+        # contains a similarly named file is not enough.
+        try:
+            identity = json.loads((target / ".system" / "config.json").read_text(encoding="utf-8")).get("vault_id")
+        except (OSError, ValueError, AttributeError):
+            identity = None
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValidationDomainError(
+                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht geloescht. "
+                "Oeffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
+                operation="delete_notebase",
+                vault_id=str(target),
+            )
         if not req.confirm_delete:
             raise ValidationDomainError(
                 "confirmDelete must be true to delete a NoteBase",
@@ -824,10 +838,12 @@ class BackendApiService:
         try:
             if is_current:
                 self.state.dispose_session()
-            shutil.rmtree(target)
+            # Recoverable by design: the folder goes to the Recycle Bin, never straight to deletion.
+            move_to_trash(target)
         except OSError as exc:
-            raise InfrastructureDomainError(
-                "Could not delete NoteBase.",
+            # A 409 keeps the reason visible; 5xx messages are replaced by a generic text.
+            raise ConflictDomainError(
+                f"Die NoteBase wurde nicht geloescht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
                 operation="delete_notebase",
                 vault_id=str(target),
                 internal_message=str(exc),
@@ -1011,7 +1027,11 @@ class BackendApiService:
             while done_path.exists() and done_path != src:
                 done_path = done_dir / f"{src.stem}_{suffix}{src.suffix}"
                 suffix += 1
-        done_path.write_text(dump_markdown(meta, body), encoding="utf-8")
+        if src != done_path:
+            # Back up the original before it disappears; the new file is recorded by its write.
+            if journal := active_journal.get():
+                journal.record(src)
+        atomic_write_text(done_path, dump_markdown(meta, body))
         if src != done_path and src.exists():
             src.unlink()
 

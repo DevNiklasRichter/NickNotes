@@ -111,14 +111,16 @@ class BackendApiServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             vault_path = Path(tmpdir) / "RecentBase"
             (vault_path / ".system").mkdir(parents=True)
-            (vault_path / ".system" / "config.json").write_text("{}", encoding="utf-8")
+            (vault_path / ".system" / "config.json").write_text('{"vault_id": "recent"}', encoding="utf-8")
 
             request = backend_api.NoteBaseDeleteRequest(path=str(vault_path), confirmDelete=True)
-            result = self.service.delete_notebase(request)
+            # The Recycle Bin itself is not exercised by unattended tests.
+            with mock.patch("src.backend.application_services.move_to_trash") as trash:
+                result = self.service.delete_notebase(request)
 
+            trash.assert_called_once_with(vault_path.resolve())
             self.assertTrue(result["deleted"])
             self.assertEqual(result["deletedPath"], str(vault_path.resolve()))
-            self.assertFalse(vault_path.exists())
             self.assertFalse(result["vaultLoaded"])
             self.assertFalse(backend_api.state.vault)
 

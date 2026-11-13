@@ -72,7 +72,7 @@ MeineNoteBase/
     tag_groups.json              einzige Tagdefinitionsquelle
     ui_settings.json             Themes und portable UI-Einstellungen
     favorite_folders.json
-    index.db                     SQLite-Projektion, Schema 3
+    index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
     graph-state.json             Graph-UI-Zustand, Version 2
     migrations/                  Konfigurationssicherungen und Nachweise
@@ -124,6 +124,19 @@ Wurzelnotizen und ohne System-/Medien-/generierte Dateien. SQLite-Vollaufbau und
 Einzeldatei-Reindex nutzen denselben Pfad, WAL und gebuendelte Transaktionen.
 Dateistatistiken erlauben beim Wiedereroeffnen die Wiederverwendung unveraenderter
 Projektionen. Ein dirty-Marker ermoeglicht Reparatur nach Projektionsfehlern.
+Seit Indexschema 4 teilt jede Volltextzeile die Zeilen-ID ihrer Notiz; Notizen,
+Tasks und To-dos sind nach Pfad indiziert. Ein einzelner Reindex durchsucht damit
+nicht mehr die gesamte Volltexttabelle. Bestehende `index.db` werden beim Oeffnen
+einmalig umgeschluesselt, ohne Markdown zu lesen oder zu aendern.
+
+Alle Quellschreibungen laufen ueber `file_io.atomic_write_*` und damit durch das
+Journal, auch Tag-Uebernahme und Task-Abschluss. Kein `Path.write_text` auf
+Notizen im Application-Service.
+
+Eine NoteBase wird nie direkt geloescht: `trash.py` verschiebt den Ordner in den
+Windows-Papierkorb. Voraussetzung ist eine `.system/config.json` mit `vault_id`;
+Ordner ohne diese Kennung, ohne Papierkorb (z. B. Netzlaufwerk) oder bei einem
+Fehler bleiben unveraendert und die Ursache wird gemeldet.
 
 Der Graph speichert explizite Links und Tag-Nutzung, keine Shared-Tag-Allpaare.
 `related_files` bewertet eine Nachbarschaft bei Bedarf (50, maximal 200 Treffer),

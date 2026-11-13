@@ -5,6 +5,11 @@
 Für den ersten stabilen Release stehen die manuelle Windows-Abnahme und die
 Signierung auf dem Release-Laptop noch aus.
 
+- Index: Erstöffnen und Speichern skalieren nicht mehr quadratisch mit der Notizanzahl.
+- NoteBase löschen verschiebt in den Windows-Papierkorb und verlangt eine NickNotes-Kennung.
+- Tag-Übernahme und Task-Abschluss sind durch das Schreibjournal abgesichert.
+- Per MCP angelegte To-dos verwenden dieselbe stabile Referenz wie die Oberfläche.
+
 ## [2.1.0-rc.4] - 2026-11-09
 
 - Lokale Markdown-Notizen, Tasks, To-dos, Tags und Wissensgraph; geschützter MCP-Zugriff.

@@ -204,6 +204,11 @@ class VaultIndexer:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_note ON todos(note_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_checked ON todos(checked);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_promoted ON todos(promoted);")
+            # Every single-file reindex looks its previous rows up by path.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_notes_path ON notes(path);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_path ON tasks(path);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_todos_note_path ON todos(note_path);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_id);")
             cur.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
@@ -226,6 +231,10 @@ class VaultIndexer:
                     f"Unsupported indexer schema version: {current_version}. Expected version <= {INDEXER_SCHEMA_VERSION}."
                 )
             self._init_schema()
+            # Schema 4 keys each full-text row by its note row, so one note is replaced
+            # without scanning the whole full-text table. Older rows are re-keyed once.
+            cur.execute("DELETE FROM notes_fts;")
+            cur.execute("INSERT INTO notes_fts(rowid, note_id, title, body) SELECT rowid, id, title, body FROM notes;")
             cur.execute(f"PRAGMA user_version={INDEXER_SCHEMA_VERSION};")
             self._commit()
 
@@ -306,10 +315,12 @@ class VaultIndexer:
                 """,
                 (note_id, path, title, body, note_type, created_at, updated_at),
             )
-            cur.execute("DELETE FROM notes_fts WHERE note_id = ?;", (note_id,))
+            # An upsert keeps the note's rowid; the full-text row shares it (see schema 4).
+            rowid = cur.execute("SELECT rowid FROM notes WHERE id = ?;", (note_id,)).fetchone()[0]
+            cur.execute("DELETE FROM notes_fts WHERE rowid = ?;", (rowid,))
             cur.execute(
-                "INSERT INTO notes_fts(note_id, title, body) VALUES (?, ?, ?);",
-                (note_id, title, body),
+                "INSERT INTO notes_fts(rowid, note_id, title, body) VALUES (?, ?, ?, ?);",
+                (rowid, note_id, title, body),
             )
             self._commit()
 
@@ -557,10 +568,12 @@ class VaultIndexer:
     def remove_projection_for_path(self, path: str) -> None:
         with self._lock:
             cur = self.conn.cursor()
-            cur.execute("SELECT id FROM notes WHERE path = ?;", (path,))
-            note_ids = [str(row["id"]) for row in cur.fetchall()]
-            if note_ids:
-                cur.executemany("DELETE FROM notes WHERE id = ?;", [(note_id,) for note_id in note_ids])
+            cur.execute("SELECT rowid, id FROM notes WHERE path = ?;", (path,))
+            rows = cur.fetchall()
+            if rows:
+                # A freed rowid may be reused by another note; its full-text row must go with it.
+                cur.executemany("DELETE FROM notes_fts WHERE rowid = ?;", [(row["rowid"],) for row in rows])
+                cur.executemany("DELETE FROM notes WHERE id = ?;", [(str(row["id"]),) for row in rows])
             cur.execute("DELETE FROM tasks WHERE path = ?;", (path,))
             cur.execute("DELETE FROM indexed_files WHERE path = ?;", (path,))
             self._prune_orphan_tags(cur)

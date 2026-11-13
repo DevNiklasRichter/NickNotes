@@ -64,5 +64,13 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertTrue(unknown['isError'])
         unchanged = self.call('read_note',{'path':data['path']},self.write)['structuredContent']
         self.assertEqual(unchanged['content'],actual['content'])
+        todo = self.call('add_todo',{'path':data['path'],'text':'Nachfassen','expected_revision':actual['revision'],'operation_id':'todo-0001'},self.write)
+        self.assertFalse(todo.get('isError',False),todo)
+        self.assertRegex(todo['structuredContent']['content'], r'- \[ \] Nachfassen <!-- nn:todo created=\S+ completed= --> \^nn-todo_[0-9a-f]{16}\n')
+        listed = self.call('list_work_items',{'kind':'todos'},self.write)['structuredContent']['items']
+        # The UI's stable block reference format gives the todo its identity.
+        self.assertEqual([item['id'] for item in listed], ['todo_'+item['block_ref'][len('nn-todo_'):] for item in listed])
+        self.assertEqual(len(listed),1)
+        actual = self.call('read_note',{'path':data['path']},self.write)['structuredContent']
         self.assertNotIn(self.write['token'], api.grant_store.path.read_text())
         self.assertEqual(len(list((self.root/'TestVault').glob('*.md'))),1)
