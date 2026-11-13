@@ -15,7 +15,7 @@ from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolder
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from .config import (
     REVIEW_DASHBOARD_DEFAULT_DAYS,
@@ -48,7 +48,6 @@ from .errors import (
     NotFoundDomainError,
     ValidationDomainError,
 )
-from .operation_context import get_operation_context
 from .nicknotes_backend.source_journal import active_journal, pending_recovery
 from .nicknotes_backend.file_io import atomic_write_text
 from .nicknotes_backend.trash import move_to_trash
@@ -499,87 +498,6 @@ class BackendApiService:
         if file_path.exists() and file_path.stat().st_size > 5 * 1024 * 1024:
             raise ValidationDomainError("Document is too large (maximum 5 MB).")
         return file_path
-
-    def _run_mutation_pipeline(
-        self,
-        operation: str,
-        request: Any,
-        *,
-        steps: list[tuple[str, Callable[[dict[str, Any]], Any], Callable[[dict[str, Any], Any], None] | None]],
-        build_response: Callable[[dict[str, Any]], dict[str, Any]],
-        lock_projection: bool = False,
-    ) -> dict[str, Any]:
-        context_meta = get_operation_context()
-        context: dict[str, Any] = {"request": request}
-        recovery_log: dict[str, Any] = {
-            "operation": operation,
-            "operationId": context_meta.operation_id,
-            "vaultId": context_meta.vault_id,
-            "status": "running",
-            "steps": [],
-        }
-
-        completed_steps: list[tuple[str, Callable[[dict[str, Any], Any], None] | None, Any]] = []
-
-        try:
-            def run_steps() -> None:
-                for step_name, execute_step, rollback_step in steps:
-                    step_entry: dict[str, Any] = {"name": step_name, "status": "running"}
-                    recovery_log["steps"].append(step_entry)
-                    try:
-                        step_result = execute_step(context)
-                        context[step_name] = step_result
-                        step_entry["status"] = "completed"
-                        completed_steps.append((step_name, rollback_step, step_result))
-                    except DomainError as exc:
-                        step_entry["status"] = "failed"
-                        step_entry["error"] = exc.public_message
-                        step_entry["errorCode"] = exc.error_code
-                        recovery_log["status"] = "failed"
-                        recovery_log["errorCode"] = exc.error_code
-                        raise
-                    except Exception as exc:
-                        step_entry["status"] = "failed"
-                        mapped_error = InfrastructureDomainError(
-                            "Operation failed unexpectedly.",
-                            operation=operation,
-                            vault_id=context_meta.vault_id,
-                            internal_message=str(exc),
-                        )
-                        step_entry["error"] = mapped_error.public_message
-                        step_entry["errorCode"] = mapped_error.error_code
-                        recovery_log["status"] = "failed"
-                        logger.exception("Operation step failed: %s", step_name)
-                        rollback_errors: list[str] = []
-                        for completed_name, rollback, step_output in reversed(completed_steps):
-                            if rollback is None:
-                                continue
-                            try:
-                                rollback(context, step_output)
-                                context[f"{completed_name}:rollback"] = "done"
-                            except Exception as rollback_exc:  # pragma: no cover - best-effort recovery
-                                rollback_errors.append(f"{completed_name}: {rollback_exc}")
-                        if rollback_errors:
-                            recovery_log["rollbackErrors"] = rollback_errors
-                            recovery_log["rollbackStatus"] = "failed"
-                        else:
-                            recovery_log["rollbackStatus"] = "attempted"
-                        raise mapped_error
-
-            if lock_projection:
-                with self.state.projection_lock:
-                    run_steps()
-                    recovery_log["status"] = "completed"
-                    response = build_response(context)
-            else:
-                run_steps()
-                recovery_log["status"] = "completed"
-                response = build_response(context)
-            response["operationLog"] = recovery_log
-            return response
-        except DomainError:
-            context["recovery"] = recovery_log
-            raise
 
     def health(self) -> dict[str, Any]:
         return {"ok": True, "vaultLoaded": self.state.vault is not None, "capabilities": self._capabilities}
@@ -1630,40 +1548,15 @@ class BackendApiService:
     @coordinated(mutation=True)
     def delete_note(self, req: NoteFileDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        note_path = self._resolve_note_request_path(vault=vault, raw_path=req.path)
-        pre_state = {
-            "path": str(note_path),
-            "content": note_path.read_text(encoding="utf-8"),
-        }
-
-        def _execute_delete(context: dict[str, Any]) -> str:
+        self._resolve_note_request_path(vault=vault, raw_path=req.path)
+        with self.state.projection_lock:
             vault.delete_note_file(req.path, indexer)
-            return pre_state["path"]
-
-        def _rollback_delete(context: dict[str, Any], step_output: str) -> None:
-            note_path = Path(step_output)
-            note_path.parent.mkdir(parents=True, exist_ok=True)
-            note_path.write_text(pre_state["content"], encoding="utf-8")
-            indexer.reindex_markdown_file(vault.vault_path, note_path)
-
-        def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return self.rebuild_graph_projection(vault)
-
-        return self._run_mutation_pipeline(
-            "delete-note",
-            req,
-            steps=[
-                ("delete-note-file", _execute_delete, _rollback_delete),
-                ("update-graph", _update_graph, None),
-            ],
-            build_response=lambda context: {
+            return {
                 "deleted": True,
+                "graphStatus": self.rebuild_graph_projection(vault),
                 "counts": self.counts(indexer),
-                "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
-            },
-            lock_projection=True,
-        )
+            }
 
     @coordinated(mutation=True)
     def move_note(self, req: NoteFileMoveRequest) -> dict[str, Any]:

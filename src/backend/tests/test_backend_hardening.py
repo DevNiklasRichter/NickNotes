@@ -121,6 +121,24 @@ class JournaledWriteTests(unittest.TestCase):
 
         self.assertEqual(Path(saved['path']).read_text(encoding='utf-8'), saved['content'])
 
+    def test_failure_after_a_save_restores_the_note_and_marks_projections(self):
+        created = self.service.add_note(NoteCreateRequest(groupKey='', title='Bericht'))
+        current = self.service.read_note_content(created['notePath'])
+        request = NoteSaveRequest(path=current['path'], content=current['content'] + '\nNeuer Absatz\n', expectedRevision=current['revision'])
+
+        with mock.patch.object(self.service, 'update_graph_after_note_save', side_effect=RuntimeError('projection failed')):
+            with self.assertRaises(RuntimeError):
+                self.service.save_note_content(request)
+
+        vault = self.service.state.vault
+        self.assertEqual(Path(current['path']).read_text(encoding='utf-8'), current['content'])
+        self.assertTrue((vault.system_path / 'projection-dirty.json').exists())
+        # The next operation repairs the projections and the same draft can be saved again.
+        saved = self.service.save_note_content(request)
+        self.assertIn('Neuer Absatz', saved['content'])
+        self.assertFalse((vault.system_path / 'projection-dirty.json').exists())
+        self.assertEqual([row['path'] for row in self.service.search_notes('Absatz')['items']], [saved['path']])
+
     def test_completing_a_task_is_backed_up_and_reported(self):
         created = self.service.add_note(NoteCreateRequest(groupKey='', title='Aufgabe', noteType='task'))
         task = next(row for row in self.service.list_tasks(include_done=True)['items'] if Path(row['path']).resolve() == Path(created['notePath']).resolve())
