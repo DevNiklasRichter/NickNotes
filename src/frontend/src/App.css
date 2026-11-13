@@ -5071,14 +5071,6 @@ button:disabled {
   color: color-mix(in srgb, var(--muted) 82%, transparent);
 }
 
-.note-properties-heading {
-  margin: 0.02rem 0 0.02rem;
-  font-size: var(--font-section);
-  font-weight: 680;
-  letter-spacing: -0.01em;
-  color: color-mix(in srgb, var(--text) 88%, var(--muted));
-}
-
 .split-note-properties-panel .note-title-row {
   padding-left: 0.36rem;
   margin-bottom: 0.72rem;

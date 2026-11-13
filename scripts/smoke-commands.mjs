@@ -204,6 +204,8 @@ async function verifyNativeClose(){
   await expect(editor).toContainText('Unsaved native close')
   assert.ok(!fs.readFileSync(saved.path,'utf8').includes('Unsaved native close'))
   assert.ok(fs.readFileSync(path.join(scratch,'profile/capture-draft.md'),'utf8').includes('Buffered capture at native close'))
+  await page.keyboard.press('F9');await expect(page.locator('.workbench-shell')).toHaveClass(/is-writing/)
+  await expect(page.locator('.capture-workspace-panel')).toBeHidden()
   // Hold the save response: the native window must stay open without accepting
   // more user input until the acknowledged Markdown save has completed.
   let savedBeforeClose,releaseSave,routeError
@@ -383,7 +385,7 @@ try{
   await verifyNativeClose()
   assert.deepEqual(errors,[])
   const report={developmentOrigin:new URL(page.url()).origin,idleRequests,restartIdleRequests,automaticReopen:true,newNote:true,newTask:true,immediateSave:true,queuedSaveExecuted:true,saveAll:true,quickOpen:true,menuUndoRedo:true,split:true,capture:true,typingDuringSavePreserved:true,dirtyCloseCanceled:true,deleteCanceled:true,deleteReopenedWithThrottledTimers:true,deleteConfirmed:true,closeOthers:true,closeAll:true,keyboardMenu:true,help:true,delayedEditorEchoesPreserved:true,externalEditorReplacement:true,nativeCloseBufferedDraftProtected:true,nativeCloseSaveBeforeExit:true,pageErrors:errors}
-  report.paletteNativeInputFocus=true;report.saveTrace=saveTrace
+  report.paletteNativeInputFocus=true;report.nativeCloseInWritingMode=true;report.saveTrace=saveTrace
   fs.writeFileSync(path.join(root,'.tmp/commands-smoke-result.json'),JSON.stringify(report,null,2))
   console.log(JSON.stringify(report,null,2))
 }catch(error){

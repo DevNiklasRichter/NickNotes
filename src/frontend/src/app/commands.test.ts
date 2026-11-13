@@ -13,6 +13,7 @@ test('shortcuts use exact modifiers so save-all never becomes save and typing st
 test('common aliases, platform modifier and non-US physical split key work',()=>{
   expect(commandForKey(key('F4',{ctrlKey:true}))?.id).toBe('closeTab')
   expect(commandForKey(key('F8'))?.id).toBe('split')
+  expect(commandForKey(key('F9'))?.id).toBe('writingMode')
   expect(commandForKey(key('z',{metaKey:true,shiftKey:true}))?.id).toBe('redo')
   expect(commandForKey(key(' ',{ctrlKey:true,shiftKey:true}))?.id).toBe('capture')
   expect(matchesShortcut(key('unknown',{ctrlKey:true,code:'Backslash'}),'Mod+\\')).toBe(true)

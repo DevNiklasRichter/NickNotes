@@ -3,6 +3,7 @@ import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import {MultiSelectPicker} from '../ui/MultiSelectPicker'
 import type { CSSProperties, KeyboardEvent, RefObject } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
+import './NotePropertiesPanel.css'
 
 type NotePropertiesPanelProps = {
   draftCommitters: RefObject<Map<string, () => boolean>>
@@ -85,6 +86,7 @@ export function NotePropertiesPanel({
   const [blockedReasonDraft, setBlockedReasonDraft] = useSyncedDraft(document.frontmatter.id || tabPath, document.frontmatter.blocked_reason)
   const [nextActionHintDraft, setNextActionHintDraft] = useSyncedDraft(document.frontmatter.id || tabPath, document.frontmatter.next_action_hint)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const detailsRef = useRef<HTMLDetailsElement | null>(null)
 
   useEffect(() => {
     const titleInput = titleInputRef.current
@@ -129,16 +131,20 @@ export function NotePropertiesPanel({
     const commits = draftCommitters.current
     commits.set(panelId, () => {
       let valid = true
+      const finish = () => {
+        if (!valid && detailsRef.current) detailsRef.current.open = true
+        return valid
+      }
       if (titleDraft !== document.frontmatter.title) onTitleChange(titleDraft)
       if (document.frontmatter.type !== 'task') return true
       if (taskTimeManagementEnabled && (taskFieldErrors?.estimate_minutes || estimateDraft !== (document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : ''))) valid = onEstimateMinutesChange(estimateDraft) && valid
-      if (!taskAdvancedHandlingEnabled) return valid
+      if (!taskAdvancedHandlingEnabled) return finish()
       if (blockedByIdsDraft !== document.frontmatter.blocked_by_ids.join(', ')) onBlockedByIdsChange(blockedByIdsDraft)
       if (waitingForDraft !== document.frontmatter.waiting_for) onWaitingForChange(waitingForDraft)
       if (taskFieldErrors?.follow_up_date || followUpDateDraft !== document.frontmatter.follow_up_date) valid = onFollowUpDateChange(followUpDateDraft) && valid
       if (blockedReasonDraft !== document.frontmatter.blocked_reason) onBlockedReasonChange(blockedReasonDraft)
       if (nextActionHintDraft !== document.frontmatter.next_action_hint) onNextActionHintChange(nextActionHintDraft)
-      return valid
+      return finish()
     })
     return () => {commits.delete(panelId)}
   })
@@ -186,7 +192,11 @@ export function NotePropertiesPanel({
           placeholder="Untitled"
         />
       </div>
-      <h2 className="note-properties-heading">Eigenschaften</h2>
+      <details ref={detailsRef} className="note-properties-details">
+      <summary><span>Eigenschaften</span><span className="note-properties-summary">
+        {document.frontmatter.type==='task'?`Task · ${taskStatusOptions.find(option=>option.value===document.frontmatter.status)?.label||document.frontmatter.status}`:'Notiz'}
+        {manualTags.length+autoTags.length?` · ${manualTags.length+autoTags.length} Tags`:''}
+      </span>{taskFieldErrors?.estimate_minutes||taskFieldErrors?.follow_up_date?<span className="note-properties-summary-error">Eingabe prüfen</span>:null}</summary>
 
       <div className={`note-properties-grid ${compact ? 'compact' : ''}`}>
         <span className="property-key">Typ</span>
@@ -557,6 +567,7 @@ export function NotePropertiesPanel({
         <span className="property-key">Aktualisiert</span>
         <span className="property-value-static">{formatTimestamp(document.frontmatter.updated_at)}</span>
       </div>
+      </details>
     </section>
   )
 }

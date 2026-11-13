@@ -30,9 +30,10 @@ const filters = process.argv.includes('--filters')
 const properties = process.argv.includes('--properties')
 const tooltips = process.argv.includes('--tooltips')
 const searchCommands = process.argv.includes('--search-commands')
+const writing = process.argv.includes('--writing-mode')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -103,7 +104,7 @@ async function capture(name, description) {
   const metrics = await page.evaluate(() => {
     const rect = selector => {
       const node = document.querySelector(selector)
-      if (!node) return null
+      if (!node || !node.getClientRects().length) return null
       const {x, y, width, height} = node.getBoundingClientRect()
       const style = getComputedStyle(node)
       return {x, y, width, height, fontSize: style.fontSize, fontFamily: style.fontFamily}
@@ -114,7 +115,7 @@ async function capture(name, description) {
       documentOverflowX: document.documentElement.scrollWidth > innerWidth,
       focus: {tag: document.activeElement?.tagName, label: document.activeElement?.getAttribute('aria-label'), className: document.activeElement?.className},
       navigation: rect('.activity-rail'), sidebar: rect('.left-sidebar'), main: rect('.main-region'),
-      railButtons: [...document.querySelectorAll('.activity-rail button')].map(node => {
+      railButtons: [...document.querySelectorAll('.activity-rail button')].filter(node=>node.getClientRects().length).map(node => {
         const {x,y,width,height} = node.getBoundingClientRect()
         return {x,y,width,height}
       }),
@@ -170,6 +171,11 @@ async function openNote(title) {
   await page.keyboard.press('Enter')
   await expect(page.locator('.note-title-input').first()).toHaveValue(title)
   await expect(page.locator('.note-body-editor .cm-content').first()).toBeVisible()
+}
+
+async function expandProperties(panel=page.getByRole('region',{name:'Notizeigenschaften',exact:true}).first()) {
+  const details=panel.locator('.note-properties-details')
+  if(!await details.evaluate(node=>node.open))await details.locator('summary').click()
 }
 
 async function theme(mode) {
@@ -356,7 +362,7 @@ async function verifyTags() {
   fs.writeFileSync(definitionsPath,JSON.stringify(definitions,null,2))
   await request('/notebase/reindex',{})
   await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
-  await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+  await page.locator('.activity-rail').getByRole('button',{name:'Tags',exact:true}).click()
   const shell = page.locator('.tag-explorer-shell')
   const group = shell.locator('[data-tag-group="ux-projekt"]:not([data-tag-id])')
   const tag = shell.locator('[data-tag-key="ux-projekt:layout"]')
@@ -472,7 +478,7 @@ async function verifyGraph() {
   // Establish the externally seeded graph before UI filtering; a late fixture
   // refresh otherwise reapplies its saved filters during the pointer measurement.
   await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
-  await page.locator('.activity-rail').getByRole('button',{name:'Graph',exact:true}).click()
+  await page.locator('.activity-rail').getByRole('button',{name:'Wissensgraph',exact:true}).click()
   await expect.poll(async()=>Number.parseInt(await page.locator('.graph-sidebar-metrics span').first().innerText())).toBeGreaterThan(0)
   await page.getByRole('button',{name:'Graph oeffnen',exact:true}).click()
   await page.locator('.graph-sidebar-search-input').fill('UX-Graph')
@@ -790,7 +796,7 @@ async function verifySidebarMenus() {
   await expect(sortMenu).toHaveCount(0); await expect(search).toBeFocused()
   report.checks.sidebarSortRadioKeyboardToggleAndOrder=true
 
-  await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+  await page.locator('.activity-rail').getByRole('button',{name:'Tags',exact:true}).click()
   const tagSort=page.getByRole('button',{name:'Tags sortieren',exact:true})
   const tagMenu=page.getByRole('menu',{name:'Tags sortieren',exact:true})
   await tagSort.focus(); await page.keyboard.press('ArrowUp')
@@ -1210,7 +1216,7 @@ async function verifyTagMatching() {
     const b=await createNote('Tag-Prüfung B','Eine weitere Orionprobe steht in dieser Notiz.\n')
     await page.reload();await expect(page.locator('.activity-rail')).toBeVisible()
     await theme('dark');await openNote('Tag-Prüfung A')
-    await page.locator('.activity-rail').getByRole('button',{name:'Tagging',exact:true}).click()
+    await page.locator('.activity-rail').getByRole('button',{name:'Tags',exact:true}).click()
     const trigger=page.getByRole('button',{name:'NoteBase nach Tag-Fundstellen durchsuchen',exact:true})
     const dialog=page.getByRole('dialog',{name:'Tag-Fundstellen prüfen',exact:true})
     const close=()=>dialog.getByRole('button',{name:'Tag-Prüfung schließen',exact:true})
@@ -1637,7 +1643,7 @@ async function verifyFilters() {
   await page.keyboard.press('Escape')
   report.checks.filtersGroupChangePrunesUnavailableTags=true
 
-  await taskTrigger.click();await page.locator('.activity-rail').getByRole('button',{name:'Todos',exact:true}).click()
+  await taskTrigger.click();await page.locator('.activity-rail').getByRole('button',{name:'To-dos',exact:true}).click()
   await expect(opened).toHaveCount(0)
   const todoShell=page.locator('.todo-explorer-shell')
   await todoShell.locator('.todo-open-dashboard-button').click()
@@ -1696,6 +1702,7 @@ async function verifyProperties() {
   await request('/notes/save',{path:task,content:source.content.replace(/^type:.*$/m,'type: task'),expectedRevision:source.revision})
   await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Eigenschaftstask')
   const panel=page.getByRole('region',{name:'Notizeigenschaften',exact:true}).first()
+  await expandProperties(panel)
   const initial=fs.readFileSync(task,'utf8')
   const saved=()=>parseYaml(fs.readFileSync(task,'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/)[1])
   const writes=()=>report.requests.filter(req=>req.method==='POST'&&req.endpoint==='/notes/save').length
@@ -1762,11 +1769,15 @@ async function verifyProperties() {
   await estimate.fill('45');const iconSave=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
   const saveButton=page.locator('.workspace-toolbar').getByRole('button',{name:'Speichern',exact:true});await expect(saveButton).toBeEnabled();await saveButton.click();assert.equal((await iconSave).status(),200);assert.equal(saved().estimate_minutes,45)
   report.checks.propertiesToolbarSaveIncludesFocusedInput=true
-  await estimate.fill('0');const beforeInvalid=writes();await page.keyboard.press('Control+s')
+  await estimate.fill('0');await panel.locator('.note-properties-details > summary').click()
+  const beforeInvalid=writes();await page.keyboard.press('Control+s')
+  await expect(panel.locator('.note-properties-details')).toHaveAttribute('open','')
+  await page.keyboard.press('F9');await expect(page.locator('.workbench-shell')).not.toHaveClass(/is-writing/)
+  report.checks.propertiesInvalidDraftOpensDisclosureAndBlocksWriting=true
   await expect(estimate).toHaveAttribute('aria-invalid','true');await expect(panel.getByRole('alert')).toContainText('positive Zahl')
   await capture('properties-field-error-dark','Invalid active estimate blocks save, retains input and describes the error at its field')
   assert.equal(writes(),beforeInvalid);assert.equal(saved().estimate_minutes,45)
-  await page.keyboard.press('Escape');await expect(estimate).toHaveValue('45');await expect(estimate).toHaveAttribute('aria-invalid','false')
+  await estimate.focus();await page.keyboard.press('Escape');await expect(estimate).toHaveValue('45');await expect(estimate).toHaveAttribute('aria-invalid','false')
   await waiting.fill('Abzubrechender Feldentwurf');await page.keyboard.press('Escape');await expect(waiting).toHaveValue('Rückmeldung mit Leerzeichen')
   report.checks.propertiesFocusedFieldsSaveAndEscapeValidation=true
 
@@ -1810,6 +1821,116 @@ async function verifyProperties() {
   await theme('light');await linksButton.click();await expect(linksPopup.getByRole('searchbox')).toBeFocused()
   await capture('properties-light','Shared property picker and task fields in the light theme');await page.keyboard.press('Escape');await theme('dark')
   await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
+}
+
+async function verifyWritingMode() {
+  await windowSize(1280,800);await theme('dark');await openNote('Arbeitsnotiz')
+  const rail=page.locator('.activity-rail'),shell=page.locator('.workbench-shell')
+  await expect(rail.getByRole('group',{name:'Aufgaben',exact:true}).getByRole('button')).toHaveCount(3)
+  await expect(rail.getByText('In Notizen',{exact:true})).toBeVisible();await expect(rail.getByText('Eigene Dateien',{exact:true})).toBeVisible()
+  for(const [name,selector]of[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Wissensgraph','.graph-editor-canvas-shell'],['Review','.review-canvas']]){
+    await rail.getByRole('button',{name,exact:true}).click();await expect(page.locator(selector)).toBeVisible()
+  }
+  await rail.getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
+  const panel=page.getByRole('region',{name:'Notizeigenschaften',exact:true}).first(),details=panel.locator('.note-properties-details'),summary=details.locator('summary')
+  const editor=page.locator('.note-body-editor .cm-content').first(),captureEditor=page.locator('.capture-markdown-editor .cm-content')
+  if(await details.evaluate(node=>node.open))await summary.click()
+  await expect(panel.getByRole('textbox',{name:'Notiztitel',exact:true})).toBeVisible();await expect(panel.getByRole('button',{name:'Tags bearbeiten',exact:true})).toBeHidden()
+  const compactTop=(await editor.boundingBox()).y
+  await capture('navigation-compact-dark','Grouped navigation names the current NoteBase and distinguishes task files from checkboxes; properties start folded')
+  await summary.focus();await page.keyboard.press('Enter');await expect(details).toHaveAttribute('open','')
+  assert.ok((await editor.boundingBox()).y>compactTop+40,'Folded properties must leave more room above the body')
+  await capture('navigation-properties-dark','Native properties disclosure opens with Enter and keeps all existing fields and pickers')
+  report.checks.writingNavigationAndCompactProperties=true
+
+  const noteBefore=fs.readFileSync(notePath,'utf8'),bodyMarker='Schreibmodus bewahrt den Notizentwurf.',captureMarker='Schreibmodus bewahrt den Captureentwurf.'
+  await editor.click();await page.keyboard.press('Control+End');await page.keyboard.type('\n'+bodyMarker)
+  await captureEditor.click();await page.keyboard.press('Control+End');await page.keyboard.type(captureMarker)
+  const preferences=(await request('/ui-settings')).app
+  const sidebarWidth=(await page.locator('.left-sidebar').boundingBox()).width
+  await page.keyboard.press('F9');await expect(shell).toHaveClass(/is-writing/)
+  await expect(rail).toBeHidden();await expect(page.locator('.left-sidebar')).toBeHidden();await expect(page.locator('.capture-workspace-panel')).toBeHidden()
+  await expect(page.locator('.capture-workspace-panel')).toHaveCount(1);await expect(details).toHaveCount(1);await expect(details).toHaveAttribute('open','')
+  await expect(editor).toContainText(bodyMarker);await expect(editor).toBeFocused()
+  await expect(page.getByRole('button',{name:'Schreibmodus beenden',exact:true})).toBeInViewport()
+  const main=await page.locator('.main-region').boundingBox(),width=await page.evaluate(()=>innerWidth)
+  assert.ok(main.x<1&&Math.abs(main.width-width)<2);assert.equal(fs.readFileSync(notePath,'utf8'),noteBefore)
+  await capture('writing-single-dark','Explicit writing mode gives the note the workspace while retaining hidden panels and their unsaved drafts')
+  await page.keyboard.press('Escape');await expect(shell).toHaveClass(/is-writing/)
+  const saved=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s');const savedResponse=await saved;assert.equal(savedResponse.status(),200);await savedResponse.finished()
+  assert.ok(fs.readFileSync(notePath,'utf8').includes(bodyMarker));assert.ok(!fs.readFileSync(notePath,'utf8').includes(captureMarker))
+  await page.getByRole('button',{name:'Schreibmodus beenden',exact:true}).click();await expect(shell).not.toHaveClass(/is-writing/)
+  await expect(captureEditor).toContainText(captureMarker);await expect(details).toHaveAttribute('open','')
+  assert.equal((await page.locator('.left-sidebar').boundingBox()).width,sidebarWidth)
+  assert.deepEqual((await request('/ui-settings')).app,preferences)
+  await capture('writing-return-dark','Exit restores sidebar width, capture text, expanded properties and the original layout preferences')
+  report.checks.writingRetainsMountedDraftsSaveAndPreferences=true
+
+  await page.keyboard.press('Control+Shift+e');await page.keyboard.press('Control+Shift+Space')
+  await expect(page.locator('.left-sidebar')).toHaveCount(0);await expect(page.locator('.capture-workspace-panel')).toHaveCount(0)
+  await page.keyboard.press('F9');await expect(shell).toHaveClass(/is-writing/);await page.keyboard.press('F9')
+  await expect(page.locator('.left-sidebar')).toHaveCount(0);await expect(page.locator('.capture-workspace-panel')).toHaveCount(0)
+  await page.keyboard.press('Control+Shift+e');await page.keyboard.press('Control+Shift+Space');await expect(captureEditor).toContainText(captureMarker)
+  report.checks.writingRestoresOriginallyHiddenPanels=true
+
+  // Use an unopened document: existing search targets activate their existing group.
+  await createNote('Schreibziel rechts','Synthetisches Ziel für die zweite Editorgruppe.\n')
+  await page.keyboard.press('F8');await page.keyboard.press('Control+2')
+  await expect.poll(()=>page.evaluate(()=>document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id'))).toBe('right')
+  await page.keyboard.press('Control+o')
+  await page.getByRole('combobox',{name:'Notiz suchen',exact:true}).fill('Schreibziel rechts')
+  const taskOption=page.getByRole('option').filter({has:page.getByText('Schreibziel rechts',{exact:true})});await expect(taskOption).toHaveCount(1);await taskOption.click()
+  const right=page.locator('[data-pane-id="right"] .note-body-editor .cm-content')
+  await expect(page.locator('[data-pane-id="right"] .note-title-input')).toHaveValue('Schreibziel rechts')
+  await right.click();await page.keyboard.press('Control+End');await page.keyboard.type('\nRechter Entwurf im Schreibmodus.')
+  await page.keyboard.press('F9');await expect(shell).toHaveClass(/is-writing/);await expect(page.locator('.editor-workspace-split')).toBeVisible()
+  await capture('writing-split-dark','Both existing editor groups and their documents remain available in writing mode')
+  await page.keyboard.press('Control+w');const confirm=page.getByRole('dialog',{name:/^Ungespeicherte Aenderungen in/})
+  await expect(confirm).toBeVisible();await confirm.getByRole('button',{name:'Abbrechen',exact:true}).click()
+  await expect(shell).toHaveClass(/is-writing/);await expect(right).toContainText('Rechter Entwurf im Schreibmodus.')
+  const saveRight=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  await page.keyboard.press('Control+s');const rightResponse=await saveRight;assert.equal(rightResponse.status(),200);await rightResponse.finished()
+  await page.keyboard.press('F9');await expect(shell).not.toHaveClass(/is-writing/);await expect(right).toBeFocused()
+  await page.keyboard.press('F8');await openNote('Arbeitsnotiz')
+  await page.keyboard.press('F9');await page.keyboard.press('Alt+3');await expect(shell).not.toHaveClass(/is-writing/);await expect(page.locator('.task-canvas')).toBeVisible()
+  await page.keyboard.press('F9');await page.keyboard.press('Alt+q');await expect(shell).not.toHaveClass(/is-writing/);await expect(captureEditor).toBeFocused();await expect(captureEditor).toContainText(captureMarker)
+  await rail.getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
+  report.checks.writingSplitCloseGuardAndExplicitNavigation=true
+
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  try {
+    for(const [label,w,h,z]of[['zoom-dark',1280,800,1.5],['small-dark',640,420,1],['light',1280,800,1]]){
+      await windowSize(w,h,z);if(label==='light')await theme('light')
+      await page.keyboard.press('F9');await expect(shell).toHaveClass(/is-writing/)
+      await expect(page.getByRole('button',{name:'Schreibmodus beenden',exact:true})).toBeInViewport();await expect(editor).toContainText(bodyMarker)
+      await capture('writing-'+label,'Writing mode and its explicit exit stay inside the '+label+' viewport')
+      await page.getByRole('button',{name:'Schreibmodus beenden',exact:true}).click();await expect(shell).not.toHaveClass(/is-writing/);await expect(rail).toBeVisible()
+    }
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  await page.keyboard.press('F9');await page.reload();await expect(rail).toBeVisible();await expect(shell).not.toHaveClass(/is-writing/);await expect(captureEditor).toContainText(captureMarker)
+  await openNote('Arbeitsnotiz');await expect(editor).toContainText(bodyMarker)
+  await capture('writing-restart-light','Reload returns to normal navigation and restores the profile capture draft; writing mode is intentionally temporary')
+  report.checks.writingResponsiveAndReload=true
+
+  await page.keyboard.press('F9');await page.keyboard.press('Control+Shift+w');await expect(page.getByText('Keine Notiz geoeffnet',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'Schreibmodus beenden',exact:true}).click();await expect(shell).not.toHaveClass(/is-writing/)
+  await openNote('Arbeitsnotiz');await expect(editor).toContainText(bodyMarker);report.checks.writingEmptyWorkspaceHasVisibleExit=true
+
+  await page.keyboard.press('F9');await page.keyboard.press('Control+p');const query=page.getByRole('combobox',{name:'Befehl suchen',exact:true})
+  await query.fill('>NoteBase erstellen');await page.keyboard.press('Enter')
+  const create=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
+  await create.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Schreibwechsel');await create.getByLabel('Speicherort',{exact:true}).fill(scratch)
+  await create.getByRole('button',{name:'NoteBase erstellen',exact:true}).click();await expect(create).toHaveCount(0)
+  await expect(shell).not.toHaveClass(/is-writing/);await expect(rail).toBeVisible();await expect(captureEditor).toContainText(captureMarker)
+  await rail.getByRole('button',{name:'NoteBase',exact:true}).click();await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Schreibwechsel')
+  await capture('writing-session-switch-light','A real NoteBase switch leaves writing mode and retains the unsent capture draft without submitting it')
+  const recent=page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true});await recent.click()
+  await page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
+  await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase');await expect(shell).not.toHaveClass(/is-writing/)
+  await rail.getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz');await expect(editor).toContainText(bodyMarker);await expect(captureEditor).toContainText(captureMarker)
+  await theme('dark')
+  report.checks.writingSessionSwitchAndCapturePreserved=true
 }
 
 function searchCommand(label) {
@@ -2002,7 +2123,7 @@ async function verifyTooltips() {
   await page.keyboard.press('Escape');await expect(fileMenu).toHaveCount(0);await noTip()
   report.checks.tooltipClickAndMenuBoundary=true
 
-  await page.getByRole('button',{name:'Tags bearbeiten',exact:true}).first().click()
+  await expandProperties();await page.getByRole('button',{name:'Tags bearbeiten',exact:true}).first().click()
   const popup=page.getByRole('dialog',{name:'Tags bearbeiten',exact:true})
   await expect(popup).toBeVisible();await notes.hover();await page.waitForTimeout(600);await noTip()
   await popup.getByRole('searchbox').click();await page.keyboard.press('Escape');await expect(popup).not.toBeVisible()
@@ -2161,6 +2282,7 @@ try {
     if (properties) await verifyProperties()
     if (tooltips) await verifyTooltips()
     if (searchCommands) await verifySearchCommands()
+    if (writing) await verifyWritingMode()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
@@ -2174,6 +2296,7 @@ try {
 
     await page.keyboard.press('Control+Shift+n')
     await expect(page.locator('.note-title-input').first()).toHaveValue('Neuer Task')
+    await expandProperties()
     await page.locator('.property-picker-select-status').selectOption('in_progress')
     const save = page.waitForResponse(res => res.url().endsWith('/notes/save') && res.request().method() === 'POST')
     await page.keyboard.press('Control+s')

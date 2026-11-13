@@ -151,6 +151,8 @@ function App() {
     const [editorPanelOpen, setEditorPanelOpen] = useState(true);
     const [capturePanelOpen, setCapturePanelOpen] = useState(true);
     const [capturePinned, setCapturePinned] = useState(true);
+    const [writingSession, setWritingSession] = useState<number|null>(null);
+    const writingMode = writingSession===connectionEpoch() && editorPanelOpen;
     const [captureInlineHeight, setCaptureInlineHeight] = useState(CAPTURE_INLINE_HEIGHT_DEFAULT);
     const [captureResizing, setCaptureResizing] = useState(false);
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -2465,6 +2467,7 @@ function App() {
     };
     const toggleEditorPanel = () => {
         if (!flushNoteInputs()) return;
+        setWritingSession(null);
         setEditorPanelOpen((previous) => !previous);
     };
     const closeCapturePanel = () => {
@@ -2508,6 +2511,7 @@ function App() {
         });
     };
     const openSidebarView = (view: SidebarView) => {
+        setWritingSession(null);
         if (sidebarView === view) {
             setSidebarOpen((prev) => !prev);
             return;
@@ -2588,11 +2592,6 @@ function App() {
                 if (isReadOnlyNote) {
                     return;
                 }
-                dispatchWorkspace({
-                    type: 'SET_LAST_FOCUSED_PANE',
-                    paneId,
-                    tabId: paneTab.id,
-                });
                 updateNoteContentByPath(paneTab.path, nextContent);
             }} onInsertImageAsset={(file) => {
                 if (isReadOnlyNote) {
@@ -2730,8 +2729,14 @@ function App() {
         if(next)dispatchWorkspace({type:'ACTIVATE_TAB',paneId:pane,tabId:next});
         focusEditorSoon(pane);
     };
-    const showSidebar = (view:SidebarView) => {setSidebarView(view);setSidebarOpen(true)};
-    const focusCapture = () => {setCapturePinned(true);setCapturePanelOpen(true);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>captureEditorRef.current?.focus()))};
+    const showSidebar = (view:SidebarView) => {setWritingSession(null);setSidebarView(view);setSidebarOpen(true)};
+    const focusCapture = () => {setWritingSession(null);setCapturePinned(true);setCapturePanelOpen(true);window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>captureEditorRef.current?.focus()))};
+    const toggleWritingMode = () => {
+        if(!flushNoteInputs())return;
+        flushSync(()=>captureEditorRef.current?.flushChanges());
+        setWritingSession(writingMode?null:connectionEpoch());
+        focusEditorSoon();
+    };
     const openSearch = (initialQuery='') => setQuickOpen({initialQuery,vaultPath,epoch:connectionEpoch(),trigger:document.activeElement instanceof HTMLElement?document.activeElement:null});
     const commandHandlers:Record<CommandId,()=>unknown> = {
         newNote:()=>createDocument('note'),newTask:()=>createDocument('task'),
@@ -2744,8 +2749,8 @@ function App() {
         search:()=>{showSidebar('notes');window.requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('.explorer-toolbar-search input')?.focus())},
         closeOthers:()=>activeTab?closeOtherEditorTabs(activeTab.id):undefined,closeAll:closeAllEditorTabs,
         split:()=>{setEditorPanelOpen(true);toggleSplitView()},leftPane:()=>focusPane('left'),rightPane:()=>focusPane('right'),switchPane:()=>focusPane(activePaneId==='left'?'right':'left'),
-        nextTab:()=>selectAdjacentTab(1),previousTab:()=>selectAdjacentTab(-1),sidebar:()=>setSidebarOpen(value=>!value),editor:toggleEditorPanel,
-        capture:()=>{setCapturePinned(true);setCapturePanelOpen(value=>!value)},focusCapture,
+        nextTab:()=>selectAdjacentTab(1),previousTab:()=>selectAdjacentTab(-1),sidebar:()=>{setWritingSession(null);setSidebarOpen(value=>writingMode||!value)},editor:toggleEditorPanel,writingMode:toggleWritingMode,
+        capture:()=>{setWritingSession(null);setCapturePinned(true);setCapturePanelOpen(value=>writingMode||!value)},focusCapture,
         notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
         focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
         fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),
@@ -2757,6 +2762,7 @@ function App() {
         if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
         if(spec.id==='closeAll')enabled=openTabs.length>0;
         if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
+        if(spec.id==='writingMode')enabled=vaultLoaded&&editorPanelOpen;
         if(spec.id==='save')enabled=settingsDialogOpen||Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
         if(spec.id==='saveAll')enabled=settingsDirty||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
         if(spec.id==='deleteNote')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
@@ -2766,13 +2772,14 @@ function App() {
             if(noteBaseOpenStatus?.active)disabledReason='Die NoteBase wird gerade geladen.';
             else if(!vaultLoaded)disabledReason='Zuerst eine NoteBase öffnen.';
             else if(spec.id==='switchPane')disabledReason='Zuerst den Editor teilen.';
+            else if(spec.id==='writingMode')disabledReason='Zuerst den Editor öffnen.';
             else if(['closeTab','closeOthers','closeAll','nextTab','previousTab'].includes(spec.id))disabledReason='Keine Ansicht geöffnet.';
             else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Quick Capture öffnen.';
             else if(activeTab?.loading)disabledReason='Die Notiz wird noch geladen.';
             else if(activeTab?.readOnly)disabledReason='Diese Notiz ist schreibgeschützt.';
             else disabledReason='Eine bearbeitbare Notiz öffnen.';
         }
-        const checked=spec.id==='split'?workspaceState.layoutMode==='split':spec.id==='capture'?capturePanelOpen:spec.id==='sidebar'?sidebarOpen:spec.id==='editor'?editorPanelOpen:undefined;
+        const checked=spec.id==='split'?workspaceState.layoutMode==='split':spec.id==='capture'?capturePanelOpen:spec.id==='sidebar'?sidebarOpen:spec.id==='editor'?editorPanelOpen:spec.id==='writingMode'?writingMode:undefined;
         return {...spec,enabled,disabledReason,checked,run:commandHandlers[spec.id]};
     });
     const executeCommand=useAppCommands(appCommands,setError,settingsDialogOpen);
@@ -2858,8 +2865,11 @@ function App() {
       {commandDialogs}
       <div className="window-content">
         <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
-        <div className="workbench-shell" style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
-      <ActivityRail sidebarView={sidebarView} onOpenSidebarView={openSidebarView} onOpenSettings={openSettingsDialog}/>
+        <div className={`workbench-shell${writingMode?' is-writing':''}`} style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
+      <ActivityRail sidebarView={sidebarView} noteBaseName={noteBaseName} onOpenSidebarView={view=>{
+          if(['todos','tasks','focus','review','graph'].includes(view))void executeCommand(view);
+          else openSidebarView(view);
+      }} onOpenSettings={openSettingsDialog}/>
 
       {sidebarOpen ? (<aside className="left-sidebar">
           <WorkbenchSidebarContent sidebarView={sidebarView} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
@@ -2924,7 +2934,7 @@ function App() {
       <section className="main-region">
         <div ref={workspaceGridRef} className={workspaceGridClassName} style={workspaceGridStyle}>
           <div className="workspace-main-row">
-            {editorPanelOpen ? (<EditorWorkspaceLayout workspace={workspaceState} paneTabs={paneTabs} paneActiveTabs={paneActiveTabs} activePaneId={activePaneId} disableSave={!activeTab || !appCommands.some(command => command.id === 'save' && command.enabled)} disableReveal={activeTab?.kind !== 'note'} onSaveActive={() => {
+            {editorPanelOpen ? (<EditorWorkspaceLayout writingMode={writingMode} onToggleWritingMode={()=>void executeCommand('writingMode')} workspace={workspaceState} paneTabs={paneTabs} paneActiveTabs={paneActiveTabs} activePaneId={activePaneId} disableSave={!activeTab || !appCommands.some(command => command.id === 'save' && command.enabled)} disableReveal={activeTab?.kind !== 'note'} onSaveActive={() => {
                 void executeCommand('save');
             }} onRevealActive={revealActiveNoteInExplorer} onToggleSplitMode={toggleSplitView} onCloseEditorPanel={toggleEditorPanel} onSetSplitRatio={(nextRatio) => {
                 dispatchWorkspace({

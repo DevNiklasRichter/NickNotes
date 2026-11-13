@@ -49,6 +49,10 @@
   gap: var(--space-1);
 }
 
+.rail-group {display: flex; flex-direction: column; gap: var(--space-1);}
+.rail-group + .rail-group {margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line);}
+.rail-group-label {margin: var(--space-1) var(--space-2); color: var(--muted); font-size: var(--font-caption); font-weight: 500;}
+
 .activity-rail button {
   flex: 0 0 auto;
   width: 100%;
@@ -93,10 +97,16 @@
 }
 
 .rail-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rail-label > * {max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.rail-label small {font-size: var(--font-caption); font-weight: 400; color: var(--muted);}
 
 .rail-spacer { flex: 1; }
 
@@ -168,6 +178,17 @@
 @media (max-width: 1050px) {
   .workbench-shell { --layout-rail-width: 3.5rem; }
   .rail-header,
+  .rail-group-label,
   .rail-label { display: none; }
   .activity-rail button { justify-content: center; padding: var(--space-1); }
 }
+
+/* Temporary writing view; retained panels keep their drafts and original preferences. */
+.workbench-shell.is-writing {grid-template-columns: minmax(0, 1fr);}
+.is-writing > .activity-rail, .is-writing > .left-sidebar,
+.is-writing .capture-workspace-panel, .is-writing .capture-resize-handle,
+.is-writing .bottom-dock, .is-writing .note-properties-details {display: none;}
+.is-writing > .main-region {grid-column: 1; grid-template-rows: minmax(0, 1fr);}
+.is-writing .workspace-grid.with-capture-column {grid-template-rows: minmax(0, 1fr);}
+.editor-tab-actions .workspace-writing-button {display: inline-flex; align-items: center; gap: var(--space-1); min-height: 26px; border: 1px solid var(--line); border-radius: var(--radius-md); background: transparent; color: var(--muted); padding: var(--space-1) var(--space-2); white-space: nowrap; font-size: var(--font-caption); line-height: 1.2;}
+.editor-tab-actions .workspace-writing-button.active {border-color: var(--accent); background: var(--accent-soft); color: var(--text);}

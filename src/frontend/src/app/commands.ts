@@ -32,6 +32,7 @@ export const COMMANDS = [
   {id:'previousTab', label:'Vorherige Ansicht', group:'Ansicht', shortcut:'Mod+Shift+Tab'},
   {id:'sidebar', label:'Seitenleiste ein-/ausblenden', group:'Ansicht', shortcut:'Mod+Shift+E'},
   {id:'editor', label:'Editor ein-/ausblenden', group:'Ansicht', shortcut:'Mod+Alt+E'},
+  {id:'writingMode', label:'Schreibmodus umschalten', group:'Ansicht', shortcut:'F9'},
   {id:'capture', label:'Quick Capture ein-/ausblenden', group:'Ansicht', shortcut:'Mod+Shift+Space'},
   {id:'focusCapture', label:'Quick Capture fokussieren', group:'Ansicht', shortcut:'Alt+Q'},
   {id:'notes', label:'Notizen', group:'Ansicht', shortcut:'Alt+1'},

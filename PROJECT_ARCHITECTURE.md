@@ -434,6 +434,27 @@ Abbruch und sofortiges Ausblenden alter Treffer verhindern stale Enter und
 spaete Uebernahmen. Fehler bleiben mit Wiederholung im Dialog. Die gemeinsamen
 Dialogfokusregeln und eigene begrenzte Ergebnisflaeche gelten fuer beide Modi.
 Nachweise: [Suche und App-Befehle](doc/search-commands-2026-11-13.md).
+
+`layout/ActivityRail.tsx` gruppiert Schreiben, Aufgaben und Wissen, benennt die
+aktive NoteBase und unterscheidet Checkbox-To-dos in Notizen von eigenstaendigen
+Task-Dateien. Sichtbare Zielnamen stammen aus dem Befehlskatalog. Dashboardziele
+oeffnen beim ersten Klick denselben Tab wie ihr Tastaturbefehl; Notizen, Tags und
+NoteBase behalten ihre Sidebarbedienung.
+`NotePropertiesPanel` laesst den Titel sichtbar und fasst Metadaten in einer
+zunaechst geschlossenen nativen `details`-Disclosure zusammen. Feldentwuerfe und
+Committer bleiben montiert; ungueltige Saves oeffnen die Felder wieder.
+Der Schreibmodus (F9, Ansicht, Palette, Toolbar) ist ein fluechtiger, an die
+Verbindungsgeneration gebundener React-Zustand. CSS blendet Rail, Sidebar,
+Eigenschaften und Capture aus, ohne Editoren oder Entwuerfe abzubauen und ohne
+Layoutpraeferenzen umzuschreiben. Split, Save-/Close-Schutz und Statushinweise
+bleiben bestehen. Sichtbares Beenden oder F9 stellt das vorherige Layout wieder
+her; explizite Bereichsnavigation bzw. Sidebar/Capture-Oeffnen beendet den Modus.
+NoteBase-Wechsel und Neustart uebernehmen ihn nicht. Keine neue API oder Persistenz.
+Inhaltssynchronisierung aendert nur das Dokument: Die aktive Editorgruppe wird
+ueber Pane-Fokus gesetzt, nicht ueber `onChange`, das auch beim expliziten Flush
+aller Editoren aufgerufen wird. So behaelt eine Suche oder Save im rechten Pane
+seinen Kontext. Nachweise: [Navigation und Schreibraum](doc/navigation-writing-2026-11-13.md).
+
 Speichern und Alle speichern teilen eine Warteschlange fuer Menue, Tasten und
 das Speicher-Icon. Jeder Auftrag behaelt seinen angeforderten Dokumentkontext;
 weitere Saves werden waehrend eines laufenden Saves nicht still verworfen.

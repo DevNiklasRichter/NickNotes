@@ -57,12 +57,27 @@ Refresh-Blöcke oder spezifischeren Reparaturregeln am Ende von `App.css` ergän
 und Update-Dialog behalten ihre Komponentenstyles. Weitere Extraktionen erfolgen
 bei Änderungen an der jeweiligen Komponente.
 
-Die Navigation ist regulär 128 px breit, unter 1050 CSS-px eine vertikale
+Die Navigation ist regulär 152 px breit, unter 1050 CSS-px eine vertikale
 56-px-Iconleiste mit bestehenden zugänglichen Namen. Die aktivierte Seitenleiste
 bleibt sichtbar, nimmt höchstens 32 % der Fensterbreite ein und respektiert sonst
 die vorhandene Breitenpräferenz. Explizites Ausblenden gibt ihren Platz frei.
 Die Hauptfläche füllt die Restbreite; die Statusleiste darf umbrechen.
 Zoom oder Fenstergröße schreiben keine Layoutpräferenzen zurück.
+
+Die Rail gruppiert **Schreiben**, **Aufgaben** und **Wissen**. Die NoteBase wird
+mit Namen angezeigt; „To-dos · In Notizen“ und „Tasks · Eigene Dateien“ erklären
+die zwei Aufgabenarten direkt am Ziel. Namen und Tooltips verwenden den
+Befehlskatalog. Ein Klick auf ein Dashboardziel öffnet sofort dessen Ansicht.
+Auf schmalen Fenstern bleiben zugängliche Namen und erklärende Tooltips erhalten.
+
+Notizeigenschaften beginnen gefaltet mit Typ-/Status-/Tagzusammenfassung; der
+Titel bleibt darüber erreichbar. Die native Disclosure unterstützt Enter und
+Leertaste. Eingabefehler öffnen sie beim Speicherversuch wieder. Der Schreibmodus
+(F9, Ansicht, App-Befehlssuche oder Toolbar) räumt Rail, Sidebar, Eigenschaften
+und Capture aus dem Blick. Er erhält Entwürfe, Split und Layoutpräferenzen.
+„Schreibmodus beenden“ bleibt sichtbar; F9 beendet ebenfalls, Escape behält seine
+lokale Dialog-/Menübedeutung. Bereichsnavigation oder ausdrückliches Öffnen von
+Sidebar/Capture beendet den Modus. Er wird nicht über Sessions gespeichert.
 
 ## Dialog, Popover und Menü
 

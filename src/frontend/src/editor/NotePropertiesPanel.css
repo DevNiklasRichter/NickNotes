@@ -1,0 +1,10 @@
+.note-properties-details {min-width: 0;}
+.note-properties-details > summary {display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2); border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text); cursor: pointer; font-size: var(--font-label); list-style: none;}
+.note-properties-details > summary::-webkit-details-marker {display: none;}
+.note-properties-details > summary::before {content: ''; width: 6px; height: 6px; border-top: 1px solid currentColor; border-right: 1px solid currentColor; transform: rotate(45deg); flex-shrink: 0; margin-right: 2px;}
+.note-properties-details[open] > summary::before {transform: rotate(135deg);}
+.note-properties-details > summary:hover {background: var(--surface-contrast);}
+.note-properties-details > summary:focus-visible {outline: 2px solid var(--accent-strong); outline-offset: -2px;}
+.note-properties-summary {color: var(--muted); overflow-wrap: anywhere;}
+.note-properties-summary-error {color: var(--error-text);}
+.note-properties-details > .note-properties-grid {padding: var(--space-2) 0;}

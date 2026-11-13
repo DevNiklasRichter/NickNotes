@@ -27,9 +27,10 @@ keine weiteren Betriebssystemfenster.
 | Zwischen vorhandenen Splitgruppen wechseln | F6 |
 | Seitenleiste ein-/ausblenden | Strg+Umschalt+E |
 | Editor ein-/ausblenden | Strg+Alt+E |
+| Schreibmodus starten / beenden | F9 |
 | Quick Capture ein-/ausblenden | Strg+Umschalt+Leertaste |
 | Quick Capture oeffnen und fokussieren | Alt+Q |
-| Notizen, Todos, Tasks, Fokus, Tags, Review, Graph | Alt+1 bis Alt+7 |
+| Notizen, To-dos, Tasks, Fokus, Tags, Review, Wissensgraph | Alt+1 bis Alt+7 |
 | NoteBase-Seitenleiste | Alt+0 |
 | In aktueller Notiz suchen | Strg+F |
 | NoteBase durchsuchen | Strg+Umschalt+F |
@@ -62,6 +63,22 @@ verwenden bestehende Aktionen samt Speicher-/Loeschschutz. Alte Suchanfragen
 werden abgebrochen; Fehler besitzen eine Wiederholung. Escape gibt den Fokus
 zurueck. Markdown-Kuerzel Strg+K und Strg+Umschalt+P bleiben unveraendert.
 Aktuelle Nachweise: [Suche und App-Befehle](search-commands-2026-11-13.md).
+
+Die linke Navigation gruppiert Schreiben, Aufgaben und Wissen. To-dos stehen
+in ihren Ursprungsnotizen, Tasks sind eigene Markdown-Dateien. Dashboardziele
+öffnen mit einem Klick denselben Tab wie ihr Tastenkürzel. Notizeigenschaften
+sind zunächst gefaltet; Enter/Leertaste auf „Eigenschaften“ öffnet sie, ein
+ungültiger Speicherversuch macht fehlerhafte Felder wieder sichtbar.
+
+F9 oder „Schreiben“ in der Editortoolbar startet den Schreibmodus; Ansicht und
+App-Befehlssuche bieten denselben Befehl mit aktivem Haken an. Navigation,
+Sidebar, Eigenschaften und Capture sind darin ausgeblendet, ihre Entwürfe und
+Layoutpräferenzen bleiben erhalten. F9 oder „Schreibmodus beenden“ stellt sie
+wieder her. Escape schließt weiterhin lokale Menüs/Dialoge. Alt+1 bis Alt+7,
+Alt+0, Alt+Q und ausdrückliches Einblenden von Sidebar/Capture verlassen den
+Modus. Split, Speichern und die Rückfrage vor dem Schließen funktionieren weiter.
+Nach NoteBase-Wechsel oder Neustart beginnt die normale Ansicht. F11 bleibt
+der separate Vollbildbefehl. [Nachweise](navigation-writing-2026-11-13.md).
 
 Alle speichern betrifft die geoeffneten Notiz-/Task-Drafts und geaenderte
 Einstellungen; Quick Capture wird dadurch nicht abgeschickt. Vor Save und Close
