@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
 import os
-import re
-import shutil
-import subprocess
-import sys
-import uuid
-import threading
 import time
-from dataclasses import dataclass, field
-from datetime import date, datetime
-from pathlib import Path
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .contracts import (
@@ -69,31 +61,53 @@ from .contracts import (
     VaultDeleteResponse,
     VaultOpenResponse,
 )
-from .config import (
-    DEFAULT_CORS_ORIGINS,
-    FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT,
-    REVIEW_DASHBOARD_DEFAULT_DAYS,
-    REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
-    REVIEW_DASHBOARD_DAYS_MAX,
-    REVIEW_DASHBOARD_DAYS_MIN,
-    REVIEW_DASHBOARD_TOP_NOTES_MAX,
-    REVIEW_DASHBOARD_TOP_NOTES_MIN,
-    TAG_GROUP_DEFAULT_COLOR,
-    TAG_MATCH_CONTEXT_RADIUS,
-)
-from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update_graph_index_for_file
-from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
-from .nicknotes_backend.graph_watcher import graph_watcher_snapshot
-from .nicknotes_backend.indexer import VaultIndexer
-from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
-from .nicknotes_backend.models import ParsedTask, TagSuggestion
 from .application_services import BackendApiService
-from .use_cases import GetFocusDashboardUseCase
-from .nicknotes_backend.parser import CaptureParser
-from .nicknotes_backend.vault import VaultManager
-from .security import LocalApiSecurity
-from .errors import DomainError
+from .commands import (
+    CapturePreviewRequest,
+    CaptureSaveRequest,
+    FavoriteFolderRequest,
+    FocusMitUpdateRequest,
+    FocusQuickCaptureRequest,
+    NoteBaseDeleteRequest,
+    NoteBaseRenameRequest,
+    NoteCreateRequest,
+    NoteFileDeleteRequest,
+    NoteFileMoveBatchRequest,
+    NoteFileMoveRequest,
+    NoteFileRenameRequest,
+    NoteGroupCreateRequest,
+    NoteGroupDeleteRequest,
+    NoteGroupMoveRequest,
+    NoteGroupRenameRequest,
+    NoteMediaAddRequest,
+    NoteOpenRequest,
+    NoteSaveRequest,
+    OneNoteImportPreviewRequest,
+    OneNoteImportRequest,
+    TagCreateRequest,
+    TagDeleteRequest,
+    TagGroupDeleteRequest,
+    TagGroupRenameRequest,
+    TagGroupRequest,
+    TagMatchApplyRequest,
+    TagMoveRequest,
+    TagRenameRequest,
+    TodoToggleRequest,
+    UiSettingsUpdateRequest,
+    VaultCreateRequest,
+    VaultOpenRequest,
+)
+from .config import DEFAULT_CORS_ORIGINS, REVIEW_DASHBOARD_DEFAULT_DAYS, REVIEW_DASHBOARD_DEFAULT_TOP_NOTES
+from .errors import DomainError, ValidationDomainError
+from .mcp_grants import GrantStore
+from .mcp_server import MCPAuthorization, create_mcp
+from .nicknotes_backend.graph_index import related_files
+from .nicknotes_backend.graph_storage import read_graph_index
+from .nicknotes_backend.recovery import list_recovery, resolve_recovery
+from .nicknotes_backend.source_journal import pending_recovery
 from .operation_context import clear_operation_context, get_operation_context, set_operation_context
+from .security import LocalApiSecurity
+from .session import RuntimeState, expected_session
 
 
 logger = logging.getLogger(__name__)
@@ -134,14 +148,9 @@ def _build_cors_origin_regex() -> str | None:
     return raw_regex or None
 
 
-from .session import RuntimeState, expected_session
-
 state = RuntimeState()
 backend_api_service = BackendApiService(runtime=state, capabilities=BACKEND_CAPABILITIES)
 
-from contextlib import asynccontextmanager
-from .mcp_grants import GrantStore
-from .mcp_server import create_mcp, MCPAuthorization
 
 grant_store = GrantStore()
 
@@ -197,7 +206,7 @@ def _active_vault_id() -> str | None:
 
 
 def _timestamp_utc() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 def _build_error_payload(
@@ -341,652 +350,320 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     return JSONResponse(status_code=500, content=payload)
 
 
-
-from .commands import (
-    VaultOpenRequest,
-    VaultCreateRequest,
-    NoteBaseRenameRequest,
-    NoteBaseDeleteRequest,
-    CapturePreviewRequest,
-    CaptureSaveRequest,
-    FocusMitUpdateRequest,
-    FocusQuickCaptureRequest,
-    NoteOpenRequest,
-    NoteSaveRequest,
-    NoteMediaAddRequest,
-    TagGroupRequest,
-    TagCreateRequest,
-    TagRenameRequest,
-    TagGroupRenameRequest,
-    TagGroupDeleteRequest,
-    TagMoveRequest,
-    TagDeleteRequest,
-    TagMatchApplyRequest,
-    NoteGroupCreateRequest,
-    NoteCreateRequest,
-    NoteGroupRenameRequest,
-    NoteGroupDeleteRequest,
-    NoteGroupMoveRequest,
-    NoteFileRenameRequest,
-    NoteFileDeleteRequest,
-    NoteFileMoveRequest,
-    NoteFileMoveBatchRequest,
-    FavoriteFolderRequest,
-    UiSettingsUpdateRequest,
-    OneNoteImportPreviewRequest,
-    OneNoteImportRequest,
-    TodoToggleRequest
-)
-
 @app.get("/health", response_model=BackendStateResponse)
-def health()-> dict[str, Any]:
+def health() -> dict[str, Any]:
     return backend_api_service.health()
 
 
-
-
 @app.get("/state", response_model=BackendStateResponse)
-def get_state()-> dict[str, Any]:
+def get_state() -> dict[str, Any]:
     return backend_api_service.get_state()
 
 
-
-
-@app.post("/vault/open", response_model=VaultOpenResponse)
-def open_vault(req: VaultOpenRequest)-> dict[str, Any]:
-    return backend_api_service.open_vault(req)
-
-
-
 @app.post("/notebase/open/start", response_model=NoteBaseOpenStartResponse)
-def start_notebase_open(req: VaultOpenRequest)-> dict[str, Any]:
+def start_notebase_open(req: VaultOpenRequest) -> dict[str, Any]:
     return backend_api_service.start_notebase_open(req)
 
 
-
-
-
-
 @app.get("/notebase/open/status", response_model=OperationStatusResponse)
-def get_notebase_open_status()-> dict[str, Any]:
+def get_notebase_open_status() -> dict[str, Any]:
     return backend_api_service.get_notebase_open_status()
 
 
-
-
-@app.post("/vault/create", response_model=VaultOpenResponse)
-def create_vault(req: VaultCreateRequest)-> dict[str, Any]:
-    return backend_api_service.create_vault(req)
-
-
-
-
-@app.post("/vault/reindex", response_model=ReindexResponse)
-def reindex_vault()-> dict[str, Any]:
-    return backend_api_service.reindex_vault()
-
-
-
-
 @app.post("/notebase/open", response_model=VaultOpenResponse)
-def open_notebase(req: VaultOpenRequest)-> dict[str, Any]:
-    return backend_api_service.open_notebase(req)
-
-
+def open_notebase(req: VaultOpenRequest) -> dict[str, Any]:
+    return backend_api_service.open_vault(req)
 
 
 @app.post("/notebase/create", response_model=VaultOpenResponse)
-def create_notebase(req: VaultCreateRequest)-> dict[str, Any]:
-    return backend_api_service.create_notebase(req)
-
-
+def create_notebase(req: VaultCreateRequest) -> dict[str, Any]:
+    return backend_api_service.create_vault(req)
 
 
 @app.post("/notebase/reindex", response_model=ReindexResponse)
-def reindex_notebase()-> dict[str, Any]:
-    return backend_api_service.reindex_notebase()
-
-
+def reindex_notebase() -> dict[str, Any]:
+    return backend_api_service.reindex_vault()
 
 
 @app.post("/imports/onenote/preview", response_model=OneNoteImportPreviewResponse)
-def preview_onenote_import(req: OneNoteImportPreviewRequest)-> dict[str, Any]:
+def preview_onenote_import(req: OneNoteImportPreviewRequest) -> dict[str, Any]:
     return backend_api_service.preview_onenote_import(req)
 
 
-
-
 @app.post("/imports/onenote/start", response_model=OneNoteImportResponse)
-def start_onenote_import(req: OneNoteImportRequest)-> dict[str, Any]:
+def start_onenote_import(req: OneNoteImportRequest) -> dict[str, Any]:
     return backend_api_service.start_onenote_import(req)
 
 
-
-
 @app.get("/imports/onenote/status", response_model=OneNoteImportStatusResponse)
-def get_onenote_import_status()-> dict[str, Any]:
+def get_onenote_import_status() -> dict[str, Any]:
     return backend_api_service.get_onenote_import_status()
 
 
-
-
 @app.post("/notebase/rename", response_model=VaultOpenResponse)
-def rename_notebase(req: NoteBaseRenameRequest)-> dict[str, Any]:
+def rename_notebase(req: NoteBaseRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_notebase(req)
 
 
-
-
 @app.post("/notebase/delete", response_model=VaultDeleteResponse)
-def delete_notebase(req: NoteBaseDeleteRequest)-> dict[str, Any]:
+def delete_notebase(req: NoteBaseDeleteRequest) -> dict[str, Any]:
     return backend_api_service.delete_notebase(req)
 
 
-
-
 @app.post("/capture/preview", response_model=CapturePreviewResponse)
-def preview_capture(req: CapturePreviewRequest)-> dict[str, Any]:
+def preview_capture(req: CapturePreviewRequest) -> dict[str, Any]:
     return backend_api_service.preview_capture(req)
 
 
-
-
 @app.post("/capture/save", response_model=SaveCaptureResponse)
-def save_capture(req: CaptureSaveRequest)-> dict[str, Any]:
+def save_capture(req: CaptureSaveRequest) -> dict[str, Any]:
     return backend_api_service.save_capture(req)
 
 
-
-
 @app.get("/focus/mit", response_model=FocusMitResponse)
-def get_focus_mit(date: str | None = None)-> dict[str, Any]:
+def get_focus_mit(date: str | None = None) -> dict[str, Any]:
     return backend_api_service.get_focus_mit(date)
 
 
-
-
 @app.post("/focus/mit", response_model=FocusMitSaveResponse)
-def save_focus_mit(req: FocusMitUpdateRequest)-> dict[str, Any]:
+def save_focus_mit(req: FocusMitUpdateRequest) -> dict[str, Any]:
     return backend_api_service.save_focus_mit(req)
 
 
-
-
 @app.post("/focus/quick-capture", response_model=QuickCaptureFocusTodoResponse)
-def quick_capture_focus_todo(req: FocusQuickCaptureRequest)-> dict[str, Any]:
+def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
     return backend_api_service.quick_capture_focus_todo(req)
 
 
-
-
 @app.post("/daily/open-today", response_model=DailyOpenResponse)
-def open_or_create_daily(date: str | None = None)-> dict[str, Any]:
+def open_or_create_daily(date: str | None = None) -> dict[str, Any]:
     return backend_api_service.open_or_create_daily(date)
 
 
-
-
 @app.get("/focus/dashboard", response_model=FocusDashboardAggregateResponse)
-def get_focus_dashboard(date: str | None = None)-> dict[str, Any]:
+def get_focus_dashboard(date: str | None = None) -> dict[str, Any]:
     return backend_api_service.get_focus_dashboard(date)
 
 
-
-
 @app.get("/tasks", response_model=TaskListResponse)
-def list_tasks(include_done: bool = False)-> dict[str, Any]:
+def list_tasks(include_done: bool = False) -> dict[str, Any]:
     return backend_api_service.list_tasks(include_done)
 
 
-
-
 @app.get("/todos", response_model=TodoListResponse)
-def list_todos()-> dict[str, Any]:
+def list_todos() -> dict[str, Any]:
     return backend_api_service.list_todos()
 
 
-
-
 @app.post("/todos/{todo_id}/toggle", response_model=TodoToggleResponse)
-def toggle_todo(todo_id: str, req: TodoToggleRequest)-> dict[str, Any]:
+def toggle_todo(todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
     return backend_api_service.toggle_todo(todo_id, req)
 
 
-
-
 @app.post("/todos/{todo_id}/promote", response_model=TodoPromoteResponse)
-def promote_todo(todo_id: str)-> dict[str, Any]:
+def promote_todo(todo_id: str) -> dict[str, Any]:
     return backend_api_service.promote_todo(todo_id)
 
 
-
-
 @app.post("/tasks/{task_id}/done", response_model=TaskDoneResponse)
-def mark_task_done(task_id: str)-> dict[str, Any]:
+def mark_task_done(task_id: str) -> dict[str, Any]:
     return backend_api_service.mark_task_done(task_id)
 
 
-
-
 @app.get("/search", response_model=SearchResponse)
-def search_notes(query: str = "", offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None)-> dict[str, Any]:
+def search_notes(query: str = "", offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None) -> dict[str, Any]:
     return backend_api_service.search_notes(query, offset=offset, limit=limit, tag=tag, note_type=note_type)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.get("/explorer/files", response_model=SearchResponse)
-def explorer_files()-> dict[str, Any]:
+def explorer_files() -> dict[str, Any]:
     return backend_api_service.explorer_files()
 
 
-
-
 @app.get("/notes/content", response_model=NoteContentResponse)
-def read_note_content(path: str)-> dict[str, Any]:
+def read_note_content(path: str) -> dict[str, Any]:
     return backend_api_service.read_note_content(path)
 
 
-
-
 @app.post("/notes/save", response_model=NoteSaveResponse)
-def save_note_content(req: NoteSaveRequest)-> dict[str, Any]:
+def save_note_content(req: NoteSaveRequest) -> dict[str, Any]:
     return backend_api_service.save_note_content(req)
 
 
-
-
 @app.post("/notes/media/add", response_model=NoteMediaResponse)
-def add_note_media_asset(req: NoteMediaAddRequest)-> dict[str, Any]:
+def add_note_media_asset(req: NoteMediaAddRequest) -> dict[str, Any]:
     return backend_api_service.add_note_media_asset(req)
 
 
-
-
 @app.get("/notes/media/content")
-def get_note_media_content(path: str, source: str)-> FileResponse:
+def get_note_media_content(path: str, source: str) -> FileResponse:
     asset = backend_api_service.get_note_media_content(path, source)
     return FileResponse(path=asset["path"], media_type=asset["mediaType"], filename=asset["fileName"])
 
 
-
-
 @app.post("/notes/open", response_model=OpenNoteResponse)
-def open_note_file(req: NoteOpenRequest)-> dict[str, Any]:
+def open_note_file(req: NoteOpenRequest) -> dict[str, Any]:
     return backend_api_service.open_note_file(req)
 
 
-
-
 @app.get("/review", response_model=ReviewResponse)
-def get_review()-> dict[str, Any]:
+def get_review() -> dict[str, Any]:
     return backend_api_service.get_review()
 
 
-
-
 @app.get("/review/dashboard", response_model=ReviewDashboardResponse)
-def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES)-> dict[str, Any]:
+def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
     return backend_api_service.get_review_dashboard(days, day, top)
 
 
-
-
 @app.get("/ui-settings", response_model=UiSettingsResponse)
-def get_ui_settings()-> dict[str, Any]:
+def get_ui_settings() -> dict[str, Any]:
     return backend_api_service.get_ui_settings()
 
 
-
-
 @app.post("/ui-settings", response_model=UiSettingsResponse)
-def update_ui_settings(req: UiSettingsUpdateRequest)-> dict[str, Any]:
+def update_ui_settings(req: UiSettingsUpdateRequest) -> dict[str, Any]:
     return backend_api_service.update_ui_settings(req)
 
 
-
-
 @app.get("/tag-groups", response_model=TagGroupsResponse)
-def get_tag_groups()-> dict[str, Any]:
+def get_tag_groups() -> dict[str, Any]:
     return backend_api_service.get_tag_groups()
 
 
-
-
 @app.get("/graph-index", response_model=GraphIndexResponse)
-def get_graph_index()-> dict[str, Any]:
+def get_graph_index() -> dict[str, Any]:
     return backend_api_service.get_graph_index()
 
 
-
-
 @app.get("/graph-index/status", response_model=GraphIndexStatusResponse)
-def get_graph_index_status()-> dict[str, Any]:
+def get_graph_index_status() -> dict[str, Any]:
     return backend_api_service.get_graph_index_status()
 
 
-
-
 @app.post("/graph-index/rebuild", response_model=GraphIndexRebuildResponse)
-def rebuild_graph_index()-> dict[str, Any]:
+def rebuild_graph_index() -> dict[str, Any]:
     return backend_api_service.rebuild_graph_index()
 
 
-
-
-def _rebuild_graph_projection(vault: VaultManager) -> dict[str, Any]:
-    return backend_api_service.rebuild_graph_projection(vault)
-
-
-def _update_graph_after_note_save(
-    *,
-    vault: VaultManager,
-    saved_path: Path,
-    previous_path: Path,
-    tag_groups: list[dict[str, Any]] | None,
-) -> dict[str, Any]:
-    return backend_api_service.update_graph_after_note_save(
-        vault=vault,
-        saved_path=saved_path,
-        previous_path=previous_path,
-        tag_groups=tag_groups,
-    )
-
-
-def _graph_index_needs_rebuild(index: GraphIndex) -> bool:
-    return backend_api_service.graph_index_needs_rebuild(index)
-
-
-def _graph_index_status(vault: VaultManager, index: GraphIndex | None = None) -> dict[str, Any]:
-    return backend_api_service.graph_index_status(vault, index)
-
-
 @app.get("/graph-state", response_model=GraphStateResponse)
-def get_graph_state()-> dict[str, Any]:
+def get_graph_state() -> dict[str, Any]:
     return backend_api_service.get_graph_state()
 
 
-
-
 @app.put("/graph-state", response_model=GraphStateResponse)
-def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict))-> dict[str, Any]:
+def update_graph_state(state_payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     return backend_api_service.update_graph_state(state_payload)
 
 
-
-
 @app.get("/tags/overview", response_model=TagOverviewResponse)
-def get_tag_overview(groupId: str, tagId: str)-> dict[str, Any]:
+def get_tag_overview(groupId: str, tagId: str) -> dict[str, Any]:
     return backend_api_service.get_tag_overview(groupId, tagId)
 
 
-
-
 @app.post("/tag-groups/add-group", response_model=TagGroupsResponse)
-def add_tag_group(req: TagGroupRequest)-> dict[str, Any]:
+def add_tag_group(req: TagGroupRequest) -> dict[str, Any]:
     return backend_api_service.add_tag_group(req)
 
 
-
-
 @app.post("/tag-groups/add-tag", response_model=TagGroupsResponse)
-def add_tag(req: TagCreateRequest)-> dict[str, Any]:
+def add_tag(req: TagCreateRequest) -> dict[str, Any]:
     return backend_api_service.add_tag(req)
 
 
-
-
 @app.post("/tag-groups/rename-group", response_model=TagGroupsResponse)
-def rename_tag_group(req: TagGroupRenameRequest)-> dict[str, Any]:
+def rename_tag_group(req: TagGroupRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_tag_group(req)
 
 
-
-
 @app.post("/tag-groups/delete-group", response_model=TagGroupsResponse)
-def delete_tag_group(req: TagGroupDeleteRequest)-> dict[str, Any]:
+def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
     return backend_api_service.delete_tag_group(req)
 
 
-
-
 @app.post("/tag-groups/rename-tag", response_model=TagGroupsResponse)
-def rename_tag(req: TagRenameRequest)-> dict[str, Any]:
+def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_tag(req)
 
 
-
-
 @app.post("/tag-groups/move-tag", response_model=TagGroupsResponse)
-def move_tag(req: TagMoveRequest)-> dict[str, Any]:
+def move_tag(req: TagMoveRequest) -> dict[str, Any]:
     return backend_api_service.move_tag(req)
 
 
-
-
 @app.post("/tag-groups/delete-tag", response_model=TagGroupsResponse)
-def delete_tag(req: TagDeleteRequest)-> dict[str, Any]:
+def delete_tag(req: TagDeleteRequest) -> dict[str, Any]:
     return backend_api_service.delete_tag(req)
 
 
-
-
 @app.get("/tag-groups/match-candidates", response_model=TagMatchCandidatesResponse)
-def scan_tag_match_candidates()-> dict[str, Any]:
+def scan_tag_match_candidates() -> dict[str, Any]:
     return backend_api_service.scan_tag_match_candidates()
 
 
-
-
 @app.post("/tag-groups/apply-matches", response_model=TagGroupsResponse)
-def apply_tag_match_candidates(req: TagMatchApplyRequest)-> dict[str, Any]:
+def apply_tag_match_candidates(req: TagMatchApplyRequest) -> dict[str, Any]:
     return backend_api_service.apply_tag_match_candidates(req)
 
 
-
-
 @app.get("/note-groups", response_model=NoteGroupsResponse)
-def get_note_groups()-> dict[str, Any]:
+def get_note_groups() -> dict[str, Any]:
     return backend_api_service.get_note_groups()
 
 
-
-
 @app.post("/note-groups/add-group", response_model=NoteGroupAddResponse)
-def add_note_group(req: NoteGroupCreateRequest)-> dict[str, Any]:
+def add_note_group(req: NoteGroupCreateRequest) -> dict[str, Any]:
     return backend_api_service.add_note_group(req)
 
 
-
-
 @app.post("/note-groups/rename", response_model=NoteGroupRenameResponse)
-def rename_note_group(req: NoteGroupRenameRequest)-> dict[str, Any]:
+def rename_note_group(req: NoteGroupRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_note_group(req)
 
 
-
-
 @app.post("/note-groups/delete", response_model=NoteGroupDeleteResponse)
-def delete_note_group(req: NoteGroupDeleteRequest)-> dict[str, Any]:
+def delete_note_group(req: NoteGroupDeleteRequest) -> dict[str, Any]:
     return backend_api_service.delete_note_group(req)
 
 
-
-
 @app.post("/note-groups/move", response_model=NoteGroupMoveResponse)
-def move_note_group(req: NoteGroupMoveRequest)-> dict[str, Any]:
+def move_note_group(req: NoteGroupMoveRequest) -> dict[str, Any]:
     return backend_api_service.move_note_group(req)
 
 
-
-
 @app.post("/note-groups/favorite", response_model=NoteFavoritesResponse)
-def favorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
+def favorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
     return backend_api_service.favorite_note_group(req)
 
 
-
-
 @app.post("/note-groups/unfavorite", response_model=NoteFavoritesResponse)
-def unfavorite_note_group(req: FavoriteFolderRequest)-> dict[str, Any]:
+def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
     return backend_api_service.unfavorite_note_group(req)
 
 
-
-
 @app.post("/note-groups/add-note", response_model=NoteAddResponse)
-def add_note(req: NoteCreateRequest)-> dict[str, Any]:
+def add_note(req: NoteCreateRequest) -> dict[str, Any]:
     return backend_api_service.add_note(req)
 
 
-
-
 @app.post("/notes/rename", response_model=NoteMutationResponse)
-def rename_note(req: NoteFileRenameRequest)-> dict[str, Any]:
+def rename_note(req: NoteFileRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_note(req)
 
 
-
-
 @app.post("/notes/delete", response_model=NoteMutationResponse)
-def delete_note(req: NoteFileDeleteRequest)-> dict[str, Any]:
+def delete_note(req: NoteFileDeleteRequest) -> dict[str, Any]:
     return backend_api_service.delete_note(req)
 
 
-
-
 @app.post("/notes/move", response_model=NoteMutationResponse)
-def move_note(req: NoteFileMoveRequest)-> dict[str, Any]:
+def move_note(req: NoteFileMoveRequest) -> dict[str, Any]:
     return backend_api_service.move_note(req)
 
 
-
-
 @app.post("/notes/move-batch", response_model=NoteMutationResponse)
-def move_notes_batch(req: NoteFileMoveBatchRequest)-> dict[str, Any]:
+def move_notes_batch(req: NoteFileMoveBatchRequest) -> dict[str, Any]:
     return backend_api_service.move_notes_batch(req)
-
-
-
-
-
-
-def _require_loaded() -> tuple[VaultManager, VaultIndexer]:
-    if not state.vault or not state.indexer:
-        raise DomainError(
-            "No NoteBase loaded",
-            status_code=400,
-            error_code="request.validation",
-            operation="require_loaded",
-        )
-    return state.vault, state.indexer
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _normalize_iso_day_param(raw: str | None) -> str:
-    return GetFocusDashboardUseCase._normalize_iso_day_param(raw)
-
-
-def _to_iso_day(value: Any) -> str:
-    return GetFocusDashboardUseCase._to_iso_day(value)
-
-
-def _compute_done_today_counts(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> tuple[int, int]:
-    return GetFocusDashboardUseCase._compute_done_today_counts(tasks=tasks, todos=todos, day_iso=day_iso)
-
-
-def _to_blocked_by_ids(raw: Any) -> list[str]:
-    return GetFocusDashboardUseCase._to_blocked_by_ids(raw)
-
-
-def _to_estimate_minutes(raw: Any) -> int | None:
-    return GetFocusDashboardUseCase._to_estimate_minutes(raw)
-
-
-def _is_task_blocked(task: dict[str, Any], status_by_id: dict[str, str]) -> bool:
-    return GetFocusDashboardUseCase._is_task_blocked(task=task, status_by_id=status_by_id)
-
-
-def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> dict[str, int]:
-    return GetFocusDashboardUseCase._compute_focus_stats(tasks=tasks, todos=todos, day_iso=day_iso)
-
-
-def _build_focus_dashboard_payload(vault: VaultManager, indexer: VaultIndexer, day_iso: str) -> dict[str, Any]:
-    return GetFocusDashboardUseCase._build_focus_dashboard_payload(vault=vault, indexer=indexer, day_iso=day_iso)
-
-
 
 
 class AgentGrantRequest(BaseModel):
@@ -1013,7 +690,6 @@ def revoke_agent_grant(identity: str):
 
 @app.get('/graph/related')
 def graph_related(path: str, limit: int = 50):
-    from .nicknotes_backend.graph_index import related_files
     with state.operation_lock:
         vault, _ = backend_api_service.require_loaded()
         resolved = backend_api_service._resolve_note_request_path(vault, path)
@@ -1029,7 +705,6 @@ def note_catalog(offset: int = 0, limit: int = 100, tag: str | None = None, note
 
 @app.get('/recovery')
 def recovery_status():
-    from .nicknotes_backend.recovery import list_recovery
     with state.operation_lock:
         vault, _ = backend_api_service.require_loaded()
         return {'items':list_recovery(vault)}
@@ -1039,15 +714,12 @@ class RecoveryRequest(BaseModel):
 
 @app.post('/recovery/{identity}')
 def recovery_resolve(identity: str, req: RecoveryRequest):
-    from .nicknotes_backend.recovery import resolve_recovery
     with state.operation_lock:
         vault, _ = backend_api_service.require_loaded()
         try:
             result=resolve_recovery(vault,identity,req.action)
         except (ValueError,OSError) as exc:
-            from .errors import ValidationDomainError
             raise ValidationDomainError('Wiederherstellung konnte nicht abgeschlossen werden. Die Sicherheitskopien bleiben erhalten.') from exc
-        from .nicknotes_backend.source_journal import pending_recovery
         if not pending_recovery(vault):
             backend_api_service.reindex_vault()
             state.start_graph_watcher()

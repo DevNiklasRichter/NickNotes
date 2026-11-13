@@ -638,18 +638,6 @@ class BackendApiService:
             ) from exc
 
     @coordinated
-    def open_notebase(self, req: VaultOpenRequest) -> dict[str, Any]:
-        return self.open_vault(req)
-
-    @coordinated
-    def create_notebase(self, req: VaultCreateRequest) -> dict[str, Any]:
-        return self.create_vault(req)
-
-    @coordinated
-    def reindex_notebase(self) -> dict[str, Any]:
-        return self.reindex_vault()
-
-    @coordinated
     def preview_onenote_import(self, req: OneNoteImportPreviewRequest) -> dict[str, Any]:
         return PreviewOneNoteImportUseCase().execute(self, req)
 

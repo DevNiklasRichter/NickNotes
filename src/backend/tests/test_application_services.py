@@ -56,7 +56,7 @@ class BackendApiServiceTests(unittest.TestCase):
         request = backend_api.VaultCreateRequest(parentPath="C:/temp", name="TestVault")
         expected = {"path": "C:/temp", "created": True}
         with mock.patch.object(backend_api.backend_api_service, "create_vault", return_value=expected) as spy:
-            result = backend_api.create_vault(request)
+            result = backend_api.create_notebase(request)
             self.assertIs(result, expected)
             spy.assert_called_once_with(request)
 
@@ -64,7 +64,7 @@ class BackendApiServiceTests(unittest.TestCase):
         request = backend_api.VaultOpenRequest(path="C:/temp")
         expected = {"vaultPath": "C:/temp"}
         with mock.patch.object(backend_api.backend_api_service, "open_vault", return_value=expected) as spy:
-            result = backend_api.open_vault(request)
+            result = backend_api.open_notebase(request)
             self.assertIs(result, expected)
             spy.assert_called_once_with(request)
 
