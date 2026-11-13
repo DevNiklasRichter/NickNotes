@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import {parse as parseYaml} from 'yaml'
 import {createInterface} from 'node:readline/promises'
 import {isViteReady} from './vite-readiness.mjs'
 
@@ -26,9 +27,10 @@ const createDialog = process.argv.includes('--create-dialog')
 const tagMatching = process.argv.includes('--tag-matching')
 const settingsDialog = process.argv.includes('--settings-dialog')
 const filters = process.argv.includes('--filters')
+const properties = process.argv.includes('--properties')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -939,6 +941,10 @@ async function verifySuggestionMenus() {
   const preview=page.waitForResponse(res=>res.url().endsWith('/capture/preview')&&res.request().postDataJSON()?.text===inserted)
   await page.keyboard.press('Control+y'); assert.equal((await read()).doc,inserted)
   assert.equal((await preview).status(),200)
+  // A preview response invalidates old menu snapshots when React applies it.
+  // Headers alone do not mean its body and editor decorations have committed.
+  await (await preview).finished()
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
   await expect(editor.locator('.cm-capture-tag-suggestion').filter({hasText:/^synthese$/i})).toHaveCount(0)
   const rejectedMark=editor.locator('.cm-capture-tag-suggestion').filter({hasText:/^Verwerfenprobe$/})
   await expect(rejectedMark).toHaveCount(1)
@@ -1586,7 +1592,7 @@ async function verifyFilters() {
   await taskTrigger.click();await expect(search).toHaveValue('');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).toBeChecked()
   await search.fill('keine passende suchoption');await expect(taskPopup.getByText('Keine passenden Optionen.',{exact:true})).toBeVisible()
   await capture('filter-search-empty-dark','Search has its own empty state without clearing the selected filter values')
-  await taskPopup.getByRole('button',{name:'Filtersuche leeren',exact:true}).focus();await page.keyboard.press('Enter');await expect(search).toHaveValue('');await expect(search).toBeFocused()
+  await taskPopup.getByRole('button',{name:'Suche leeren',exact:true}).focus();await page.keyboard.press('Enter');await expect(search).toHaveValue('');await expect(search).toBeFocused()
   await taskPopup.getByRole('button',{name:'Fertig',exact:true}).focus();await page.keyboard.press('Tab')
   const priorityTrigger=trigger('Tasks: Priorität'),priorityPopup=popup('Tasks: Priorität')
   await expect(taskPopup).toHaveCount(0);await expect(priorityTrigger).toBeFocused()
@@ -1669,6 +1675,128 @@ async function verifyFilters() {
   await page.keyboard.press('Control+s');assert.equal((await response).status(),200)
   assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
   report.checks.filtersDraftSavedAfterExplicitSave=true
+}
+
+async function verifyProperties() {
+  const oldSettings=(await request('/ui-settings')).settings
+  await request('/ui-settings',{app:{...oldSettings.app,taskFeatureSettings:{advancedTaskHandling:true,taskTimeManagement:true}}})
+  await request('/tag-groups/add-group',{groupId:'ux-properties',displayName:'Eigenschaften',color:'#81a1c1'})
+  for(let i=0;i<6;i++)await request('/tag-groups/add-tag',{groupId:'ux-properties',tagId:'tag-'+i,displayName:`Eigenschaftsauswahl ${i} mit langem Namen für einen kontrollierten Zeilenumbruch`})
+  const target=await createNote('Eigenschaftsziel','Ziel einer manuellen Verknüpfung.\n')
+  let task=await createNote('Eigenschaftstask','Automatischer Bezug bleibt im Body: {tag:ux-properties/tag-5}.\n')
+  const source=await request('/notes/content?path='+encodeURIComponent(task))
+  await request('/notes/save',{path:task,content:source.content.replace(/^type:.*$/m,'type: task'),expectedRevision:source.revision})
+  await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Eigenschaftstask')
+  const panel=page.getByRole('region',{name:'Notizeigenschaften',exact:true}).first()
+  const initial=fs.readFileSync(task,'utf8')
+  const saved=()=>parseYaml(fs.readFileSync(task,'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/)[1])
+  const writes=()=>report.requests.filter(req=>req.method==='POST'&&req.endpoint==='/notes/save').length
+  const save=async()=>{
+    const response=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+    await page.keyboard.press('Control+s');const result=await response;assert.equal(result.status(),200);task=(await result.json()).path||task
+  }
+  const tagsButton=panel.getByRole('button',{name:'Tags bearbeiten',exact:true}),tagsPopup=page.getByRole('dialog',{name:'Tags bearbeiten',exact:true})
+  await expect(panel.getByRole('button',{name:'Task',exact:true})).toHaveAttribute('aria-pressed','true')
+  await expect(panel.getByLabel('Status',{exact:true})).toHaveValue('open')
+  await expect(panel.getByLabel('Priorität',{exact:true})).toBeVisible()
+  await tagsButton.focus();await page.keyboard.press('Enter');await expect(tagsPopup.getByRole('searchbox')).toBeFocused()
+  await tagsPopup.getByRole('searchbox').fill('unbestätigte suche');await capture('properties-tag-search-dark','Named shared picker: searching and dismissal do not add a tag')
+  await page.keyboard.press('Escape');await expect(tagsButton).toBeFocused();assert.equal(fs.readFileSync(task,'utf8'),initial)
+  await expect(panel.locator('.property-chip.manual')).toHaveCount(0)
+  await tagsButton.click();await tagsPopup.getByRole('searchbox').fill('Eigenschaftsauswahl')
+  await expect(tagsPopup.getByRole('checkbox')).toHaveCount(6)
+  await tagsPopup.getByRole('checkbox').first().focus();await page.keyboard.press('Space');await expect(tagsPopup).toBeVisible()
+  await page.keyboard.press('Enter');await expect(tagsPopup.getByRole('checkbox').first()).not.toBeChecked()
+  await page.keyboard.press('Space');await expect(tagsPopup.getByRole('checkbox').first()).toBeChecked()
+  await tagsPopup.getByRole('searchbox').fill(':');await tagsPopup.locator('.nn-picker-add-value').click()
+  await expect(tagsPopup.getByRole('alert')).toContainText('ungültig');await capture('properties-invalid-value-dark','Invalid free tag remains visible with an inline alert and no file write')
+  await tagsPopup.getByRole('button',{name:'Suche leeren',exact:true}).click();await expect(tagsPopup.getByRole('alert')).toHaveCount(0)
+  await tagsPopup.getByRole('searchbox').fill('ux-properties:freier-wert');await tagsPopup.locator('.nn-picker-add-value').click()
+  await expect(tagsPopup.getByRole('searchbox')).toHaveValue('');await page.keyboard.press('Escape')
+  await expect(panel.getByRole('button',{name:'Tag ux-properties:tag-0 entfernen',exact:true})).toBeVisible()
+  await expect(panel.getByRole('button',{name:'Tag ux-properties:freier-wert entfernen',exact:true})).toBeVisible()
+  const linksButton=panel.getByRole('button',{name:'Verknüpfungen bearbeiten',exact:true}),linksPopup=page.getByRole('dialog',{name:'Verknüpfungen bearbeiten',exact:true})
+  await linksButton.click();await linksPopup.getByRole('searchbox').fill('Eigenschaftsziel');await linksPopup.getByRole('checkbox',{name:'Eigenschaftsziel',exact:true}).check()
+  await capture('properties-related-dark','Existing note selection changes only the document draft; real automatic tags remain separate')
+  await page.keyboard.press('Escape');await expect(linksButton).toBeFocused()
+  assert.equal(fs.readFileSync(task,'utf8'),initial)
+  await save();assert.ok(saved().tags.includes('ux-properties:tag-0'));assert.ok(saved().tags.includes('ux-properties:freier-wert'));assert.ok(saved().related.includes('Eigenschaftsziel'))
+  const graph=JSON.parse(fs.readFileSync(path.join(vaultPath,'.system','graph-index.json'),'utf8'))
+  const entry=graph.files[path.relative(vaultPath,task).replaceAll('\\','/')],other=graph.files[path.relative(vaultPath,target).replaceAll('\\','/')]
+  assert.ok(graph.edges.some(edge=>edge.type==='tagUsage'&&edge.source===entry.id&&edge.target==='tag:ux-properties/tag-0'))
+  assert.ok(graph.edges.some(edge=>edge.source===entry.id&&edge.target===other.id))
+  const indexed=await request('/search?tag='+encodeURIComponent('ux-properties:tag-0'))
+  assert.ok(indexed.items.some(item=>path.resolve(item.path)===path.resolve(task)))
+  report.checks.propertiesExplicitSelectionSaveIndexAndGraph=true
+
+  const title=panel.getByLabel('Notiztitel',{exact:true})
+  let releaseTitleSave, titleSaveReady=false
+  const titleGate=new Promise(resolve=>releaseTitleSave=resolve)
+  const holdTitle=async route=>{const result=await route.fetch();titleSaveReady=true;await titleGate;await route.fulfill({response:result})}
+  await page.route('**/notes/save',holdTitle)
+  try {
+    await title.fill('Eigenschaftstask mit geändertem Titel');const pendingSave=save()
+    await expect.poll(()=>titleSaveReady).toBe(true);await title.fill('Eigenschaftstask')
+    releaseTitleSave();await pendingSave;await expect(title).toHaveValue('Eigenschaftstask');await expect(title).toBeFocused()
+    assert.equal(saved().title,'Eigenschaftstask mit geändertem Titel')
+  } finally {releaseTitleSave();await page.unroute('**/notes/save',holdTitle)}
+  await save();assert.equal(saved().title,'Eigenschaftstask')
+  report.checks.propertiesTitleRenameAndTypingDuringSavePreserved=true
+  const waiting=panel.getByLabel('Warten auf',{exact:true}),estimate=panel.getByLabel('Schätzung in Minuten',{exact:true})
+  for(const [name,value,key,expected] of [['Schätzung in Minuten','35','estimate_minutes',35],['Warten auf','Rückmeldung mit Leerzeichen','waiting_for','Rückmeldung mit Leerzeichen'],['Blockierungsgrund','Ein genauer Grund\nmit zweiter Zeile','blocked_reason','Ein genauer Grund mit zweiter Zeile'],['Nächster Schritt','Die nächste Aktion','next_action_hint','Die nächste Aktion'],['Wiedervorlagedatum','2026-12-01','follow_up_date','2026-12-01']]) {
+    const field=panel.getByLabel(name,{exact:true});await field.fill(value);await save();await expect(field).toBeFocused();assert.equal(saved()[key],expected)
+  }
+  await estimate.fill('45');const iconSave=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
+  const saveButton=page.locator('.workspace-toolbar').getByRole('button',{name:'Speichern',exact:true});await expect(saveButton).toBeEnabled();await saveButton.click();assert.equal((await iconSave).status(),200);assert.equal(saved().estimate_minutes,45)
+  report.checks.propertiesToolbarSaveIncludesFocusedInput=true
+  await estimate.fill('0');const beforeInvalid=writes();await page.keyboard.press('Control+s')
+  await expect(estimate).toHaveAttribute('aria-invalid','true');await expect(panel.getByRole('alert')).toContainText('positive Zahl')
+  await capture('properties-field-error-dark','Invalid active estimate blocks save, retains input and describes the error at its field')
+  assert.equal(writes(),beforeInvalid);assert.equal(saved().estimate_minutes,45)
+  await page.keyboard.press('Escape');await expect(estimate).toHaveValue('45');await expect(estimate).toHaveAttribute('aria-invalid','false')
+  await waiting.fill('Abzubrechender Feldentwurf');await page.keyboard.press('Escape');await expect(waiting).toHaveValue('Rückmeldung mit Leerzeichen')
+  report.checks.propertiesFocusedFieldsSaveAndEscapeValidation=true
+
+  await page.keyboard.press('Control+Shift+s');await expect(page.locator('.tab-dirty-dot')).toHaveCount(0)
+  await waiting.fill('Nur vor nativem Schließen gepuffert');await expect(page.locator('.tab-dirty-dot')).toHaveCount(0)
+  await page.evaluate(async()=>{window.nicknotes.setUnsavedChanges(false);await window.nicknotes.getBackendUrl()})
+  await app.evaluate(({dialog})=>{
+    globalThis.__propertiesDialog=dialog.showMessageBoxSync;globalThis.__propertiesClosePrompts=0
+    dialog.showMessageBoxSync=()=>{globalThis.__propertiesClosePrompts++;return 2}
+  })
+  try {
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close())
+    await expect.poll(()=>app.evaluate(()=>globalThis.__propertiesClosePrompts)).toBe(1)
+    await expect(page.locator('.tab-dirty-dot')).toHaveCount(1)
+  } finally {await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=globalThis.__propertiesDialog;delete globalThis.__propertiesDialog})}
+  await expect(waiting).toHaveValue('Nur vor nativem Schließen gepuffert');assert.equal(saved().waiting_for,'Rückmeldung mit Leerzeichen')
+  await waiting.focus();await save();assert.equal(saved().waiting_for,'Nur vor nativem Schließen gepuffert')
+  report.checks.propertiesNativeCloseFlushAndCancel=true
+  await capture('properties-fields-dark','Named task fields, retained native-close draft, wrapped tag chips and accessible actions')
+
+  await waiting.fill('Entwurf vor dem Teilen')
+  await page.keyboard.press('Control+\\');await expect(page.locator('.workspace-pane')).toHaveCount(2)
+  await expect(waiting).toHaveValue('Entwurf vor dem Teilen')
+  await capture('properties-split-dark','Property panel stays usable alongside the existing second editor group')
+  await page.keyboard.press('Control+\\');await expect(page.locator('.workspace-pane')).toHaveCount(1)
+  await expect(waiting).toHaveValue('Entwurf vor dem Teilen');await waiting.focus();await save();assert.equal(saved().waiting_for,'Entwurf vor dem Teilen')
+  report.checks.propertiesSplitPreservesPendingInput=true
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  try {
+    for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
+      await windowSize(width,height,1.5);await title.focus()
+      await expect.poll(()=>title.evaluate(node=>node.scrollHeight<=node.clientHeight+1)).toBe(true)
+      await tagsButton.evaluate(button=>button.scrollIntoView({block:'center',inline:'nearest'}));await tagsButton.click();await tagsPopup.getByRole('searchbox').fill('Eigenschaftsauswahl')
+      await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await expect(tagsPopup.getByRole('checkbox').last()).toBeInViewport()
+      const rect=await tagsPopup.boundingBox(),view=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
+      assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
+      await capture(`properties-${label}-dark`,'Shared property selection remains inside '+label+' viewport with a reachable final option')
+      await page.keyboard.press('Escape');await expect(tagsButton).toBeFocused()
+    }
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  await theme('light');await linksButton.click();await expect(linksPopup.getByRole('searchbox')).toBeFocused()
+  await capture('properties-light','Shared property picker and task fields in the light theme');await page.keyboard.press('Escape');await theme('dark')
+  await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
 }
 
 async function captureTabMenuEdges() {
@@ -1766,6 +1894,7 @@ try {
     if (tagMatching) await verifyTagMatching()
     if (settingsDialog) await verifySettingsDialog()
     if (filters) await verifyFilters()
+    if (properties) await verifyProperties()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')
@@ -1798,7 +1927,9 @@ try {
     await page.keyboard.press('F8')
     await expect(page.locator('.editor-workspace-split')).toBeVisible()
     await page.keyboard.press('Control+2')
+    await expect.poll(()=>page.evaluate(()=>document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id'))).toBe('right')
     await page.keyboard.press('F6')
+    await expect.poll(()=>page.evaluate(()=>document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id'))).toBe('left')
     report.checks.splitFocusPane = await page.evaluate(() => document.activeElement?.closest('[data-pane-id]')?.getAttribute('data-pane-id'))
     assert.equal(report.checks.splitFocusPane, 'left')
     await capture('split-dark', 'Two editor groups, pane switching by keyboard, dark, 1600×1000')

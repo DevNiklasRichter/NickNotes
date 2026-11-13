@@ -1,5 +1,4 @@
 import {useLayoutEffect, useMemo, useRef, type RefObject, type Dispatch, type SetStateAction} from 'react'
-import {flushSync} from 'react-dom'
 import type {WorkspaceState, WorkspaceAction} from './workspaceState'
 import type {AppMutationEvent} from '../app/mutationEvents'
 import type {TagGroupDefinition} from '../tags/tagTypes'
@@ -13,6 +12,7 @@ import {apiRequest, getFileName, toNoteDisplayName, normalizeFilePathKey, normal
 import type {NoteTab} from '../app/AppShared'
 
 type NoteDocumentContext = {
+ flushNoteInputs:(includeEditors?:boolean)=>boolean
  backendUrl:string
  workspaceStateRef:RefObject<WorkspaceState>; openTabsRef:RefObject<NoteTab[]>
  leftEditorRef:RefObject<MarkdownEditorApi|null>; rightEditorRef:RefObject<MarkdownEditorApi|null>
@@ -45,7 +45,7 @@ const getLiveMarkdownForTab = (tab: NoteTab): string | null => {
     };
 
 const saveNoteTab = async (path: string): Promise<boolean> => {
-        flushSync(()=>{context.leftEditorRef.current?.flushChanges();context.rightEditorRef.current?.flushChanges()});
+        if (!context.flushNoteInputs()) return false;
         const targetTab = context.findTabByPath(path);
         if (!targetTab || targetTab.kind !== 'note' || targetTab.loading || !targetTab.dirty) {
             return true;
@@ -78,7 +78,7 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
                 context.remapOpenNotePaths(targetTab.path, savedPath);
             }
             context.setOpenTabs((prev) => prev.map((tab) => {
-                if (tab.path !== path && tab.path !== savedPath) {
+                if (tab.id !== targetTab.id) {
                     return tab;
                 }
                 return mergeSavedTab(tab, submittedTab, {path: savedPath || tab.path, content: response.content, revision: response.revision, title: response.title});
@@ -129,6 +129,7 @@ const openNoteInTab = async (path: string, suggestedTitle?: string, options?: {
         initialNoteType?: 'note' | 'task';
         targetPane?: PaneId;
     }) => {
+        if (!context.flushNoteInputs()) return;
         const cleanPath = normalizeLabel(path);
         if (!cleanPath) {
             return;
@@ -275,6 +276,9 @@ const openNoteInTab = async (path: string, suggestedTitle?: string, options?: {
     };
 
 async function refreshOpenTabsFromDisk(paths: string[]) {
+        // A save acknowledgement may still be propagating its normalized body
+        // to CodeMirror. Commit properties here without re-emitting that old body.
+        if (!context.flushNoteInputs(false)) return;
         if (paths.length === 0) {
             return;
         }
@@ -300,6 +304,7 @@ export function useNoteDocuments(context:NoteDocumentContext) {
 get workspaceStateRef(){return latest.current.workspaceStateRef},
 get leftEditorRef(){return latest.current.leftEditorRef},
 get rightEditorRef(){return latest.current.rightEditorRef},
+get flushNoteInputs(){return latest.current.flushNoteInputs},
 get findTabByPath(){return latest.current.findTabByPath},
 get setMessage(){return latest.current.setMessage},
 get setError(){return latest.current.setError},

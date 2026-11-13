@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import {MultiSelectFilter, type MultiSelectFilterOption} from '../ui/MultiSelectFilter'
+import {MultiSelectPicker, type MultiSelectPickerOption} from '../ui/MultiSelectPicker'
 import {ContextMenuItem} from '../ui/ContextMenu'
 import {MenuButton} from '../ui/MenuButton'
 import { ExplorerSidebar } from '../explorer/ExplorerSidebarFlatV3'
@@ -241,8 +241,8 @@ export function WorkbenchSidebarContent({
     })
   }, [mergedTagGroups])
 
-  const todoTagGroups = useMemo<MultiSelectFilterOption[]>(() => {
-    const byId = new Map<string, MultiSelectFilterOption>()
+  const todoTagGroups = useMemo<MultiSelectPickerOption[]>(() => {
+    const byId = new Map<string, MultiSelectPickerOption>()
     for (const group of mergedTagGroups) {
       const groupId = group.id.trim().toLowerCase()
       if (!groupId || byId.has(groupId)) {
@@ -257,7 +257,7 @@ export function WorkbenchSidebarContent({
     return Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label, 'de', { sensitivity: 'base' }))
   }, [mergedTagGroups])
 
-  const statusOptions = useMemo<MultiSelectFilterOption[]>(
+  const statusOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
       { value: 'open', label: 'Open' },
       { value: 'done', label: 'Done' },
@@ -265,7 +265,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const promotionOptions = useMemo<MultiSelectFilterOption[]>(
+  const promotionOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
       { value: 'promoted', label: 'Promoted' },
       { value: 'unpromoted', label: 'Unpromoted' },
@@ -273,7 +273,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskStatusOptions = useMemo<MultiSelectFilterOption[]>(
+  const taskStatusOptions = useMemo<MultiSelectPickerOption[]>(
     () =>
       TASK_STATUS_OPTIONS.map((entry) => ({
         value: entry.value,
@@ -283,7 +283,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskPriorityOptions = useMemo<MultiSelectFilterOption[]>(
+  const taskPriorityOptions = useMemo<MultiSelectPickerOption[]>(
     () =>
       TASK_PRIORITY_OPTIONS.map((entry) => ({
         value: entry.value,
@@ -293,7 +293,7 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskDueOptions = useMemo<MultiSelectFilterOption[]>(
+  const taskDueOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
       { value: 'overdue', label: 'Ueberfaellig' },
       { value: 'tomorrow', label: 'Morgen' },
@@ -304,8 +304,8 @@ export function WorkbenchSidebarContent({
     []
   )
 
-  const taskTagGroups = useMemo<MultiSelectFilterOption[]>(() => {
-    const byId = new Map<string, MultiSelectFilterOption>()
+  const taskTagGroups = useMemo<MultiSelectPickerOption[]>(() => {
+    const byId = new Map<string, MultiSelectPickerOption>()
     for (const group of mergedTagGroups) {
       const groupId = group.id.trim().toLowerCase()
       if (!groupId || byId.has(groupId)) {
@@ -376,8 +376,8 @@ export function WorkbenchSidebarContent({
     return taskTagOptions.filter((option) => selectedGroups.has(option.groupId.toLowerCase()))
   }, [taskFilters.tagGroups, taskTagOptions])
 
-  const taskRelatedOptions = useMemo<MultiSelectFilterOption[]>(() => {
-    const byValue = new Map<string, MultiSelectFilterOption>()
+  const taskRelatedOptions = useMemo<MultiSelectPickerOption[]>(() => {
+    const byValue = new Map<string, MultiSelectPickerOption>()
     for (const task of tasks) {
       for (const rawRelated of task.related || []) {
         const normalized = normalizeRelatedCandidate(rawRelated)
@@ -534,13 +534,13 @@ export function WorkbenchSidebarContent({
     setTaskFilter({ dueBuckets: next as TaskDashboardFilters['dueBuckets'] })
   }
 
-  const renderTodoMultiSelect = (key: TodoDropdownKey, selected: string[], options: MultiSelectFilterOption[], allLabel: string, onToggle: (value: string) => void) => {
+  const renderTodoMultiSelect = (key: TodoDropdownKey, selected: string[], options: MultiSelectPickerOption[], allLabel: string, onToggle: (value: string) => void) => {
     const names: Record<TodoDropdownKey, string> = {status: 'Status', tag_groups: 'Tag-Gruppe', tags: 'Tags', promotions: 'Promotion'}
-    return <MultiSelectFilter key={`todo-${key}`} label={`To-dos: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
+    return <MultiSelectPicker key={`todo-${key}`} label={`To-dos: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
   }
-  const renderTaskMultiSelect = (key: TaskDropdownKey, selected: string[], options: MultiSelectFilterOption[], allLabel: string, onToggle: (value: string) => void) => {
+  const renderTaskMultiSelect = (key: TaskDropdownKey, selected: string[], options: MultiSelectPickerOption[], allLabel: string, onToggle: (value: string) => void) => {
     const names: Record<TaskDropdownKey, string> = {status: 'Status', priority: 'Priorität', due: 'Fälligkeit', tag_groups: 'Tag-Gruppe', tags: 'Tags', related: 'Verknüpfungen'}
-    return <MultiSelectFilter key={`task-${key}`} label={`Tasks: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
+    return <MultiSelectPicker key={`task-${key}`} label={`Tasks: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
   }
   const resetTodoFilters = () => {
     onTodoFiltersChange({...todoFilters, query: '', statuses: [], tagGroups: [], tags: [], promotions: []})

@@ -2598,7 +2598,7 @@
 
 .workspace-grid.with-capture-column {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) 8px minmax(120px, var(--capture-inline-height, 220px));
+  grid-template-rows: minmax(0, 1fr) 8px minmax(0, min(var(--capture-inline-height, 220px), 45%));
 }
 
 .workspace-panel {
@@ -5013,6 +5013,7 @@ button:disabled {
 }
 
 .note-properties-panel {
+  container: note-properties / inline-size;
   background: transparent;
   padding: 0.16rem 0 0.56rem;
   display: grid;
@@ -5064,6 +5065,7 @@ button:disabled {
   outline: none;
   box-shadow: none;
 }
+.note-title-input:focus-visible {outline: 2px solid var(--accent-strong); outline-offset: 3px; border-radius: var(--radius-md);}
 
 .note-title-input::placeholder {
   color: color-mix(in srgb, var(--muted) 82%, transparent);
@@ -5084,20 +5086,26 @@ button:disabled {
 
 .note-properties-grid {
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr);
+  grid-template-columns: 128px minmax(0, 1fr);
   align-items: start;
   gap: 0.34rem 0.56rem;
 }
 
 .note-properties-grid.compact {
-  grid-template-columns: 68px minmax(0, 1fr);
   gap: 0.28rem 0.44rem;
 }
 
+@container note-properties (max-width: 360px) {
+  .note-properties-grid {grid-template-columns: minmax(0, 1fr);}
+  .property-key {padding-top: var(--space-2);}
+}
+
 .property-key {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--font-caption);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--muted);
   padding-top: 0.18rem;
 }
@@ -5281,15 +5289,10 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 0.32rem;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  min-width: 0;
   min-height: 1.9rem;
   padding: 0.03rem 0 0.08rem;
-  scrollbar-width: none;
-}
-
-.property-token-line::-webkit-scrollbar {
-  height: 0;
 }
 
 .property-chip {
@@ -5361,21 +5364,9 @@ button:disabled {
   background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
 }
 
-.property-chip-input {
-  min-width: 120px;
-  width: 152px;
-  max-width: 220px;
-  font-size: var(--font-caption);
-  padding: 0.1rem 0.42rem;
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-}
-
-.property-chip-input:focus {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-}
+.property-token-line .property-chip {max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere;}
+.property-token-line .property-chip-remove {flex-shrink: 0;}
+.property-picker-badge:focus-within {outline: 2px solid var(--accent-strong); outline-offset: 2px;}
 
 /* Visual cohesion adjustments (titlebar + side panels) */
 .window-titlebar {

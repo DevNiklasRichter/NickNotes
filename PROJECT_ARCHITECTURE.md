@@ -343,8 +343,8 @@ Keine neue Persistenz, Backend- oder Formatmigration. `--settings-dialog` prueft
 die Dialog- und Speicherwege ausschliesslich im isolierten Testprofil.
 Nachweise: [Einstellungsdialog](doc/settings-dialog-2026-11-11.md).
 
-`ui/MultiSelectFilter.tsx` besitzt die gemeinsame Mehrfachauswahl der To-do- und
-Taskfilter: benannter nichtmodaler HTML-Popover im Body-Portal, echte Checkboxen,
+`ui/MultiSelectPicker.tsx` besitzt die gemeinsame Mehrfachauswahl der To-do- und
+Taskfilter sowie der Editor-Tags/-Verknuepfungen: benannter nichtmodaler HTML-Popover im Body-Portal, echte Checkboxen,
 Suche, Tastaturnavigation und Fokusabschluss. Chromiums Popover-API uebernimmt
 Top-Layer, exklusives Oeffnen und Aussenklick. Die Fensterbegrenzung teilen
 Filter und Kontextmenues ueber `ui/placeFloatingSurface.ts`. Lange Optionen
@@ -358,6 +358,42 @@ Persistenz. Doppelte Renderer, Suchzustaende, Listener und Popupstyles sind
 entfernt. `--filters` prueft echte Dashboardtreffer, unveraenderte Markdown-
 Dateien und erhaltene Editorentwuerfe im isolierten Testprofil.
 Nachweise: [Mehrfachfilter](doc/multiselect-filters-2026-11-12.md).
+
+`editor/NotePropertiesPanel.tsx` liefert Tag-/Related-Auswahl an denselben Picker.
+Vorhandene Tagdefinitionen und Notizziele sind Optionen; freie Werte werden nur
+ueber Hinzufuegen an die bestehenden Normalisierungs-/Dokumentcallbacks gegeben.
+Suche und Abbruch erzeugen keine Dokumentmutation. Der Picker speichert keine
+fachlichen Werte selbst. Die alten Inline-Datalists und vier App-Zustaende fuer
+deren Oeffnung/Eingaben sind entfernt. Felder, Typauswahl und Chipaktionen sind
+benannt; Validierungsfehler besitzen Feldbezug und Alertsemantik. Lange Chips
+umbrechen innerhalb der verfuegbaren Flaeche.
+Ein benannter CSS-Container schaltet unter 360 px Panelbreite auf gestapelte
+Feldnamen und Eingaben; sonst stehen fuer die deutschen Beschriftungen 128 px
+bereit. Das Titelfeld beobachtet seine Groesse und passt seine Hoehe nach
+Breitenwechseln im naechsten Frame an, ohne den Dokumententwurf zu veraendern.
+Das bestehende Workspace-Raster begrenzt die dargestellte Capture-Hoehe auf
+45 % seiner Hoehe. Die CSS-Praeferenz bleibt erhalten; kleine/gezoomte Fenster
+behalten damit eine scrollbar bedienbare Editorflaeche neben Quick Capture.
+Die vorhandenen lokalen Eigenschaftsentwuerfe verwenden die stabile Markdown-ID
+statt des umbenennbaren Dateipfads als Identitaet. Jedes montierte Panel meldet
+seinen aktuellen Commit im Layout-Effect an eine gemeinsame Ref-Map; der Eintrag
+verfaellt beim Abbau. `flushNoteInputs` synchronisiert diese Puffer und beide
+CodeMirror-Editoren gemeinsam in `flushSync` vor Save, Close und NoteBase-/Tab-/
+Ansichtswechsel. Dokumentrevalidierung uebernimmt nur die Eigenschaftspuffer:
+Direkt nach einem Save darf kein noch nicht aktualisierter CodeMirror-Puffer
+die normalisierte Save-Antwort wieder dirty machen. Die bestehende Feldvalidierung
+liefert ihren Erfolg zurueck; ungueltige Werte sperren Save statt still verworfen
+zu werden. Escape setzt lokale Taskfeldentwuerfe auf ihren Dokumentstand zurueck.
+Die native Close-Pruefung erkennt auch solche noch fokussierten Eingaben.
+Der sichtbare Speichern-Button verwendet dieselbe Befehlsfreigabe wie Strg+S;
+ein noch nicht durch Blur uebernommener Feldpuffer darf ihn nicht deaktivieren.
+Ein Save ordnet seine Antwort ueber die stabile Workspace-Tab-ID zu. Ein vorher
+erfolgtes Pfadremapping mit anderer Windows-Slashschreibweise darf weder die neue
+Revision noch den Schutz inzwischen weiterbearbeiteter Entwuerfe auslassen.
+Backend-Normalisierung, Link-Rewrite und Projektionen bleiben zustaendig.
+`--properties` prueft reale Saves, verzögerte Titel-Saves mit Pfadwechsel,
+Tag-/Related-Projektionen und native Close-Abfrage ausschliesslich synthetisch.
+Nachweise: [Editor-Eigenschaften](doc/editor-properties-2026-11-12.md).
 
 `app/commands.ts` ist der gemeinsame Katalog fuer Menueeintraege, Tastaturkuerzel,
 Hilfeseite und Tooltip-Texte. `useAppCommands.ts` fuehrt freigegebene Befehle aus;

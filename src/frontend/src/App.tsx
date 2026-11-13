@@ -178,10 +178,6 @@ function App() {
     const [tagActionDialog, setTagActionDialog] = useState<TagActionDialogState | null>(null);
     const tagActionDialogRef = useRef<TagActionDialogState | null>(null);
     const { tagMatchWorkflow, visibleTagMatchItems, activeTagMatch, openTagMatchWorkflowLoading, resolveTagMatchWorkflowCandidates, stopTagMatchWorkflowLoading, closeTagMatchWorkflow, moveTagMatchCursor, skipTagMatch, beginTagMatchApply, finishTagMatchApply, removeAppliedTagMatches, } = useTagMatchWorkflowState();
-    const [propertyTagInputOpenByPath, setPropertyTagInputOpenByPath] = useState<Record<string, boolean>>({});
-    const [propertyTagDraftByPath, setPropertyTagDraftByPath] = useState<Record<string, string>>({});
-    const [propertyRelatedInputOpenByPath, setPropertyRelatedInputOpenByPath] = useState<Record<string, boolean>>({});
-    const [propertyRelatedDraftByPath, setPropertyRelatedDraftByPath] = useState<Record<string, string>>({});
     const [propertyTaskFieldErrorsByPath, setPropertyTaskFieldErrorsByPath] = useState<Record<string, {
         estimate_minutes?: string;
         follow_up_date?: string;
@@ -189,7 +185,20 @@ function App() {
     const leftEditorRef = useRef<MarkdownEditorApi | null>(null);
     const rightEditorRef = useRef<MarkdownEditorApi | null>(null);
     const captureEditorRef = useRef<MarkdownEditorApi | null>(null);
+    const propertyDraftCommitters = useRef(new Map<string, () => boolean>());
     const { latestOperatorNotification, launchOperatorNotifications, setMessage, setWarnMessage, setError, setCriticalMessage, } = useOperatorNotifications();
+    const flushNoteInputs = (includeEditors = true) => {
+        let valid = true;
+        flushSync(() => {
+            for (const commit of propertyDraftCommitters.current.values()) if (!commit()) valid = false;
+            if (includeEditors) {
+                leftEditorRef.current?.flushChanges();
+                rightEditorRef.current?.flushChanges();
+            }
+        });
+        if (!valid) setError('Bitte die markierten Eigenschaften korrigieren oder leeren.');
+        return valid;
+    };
     const [captureText,setCaptureText]=useCaptureDraft(setError);
     const [workspaceReady,setWorkspaceReady]=useState(false);
     const initialCaptureActivated=useRef(false);
@@ -355,7 +364,7 @@ function App() {
         return map;
     }, [openTabs]);
     const {saveTab, openNoteInTab, refreshOpenTabsFromDisk} = useNoteDocuments({
- workspaceStateRef, leftEditorRef, rightEditorRef, findTabByPath, setMessage, setError, backendUrl, setCounts, setCustomTagGroups,
+ workspaceStateRef, leftEditorRef, rightEditorRef, flushNoteInputs, findTabByPath, setMessage, setError, backendUrl, setCounts, setCustomTagGroups,
  setLatestGraphStatus, setGraphUpdateToken, remapOpenNotePaths:(from,to)=>remapOpenNotePaths(from,to), setOpenTabs, emitMutationEvent:event=>emitMutationEvent(event), toNoteId,
  confirmCloseTab:(id)=>confirmCloseTab(id), openTabsRef, isTagOverviewPath, dispatchWorkspace, setEditorPanelOpen, createTabId, isTagOverviewReadOnly,
 });
@@ -1191,6 +1200,7 @@ function App() {
             .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }));
     }, [explorerRows, toWikiTargetForRow, vaultPath]);
     const openTodoDashboardTab = () => {
+        if (!flushNoteInputs()) return;
         if (vaultLoaded) {
             void refreshTodos();
         }
@@ -1228,6 +1238,7 @@ function App() {
         });
     };
     const openTaskDashboardTab = () => {
+        if (!flushNoteInputs()) return;
         if (vaultLoaded) {
             void refreshTasks();
         }
@@ -1265,6 +1276,7 @@ function App() {
         });
     };
     const openFocusDashboardTab = () => {
+        if (!flushNoteInputs()) return;
         if (vaultLoaded) {
             void Promise.allSettled([refreshFocusAggregate(), refreshReview()]);
         }
@@ -1302,6 +1314,7 @@ function App() {
         });
     };
     const openReviewDashboardTab = () => {
+        if (!flushNoteInputs()) return;
         if (vaultLoaded) {
             void refreshReview();
         }
@@ -1339,6 +1352,7 @@ function App() {
         });
     };
     const openGraphDashboardTab = () => {
+        if (!flushNoteInputs()) return;
         const existing = findTabByPath(GRAPH_DASHBOARD_TAB_PATH, openTabs);
         const targetPane = workspaceStateRef.current.lastFocusedPane;
         if (existing) {
@@ -1579,7 +1593,7 @@ function App() {
         await closeEditorTabs([tabId]);
     };
     const closeEditorTabs = async (tabIds: string[]): Promise<boolean> => {
-        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
+        if (!flushNoteInputs()) return false;
         if (tabIds.length === 0) {
             return true;
         }
@@ -1811,12 +1825,12 @@ function App() {
                     estimate_minutes: null,
                 },
             }));
-            return;
+            return true;
         }
         const parsed = Number.parseInt(clean, 10);
         if (!Number.isFinite(parsed) || parsed <= 0) {
             setTaskFieldErrorByPath(tabPath, 'estimate_minutes', 'Bitte eine positive Zahl eingeben.');
-            return;
+            return false;
         }
         setTaskFieldErrorByPath(tabPath, 'estimate_minutes', '');
         updateNoteDocumentByPath(tabPath, (document) => ({
@@ -1826,6 +1840,7 @@ function App() {
                 estimate_minutes: Math.min(parsed, 10000),
             },
         }));
+        return true;
     };
     const updateNoteBlockedByIdsByPath = (tabPath: string, rawBlockedByIds: string) => {
         updateNoteDocumentByPath(tabPath, (document) => ({
@@ -1861,11 +1876,11 @@ function App() {
                     follow_up_date: '',
                 },
             }));
-            return;
+            return true;
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
             setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gueltiges ISO-Datum eingeben.');
-            return;
+            return false;
         }
         setTaskFieldErrorByPath(tabPath, 'follow_up_date', '');
         updateNoteDocumentByPath(tabPath, (document) => ({
@@ -1875,6 +1890,7 @@ function App() {
                 follow_up_date: clean,
             },
         }));
+        return true;
     };
     const updateNoteBlockedReasonByPath = (tabPath: string, rawBlockedReason: string) => {
         const normalized = rawBlockedReason.trim();
@@ -1899,7 +1915,7 @@ function App() {
     const addNoteTagByPath = (tabPath: string, rawTag: string) => {
         const normalized = normalizeTagCandidate(rawTag);
         if (!normalized) {
-            return;
+            return false;
         }
         updateNoteDocumentByPath(tabPath, (document) => ({
             ...document,
@@ -1908,6 +1924,7 @@ function App() {
                 tags: Array.from(new Set([...document.frontmatter.tags, normalized])).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' })),
             },
         }));
+        return true;
     };
     const removeNoteTagByPath = (tabPath: string, tag: string) => {
         updateNoteDocumentByPath(tabPath, (document) => ({
@@ -1921,7 +1938,7 @@ function App() {
     const addNoteRelatedByPath = (tabPath: string, rawRelated: string) => {
         const normalized = normalizeRelatedCandidate(rawRelated);
         if (!normalized) {
-            return;
+            return false;
         }
         updateNoteDocumentByPath(tabPath, (document) => ({
             ...document,
@@ -1930,6 +1947,7 @@ function App() {
                 related: Array.from(new Set([...document.frontmatter.related, normalized])).sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' })),
             },
         }));
+        return true;
     };
     const removeNoteRelatedByPath = (tabPath: string, related: string) => {
         updateNoteDocumentByPath(tabPath, (document) => ({
@@ -1940,43 +1958,7 @@ function App() {
             },
         }));
     };
-    const openPropertyTagInput = (tabPath: string) => {
-        setPropertyTagInputOpenByPath((prev) => ({ ...prev, [tabPath]: true }));
-    };
-    const closePropertyTagInput = (tabPath: string) => {
-        setPropertyTagInputOpenByPath((prev) => ({ ...prev, [tabPath]: false }));
-        setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: '' }));
-    };
-    const commitPropertyTagInput = (tabPath: string) => {
-        const draft = propertyTagDraftByPath[tabPath] || '';
-        if (!normalizeLabel(draft)) {
-            closePropertyTagInput(tabPath);
-            return;
-        }
-        addNoteTagByPath(tabPath, draft);
-        closePropertyTagInput(tabPath);
-    };
-    const openPropertyRelatedInput = (tabPath: string) => {
-        setPropertyRelatedInputOpenByPath((prev) => ({ ...prev, [tabPath]: true }));
-    };
-    const closePropertyRelatedInput = (tabPath: string) => {
-        setPropertyRelatedInputOpenByPath((prev) => ({ ...prev, [tabPath]: false }));
-        setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: '' }));
-    };
-    const commitPropertyRelatedInput = (tabPath: string) => {
-        const draft = propertyRelatedDraftByPath[tabPath] || '';
-        if (!normalizeLabel(draft)) {
-            closePropertyRelatedInput(tabPath);
-            return;
-        }
-        addNoteRelatedByPath(tabPath, draft);
-        closePropertyRelatedInput(tabPath);
-    };
     const renderNoteProperties = (tabPath: string, document: ParsedNoteDocument, compact = false) => {
-        const tagDraft = propertyTagDraftByPath[tabPath] ?? '';
-        const relatedDraft = propertyRelatedDraftByPath[tabPath] ?? '';
-        const tagInputOpen = propertyTagInputOpenByPath[tabPath] ?? false;
-        const relatedInputOpen = propertyRelatedInputOpenByPath[tabPath] ?? false;
         const taskFieldErrors = propertyTaskFieldErrorsByPath[tabPath] || {};
         const relatedOptionsForPath = propertyRelatedOptions.filter((item) => normalizeWikiLookup(item) !== normalizeWikiLookup(toNoteDisplayName(tabPath)));
         const currentTaskId = normalizeLabel(document.frontmatter.id).toLowerCase();
@@ -1984,7 +1966,7 @@ function App() {
             .map((task) => normalizeLabel(task.id))
             .filter((taskId) => taskId && taskId.toLowerCase() !== currentTaskId)
             .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }));
-        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} tagInputOpen={tagInputOpen} tagDraft={tagDraft} relatedInputOpen={relatedInputOpen} relatedDraft={relatedDraft} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
+        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
                 updateNoteTitleByPath(tabPath, nextTitle);
             }} onTitleBlur={(nextTitle) => {
                 void syncNotePathWithTitle(tabPath, nextTitle);
@@ -1999,13 +1981,13 @@ function App() {
             }} onRemoveDueDate={() => {
                 updateNoteDueDateByPath(tabPath, '');
             }} onEstimateMinutesChange={(nextEstimateMinutes) => {
-                updateNoteEstimateMinutesByPath(tabPath, nextEstimateMinutes);
+                return updateNoteEstimateMinutesByPath(tabPath, nextEstimateMinutes);
             }} onBlockedByIdsChange={(nextBlockedByIds) => {
                 updateNoteBlockedByIdsByPath(tabPath, nextBlockedByIds);
             }} onWaitingForChange={(nextWaitingFor) => {
                 updateNoteWaitingForByPath(tabPath, nextWaitingFor);
             }} onFollowUpDateChange={(nextFollowUpDate) => {
-                updateNoteFollowUpDateByPath(tabPath, nextFollowUpDate);
+                return updateNoteFollowUpDateByPath(tabPath, nextFollowUpDate);
             }} onBlockedReasonChange={(nextBlockedReason) => {
                 updateNoteBlockedReasonByPath(tabPath, nextBlockedReason);
             }} onNextActionHintChange={(nextActionHint) => {
@@ -2014,25 +1996,9 @@ function App() {
                 void openTagOverviewByReference(rawTag);
             }} onRemoveTag={(tag) => {
                 removeNoteTagByPath(tabPath, tag);
-            }} onOpenTagInput={() => {
-                openPropertyTagInput(tabPath);
-            }} onTagDraftChange={(value) => {
-                setPropertyTagDraftByPath((prev) => ({ ...prev, [tabPath]: value }));
-            }} onCommitTagInput={() => {
-                commitPropertyTagInput(tabPath);
-            }} onCloseTagInput={() => {
-                closePropertyTagInput(tabPath);
-            }} onRemoveRelated={(related) => {
+            }} onAddTag={(value) => addNoteTagByPath(tabPath, value)} onRemoveRelated={(related) => {
                 removeNoteRelatedByPath(tabPath, related);
-            }} onOpenRelatedInput={() => {
-                openPropertyRelatedInput(tabPath);
-            }} onRelatedDraftChange={(value) => {
-                setPropertyRelatedDraftByPath((prev) => ({ ...prev, [tabPath]: value }));
-            }} onCommitRelatedInput={() => {
-                commitPropertyRelatedInput(tabPath);
-            }} onCloseRelatedInput={() => {
-                closePropertyRelatedInput(tabPath);
-            }}/>);
+            }} onAddRelated={(value) => addNoteRelatedByPath(tabPath, value)}/>);
     };
     const syncNotePathWithTitle = async (tabPath: string, rawTitleOverride?: string) => {
         const tab = openTabsRef.current.find((entry) => entry.path === tabPath && entry.kind === 'note');
@@ -2161,6 +2127,7 @@ function App() {
         return result.actionId;
     }, [openTagActionDialog]);
     async function requestSaveBeforeNoteBaseSwitch(): Promise<boolean> {
+        if (!flushNoteInputs()) return false;
         const dirtyTabs = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty);
         if (!settingsDirtyRef.current && dirtyTabs.length === 0) {
             return true;
@@ -2194,16 +2161,18 @@ function App() {
     }
     const prepareCloseState = useEffectEvent(async ():Promise<boolean> => {
         const captureDraft=captureEditorRef.current?.getMarkdown()??captureText;
-        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges();captureEditorRef.current?.flushChanges()});
+        const propertiesValid=flushNoteInputs();
+        flushSync(()=>captureEditorRef.current?.flushChanges());
         try{
             await window.nicknotes?.writeCaptureDraft?.(captureDraft);
         }catch(error){
             setError('Schnellerfassungsentwurf konnte vor dem Schließen nicht lokal gesichert werden: '+String(error));
             throw error;
         }
-        return settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.kind==='note'&&tab.dirty);
+        return !propertiesValid||settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.kind==='note'&&tab.dirty);
     });
     const requestSaveBeforeAppClose = useEffectEvent(async (): Promise<boolean> => {
+        if (!flushNoteInputs()) return false;
         await prepareCloseState();
         if (settingsDirtyRef.current) {
             const settingsSaved = await saveSettings();
@@ -2382,8 +2351,8 @@ function App() {
             return;
         }
         if (!beginTagMatchApply()) return;
-        // Include buffered CodeMirror/table edits before inspecting the current drafts.
-        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
+        // Include buffered property and CodeMirror/table edits before inspecting drafts.
+        if (!flushNoteInputs()) {finishTagMatchApply('Bitte zuerst die markierten Notizeigenschaften korrigieren.'); return;}
         const targetPathKeys = new Set(uniqueMatches.map((item) => normalizeFilePathKey(item.path)));
         const dirtyTargets = openTabsRef.current.filter((tab) => tab.kind === 'note' && tab.dirty && targetPathKeys.has(normalizeFilePathKey(tab.path)));
         if (dirtyTargets.length > 0) {
@@ -2475,6 +2444,7 @@ function App() {
         });
     };
     const handleActivatePaneTab = (paneId: PaneId, tabId: string) => {
+        if (!flushNoteInputs()) return;
         dispatchWorkspace({
             type: 'ACTIVATE_TAB',
             paneId,
@@ -2498,6 +2468,7 @@ function App() {
         });
     };
     const handleMoveTabToOtherPane = (fromPaneId: PaneId, toPaneId: PaneId, tabId: string) => {
+        if (!flushNoteInputs()) return;
         dispatchWorkspace({
             type: 'MOVE_TAB_TO_OTHER_PANE',
             fromPaneId,
@@ -2506,9 +2477,11 @@ function App() {
         });
     };
     const toggleSplitView = () => {
+        if (!flushNoteInputs()) return;
         dispatchWorkspace({ type: 'TOGGLE_SPLIT_MODE' });
     };
     const toggleEditorPanel = () => {
+        if (!flushNoteInputs()) return;
         setEditorPanelOpen((previous) => !previous);
     };
     const closeCapturePanel = () => {
@@ -2753,7 +2726,7 @@ function App() {
         focusEditorSoon();
     };
     const saveAllDocuments = async () => {
-        flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});
+        if (!flushNoteInputs()) return;
         if(settingsDirtyRef.current && !await saveSettings())return;
         for(const tab of openTabsRef.current.filter(tab=>tab.kind==='note'&&tab.dirty&&!tab.readOnly)) {
             if(!await saveTab(tab.path))return; // A conflict must leave all remaining drafts intact.
@@ -2766,6 +2739,7 @@ function App() {
         if(choice==='delete')await deleteExplorerFile(tab.path);
     };
     const selectAdjacentTab = (direction:number) => {
+        if (!flushNoteInputs()) return;
         const pane=workspaceStateRef.current.lastFocusedPane;
         const state=workspaceStateRef.current.panes[pane];
         const index=state.tabIds.indexOf(state.activeTabId??'');
@@ -2780,7 +2754,7 @@ function App() {
         openNote:()=>vaultLoaded?setQuickOpen(true):pickAndOpenVault(),openVault:pickAndOpenVault,newVault:createVault,daily:openOrCreateTodayDaily,
         save:()=>settingsDialogOpen?saveSettings():activeTab?saveTab(activeTab.path):undefined,saveAll:saveAllDocuments,deleteNote:deleteCurrentDocument,
         closeTab:()=>activeTab?closeEditorTab(activeTab.id):undefined,settings:openSettingsDialog,
-        quit:()=>{flushSync(()=>{leftEditorRef.current?.flushChanges();rightEditorRef.current?.flushChanges()});window.nicknotes?.setUnsavedChanges?.(settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.dirty));return window.nicknotes?.windowAction?.('close')},
+        quit:()=>{flushNoteInputs();window.nicknotes?.setUnsavedChanges?.(settingsDirtyRef.current||openTabsRef.current.some(tab=>tab.dirty));return window.nicknotes?.windowAction?.('close')},
         undo:()=>editText('undo'),redo:()=>editText('redo'),cut:()=>editText('cut'),copy:()=>editText('copy'),paste:()=>editText('paste'),selectAll:()=>editText('selectAll'),
         find:()=>focusedEditor()?.find(),format:()=>focusedEditor()?.openCommandPalette(),
         search:()=>{showSidebar('notes');window.requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('.explorer-toolbar-search input')?.focus())},
@@ -2946,7 +2920,7 @@ function App() {
       <section className="main-region">
         <div ref={workspaceGridRef} className={workspaceGridClassName} style={workspaceGridStyle}>
           <div className="workspace-main-row">
-            {editorPanelOpen ? (<EditorWorkspaceLayout workspace={workspaceState} paneTabs={paneTabs} paneActiveTabs={paneActiveTabs} activePaneId={activePaneId} disableSave={!activeTab || !activeTab.dirty} disableReveal={activeTab?.kind !== 'note'} onSaveActive={() => {
+            {editorPanelOpen ? (<EditorWorkspaceLayout workspace={workspaceState} paneTabs={paneTabs} paneActiveTabs={paneActiveTabs} activePaneId={activePaneId} disableSave={!activeTab || !appCommands.some(command => command.id === 'save' && command.enabled)} disableReveal={activeTab?.kind !== 'note'} onSaveActive={() => {
                 void executeCommand('save');
             }} onRevealActive={revealActiveNoteInExplorer} onToggleSplitMode={toggleSplitView} onCloseEditorPanel={toggleEditorPanel} onSetSplitRatio={(nextRatio) => {
                 dispatchWorkspace({

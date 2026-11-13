@@ -157,7 +157,7 @@ das aktive Theme-Feld. Nach Verwerfen liegt der Fokus sichtbar auf der aktuellen
 Rubrik, bei unverändertem Strg+S bleibt der Feldfokus erhalten. Kleine Fenster
 scrollen innerhalb der Dialoggrenzen. [Nachweise](settings-dialog-2026-11-11.md).
 
-Mehrfachfilter für Tasks und To-dos verwenden `ui/MultiSelectFilter.tsx`:
+Mehrfachfilter für Tasks und To-dos verwenden `ui/MultiSelectPicker.tsx`:
 benannter nichtmodaler Popover mit Suchfeld und echten Checkboxen. Maus,
 Enter und Leertaste ändern die Auswahl, ohne die Liste zu schließen. Pfeile
 sowie Home/End navigieren fokussierte Optionen; im Suchfeld behalten Home/End
@@ -168,6 +168,22 @@ Eine leere Datenquelle unterscheidet sich von einer Suche ohne Treffer.
 Der Auslöser nennt Filter und Auswahl; reine Filterbedienung speichert keine
 Notiz. Bestehende Optionen und Filterregeln bleiben beim jeweiligen Aufrufer.
 [Nachweise](multiselect-filters-2026-11-12.md).
+
+Tags und Verknüpfungen in den Editor-Eigenschaften verwenden denselben Picker.
+Checkboxen ändern den Dokumententwurf unmittelbar; freie Werte benötigen den
+sichtbaren Hinzufügen-Button. Reine Suche, Tab, Escape und Außenklick übernehmen
+keinen eingegebenen Wert. Automatisch erkannte Bezüge behalten ihre eigene
+Darstellung; manuelle Chipaktionen nennen den betroffenen Wert.
+Eigenschaftsfelder besitzen eindeutige Namen, die Typbuttons zeigen ihre Auswahl
+mit `aria-pressed`, Fehler stehen am jeweiligen Feld. Lange Chips umbrechen.
+Beschriftungen erhalten auch im Split ausreichend Platz. Unter 360 px Panelbreite
+stehen Feldname und Eingabe untereinander; Titel wachsen nach Breitenwechseln
+mit ihrem Inhalt, statt ihn innerhalb einer alten festen Höhe abzuschneiden.
+Strg+S übernimmt auch noch aktive Text-/Taskfelder. Ungültige Eingaben bleiben
+zur Korrektur stehen und verhindern Save. Escape verwirft die lokale Taskfeld-
+eingabe; Enter übernimmt ein einzeiliges Feld und bleibt in Textareas eine Texteingabe.
+Titelentwürfe überstehen die tatsächliche Dateiumbenennung und weitere Eingaben
+während einer Speicherantwort. [Nachweise](editor-properties-2026-11-12.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).
