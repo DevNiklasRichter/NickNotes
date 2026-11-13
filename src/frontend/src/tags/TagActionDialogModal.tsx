@@ -110,7 +110,7 @@ function TagColorPicker({ colorPresets, selectedColor, onSelectColor }: TagColor
                 setSelectionSource('preset')
                 onSelectColor(normalizedPreset)
               }}
-              title={preset}
+              data-tooltip={preset}
               aria-label={`Farbe ${preset}`}
             />
           )
@@ -118,7 +118,7 @@ function TagColorPicker({ colorPresets, selectedColor, onSelectColor }: TagColor
       </div>
       <div className="tag-color-custom-panel">
         <span className="tag-color-custom-heading">Eigene Farbe</span>
-        <label className={`tag-color-custom-option ${selectionSource === 'custom' ? 'active' : ''}`} title={customColor}>
+        <label className={`tag-color-custom-option ${selectionSource === 'custom' ? 'active' : ''}`} data-tooltip={customColor}>
           <input
             type="color"
             className="tag-color-custom-input"

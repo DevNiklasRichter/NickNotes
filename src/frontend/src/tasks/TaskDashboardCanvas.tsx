@@ -211,7 +211,7 @@ export function TaskDashboardCanvas({
                       <button
                         className="icon-button compact muted task-list-sort-reset"
                         onClick={clearListSort}
-                        title="Sortierung zuruecksetzen"
+                        aria-label="Sortierung zuruecksetzen" data-tooltip="Sortierung zuruecksetzen"
                       >
                         <LucideNamedIcon name="FilterX" size={12} />
                       </button>
@@ -255,7 +255,7 @@ export function TaskDashboardCanvas({
                                 onOpenTaskPath(task.path, task.title)
                               }}
                               disabled={!canOpen}
-                              title={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
+                              aria-label={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'} data-tooltip={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
                             >
                               <LucideNamedIcon name="ArrowUpRight" size={14} />
                             </button>
@@ -319,7 +319,7 @@ export function TaskDashboardCanvas({
                               onOpenTaskPath(task.path, task.title)
                             }}
                             disabled={!canOpen}
-                            title={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
+                            aria-label={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'} data-tooltip={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
                           >
                             <LucideNamedIcon name="ArrowUpRight" size={14} />
                           </button>

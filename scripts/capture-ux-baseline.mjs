@@ -28,9 +28,10 @@ const tagMatching = process.argv.includes('--tag-matching')
 const settingsDialog = process.argv.includes('--settings-dialog')
 const filters = process.argv.includes('--filters')
 const properties = process.argv.includes('--properties')
+const tooltips = process.argv.includes('--tooltips')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -94,6 +95,7 @@ async function capture(name, description) {
   await page.evaluate(async () => {
     await document.fonts.ready
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    await Promise.all([...document.querySelectorAll('.nn-tooltip:popover-open .nn-tooltip-content')].flatMap(node=>node.getAnimations()).map(animation=>animation.finished.catch(()=>{})))
   })
   const step = report.screenshots.length + (edgesOnly ? 19 : 1)
   const file = `${String(step).padStart(2, '0')}-${name}.png`
@@ -119,6 +121,11 @@ async function capture(name, description) {
       properties: rect('.note-properties-panel'), editor: rect('.note-body-editor .cm-scroller'),
       graphCanvas: rect('.graph-network-canvas'),
       capture: rect('.capture-workspace-panel'),
+      tooltips: [...document.querySelectorAll('.nn-tooltip:popover-open')].map(node=>{
+        const {x,y,width,height}=node.getBoundingClientRect()
+        return {text:node.textContent,id:node.id,x,y,width,height,outsideViewport:x<0||y<0||x+width>innerWidth||y+height>innerHeight,
+          describedBy:[...document.querySelectorAll('[aria-describedby]')].filter(target=>target.getAttribute('aria-describedby').split(/\s+/).includes(node.id)).map(target=>({tag:target.tagName,label:target.getAttribute('aria-label')}))}
+      }),
       menus: [...document.querySelectorAll('.nn-context-menu,.explorer-context-menu,.editor-selection-context-menu')].map(node => {
         const {x, y, width, height} = node.getBoundingClientRect()
         return {className: node.className, role: node.getAttribute('role'), label: node.getAttribute('aria-label'), x, y, width, height,
@@ -1571,7 +1578,7 @@ async function verifyFilters() {
   const opened=page.locator('.nn-filter-popover:popover-open')
   const taskLabel='Tasks: Status',taskPopup=popup(taskLabel),taskTrigger=trigger(taskLabel)
   const taskShell=page.locator('.todo-explorer-shell')
-  const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
+  const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
   const titles=()=>page.locator('.task-canvas .task-title-with-tags').allTextContents().then(items=>items.map(text=>text.trim()).sort())
   await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click()
   await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
@@ -1604,10 +1611,10 @@ async function verifyFilters() {
   report.checks.filtersKeyboardMultipleSelectionAndRealHits=true
 
   await priorityTrigger.click();await taskTrigger.click();await expect(opened).toHaveCount(1);await expect(taskPopup).toBeVisible()
-  await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).focus();await expect(opened).toHaveCount(0)
+  await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).focus();await expect(opened).toHaveCount(0)
   await taskTrigger.click();await expect(search).toBeFocused();await taskTrigger.click();await expect(opened).toHaveCount(0);await expect(taskTrigger).toHaveAttribute('aria-expanded','false')
   await taskTrigger.dblclick();await expect(opened).toHaveCount(0);await expect(taskTrigger).toHaveAttribute('aria-expanded','false')
-  await taskTrigger.click();await taskShell.getByTitle('Tasks durchsuchen',{exact:true}).click();await expect(opened).toHaveCount(0)
+  await taskTrigger.click();await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).click();await expect(opened).toHaveCount(0)
   report.checks.filtersNativeToggleExclusivityAndOutsideFocus=true
 
   const tagsLabel='Tasks: Tags',tagsPopup=popup(tagsLabel),tagsTrigger=trigger(tagsLabel)
@@ -1633,7 +1640,7 @@ async function verifyFilters() {
   await expect(opened).toHaveCount(0)
   const todoShell=page.locator('.todo-explorer-shell')
   await todoShell.locator('.todo-open-dashboard-button').click()
-  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await todoShell.getByTitle('Todos durchsuchen',{exact:true}).fill('Filtertodo')
+  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await todoShell.getByLabel('Todos durchsuchen',{exact:true}).fill('Filtertodo')
   await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
   const todoLabel='To-dos: Status',todoPopup=popup(todoLabel),todoTrigger=trigger(todoLabel)
   await todoTrigger.click();await todoPopup.getByRole('checkbox',{name:'Done',exact:true}).check()
@@ -1799,6 +1806,118 @@ async function verifyProperties() {
   await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
 }
 
+async function verifyTooltips() {
+  await windowSize(1280,800)
+  await theme('dark');await openNote('Arbeitsnotiz')
+  const original=fs.readFileSync(notePath,'utf8')
+  const tip=page.getByRole('tooltip'),rail=page.locator('.activity-rail')
+  const notes=rail.getByRole('button',{name:'Notizen',exact:true})
+  const noTip=()=>expect(tip).not.toBeVisible()
+  const bounds=async()=>{
+    const box=await tip.boundingBox(),vp=await page.evaluate(()=>({w:innerWidth,h:innerHeight}))
+    report.checks.tooltipBounds ??= []
+    report.checks.tooltipBounds.push({text:await tip.textContent(),box,viewport:vp})
+    assert.ok(box&&box.x>=7&&box.y>=7&&box.x+box.width<=vp.w-7&&box.y+box.height<=vp.h-7,'Tooltip outside viewport')
+  }
+  const beside=async item=>{
+    const box=await tip.boundingBox(),anchor=await item.boundingBox()
+    assert.ok(box.x>=anchor.x+anchor.width-1||box.x+box.width<=anchor.x+1,'Menu hint covers neighbouring actions')
+  }
+  await notes.hover();await expect(tip).toContainText('Notizen');await expect(tip).toContainText('Alt+1')
+  await bounds();await capture('tooltip-rail-dark','Shared dark tooltip with command-catalog shortcut; right of the activity rail')
+  await tip.hover();await page.waitForTimeout(600);await expect(tip).toBeVisible()
+  await page.mouse.move(700,500);await noTip()
+  report.checks.tooltipHoverBridge=true
+
+  await rail.getByRole('button',{name:'NoteBase',exact:true}).focus();await page.keyboard.press('Tab')
+  await expect(notes).toBeFocused();await expect(tip).toContainText('Notizen')
+  const tipId=await tip.getAttribute('id');await expect(notes).toHaveAttribute('aria-describedby',tipId)
+  await capture('tooltip-keyboard-dark','Keyboard focus opens the same hint without moving focus')
+  await page.keyboard.press('Escape');await noTip();await expect(notes).toBeFocused()
+  await expect(notes).not.toHaveAttribute('aria-describedby',/./)
+  await page.waitForTimeout(600);await noTip()
+  report.checks.tooltipKeyboardEscapeKeepsFocusAndStaysDismissed=true
+
+  await notes.hover();await page.mouse.move(700,500);await notes.hover();await expect(tip).toBeVisible()
+  await notes.click();await noTip();await page.waitForTimeout(600);await noTip()
+  await expect(page.locator('.left-sidebar')).not.toBeVisible()
+  await notes.click();await expect(page.locator('.left-sidebar')).toBeVisible()
+  const menuTrigger=page.getByRole('button',{name:'Notizen sortieren',exact:true})
+  await menuTrigger.click();await expect(page.getByRole('menu',{name:'Notizen sortieren',exact:true})).toBeVisible()
+  await notes.hover();await page.waitForTimeout(600);await noTip();await page.keyboard.press('Escape')
+  await page.locator('.explorer-row').filter({hasText:'Arbeitsnotiz'}).first().click({button:'right'})
+  const fileMenu=page.getByRole('menu',{name:'Exploreraktionen',exact:true})
+  await expect(fileMenu).toBeVisible();await fileMenu.getByRole('menuitem',{name:'Umbenennen',exact:true}).hover()
+  const rename=fileMenu.getByRole('menuitem',{name:'Umbenennen',exact:true})
+  await expect(tip).toHaveText('Umbenennen');await expect(fileMenu).toBeVisible();await bounds();await beside(rename)
+  await capture('tooltip-context-menu-dark','Shared hint within the active context menu keeps its actions and focus intact')
+  await page.keyboard.press('Escape');await expect(fileMenu).toHaveCount(0);await noTip()
+  await page.locator('.explorer-row').filter({hasText:'Arbeitsnotiz'}).first().evaluate(node=>node.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:innerWidth-4,clientY:200,button:2})))
+  await expect(fileMenu).toBeVisible();await rename.hover();await expect(tip).toHaveText('Umbenennen');await bounds();await beside(rename)
+  await capture('tooltip-menu-right-edge-dark','Actual menu with synthetic right-edge coordinates: hint flips to its left without covering adjacent actions')
+  await page.keyboard.press('Escape');await expect(fileMenu).toHaveCount(0);await noTip()
+  report.checks.tooltipClickAndMenuBoundary=true
+
+  await page.getByRole('button',{name:'Tags bearbeiten',exact:true}).first().click()
+  const popup=page.getByRole('dialog',{name:'Tags bearbeiten',exact:true})
+  await expect(popup).toBeVisible();await notes.hover();await page.waitForTimeout(600);await noTip()
+  await popup.getByRole('searchbox').click();await page.keyboard.press('Escape');await expect(popup).not.toBeVisible()
+  report.checks.tooltipDoesNotDismissOrEscapeAutoPopover=true
+
+  await rail.getByRole('button',{name:'Einstellungen',exact:true}).click()
+  const close=page.getByRole('button',{name:'Einstellungen schliessen',exact:true})
+  await close.hover();await expect(tip).toContainText('Einstellungen schliessen');await bounds()
+  await capture('tooltip-settings-dark','Hint above the active settings dialog; no focus or action in the hint')
+  // Synthetic event probes scope eligibility without clicking through the modal.
+  await notes.dispatchEvent('pointerover',{pointerType:'mouse'});await page.waitForTimeout(600);await noTip()
+  await close.click();report.checks.tooltipDialogBoundary=true
+
+  // Explicitly synthetic lifecycle/edge controls; the real shared layer owns all hints.
+  await page.evaluate(()=>{
+    const host=document.createElement('section');host.id='tooltip-probe';host.style.cssText='position:fixed;left:430px;top:250px;z-index:300;background:var(--surface);padding:16px;border:1px solid var(--line)'
+    host.innerHTML='<p>Isolierte Tooltip-Probe</p><p id="tooltip-probe-description">Bestehende Feldbeschreibung</p><input aria-label="Tooltip-Prüffeld" aria-describedby="tooltip-probe-description" data-tooltip="Zusätzlicher Feldhinweis"/><button disabled data-tooltip="Aktion derzeit nicht verfügbar">Deaktivierte Aktion</button><button id="tooltip-probe-edge">Langer Pfad</button>'
+    host.querySelector('#tooltip-probe-edge').dataset.tooltip='C:/Synthetische-NoteBase/'+('Ein-sehr-langer-Ordnername/'.repeat(9))+'Dokument.md'
+    document.body.append(host)
+  })
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  try {
+    const field=page.getByRole('textbox',{name:'Tooltip-Prüffeld',exact:true})
+    await field.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(field).toBeFocused()
+    await expect(tip).toHaveText('Zusätzlicher Feldhinweis')
+    await expect(field).toHaveAttribute('aria-describedby',`tooltip-probe-description ${tipId}`)
+    await page.keyboard.press('Escape');await noTip();await expect(field).toHaveAttribute('aria-describedby','tooltip-probe-description')
+    await expect(field).toBeFocused();report.checks.tooltipPreservesExistingDescription=true
+    await page.getByRole('button',{name:'Langer Pfad',exact:true}).focus()
+    await field.dispatchEvent('pointerdown',{pointerType:'touch'});await field.focus();await page.waitForTimeout(600);await noTip()
+    await field.dispatchEvent('pointerout',{pointerType:'touch'});report.checks.tooltipTouchFocusDoesNotOpen=true
+    await page.getByRole('button',{name:'Deaktivierte Aktion',exact:true}).hover();await expect(tip).toHaveText('Aktion derzeit nicht verfügbar')
+    await capture('tooltip-disabled-dark','Synthetic disabled control remains explainable on hover')
+    await page.getByRole('button',{name:'Deaktivierte Aktion',exact:true}).evaluate(node=>node.remove());await noTip()
+    report.checks.tooltipDisabledAndUnmount=true
+    for(const [label,w,h,z,mode]of[['zoom',1280,800,1.5,'dark'],['small',640,420,1,'dark'],['light',1280,800,1,'light']]) {
+      await windowSize(w,h,z)
+      if(mode==='light')await theme('light')
+      await page.evaluate(()=>{const host=document.getElementById('tooltip-probe');host.style.cssText='position:fixed;right:8px;bottom:8px;z-index:300;background:var(--surface);padding:8px;border:1px solid var(--line)';host.querySelector('input').style.display='none';host.querySelectorAll('p').forEach(node=>node.style.display='none')})
+      const edge=page.getByRole('button',{name:'Langer Pfad',exact:true})
+      await page.mouse.move(10,100);await edge.hover();await expect(tip).toContainText('Dokument.md');await bounds()
+      await capture(`tooltip-${label}`,'Synthetic long path at the bottom-right boundary, '+label)
+      await page.keyboard.press('Escape');await noTip()
+    }
+    await page.emulateMedia({reducedMotion:'reduce'})
+    await page.mouse.move(10,100);await page.getByRole('button',{name:'Langer Pfad',exact:true}).hover();await expect(tip).toBeVisible()
+    assert.equal(await tip.locator('.nn-tooltip-content').evaluate(node=>getComputedStyle(node).animationName),'none')
+    await capture('tooltip-reduced-motion','Shared tooltip with reduced-motion preference and no animation')
+    await page.mouse.wheel(0,150);await noTip();report.checks.tooltipReducedMotionAndScrollDismiss=true
+  } finally {
+    await page.evaluate(()=>document.getElementById('tooltip-probe')?.remove());await page.emulateMedia({reducedMotion:null})
+    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum)
+  }
+  await noTip();assert.equal(fs.readFileSync(notePath,'utf8'),original)
+  report.checks.tooltipNoDocumentWrites=true
+  assert.equal(await page.locator('.activity-rail [title],.editor-workspace-panel [title]:not(.cm-editor *)').count(),0)
+  await windowSize(1280,800);await theme('dark');await openNote('Arbeitsnotiz')
+}
+
 async function captureTabMenuEdges() {
   // Exercise the actual tab handler with boundary inputs. The trigger is genuine;
   // only the pointer coordinates are synthetic, because tabs cannot occupy every corner.
@@ -1895,6 +2014,7 @@ try {
     if (settingsDialog) await verifySettingsDialog()
     if (filters) await verifyFilters()
     if (properties) await verifyProperties()
+    if (tooltips) await verifyTooltips()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

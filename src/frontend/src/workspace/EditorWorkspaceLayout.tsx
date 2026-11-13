@@ -514,7 +514,7 @@ export function EditorWorkspaceLayout({
                     onClick={() => {
                       onActivateTab(paneId, tab.id)
                     }}
-                    title={getTabTooltip(tab)}
+                    data-tooltip={getTabTooltip(tab)}
                   >
                     <span className="tab-kind-icon" aria-hidden="true">
                       <LucideNamedIcon name={resolveTabIconName(tab)} size={13} />
@@ -531,7 +531,7 @@ export function EditorWorkspaceLayout({
                     onClick={() => {
                       onCloseTab(tab.id)
                     }}
-                    title="Diese Ansicht schließen (Strg+W schließt die aktive Ansicht)"
+                    aria-label="Diese Ansicht schließen" data-tooltip={`Diese Ansicht schließen\n${commandTitle('closeTab')}`}
                   >
                     <LucideNamedIcon name="X" size={14} />
                   </button>
@@ -551,7 +551,7 @@ export function EditorWorkspaceLayout({
               onClick={() => {
                 setOverflowMenuPaneId((current) => (current === paneId ? null : paneId))
               }}
-              title="Weitere Tabs anzeigen"
+              aria-label="Weitere Tabs anzeigen" data-tooltip="Weitere Tabs anzeigen"
             >
               <LucideNamedIcon name="ChevronDown" size={14} />
             </button>
@@ -564,7 +564,7 @@ export function EditorWorkspaceLayout({
                       key={`${paneId}-overflow-tab-${tab.id}`}
                       type="button"
                       className={`pane-tab-overflow-item ${isActive ? 'active' : ''}`}
-                      title={getTabTooltip(tab)}
+                      data-tooltip={getTabTooltip(tab)}
                       onClick={() => {
                         const fromIndex = tabs.findIndex((entry) => entry.id === tab.id)
                         if (fromIndex > 0) {
@@ -640,14 +640,14 @@ export function EditorWorkspaceLayout({
           renderPaneTabBar('left', 'toolbar')
         )}
         <div className="editor-tab-actions">
-          <button className="icon-button compact muted" onClick={onSaveActive} disabled={disableSave} aria-label="Speichern" title={commandTitle('save')}>
+          <button className="icon-button compact muted" onClick={onSaveActive} disabled={disableSave} aria-label="Speichern" data-tooltip={commandTitle('save')}>
             <LucideNamedIcon name="Save" size={14} />
           </button>
           <button
             className="icon-button compact muted"
             onClick={onRevealActive}
             disabled={disableReveal}
-            title="Im Explorer anzeigen"
+            aria-label="Im Explorer anzeigen" data-tooltip="Im Explorer anzeigen"
           >
             <LucideNamedIcon name="FolderSearch" size={14} />
           </button>
@@ -655,11 +655,11 @@ export function EditorWorkspaceLayout({
             className="icon-button compact muted"
             onClick={onToggleSplitMode}
             aria-label={workspace.layoutMode === 'split' ? 'Split aus' : 'Split an'}
-            title={commandTitle('split',workspace.layoutMode === 'split' ? 'Split aus' : 'Split an')}
+            data-tooltip={commandTitle('split',workspace.layoutMode === 'split' ? 'Split aus' : 'Split an')}
           >
             <LucideNamedIcon name="Columns2" size={14} />
           </button>
-          <button className="icon-button compact muted" onClick={onCloseEditorPanel} aria-label="Editor schließen" title={commandTitle('editor','Editor schließen')}>
+          <button className="icon-button compact muted" onClick={onCloseEditorPanel} aria-label="Editor schließen" data-tooltip={commandTitle('editor','Editor schließen')}>
             <LucideNamedIcon name="X" size={14} />
           </button>
         </div>

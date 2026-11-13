@@ -93,7 +93,7 @@ export function MultiSelectPicker({label, selectedValues, options, allLabel = 'A
 
   return <div className={`nn-multiselect${open ? ' is-open' : ''}`}>
     <button ref={trigger} type="button" className={`nn-multiselect-trigger${triggerText ? ' nn-picker-token-trigger' : ''}`} disabled={disabled}
-      aria-label={triggerText ? label : `${label}: ${summary}`} title={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} popoverTarget={id}
+      aria-label={triggerText ? label : `${label}: ${summary}`} data-tooltip={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} popoverTarget={id}
       onClick={event => event.stopPropagation()}
       onKeyDown={event => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return

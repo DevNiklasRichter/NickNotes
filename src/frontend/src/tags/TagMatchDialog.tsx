@@ -33,7 +33,7 @@ export function TagMatchDialog({loading, applying, error, status, needsRescan, m
       <span className="tag-match-context">{match.before}</span>
       {mode === 'before' ? <mark className="tag-match-highlight">{match.matchedText}</mark>
         : <span className="cm-md-inline-tag-chip tag-match-chip" style={{'--cm-md-tag-color': match.groupColor} as CSSProperties}
-          title={`${match.groupDisplayName} / ${match.tagDisplayName}`}>{match.tagDisplayName}</span>}
+          data-tooltip={`${match.groupDisplayName} / ${match.tagDisplayName}`}>{match.tagDisplayName}</span>}
       <span className="tag-match-context">{match.after}</span>
     </div>
   </section>
@@ -55,9 +55,9 @@ export function TagMatchDialog({loading, applying, error, status, needsRescan, m
         <h3 id={`${id}-title`}>Tag-Fundstellen prüfen</h3>
         <div className="tag-match-header-actions">
           <button type="button" onClick={() => {void onSearch()}} disabled={loading || applying}
-            title="Neuer Prüfdurchlauf, einschließlich zuvor übersprungener Fundstellen">Erneut suchen</button>
+            data-tooltip="Neuer Prüfdurchlauf, einschließlich zuvor übersprungener Fundstellen">Erneut suchen</button>
           <button type="button" className="icon-button compact muted" onClick={close} disabled={applying}
-            aria-label="Tag-Prüfung schließen" title="Schließen (Esc)"><LucideNamedIcon name="X" size={14}/></button>
+            aria-label="Tag-Prüfung schließen" data-tooltip="Schließen (Esc)"><LucideNamedIcon name="X" size={14}/></button>
         </div>
       </header>
       <p className="muted-copy" id={`${id}-description`}>Prüfe Textstellen vor dem Ersetzen durch Tagreferenzen. Überspringen gilt für diesen Prüfdurchlauf.</p>
@@ -72,8 +72,8 @@ export function TagMatchDialog({loading, applying, error, status, needsRescan, m
         <div className="tag-match-compare-grid">{preview('before')}{preview('after')}</div>
         <footer className="tag-match-actions">
           <div className="tag-match-nav-actions">
-            <button type="button" aria-label="Vorherige Fundstelle" title="Vorherige Fundstelle (←)" onClick={() => onMove(-1)} disabled={applying || total <= 1}><LucideNamedIcon name="ChevronLeft" size={14}/></button>
-            <button type="button" aria-label="Nächste Fundstelle" title="Nächste Fundstelle (→)" onClick={() => onMove(1)} disabled={applying || total <= 1}><LucideNamedIcon name="ChevronRight" size={14}/></button>
+            <button type="button" aria-label="Vorherige Fundstelle" data-tooltip="Vorherige Fundstelle (←)" onClick={() => onMove(-1)} disabled={applying || total <= 1}><LucideNamedIcon name="ChevronLeft" size={14}/></button>
+            <button type="button" aria-label="Nächste Fundstelle" data-tooltip="Nächste Fundstelle (→)" onClick={() => onMove(1)} disabled={applying || total <= 1}><LucideNamedIcon name="ChevronRight" size={14}/></button>
           </div>
           <div className="tag-match-apply-actions">
             <button type="button" onClick={onSkip} disabled={applying}>Überspringen</button>

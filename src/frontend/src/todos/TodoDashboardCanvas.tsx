@@ -364,7 +364,7 @@ export function TodoDashboardCanvas({
                               key={`${todo.id}-tag-${token.key}-${index}`}
                               className={`todo-inline-tag-chip todo-inline-tag-chip-button ${tagMatchesQuery ? 'query-match' : ''}`}
                               style={{ '--todo-tag-color': token.color } as CSSProperties}
-                              title={`${token.raw} - Tag-Overview oeffnen`}
+                              data-tooltip={`${token.raw} - Tag-Overview oeffnen`}
                               onClick={() => onOpenTagOverview(token.key)}
                             >
                               {token.label}
@@ -377,7 +377,7 @@ export function TodoDashboardCanvas({
                     <div className="todo-canvas-line-actions">
                       <button
                         className="icon-button compact muted"
-                        title={`Ursprung oeffnen (${todoNoteLabel(todo)})`}
+                        aria-label={`Ursprung oeffnen (${todoNoteLabel(todo)})`} data-tooltip={`Ursprung oeffnen (${todoNoteLabel(todo)})`}
                         onClick={() => onOpenOrigin(todo.note_path, todo.note_title || undefined)}
                       >
                         <LucideNamedIcon name="ArrowUpRight" size={14} />
@@ -385,7 +385,7 @@ export function TodoDashboardCanvas({
                       {todo.promoted ? (
                         <button
                           className="icon-button compact muted"
-                          title={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'}
+                          aria-label={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'} data-tooltip={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'}
                           onClick={() => {
                             if (!canOpenPromotedTask) {
                               return
@@ -399,7 +399,7 @@ export function TodoDashboardCanvas({
                       ) : (
                         <button
                           className="icon-button compact muted"
-                          title="Als Task promoten"
+                          aria-label="Als Task promoten" data-tooltip="Als Task promoten"
                           onClick={() => onPromoteTodo(todo.id)}
                         >
                           <LucideNamedIcon name="ArrowBigUpDash" size={14} />

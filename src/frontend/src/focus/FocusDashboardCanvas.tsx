@@ -199,7 +199,7 @@ function FocusItemCard({
         onClick={() => {
           onSelect(item.key)
         }}
-        title="Kontext zu diesem Fokuspunkt anzeigen"
+        data-tooltip="Kontext zu diesem Fokuspunkt anzeigen"
       >
         <div className="focus-primary-card-head">
           <span className={`item-kind-pill ${item.kind === 'todo' ? 'todo' : ''}`}>{item.kind === 'task' ? 'TASK' : 'TODO'}</span>
@@ -245,7 +245,7 @@ function FocusItemCard({
             onToggleMit(item)
           }}
           disabled={mitActionDisabled}
-          title={mitActionTitle}
+          data-tooltip={mitActionTitle}
         >
           {item.isMit ? 'Aus MIT' : 'Als MIT'}
         </button>
@@ -255,7 +255,7 @@ function FocusItemCard({
           onClick={() => {
             onOpenOrigin(item)
           }}
-          title={canOpen ? 'Ursprung oeffnen' : 'Kein Ursprungspfad vorhanden'}
+          aria-label={canOpen ? 'Ursprung oeffnen' : 'Kein Ursprungspfad vorhanden'} data-tooltip={canOpen ? 'Ursprung oeffnen' : 'Kein Ursprungspfad vorhanden'}
         >
           <LucideNamedIcon name="ArrowUpRight" size={14} />
         </button>
@@ -646,7 +646,7 @@ export function FocusDashboardCanvas({
                       <button
                         className="focus-card-action-button"
                         disabled={toSuggestionActionDisabled(entry, mitBusyKey)}
-                        title={entry.item.canAddToMit ? 'Als MIT uebernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
+                        data-tooltip={entry.item.canAddToMit ? 'Als MIT uebernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
                         onClick={() => {
                           void toggleMit(entry.item)
                         }}
@@ -776,7 +776,7 @@ export function FocusDashboardCanvas({
                         openItemOrigin(item)
                       }}
                       disabled={!item.path}
-                      title="Ursprung oeffnen"
+                      aria-label="Ursprung oeffnen" data-tooltip="Ursprung oeffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -815,7 +815,7 @@ export function FocusDashboardCanvas({
                       const noteType = note.noteType.trim().toLowerCase() === 'task' ? 'task' : 'note'
                       onOpenNotePath(note.path, note.title, noteType)
                     }}
-                    title={`Notiz oeffnen (${note.path})`}
+                    aria-label={`Notiz oeffnen (${note.path})`} data-tooltip={`Notiz oeffnen (${note.path})`}
                   >
                     <LucideNamedIcon name="ArrowUpRight" size={14} />
                   </button>
@@ -845,7 +845,7 @@ export function FocusDashboardCanvas({
                       onClick={() => {
                         onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
                       }}
-                      title="Daily oeffnen"
+                      aria-label="Daily oeffnen" data-tooltip="Daily oeffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -891,7 +891,7 @@ export function FocusDashboardCanvas({
                         openItemOrigin(item)
                       }}
                       disabled={!item.path}
-                      title="Ursprung oeffnen"
+                      aria-label="Ursprung oeffnen" data-tooltip="Ursprung oeffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -947,7 +947,7 @@ export function FocusDashboardCanvas({
                       onClick={() => {
                         onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
                       }}
-                      title="Daily oeffnen"
+                      aria-label="Daily oeffnen" data-tooltip="Daily oeffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -977,7 +977,7 @@ export function FocusDashboardCanvas({
                       const noteType = note.note_type.trim().toLowerCase() === 'task' ? 'task' : 'note'
                       onOpenNotePath(note.path, note.title, noteType)
                     }}
-                    title="Notiz oeffnen"
+                    aria-label="Notiz oeffnen" data-tooltip="Notiz oeffnen"
                   >
                     <LucideNamedIcon name="ArrowUpRight" size={14} />
                   </button>

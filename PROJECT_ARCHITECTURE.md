@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 12. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
+Stand: 13. November 2026, Windows-Kandidat 2.1.0-rc.4. Der
 [Implementierungsplan](doc/implementation-plan.md) dokumentiert Umsetzung und
 Restabnahme; [Releasepruefung](doc/release-candidate-2026-11-08.md),
 [Windows-Auslieferung](doc/windows-release.md) und [MCP](doc/mcp-connections.md)
@@ -187,7 +187,7 @@ Die globalen App-Shortcuts greifen nicht in fokussierte Kontextmenues ein.
 Der vorhandene Explorer-Eingabe-/Bestaetigungsdialog gibt beim Schliessen den
 Fokus zurueck, begrenzt die Tabfolge und loest sein Ergebnis ohne Timer auf.
 Bei Loeschbestaetigungen liegt der Standardfokus auf Abbrechen. Weitere
-Popover, Dialoge und Tooltips folgen in eigenen Schnitten.
+Popover und Dialoge sind in den nachfolgenden Schnitten beschrieben.
 `npm run ux:baseline -- --foundations --menus` prueft zusaetzlich konkrete
 Menueaktionen, deaktivierte Eintraege, Tastatur-/Dialogfokus und sehr kleine
 Testfenster. Die reduzierte Fenstermindestgroesse gilt ausschliesslich fuer
@@ -231,6 +231,21 @@ gerendert. Es gibt keine zweite Inhaltsquelle oder Formatmigration.
 `--editor-menus` erweitert den UX-Runner um diese Ablaeufe, echte Markdown-Saves,
 Undo/Redo und eine isolierte Komponentenprobe fuer Schreibschutz und veraltete
 Auswahlcallbacks. Nachweise: [Editormenues](doc/editor-menus-2026-11-10.md).
+
+`ui/TooltipLayer.tsx` besitzt genau eine fluechtige Hinweisflaeche pro App.
+Deklarative Controls liefern `data-tooltip`; ihre Namen und Fachaktionen bleiben
+bei den Controls, Shortcuttexte beim Befehlskatalog. Hover und sichtbarer
+Tastaturfokus oeffnen zeitversetzt einen nichtfokussierbaren manuellen Popover.
+Der vorhandene Positionierungshelfer begrenzt ihn auf das Fenster. Der Hinweis
+bleibt beim Ueberfahren erreichbar, nimmt keinen Fokus und verbraucht keine
+Tastaturereignisse. Escape, Eingabe, Klick, Scrollen und Fensterwechsel schliessen
+ihn; der eigene `aria-describedby`-Verweis wird neben vorhandenen Beschreibungen
+gesetzt und gezielt wieder entfernt. Menues, Auswahlpopover und modale Dialoge
+begrenzen die erlaubten Ausloeser. Ausgeblendete/abgebaute Ausloeser entfernen
+ihren Hinweis. Observer und Listener bleiben innerhalb des Bausteins; keine
+Persistenz, Dependency oder Fachmutation. CodeMirror-/Markdown-Inhaltstitel
+bleiben beim Editor. `--tooltips` prueft Bedienung und ausdruecklich synthetische
+Rand-/Lebensdauerproben. Details: [Tooltips](doc/tooltips-2026-11-13.md).
 
 `ui/MenuButton.tsx` ergaenzt den gemeinsamen Menuebaustein um einen expliziten
 Ausloeser mit `aria-haspopup`/`aria-expanded`, Klick-Toggle und Tastaturoeffnung.

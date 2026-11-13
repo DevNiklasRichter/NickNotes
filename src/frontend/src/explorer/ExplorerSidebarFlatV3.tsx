@@ -1487,7 +1487,7 @@ export function ExplorerSidebar({
                 void runOpenOrCreateTodayDaily()
               }}
               disabled={!vaultLoaded}
-              title={commandTitle('daily','Tagesnotiz öffnen oder anlegen')}
+              aria-label={commandTitle('daily','Tagesnotiz öffnen oder anlegen')} data-tooltip={commandTitle('daily','Tagesnotiz öffnen oder anlegen')}
             >
               <LucideNamedIcon name="CalendarDays" className="row-action-icon" size={14} />
             </button>
@@ -1496,7 +1496,7 @@ export function ExplorerSidebar({
           <h3>Notizen</h3>
 
           <div className="explorer-toolbar-right">
-            <span title={createActionsDisabled ? createActionsDisabledReason : commandTitle('newNote')}>
+            <span data-tooltip={createActionsDisabled ? createActionsDisabledReason : commandTitle('newNote')}>
               <button
                 className="icon-button compact"
                 onClick={() => {
@@ -1508,7 +1508,7 @@ export function ExplorerSidebar({
                 <LucideNamedIcon name="FilePlus" className="row-action-icon" size={14} />
               </button>
             </span>
-            <span title={createActionsDisabled ? createActionsDisabledReason : commandTitle('newTask')}>
+            <span data-tooltip={createActionsDisabled ? createActionsDisabledReason : commandTitle('newTask')}>
               <button
                 className="icon-button compact"
                 onClick={() => {
@@ -1520,7 +1520,7 @@ export function ExplorerSidebar({
                 <LucideNamedIcon name="CheckSquare" className="row-action-icon" size={14} />
               </button>
             </span>
-            <span title={createActionsDisabled ? createActionsDisabledReason : 'Neuer Ordner'}>
+            <span data-tooltip={createActionsDisabled ? createActionsDisabledReason : 'Neuer Ordner'}>
               <button
                 className="icon-button compact"
                 onClick={() => {
@@ -1559,7 +1559,7 @@ export function ExplorerSidebar({
                   })
                 }}
                 aria-label="Suche leeren"
-                title="Suche leeren"
+                data-tooltip="Suche leeren"
               >
                 <LucideNamedIcon name="X" size={12} />
               </button>
@@ -1739,7 +1739,7 @@ export function ExplorerSidebar({
                 </div>
                 <div className="row-meta">
                   {node.type === 'folder' ? (
-                    <button type="button" className="row-folder-menu" onClick={(event) => openContextMenuAt(event, node)} title="Ordner-Aktionen">
+                    <button type="button" className="row-folder-menu" onClick={(event) => openContextMenuAt(event, node)} aria-label="Ordner-Aktionen" data-tooltip="Ordner-Aktionen">
                       <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                     </button>
                   ) : null}
@@ -1792,7 +1792,7 @@ export function ExplorerSidebar({
                   <ContextMenuItem
 
                     disabled={contextCreateLocked}
-                    title={contextCreateLocked ? contextCreateLockReason : 'Neue Datei'}
+                    data-tooltip={contextCreateLocked ? contextCreateLockReason : 'Neue Datei'}
                     onClick={() => {
                       void createFileInFolderFromContext(contextNode)
                     }}
@@ -1805,7 +1805,7 @@ export function ExplorerSidebar({
                   <ContextMenuItem
 
                     disabled={contextCreateLocked}
-                    title={contextCreateLocked ? contextCreateLockReason : 'Neue Task'}
+                    data-tooltip={contextCreateLocked ? contextCreateLockReason : 'Neue Task'}
                     onClick={() => {
                       void createTaskInFolderFromContext(contextNode)
                     }}
@@ -1818,7 +1818,7 @@ export function ExplorerSidebar({
                   <ContextMenuItem
 
                     disabled={contextCreateLocked}
-                    title={contextCreateLocked ? contextCreateLockReason : 'Neuer Ordner'}
+                    data-tooltip={contextCreateLocked ? contextCreateLockReason : 'Neuer Ordner'}
                     onClick={() => {
                       void createFolderInFolderFromContext(contextNode)
                     }}
@@ -1830,7 +1830,7 @@ export function ExplorerSidebar({
                 <ContextMenuItem
 
                   disabled={contextReadonlyLinkFile}
-                  title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht umbenannt werden.' : 'Umbenennen'}
+                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht umbenannt werden.' : 'Umbenennen'}
                   onClick={() => {
                     void renameNodeFromContext(contextNode)
                   }}
@@ -1851,7 +1851,7 @@ export function ExplorerSidebar({
                 <ContextMenuItem
                   className="danger"
                   disabled={(contextNode.type === 'folder' && contextNode.canDelete === false) || contextReadonlyLinkFile}
-                  title={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht geloescht werden.' : 'Loeschen'}
+                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht geloescht werden.' : 'Loeschen'}
                   onClick={() => {
                     void deleteNodeFromContext(contextNode)
                   }}
@@ -1973,7 +1973,7 @@ export function ExplorerSidebar({
                   setIconPicker(null)
                   setIconSearchQuery('')
                 }}
-                title="Schliessen"
+                aria-label="Schliessen" data-tooltip="Schliessen"
               >
                 <LucideNamedIcon name="X" size={14} className="row-action-icon" />
               </button>
@@ -1993,7 +1993,7 @@ export function ExplorerSidebar({
                   setIconPicker(null)
                   setIconSearchQuery('')
                 }}
-                title="Standardicon wiederherstellen"
+                aria-label="Standardicon wiederherstellen" data-tooltip="Standardicon wiederherstellen"
               >
                 <LucideNamedIcon name="RotateCcw" size={14} className="row-action-icon" />
               </button>
@@ -2013,7 +2013,7 @@ export function ExplorerSidebar({
                     setIconPicker(null)
                     setIconSearchQuery('')
                   }}
-                  title={iconName}
+                  data-tooltip={iconName}
                 >
                   <LucideNamedIcon name={iconName} size={16} className="explorer-icon-option-glyph" />
                   <span>{iconName}</span>
@@ -2036,7 +2036,7 @@ export function ExplorerSidebar({
         }
         window.addEventListener('mousemove', onMove)
         window.addEventListener('mouseup', onUp)
-      }} title="Explorer-Breite anpassen" />
+      }} data-tooltip="Explorer-Breite anpassen" />
     </div>
   )
 }

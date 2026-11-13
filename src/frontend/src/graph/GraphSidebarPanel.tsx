@@ -22,7 +22,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       return null
     }
     return (
-      <label className="focus-sidebar-check-option" title={title}>
+      <label className="focus-sidebar-check-option" data-tooltip={title}>
         <input type="checkbox" checked={value} onChange={(event) => graph.updateFilters({ [key]: event.target.checked })} />
         <span>{label}</span>
       </label>
@@ -35,10 +35,10 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
         <div className="explorer-toolbar-top">
           <h3>Graph</h3>
           <div className="explorer-toolbar-right">
-            <button className="icon-button compact" onClick={graph.requestFitGraph} disabled={!vaultLoaded} title="Graph in Fenster einpassen">
+            <button className="icon-button compact" onClick={graph.requestFitGraph} disabled={!vaultLoaded} aria-label="Graph in Fenster einpassen" data-tooltip="Graph in Fenster einpassen">
               <LucideNamedIcon name="Maximize" size={14} />
             </button>
-            <button className="icon-button compact" onClick={() => void graph.triggerRebuild()} disabled={!vaultLoaded || graph.rebuilding} title="Graph neu laden">
+            <button className="icon-button compact" onClick={() => void graph.triggerRebuild()} disabled={!vaultLoaded || graph.rebuilding} aria-label="Graph neu laden" data-tooltip="Graph neu laden">
               <LucideNamedIcon name="RefreshCw" size={14} />
             </button>
           </div>
@@ -61,7 +61,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
           />
         </div>
         <div className="graph-search-mode-options" role="radiogroup" aria-label="Suchdarstellung">
-          <label title="Nur Suchtreffer im Graph anzeigen">
+          <label data-tooltip="Nur Suchtreffer im Graph anzeigen">
             <input
               type="radio"
               name="graph-search-mode"
@@ -70,7 +70,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             />
             <span>Nur Treffer anzeigen</span>
           </label>
-          <label title="Gesamtgraph behalten und Suchtreffer hervorheben">
+          <label data-tooltip="Gesamtgraph behalten und Suchtreffer hervorheben">
             <input
               type="radio"
               name="graph-search-mode"
@@ -95,7 +95,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       <section className="todo-sidebar-section">
         <div className="todo-section-header">
           <h4>Filter</h4>
-          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} title="Filter zuruecksetzen">
+          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} aria-label="Filter zuruecksetzen" data-tooltip="Filter zuruecksetzen">
             <LucideNamedIcon name="FilterX" size={13} />
           </button>
         </div>
@@ -105,7 +105,8 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
               Gewicht
               <span
                 className="graph-filter-info-icon"
-                title="Mindestgewicht fuer Kanten: Hoehere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
+                tabIndex={0} role="img" aria-label="Hinweis zum Kantengewicht"
+                data-tooltip="Mindestgewicht fuer Kanten: Hoehere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
               >
                 <LucideNamedIcon name="Info" size={13} />
               </span>

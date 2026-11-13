@@ -17,7 +17,7 @@ export function MenuButton({label, heading, icon, disabled, className = 'icon-bu
   const [anchor, setAnchor] = useState<(ContextMenuAnchor & {focusLast?: boolean}) | null>(null)
   return <>
     <button type="button" className={`${className}${anchor ? ' active' : ''}`}
-      disabled={disabled} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={Boolean(anchor)}
+      disabled={disabled} aria-label={label} data-tooltip={label} aria-haspopup="menu" aria-expanded={Boolean(anchor)}
       onClick={event => {
         event.stopPropagation()
         setAnchor(anchor ? null : contextMenuAnchor(event.currentTarget, fallbackRef?.current))

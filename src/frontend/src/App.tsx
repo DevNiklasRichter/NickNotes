@@ -1,4 +1,5 @@
 import {ContextMenu, ContextMenuItem} from './ui/ContextMenu';
+import {TooltipLayer} from './ui/TooltipLayer';
 import type {ContextMenuAnchor} from './ui/contextMenuAnchor';
 import {useNoteDocuments} from './workspace/useNoteDocuments';
 import {useExternalChanges} from './app/useExternalChanges';
@@ -2798,6 +2799,7 @@ function App() {
         : '';
     if (!vaultLoaded) {
         return (<div className="window-frame">
+        <TooltipLayer/>
         {windowTitlebar}
         <div className="window-content">
           <div className="launch-shell">
@@ -2850,6 +2852,7 @@ function App() {
       </div>);
     }
     return (<div className="window-frame">
+      <TooltipLayer/>
       {windowTitlebar}
       {commandDialogs}
       <div className="window-content">
@@ -2941,13 +2944,13 @@ function App() {
           {showCaptureInline ? (<div className={`capture-resize-handle ${captureResizing ? 'active' : ''}`} onPointerDown={(event) => {
                 event.preventDefault();
                 setCaptureResizing(true);
-            }} title="Quick Capture Hoehe anpassen"/>) : null}
+            }} data-tooltip="Quick Capture Hoehe anpassen"/>) : null}
 
           {showCaptureInline ? (<section className="workspace-panel capture-workspace-panel">
               <div className="panel-header-row">
                 <h3>Quick Capture</h3>
                 <div className="panel-inline-actions">
-                  <button className="icon-button compact muted" onClick={closeCapturePanel} title={commandTitle('capture','Quick Capture schließen')}>
+                  <button className="icon-button compact muted" onClick={closeCapturePanel} aria-label={commandTitle('capture','Quick Capture schließen')} data-tooltip={commandTitle('capture','Quick Capture schließen')}>
                     <LucideNamedIcon name="X" size={14}/>
                   </button>
                 </div>
@@ -2970,7 +2973,7 @@ function App() {
             </section>) : null}
         </div>
         {!showCaptureInline ? (<div className="bottom-dock">
-            <button className="dock-tab" onClick={openCaptureFromDock} title={commandTitle('capture')}>
+            <button className="dock-tab" onClick={openCaptureFromDock} data-tooltip={commandTitle('capture')}>
               Quick Capture
             </button>
           </div>) : null}

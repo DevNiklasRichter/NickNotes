@@ -479,7 +479,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
               <h3>{activeSection.title}</h3>
               <p>{activeSection.description}</p>
             </div>
-            <button type="button" className="icon-button compact muted" onClick={close} title="Einstellungen schliessen" aria-label="Einstellungen schliessen">
+            <button type="button" className="icon-button compact muted" onClick={close} data-tooltip="Einstellungen schliessen" aria-label="Einstellungen schliessen">
               <LucideNamedIcon name="X" size={16}/>
             </button>
           </header>
@@ -600,7 +600,7 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
 
           {oneNoteSourcePaths.length ? (<div className="import-source-list">
               {oneNoteSourcePaths.map((path) => (<div key={path} className="import-source-row">
-                  <span title={path}>{path}</span>
+                  <span data-tooltip={path}>{path}</span>
                   <button onClick={() => {
                         setOneNoteSourcePaths((prev) => prev.filter((item) => item !== path));
                         setOneNotePreview(null);

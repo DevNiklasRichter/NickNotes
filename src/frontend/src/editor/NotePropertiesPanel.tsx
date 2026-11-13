@@ -284,7 +284,7 @@ export function NotePropertiesPanel({
                   onClick={() => {
                     onRemoveDueDate()
                   }}
-                  aria-label="Fälligkeitsdatum entfernen" title="Faelligkeitsdatum entfernen"
+                  aria-label="Fälligkeitsdatum entfernen" data-tooltip="Faelligkeitsdatum entfernen"
                 >
                   x
                 </button>
@@ -322,7 +322,7 @@ export function NotePropertiesPanel({
                           setEstimateDraft('')
                           onEstimateMinutesChange('')
                         }}
-                        aria-label="Schätzung entfernen" title="Schaetzung entfernen"
+                        aria-label="Schätzung entfernen" data-tooltip="Schaetzung entfernen"
                       >
                         x
                       </button>
@@ -417,7 +417,7 @@ export function NotePropertiesPanel({
                           setFollowUpDateDraft('')
                           onFollowUpDateChange('')
                         }}
-                        aria-label="Wiedervorlagedatum entfernen" title="Follow-up entfernen"
+                        aria-label="Wiedervorlagedatum entfernen" data-tooltip="Follow-up entfernen"
                       >
                         x
                       </button>
@@ -475,7 +475,7 @@ export function NotePropertiesPanel({
                 key={`tag-manual-${item}`}
                 className="property-chip tag-chip manual interactive"
                 style={{ '--tag-chip-color': visual.color } as CSSProperties}
-                title={item}
+                data-tooltip={item}
               >
                 <button
                   type="button"
@@ -483,7 +483,7 @@ export function NotePropertiesPanel({
                   onClick={() => {
                     onOpenTagOverview?.(item)
                   }}
-                  title={`Tag-Overview oeffnen (${item})`}
+                  data-tooltip={`Tag-Overview oeffnen (${item})`}
                 >
                   {visual.label}
                 </button>
@@ -494,7 +494,7 @@ export function NotePropertiesPanel({
                     event.stopPropagation()
                     onRemoveTag(item)
                   }}
-                  aria-label={`Tag ${item} entfernen`} title="Tag entfernen"
+                  aria-label={`Tag ${item} entfernen`} data-tooltip="Tag entfernen"
                 >
                   x
                 </button>
@@ -509,7 +509,7 @@ export function NotePropertiesPanel({
                 key={`tag-auto-${item}`}
                 className="property-chip tag-chip auto property-chip-link-button"
                 style={{ '--tag-chip-color': visual.color } as CSSProperties}
-                title={`Automatisch erkannt - ${item}`}
+                data-tooltip={`Automatisch erkannt - ${item}`}
                 onClick={() => {
                   onOpenTagOverview?.(item)
                 }}
@@ -536,14 +536,14 @@ export function NotePropertiesPanel({
                 onClick={() => {
                   onRemoveRelated(item)
                 }}
-                aria-label={`Verknüpfung ${item} entfernen`} title="Link entfernen"
+                aria-label={`Verknüpfung ${item} entfernen`} data-tooltip="Link entfernen"
               >
                 x
               </button>
             </span>
           ))}
           {autoRelated.map((item) => (
-            <span key={`related-auto-${item}`} className="property-chip auto" title="Automatisch erkannt">
+            <span key={`related-auto-${item}`} className="property-chip auto" data-tooltip="Automatisch erkannt">
               {item}
             </span>
           ))}

@@ -310,7 +310,7 @@ export function TagSidebar({
                 onOpenTagMatchWorkflow()
               }}
               disabled={!vaultLoaded || groups.length === 0}
-              title="NoteBase nach Tag-Fundstellen durchsuchen"
+              data-tooltip="NoteBase nach Tag-Fundstellen durchsuchen"
               aria-label="NoteBase nach Tag-Fundstellen durchsuchen"
             >
               <LucideNamedIcon name="ScanSearch" className="row-action-icon" size={14} />
@@ -322,7 +322,7 @@ export function TagSidebar({
                 onCreateGroup()
               }}
               disabled={!vaultLoaded}
-              title="Neue Tag-Gruppe"
+              aria-label="Neue Tag-Gruppe" data-tooltip="Neue Tag-Gruppe"
             >
               <LucideNamedIcon name="FolderPlus" className="row-action-icon" size={14} />
             </button>
@@ -333,7 +333,7 @@ export function TagSidebar({
                 onCreateTag(effectiveSelectedGroupId || null)
               }}
               disabled={!vaultLoaded || groups.length === 0}
-              title="Neuer Tag in bestehender Gruppe"
+              aria-label="Neuer Tag in bestehender Gruppe" data-tooltip="Neuer Tag in bestehender Gruppe"
             >
               <LucideNamedIcon name="Tag" className="row-action-icon" size={14} />
             </button>
@@ -349,7 +349,7 @@ export function TagSidebar({
               value={filterQuery}
               onChange={(event) => {setFilterQuery(event.target.value); setSearchCursor(-1)}}
               placeholder="Search"
-              title={filterQuery ? 'Enter: naechster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
+              aria-label="Tags und Gruppen filtern" data-tooltip={filterQuery ? 'Enter: naechster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') {
@@ -373,7 +373,7 @@ export function TagSidebar({
                   })
                 }}
                 aria-label="Suche leeren"
-                title="Suche leeren"
+                data-tooltip="Suche leeren"
               >
                 <LucideNamedIcon name="X" size={12} />
               </button>
@@ -447,7 +447,7 @@ export function TagSidebar({
                   <span
                     className="row-name tag-colored-label"
                     style={{ '--tag-accent': group.color } as CSSProperties}
-                    title={group.id}
+                    data-tooltip={group.id}
                   >
                     {group.displayName}
                   </span>
@@ -459,7 +459,7 @@ export function TagSidebar({
                     onClick={(event) =>
                       openContextAt(event, { kind: 'group', groupId: group.id }, setContextMenu, setSelectedGroupId, setSelectedTagKey)
                     }
-                    title="Gruppe verwalten"
+                    aria-label="Gruppe verwalten" data-tooltip="Gruppe verwalten"
                   >
                     <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                   </button>
@@ -517,7 +517,7 @@ export function TagSidebar({
                         <span
                           className="row-name tag-colored-label"
                           style={{ '--tag-accent': group.color } as CSSProperties}
-                          title={`${group.id}/${tag.id}`}
+                          data-tooltip={`${group.id}/${tag.id}`}
                         >
                           {tag.displayName}
                         </span>
@@ -535,7 +535,7 @@ export function TagSidebar({
                               setSelectedTagKey
                             )
                           }
-                          title="Tag verwalten"
+                          aria-label="Tag verwalten" data-tooltip="Tag verwalten"
                         >
                           <LucideNamedIcon name="MoreHorizontal" size={13} className="row-menu-icon" />
                         </button>
@@ -675,7 +675,7 @@ export function TagSidebar({
           window.addEventListener('mousemove', onMove)
           window.addEventListener('mouseup', onUp)
         }}
-        title="Explorer-Breite anpassen"
+        data-tooltip="Explorer-Breite anpassen"
       />
     </div>
   )

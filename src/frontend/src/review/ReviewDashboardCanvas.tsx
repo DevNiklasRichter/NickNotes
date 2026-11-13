@@ -226,7 +226,8 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     <div
                       key={point.date}
                       className="review-throughput-column"
-                      title={`${point.date} | Neu ${created} | Erledigt ${done}`}
+                      role="img" aria-label={`${point.date} | Neu ${created} | Erledigt ${done}`}
+                      data-tooltip={`${point.date} | Neu ${created} | Erledigt ${done}`}
                     >
                       <div className="review-throughput-bars">
                         <span className="review-throughput-bar created" style={{ height: toBarHeight(created, throughputMax) }} />
@@ -269,7 +270,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                 }}
                 role="tab"
                 aria-selected={filters.backlogMode === 'grouped'}
-                title="Tasks und Todos nebeneinander"
+                data-tooltip="Tasks und Todos nebeneinander"
               >
                 Nebeneinander
               </button>
@@ -283,7 +284,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                 }}
                 role="tab"
                 aria-selected={filters.backlogMode === 'stacked'}
-                title="Tasks und Todos gestapelt"
+                data-tooltip="Tasks und Todos gestapelt"
               >
                 Gestapelt
               </button>
@@ -305,7 +306,8 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     <div
                       key={point.date}
                       className="review-backlog-column"
-                      title={`${point.date} | Offen ${totalOpen} (Tasks ${point.open_tasks}, Todos ${point.open_todos})`}
+                      role="img" aria-label={`${point.date} | Offen ${totalOpen} (Tasks ${point.open_tasks}, Todos ${point.open_todos})`}
+                      data-tooltip={`${point.date} | Offen ${totalOpen} (Tasks ${point.open_tasks}, Todos ${point.open_todos})`}
                     >
                       <div className="review-backlog-bars">
                         <span className="review-backlog-bar tasks" style={{ height: toBarHeight(point.open_tasks, backlogMax) }} />
@@ -371,7 +373,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     </div>
                     <button
                       className="icon-button compact muted"
-                      title="Notiz oeffnen"
+                      aria-label="Notiz oeffnen" data-tooltip="Notiz oeffnen"
                       onClick={() => {
                         onOpenNotePath(entry.path, entry.title, normalizedType === 'task' ? 'task' : 'note')
                       }}
@@ -405,7 +407,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                   </div>
                   <button
                     className="icon-button compact muted"
-                    title="Task oeffnen"
+                    aria-label="Task oeffnen" data-tooltip="Task oeffnen"
                     onClick={() => {
                       onOpenNotePath(entry.path, entry.title, 'task')
                     }}
@@ -439,7 +441,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     </div>
                     <button
                       className="icon-button compact muted"
-                      title="Eintrag oeffnen"
+                      aria-label="Eintrag oeffnen" data-tooltip="Eintrag oeffnen"
                       onClick={() => {
                         const noteType = entry.kind === 'task' || normalizedType === 'task' ? 'task' : 'note'
                         onOpenNotePath(entry.path, entry.title, noteType)

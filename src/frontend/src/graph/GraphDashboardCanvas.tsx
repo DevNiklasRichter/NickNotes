@@ -17,7 +17,7 @@ export function GraphDashboardCanvas() {
           <span>
             Groesserer Graph sichtbar ({graph.filtered.nodes.length} Nodes, {graph.filtered.edges.length} Edges). Filter sind in der Sidebar.
           </span>
-          <button className="icon-button compact muted" onClick={() => setDismissedLargeGraphNoticeKey(largeGraphNoticeKey)} title="Hinweis ausblenden">
+          <button className="icon-button compact muted" onClick={() => setDismissedLargeGraphNoticeKey(largeGraphNoticeKey)} aria-label="Hinweis ausblenden" data-tooltip="Hinweis ausblenden">
             x
           </button>
         </div>

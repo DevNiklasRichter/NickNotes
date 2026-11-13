@@ -622,10 +622,10 @@ export function WorkbenchSidebarContent({
             <div className="explorer-toolbar-left" />
             <h3>NoteBase</h3>
             <div className="explorer-toolbar-right">
-              <button className="icon-button compact" onClick={onPickAndOpenVault} title="NoteBase laden">
+              <button className="icon-button compact" onClick={onPickAndOpenVault} aria-label="NoteBase laden" data-tooltip="NoteBase laden">
                 <LucideNamedIcon name="FolderOpen" size={14} />
               </button>
-              <button className="icon-button compact" onClick={onCreateVault} title="NoteBase erstellen">
+              <button className="icon-button compact" onClick={onCreateVault} aria-label="NoteBase erstellen" data-tooltip="NoteBase erstellen">
                 <LucideNamedIcon name="FolderPlus" size={14} />
               </button>
             </div>
@@ -636,7 +636,7 @@ export function WorkbenchSidebarContent({
           <section className="notebase-section">
             <p className="muted-label">Aktive NoteBase</p>
             <div className="notebase-list">
-              <div className="notebase-row active" title={vaultPath || 'Keine NoteBase geladen'}>
+              <div className="notebase-row active" data-tooltip={vaultPath || 'Keine NoteBase geladen'}>
                 <div className="notebase-row-main">
                   <strong>{noteBaseName || 'Keine NoteBase'}</strong>
                   <span>{vaultPath || 'Keine NoteBase geladen'}</span>
@@ -651,7 +651,7 @@ export function WorkbenchSidebarContent({
             {recentNoteBasesForList.length > 0 ? (
               <div className="notebase-list recent-notebase-list">
                 {recentNoteBasesForList.map((recent) => (
-                  <div className="notebase-row" key={recent.path} title={recent.path}>
+                  <div className="notebase-row" key={recent.path} data-tooltip={recent.path}>
                     <div className="notebase-row-main">
                       <strong>{recent.name}</strong>
                       <span>{recent.path}</span>
@@ -676,7 +676,7 @@ export function WorkbenchSidebarContent({
           <div className="explorer-toolbar-top">
             <div className="explorer-toolbar-left">
               <div className="explorer-sort-anchor">
-                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                <button className="icon-button compact" disabled={!vaultLoaded} aria-label="Filteroptionen" data-tooltip="Filteroptionen">
                   <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
                 </button>
               </div>
@@ -690,7 +690,7 @@ export function WorkbenchSidebarContent({
                   onRefreshTodos()
                 }}
                 disabled={!vaultLoaded}
-                title="Todos aktualisieren"
+                aria-label="Todos aktualisieren" data-tooltip="Todos aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -705,7 +705,7 @@ export function WorkbenchSidebarContent({
                 value={todoFilters.query}
                 onChange={(event) => setTodoFilter({ query: event.target.value })}
                 placeholder="Search"
-                title="Todos durchsuchen"
+                aria-label="Todos durchsuchen" data-tooltip="Todos durchsuchen"
               />
               {todoFilters.query ? (
                 <button
@@ -717,7 +717,7 @@ export function WorkbenchSidebarContent({
                     setTodoFilter({ query: '' })
                   }}
                   aria-label="Suche leeren"
-                  title="Suche leeren"
+                  data-tooltip="Suche leeren"
                 >
                   <LucideNamedIcon name="X" size={12} />
                 </button>
@@ -736,7 +736,7 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetTodoFilters}
-              title="Alle Filter zuruecksetzen"
+              data-tooltip="Alle Filter zuruecksetzen"
               aria-label="Alle Filter zuruecksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
@@ -819,7 +819,7 @@ export function WorkbenchSidebarContent({
           <div className="explorer-toolbar-top">
             <div className="explorer-toolbar-left">
               <div className="explorer-sort-anchor">
-                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                <button className="icon-button compact" disabled={!vaultLoaded} aria-label="Filteroptionen" data-tooltip="Filteroptionen">
                   <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
                 </button>
               </div>
@@ -833,7 +833,7 @@ export function WorkbenchSidebarContent({
                   onRefreshTasks()
                 }}
                 disabled={!vaultLoaded}
-                title="Tasks aktualisieren"
+                aria-label="Tasks aktualisieren" data-tooltip="Tasks aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -848,7 +848,7 @@ export function WorkbenchSidebarContent({
                 value={taskFilters.query}
                 onChange={(event) => setTaskFilter({ query: event.target.value })}
                 placeholder="Search"
-                title="Tasks durchsuchen"
+                aria-label="Tasks durchsuchen" data-tooltip="Tasks durchsuchen"
               />
               {taskFilters.query ? (
                 <button
@@ -860,7 +860,7 @@ export function WorkbenchSidebarContent({
                     setTaskFilter({ query: '' })
                   }}
                   aria-label="Suche leeren"
-                  title="Suche leeren"
+                  data-tooltip="Suche leeren"
                 >
                   <LucideNamedIcon name="X" size={12} />
                 </button>
@@ -879,7 +879,7 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetTaskFilters}
-              title="Alle Filter zuruecksetzen"
+              data-tooltip="Alle Filter zuruecksetzen"
               aria-label="Alle Filter zuruecksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
@@ -987,7 +987,7 @@ export function WorkbenchSidebarContent({
           <div className="explorer-toolbar-top">
             <div className="explorer-toolbar-left">
               <div className="explorer-sort-anchor">
-                <button className="icon-button compact" disabled={!vaultLoaded} title="Filteroptionen">
+                <button className="icon-button compact" disabled={!vaultLoaded} aria-label="Filteroptionen" data-tooltip="Filteroptionen">
                   <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
                 </button>
               </div>
@@ -1001,7 +1001,7 @@ export function WorkbenchSidebarContent({
                   onRefreshFocusData()
                 }}
                 disabled={!vaultLoaded}
-                title="Focus-Daten aktualisieren"
+                aria-label="Focus-Daten aktualisieren" data-tooltip="Focus-Daten aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -1016,7 +1016,7 @@ export function WorkbenchSidebarContent({
                 value={focusFilters.query}
                 onChange={(event) => setFocusFilter({ query: event.target.value })}
                 placeholder="Search"
-                title="Focus durchsuchen"
+                aria-label="Focus durchsuchen" data-tooltip="Focus durchsuchen"
               />
               {focusFilters.query ? (
                 <button
@@ -1028,7 +1028,7 @@ export function WorkbenchSidebarContent({
                     setFocusFilter({ query: '' })
                   }}
                   aria-label="Suche leeren"
-                  title="Suche leeren"
+                  data-tooltip="Suche leeren"
                 >
                   <LucideNamedIcon name="X" size={12} />
                 </button>
@@ -1047,7 +1047,7 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetFocusFilters}
-              title="Focus-Filter zuruecksetzen"
+              data-tooltip="Focus-Filter zuruecksetzen"
               aria-label="Focus-Filter zuruecksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
@@ -1146,7 +1146,7 @@ export function WorkbenchSidebarContent({
                   onRefreshReview()
                 }}
                 disabled={!vaultLoaded}
-                title="Review aktualisieren"
+                aria-label="Review aktualisieren" data-tooltip="Review aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -1164,7 +1164,7 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetReviewFilters}
-              title="Review-Filter zuruecksetzen"
+              data-tooltip="Review-Filter zuruecksetzen"
               aria-label="Review-Filter zuruecksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />

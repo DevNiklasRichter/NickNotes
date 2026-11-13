@@ -1,6 +1,6 @@
 # NickNotes Gestaltungsgrundlage
 
-Stand: 12. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
+Stand: 13. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
 CSS-Tokens in `src/frontend/src/index.css`, die Farbprofile in
 `src/frontend/src/app/AppShared.ts` und die jeweiligen Komponentenstyles.
 Dieser Leitfaden beschreibt ihren Einsatz; er ist kein zweites Themesystem.
@@ -184,6 +184,20 @@ zur Korrektur stehen und verhindern Save. Escape verwirft die lokale Taskfeld-
 eingabe; Enter übernimmt ein einzeiliges Feld und bleibt in Textareas eine Texteingabe.
 Titelentwürfe überstehen die tatsächliche Dateiumbenennung und weitere Eingaben
 während einer Speicherantwort. [Nachweise](editor-properties-2026-11-12.md).
+
+Tooltips verwenden die gemeinsame `ui/TooltipLayer.tsx` und bestehende Farb-,
+Text-, Rahmen- und Schattenrollen. Ein Control liefert seinen Hinweis über
+`data-tooltip` und behält einen unabhängigen zugänglichen Namen. Aktionen gehören
+in Menüs, nicht in Tooltips. Befehls-Shortcuts kommen aus `commandTitle`.
+Hover öffnet nach 500 ms, sichtbarer Tastaturfokus nach 150 ms. Der Hinweis
+bleibt überfahrbar; er übernimmt keinen Fokus. Escape, Eingabe, Klick und
+Scrollen schließen ihn. Bestehende Feldbeschreibungen bleiben erhalten. Die
+Fläche bleibt innerhalb des Fensters, lange Pfade umbrechen, reduzierte Bewegung
+schaltet die kurze Einblendung aus. Hinweise hinter einem geöffneten Menü,
+Auswahlpopover oder modalen Dialog werden unterdrückt; innerhalb der aktiven
+Fläche bleiben sie möglich. Native UI-`title` nicht zusätzlich setzen;
+Markdown-/CodeMirror-Inhaltstitel bleiben Editorzuständigkeit.
+[Nachweise und Grenzen](tooltips-2026-11-13.md).
 
 Prüfungen, Kontrastwerte und Screenshots der Umsetzung:
 [POT-02-Abnahme](ui-foundations-2026-11-10.md).

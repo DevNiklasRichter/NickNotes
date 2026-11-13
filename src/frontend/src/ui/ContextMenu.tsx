@@ -127,7 +127,7 @@ export function ContextMenu({anchor, label, heading, initialFocus = 'first', tri
     }
   }
 
-  return createPortal(<MenuActivation.Provider value={activate}><div ref={ref} role="menu" aria-label={label} className="nn-context-menu"
+  return createPortal(<MenuActivation.Provider value={activate}><div ref={ref} role="menu" aria-label={label} className="nn-context-menu" data-tooltip-side="right"
     style={{left: anchor.x, top: anchor.y}} onKeyDown={onKeyDown}
     onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}
     onContextMenu={event => {event.preventDefault(); event.stopPropagation()}}
