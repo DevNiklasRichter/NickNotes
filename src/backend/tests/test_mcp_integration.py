@@ -34,7 +34,7 @@ class MCPIntegrationTests(unittest.TestCase):
         initialized = self.rpc('initialize', {'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'test','version':'1'}})
         self.assertEqual(initialized['result']['serverInfo']['name'],'NickNotes')
         tools = self.rpc('tools/list')['result']['tools']
-        self.assertIn('get_related_notes', {tool['name'] for tool in tools})
+        self.assertIn('get_note_context', {tool['name'] for tool in tools})
         info = self.call('get_workspace_context',{})
         self.assertFalse(info.get('isError',False), info)
         denied = self.call('create_note', {'title':'Denied','body':'','tags':[],'operation_id':'denied-0001'})

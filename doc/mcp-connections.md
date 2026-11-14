@@ -33,9 +33,9 @@ Eine Konfiguration mit dem echten Schluessel nicht ins Repository einchecken. Di
 | --- | --- |
 | `get_workspace_context` | NoteBase, Rechte, Ordner und Format erklaeren |
 | `list_tags` | Verbindliche Gruppen und Tags auflisten |
-| `search_notes` | Volltextsuche mit Relevanz, Ausschnitt, Seiten, Tag- und Typfilter |
+| `search_notes` | Volltextsuche, nach Wissensgraph nachsortiert (mit anderen Treffern verlinkte Notizen steigen); je Treffer Tags, Backlinks und verlinkte Treffer; Seiten, Tag- und Typfilter |
 | `read_note` | Markdown plus SHA-256-Revision lesen |
-| `get_related_notes` | Direkte Verweise und gemeinsame Tags mit Begruendung; standardmaessig 50, maximal 200 Treffer |
+| `get_note_context` | Links, Backlinks und gewichtete Tag-Nachbarn einer Notiz; mit `depth=2` auch die Notizen hinter direkten Links samt Verbindung |
 | `list_work_items` | Tasks und Checkbox-Todos mit Herkunft, Status und Terminen |
 
 | Schreiben | Zweck |
