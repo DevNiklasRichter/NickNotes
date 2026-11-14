@@ -1,8 +1,7 @@
 # NickNotes Gestaltungsgrundlage
 
-Stand: 13. November 2026, Gestaltungsgrundlage POT-02 und folgende POT-03-Schnitte. Verbindliche Quelle sind die
-CSS-Tokens in `src/frontend/src/index.css`, die Farbprofile in
-`src/frontend/src/app/AppShared.ts` und die jeweiligen Komponentenstyles.
+Stand: 14. November 2026. Verbindliche Quelle sind die CSS-Tokens in
+`src/frontend/src/index.css` und die jeweiligen Komponentenstyles.
 Dieser Leitfaden beschreibt ihren Einsatz; er ist kein zweites Themesystem.
 
 ## Text und Dichte
@@ -15,10 +14,10 @@ App-Zoom skaliert das gesamte Interface. Keine globale Schriftgrößenregel mit
 | --- | --- | --- | --- |
 | Zusatzinformation | `--font-caption` | 12 px | Zeitstempel, Status, Abschnittslabels |
 | Beschriftung | `--font-label` | 13 px | Navigation, Explorer, kompakte Aktionen |
-| Oberflächentext | `--font-ui` | 14 px | Formulare, Dialoge, allgemeiner UI-Text |
-| Abschnitt | `--font-section` | 16 px | Property- und Bereichsüberschriften |
-| Notiztext | `--font-editor` | 15,5 px | CodeMirror-Fließtext; Zeilenhöhe 1,7 |
-| Notiztitel | `--font-note-title` | flexibel | Dokumenttitel; eigener Split-Token |
+| Oberflächentext | `--font-ui` | 13 px | Formulare, Dialoge, allgemeiner UI-Text |
+| Abschnitt | `--font-section` | 15 px | Property- und Bereichsüberschriften |
+| Notiztext | `--font-editor` | 15 px | CodeMirror-Fließtext; Zeilenhöhe 1,7 |
+| Notiztitel | `--font-note-title` | 28–32 px | Dokumenttitel; eigener Split-Token |
 
 Markdown-Überschriften, Code und Tabellen behalten die Dokumenttypografie.
 Kein universelles UI-Label-Token auf deren Inlineelemente anwenden.
@@ -40,9 +39,27 @@ kompakt, die Hauptnavigation bietet mindestens 36 px hohe Schaltflächen.
 | Tastaturfokus | `--focus-ring` | sichtbare 2-px-Kontur mit 2-px-Abstand |
 | Erfolg/Fehler | `--ok-bg/border/text`, `--error-bg/border/text` | Meldungsfläche mit Text; fachliche Statusfarben ergänzend |
 
-Hell/Dunkel überschreiben Farben, nicht Typografie oder Shell-Geometrie.
-Benutzerprofile nutzen weiterhin die bestehenden Farbfelder in
-`.system/ui_settings.json`; keine neuen Profilfelder oder Migrationen.
+Hell/Dunkel überschreiben Farben, nicht Typografie oder Shell-Geometrie. Es gibt
+nur diese zwei Themes; `.system/ui_settings.json` speichert `theme`, eigene
+Farbprofile werden nicht mehr gelesen. Die Titelleiste in `src/desktop/main.mjs`
+und die Startseite in `index.html` spiegeln `--surface`, `--bg-layer-1`, `--muted`.
+
+**Geometrie.** Rundungen folgen Rollen: `--radius-control` (6 px) für Buttons,
+Eingaben, Zeilen und Karten, `--radius-menu` (8 px) für Menüs, Popover und
+Spalten, `--radius-dialog` (12 px) für Dialoge, `--radius-pill` für Chips. Keine
+festen Pixelwerte daneben. `--shadow` gehört nur an schwebende Flächen (Menü,
+Popover, Dialog, Tooltip, Meldung).
+
+**Controls.** `index.css` definiert `button`, `input`, `select`, `textarea` und
+`.icon-button` einmal. Buttons ruhen ohne Rahmen auf `--control-bg`; Hover
+wechselt die Fläche, Fokus zeigt den Ring. Varianten: `.primary` (eine pro
+Ansicht), `.danger`. Eingaben und Auswahlfelder haben Fläche und Rand.
+Komponenten ergänzen nur Layout, keine eigenen Rahmen-, Radius- oder
+Hoverregeln für Standardbuttons.
+
+**Sprache.** Deutsche Oberfläche mit echten Umlauten. Feste Begriffe:
+Schnellerfassung, Rückblick, Fokus, To-do (in Notizen), Task (eigene Datei),
+Verknüpft; Taskstatus Neues Thema, Offen, In Arbeit, Pausiert, Erledigt.
 Der globale Fokusstil ist die Grundlage. Komponenten dürfen ihn nur durch einen
 mindestens gleich gut sichtbaren Fokus ersetzen. Menüfokus und vollständige
 Tastaturführung werden in POT-03 konsolidiert; Explorer, Tabs, Tags, Graphknoten und Editoraktionen verwenden
@@ -82,8 +99,8 @@ Sidebar/Capture beendet den Modus. Er wird nicht über Sessions gespeichert.
 ## Dialog, Popover und Menü
 
 Der Meldungseinstieg in der Titelleiste bleibt auch bei ausgeblendeter
-Statusmeldung erreichbar. Fehler werden als Alert angezeigt und erst durch
-Bestätigen entfernt; spätere Erfolge ersetzen ihre Details nicht. Fehlgeschlagene
+Statusmeldung erreichbar. Hinweise verschwinden nach vier Sekunden von selbst.
+Fehler werden als Alert angezeigt und erst durch Bestätigen entfernt; spätere Erfolge ersetzen ihre Details nicht. Fehlgeschlagene
 Schreibaktionen werden bewusst am ursprünglichen Vorgang wiederholt. Langsame
 Saves zeigen ab 400 ms einen Textstatus, während der Editor weiter nutzbar bleibt.
 `public/motion.css` ergänzt ausschließlich 140-ms-Farb-/Randübergänge. Die

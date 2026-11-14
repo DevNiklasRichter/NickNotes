@@ -100,7 +100,7 @@ const SETTINGS_SECTIONS: Array<{
         id: 'appearance',
         title: 'Darstellung',
         eyebrow: 'Oberfläche',
-        description: 'Theme und visuelle Arbeitsweise.',
+        description: 'Farbschema der App.',
         icon: 'Palette',
     },
     {id: 'agents', title: 'Agent-Verbindungen', eyebrow: 'MCP', description: 'Externe Agenten gezielt für diese NoteBase freigeben.', icon: 'Plug'},

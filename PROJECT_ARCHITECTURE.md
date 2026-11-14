@@ -80,7 +80,7 @@ MeineNoteBase/
   .system/
     config.json                  Formatversion 2, stabile vault_id
     tag_groups.json              einzige Tagdefinitionsquelle
-    ui_settings.json             Themes und portable UI-Einstellungen
+    ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
@@ -199,7 +199,9 @@ Regeln, die Aenderungen einhalten muessen:
 - **Ansichtszustand ist fluechtig oder UI-Setting.** Schreibmodus, Filter und
   Layout erzeugen keine fachliche Aenderungsversion und schreiben kein Markdown.
 - **Gestaltung** folgt den Tokens in `index.css` und dem
-  [UI-Styleguide](doc/ui-styleguide.md). `layout/WorkbenchShell.css` besitzt das
+  [UI-Styleguide](doc/ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
+  Farben stehen nur in `index.css`, Buttons, Eingaben und Auswahlfelder sind dort
+  einmal definiert. `layout/WorkbenchShell.css` besitzt das
   Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen. Geplante
   Vereinheitlichung: [UI-Modernisierung](doc/ui-modernization-plan-2026-11-12.md).
 

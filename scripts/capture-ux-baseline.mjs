@@ -1562,7 +1562,7 @@ async function verifyFilters() {
   const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zurücksetzen',exact:true}).click();await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
   const titles=()=>page.locator('.task-canvas .task-title-with-tags').allTextContents().then(items=>items.map(text=>text.trim()).sort())
   await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click()
-  await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
+  await expect(page.locator('.task-canvas')).toBeVisible();await resetTasks()
   await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen','Filtertask Wartet'])
   await taskTrigger.focus();await page.keyboard.press('Enter')
   const search=taskPopup.getByRole('searchbox',{name:taskLabel+' durchsuchen',exact:true})
@@ -1620,7 +1620,7 @@ async function verifyFilters() {
   await taskTrigger.click();await page.locator('.activity-rail').getByRole('button',{name:'To-dos',exact:true}).click()
   await expect(opened).toHaveCount(0)
   const todoShell=page.locator('.todo-explorer-shell')
-  await todoShell.locator('.todo-open-dashboard-button').click()
+  await expect(page.locator('.todo-canvas')).toBeVisible()
   await todoShell.getByRole('button',{name:'Alle Filter zurücksetzen',exact:true}).click();await todoShell.getByLabel('Todos durchsuchen',{exact:true}).fill('Filtertodo')
   await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
   const todoLabel='To-dos: Status',todoPopup=popup(todoLabel),todoTrigger=trigger(todoLabel)
@@ -1635,7 +1635,7 @@ async function verifyFilters() {
   assert.equal(writes(),before)
   report.checks.filtersDoNotWriteMarkdownOrLoseEditorDraft=true
 
-  await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click();await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
+  await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click();await expect(page.locator('.task-canvas')).toBeVisible();await resetTasks()
   const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,200);return old})
   try {
     for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500],['short',640,240]]) {
@@ -2336,9 +2336,9 @@ try {
     await capture('task-dark', 'Task created by keyboard, status changed by visible control and persisted')
 
     await page.locator('.activity-rail').getByRole('button', {name: 'Tasks', exact: true}).click()
-    await page.locator('.left-sidebar .todo-open-dashboard-button').click()
+    await expect(page.locator('.left-sidebar .todo-open-dashboard-button')).toHaveCount(0)
     await expect(page.locator('.task-canvas')).toBeVisible()
-    await capture('task-dashboard-dark', 'Task dashboard opened with the mouse')
+    await capture('task-dashboard-dark', 'Task dashboard opened from the navigation; no redundant open button')
     await openNote('Arbeitsnotiz')
     await windowSize(1600, 1000)
     await page.keyboard.press('F8')
