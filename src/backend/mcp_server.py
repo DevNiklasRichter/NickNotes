@@ -47,13 +47,23 @@ def create_mcp(service, grants):
 
     @contextmanager
     def access(writing=False):
-        with service.state.operation_lock:
-            grant = grants.current(principal.get())
+        # Every call re-checks the grant; its NoteBase opens on demand even when the app shows another one.
+        grant = grants.current(principal.get())
+        if not grant:
+            raise ValidationDomainError('Diese Agent-Freigabe ist nicht mehr gültig.')
+        if writing and not grant['write']:
+            raise ValidationDomainError('Diese Agent-Freigabe erlaubt nur Lesen.')
+        root = Path(grant['vaultPath'])
+        try:
+            identity = json.loads((root / '.system' / 'config.json').read_text(encoding='utf-8')).get('vault_id')
+        except (OSError, ValueError, AttributeError):
+            identity = None
+        if identity != grant['vaultId']:
+            raise ValidationDomainError('Die freigegebene NoteBase ist unter ihrem Pfad nicht erreichbar.')
+        with service.sessions.bind(root) as runtime, runtime.operation_lock:
             vault, indexer = service.require_loaded()
-            if not grant or grant['vaultId'] != vault.read_config()['vault_id'] or Path(grant['vaultPath']) != vault.vault_path.resolve():
-                raise ValidationDomainError('Diese Agent-Freigabe gilt nicht für die aktuell geöffnete NoteBase.')
-            if writing and not grant['write']:
-                raise ValidationDomainError('Diese Agent-Freigabe erlaubt nur Lesen.')
+            if vault.vault_path.resolve() != root.resolve():
+                raise ConflictDomainError('Die NoteBase wurde gerade gewechselt. Bitte erneut versuchen.')
             yield vault, indexer, grant
 
     def receipt(vault, grant, operation_id, payload, execute):

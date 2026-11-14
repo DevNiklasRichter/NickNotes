@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import threading
-from .session import RuntimeState, coordinated
+from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
 from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteOpenRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagMoveRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
@@ -64,10 +64,12 @@ class BackendApiService:
     def __init__(self, runtime: Any | None = None, capabilities: dict[str, Any] | None = None) -> None:
         self._runtime = runtime if runtime is not None else RuntimeState()
         self._capabilities = capabilities or {}
+        self.sessions = SessionRegistry(self)
 
     @property
     def state(self) -> RuntimeState:
-        return self._runtime
+        # Agent calls bind the session of their own NoteBase; everything else uses the app's.
+        return bound_runtime.get() or self._runtime
 
     @coordinated
     def require_loaded(self) -> tuple[Any, Any]:

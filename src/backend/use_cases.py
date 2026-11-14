@@ -52,6 +52,8 @@ class OpenVaultUseCase:
         if not vault_path.exists():
             raise ValidationDomainError(f"NoteBase path not found: {vault_path}", operation="open_vault", vault_id=str(vault_path))
 
+        if service.state is service._runtime:
+            service.sessions.release(vault_path)
         service.state.dispose_session()
         indexer = None
         try:

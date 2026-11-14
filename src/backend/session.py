@@ -1,11 +1,14 @@
 from __future__ import annotations
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
+import sys
 import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from .nicknotes_backend.vault import VaultManager
 from .nicknotes_backend.indexer import VaultIndexer
@@ -250,3 +253,77 @@ class RuntimeState:
     def stop_graph_watcher(self) -> None:
         with self.operation_lock, self.session_lock:
             self._session.stop_graph_watcher()
+
+
+# Runtime of the current call when it is not the NoteBase shown in the app (MCP).
+bound_runtime: ContextVar[RuntimeState | None] = ContextVar("nicknotes_bound_runtime", default=None)
+
+
+class SessionRegistry:
+    """NoteBases opened for agents next to the one the app shows; idle ones close themselves."""
+
+    IDLE_SECONDS = 600
+
+    def __init__(self, service) -> None:
+        self.service = service
+        self.lock = threading.Lock()
+        self.extra: dict[Path, list] = {}  # resolved path -> [runtime, last use]
+        self.reaper: threading.Thread | None = None
+
+    @staticmethod
+    def _key(path: Path) -> Path:
+        return Path(str(path.resolve()).lower()) if sys.platform == "win32" else path.resolve()
+
+    @contextmanager
+    def bind(self, path: Path):
+        app = self.service._runtime
+        key = self._key(path)
+        if app.vault and self._key(app.vault.vault_path) == key:
+            yield app
+            return
+        with self.lock:
+            entry = self.extra.get(key)
+            if entry is None:
+                runtime = RuntimeState()
+                token = bound_runtime.set(runtime)
+                try:
+                    self.service.open_vault(SimpleNamespace(path=str(path)))
+                except Exception:
+                    runtime.dispose_session()
+                    raise
+                finally:
+                    bound_runtime.reset(token)
+                entry = self.extra[key] = [runtime, 0.0]
+                self._start_reaper()
+            entry[1] = time.monotonic()
+        token = bound_runtime.set(entry[0])
+        try:
+            yield entry[0]
+        finally:
+            entry[1] = time.monotonic()
+            bound_runtime.reset(token)
+
+    def release(self, path: Path) -> None:
+        """The app is about to open this NoteBase itself; one session per NoteBase."""
+        with self.lock:
+            entry = self.extra.pop(self._key(path), None)
+        if entry:
+            entry[0].dispose_session()
+
+    def close_idle(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            idle = [key for key, (_, used) in self.extra.items() if now - used > self.IDLE_SECONDS]
+            entries = [self.extra.pop(key) for key in idle]
+        for runtime, _ in entries:
+            runtime.dispose_session()
+
+    def _start_reaper(self) -> None:
+        if self.reaper and self.reaper.is_alive():
+            return
+        def reap() -> None:
+            while True:
+                time.sleep(60)
+                self.close_idle()
+        self.reaper = threading.Thread(target=reap, name="nicknotes-session-reaper", daemon=True)
+        self.reaper.start()

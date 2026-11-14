@@ -19,6 +19,7 @@ class MCPIntegrationTests(unittest.TestCase):
         self.write = self.client.post('/agents', json={'name':'writer','write':True}).json()
     def tearDown(self):
         self.client.__exit__(None,None,None)
+        api.backend_api_service.sessions.close_idle(float('inf'))
         api.grant_store.path = self.previous
         self.temp.cleanup()
     def rpc(self, method, params=None, grant=None):
@@ -40,9 +41,21 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertTrue(denied['isError'])
         self.client.delete('/agents/'+self.read['id'])
         self.assertEqual(self.client.post('/mcp/',headers={'Authorization':'Bearer '+self.read['token']},json={}).status_code,401)
+        # The app switching NoteBases must not cut the agent off from its own one.
         self.client.post('/notebase/create',json={'parentPath':str(self.root),'name':'Other'})
-        mismatch = self.call('get_workspace_context',{},self.write)
-        self.assertTrue(mismatch['isError'])
+        own = self.call('get_workspace_context',{},self.write)
+        self.assertFalse(own.get('isError',False), own)
+        self.assertEqual(Path(own['structuredContent']['vaultPath']).name,'TestVault')
+        self.assertEqual(Path(self.client.get('/state').json()['vaultPath']).name,'Other')
+        created = self.call('create_note',{'title':'Im Hintergrund','body':'','tags':[],'operation_id':'background-0001'},self.write)
+        self.assertFalse(created.get('isError',False), created)
+        written = Path(created['structuredContent']['path'])
+        self.assertTrue(written.exists() and written.resolve().is_relative_to((self.root/'TestVault').resolve()), written)
+        # Opening it in the app hands over to one session; a replaced folder is refused.
+        self.client.post('/notebase/open',json={'path':str(self.root/'TestVault')})
+        self.assertEqual(api.backend_api_service.sessions.extra,{})
+        (self.root/'TestVault'/'.system'/'config.json').write_text('{"vault_id": "fremd"}',encoding='utf-8')
+        self.assertTrue(self.call('get_workspace_context',{},self.write)['isError'])
     def test_write_revision_and_durable_idempotency(self):
         args = {'title':'MCP Note','body':'Knowledge','tags':[],'operation_id':'create-0001'}
         first = self.call('create_note',args,self.write)
