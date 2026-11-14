@@ -51,13 +51,13 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
                     vault.rebuild_task_status_links(indexer)
                     vault.sync_tag_groups_with_index(indexer)
                     if len(real)<=8 and not any(path.name=='tag_groups.json' for path in real):
-                        graph=read_graph_index(vault.graph_index_path)
+                        stored=graph=read_graph_index(vault.graph_index_path)
                         if service.graph_index_needs_rebuild(graph):
                             service.rebuild_graph_projection(vault)
                         else:
                             for path in real:
                                 graph=update_graph_index_for_file(vault_path=vault.vault_path,tag_groups=vault.read_tag_groups(),index=graph,file_path=path)
-                            write_graph_index(vault.graph_index_path,graph)
+                            if graph is not stored:write_graph_index(vault.graph_index_path,graph)
                     else:
                         service.rebuild_graph_projection(vault)
                 runtime.record_change('external-files', real)

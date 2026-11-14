@@ -208,7 +208,7 @@ class BackendApiServiceTests(unittest.TestCase):
             return_value=(vault, indexer),
         ), mock.patch.object(
             self.service,
-            "rebuild_graph_projection",
+            "update_graph_after_note_move",
             return_value={"available": True},
         ) as rebuild:
             try:
@@ -238,7 +238,7 @@ class BackendApiServiceTests(unittest.TestCase):
             return_value=(vault, indexer),
         ), mock.patch.object(
             self.service,
-            "rebuild_graph_projection",
+            "update_graph_after_note_move",
             return_value={"available": True},
         ) as rebuild:
             try:
