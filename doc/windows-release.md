@@ -193,18 +193,25 @@ Signierwege fuer eine Einzelperson (Stand November 2026):
 | SignPath Foundation | kostenlos | „SignPath Foundation“ | GitHub Actions; jede Signatur wird manuell freigegeben |
 | Azure Artifact Signing | etwa 10 USD/Monat | eigener Name | nur fuer Einzelpersonen aus USA/Kanada, fuer Deutschland nicht verfuegbar |
 
-Empfehlung fuer den Start: Certum auf dem eigenen Laptop. Es passt zum
-vorhandenen Ablauf (`package:release` signiert ueber
-`NICKNOTES_CERTIFICATE_SUBJECT_NAME` aus dem Zertifikatspeicher), der eigene Name
-steht als Herausgeber im Installer, und es braucht keinen bereits erschienenen
-Release. SignPath kommt spaeter in Frage: Es verlangt einen schon
-veroeffentlichten Release, eine Seite „Code signing policy“ und MFA fuer alle
-Beteiligten, signiert nur in der CI gebaute Dateien und nennt SignPath als
-Herausgeber. Der Updater akzeptiert genau einen Herausgeber; ein spaeterer
-Wechsel braucht deshalb eine Uebergangsversion, noch mit dem alten Zertifikat
-signiert, die auch den neuen Herausgeber akzeptiert. Den Weg darum vor dem
-ersten stabilen Release festlegen. Kein Zertifikat beseitigt SmartScreen-Hinweise sofort; die
-Reputation waechst mit Downloads.
+Entscheidung (14. November 2026): **SignPath Foundation**, kostenlos. Herausgeber
+im Installer ist dann „SignPath Foundation“, nicht der eigene Name. Daraus folgt:
+
+1. Signiert wird in GitHub Actions, nicht mehr auf einem Laptop. Die Release-CI
+   baut, schickt die Dateien an SignPath, ein Freigabeberechtigter bestaetigt die
+   Signatur, die CI haengt die signierten Dateien an den Entwurf. Der
+   Laptop-Ablauf unten bleibt nur als Rueckfallweg mit eigenem Zertifikat.
+2. Voraussetzungen fuer die Aufnahme: oeffentliches Repository, ein bereits
+   veroeffentlichter (unsignierter) Release, MFA fuer GitHub und SignPath, ein
+   Abschnitt „Code signing policy“ in README mit Rollen und Datenschutzhinweis
+   (Updatepruefung gegen GitHub).
+3. `NICKNOTES_PUBLISHER_NAME` wird „SignPath Foundation“. Der Updater akzeptiert
+   genau einen Herausgeber; diesen Wert vor dem ersten stabilen Release festlegen.
+4. Der erste oeffentliche Release ist deshalb unsigniert (Pre-Release ohne
+   Auto-Update); erst danach folgt die Aufnahme bei SignPath und der erste
+   signierte stabile Release.
+
+Kein Zertifikat beseitigt SmartScreen-Hinweise sofort; die Reputation waechst mit
+Downloads.
 
 ## Uebergabe an den Signier-Laptop
 
