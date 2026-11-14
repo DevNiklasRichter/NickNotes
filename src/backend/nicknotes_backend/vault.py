@@ -90,7 +90,6 @@ TASK_LINK_NOTE_TYPE = "task_link"
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
 TITLE_HEADING_PATTERN = re.compile(r"^\s{0,3}#\s+(.+?)\s*$")
-MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]\n]*\]\(([^)\n]+)\)")
 MEDIA_IMAGE_CONTENT_TYPES = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -468,10 +467,6 @@ class VaultManager:
         if not self.ui_settings_path.exists():
             atomic_write_text(self.ui_settings_path, json.dumps({'updated_at': datetime.now().astimezone().isoformat(timespec='seconds'), 'app': {}, 'explorer': {}}, indent=2, ensure_ascii=False), encoding='utf-8')
 
-        self._migrate_legacy_daily_notes_folder()
-        self._migrate_flat_daily_notes_to_months()
-        self._migrate_legacy_inbox()
-
     def _configure_root_paths(self) -> None:
         self.daily_root_name = "daily"
         self.tag_root_name = "tags"
@@ -665,9 +660,6 @@ class VaultManager:
                 indexer=indexer,
             )
         return {"note_id": note_id, "note_path": note_path, "title": clean_title}
-
-    def create_task_in_group(self, group_key: str, title: str, indexer: VaultIndexer, status: str = "open") -> dict[str, Any]:
-        return self.create_note_in_group(group_key=group_key, title=title, indexer=indexer, note_type="task", status=status)
 
     def rename_note_group(self, group_key: str, new_name: str, indexer: VaultIndexer) -> dict[str, Any]:
         self._record_link_rewrite_result({"updated": 0, "paths": []})
@@ -977,7 +969,6 @@ class VaultManager:
 
 
 
-
     def _validated_media_payload(self, *, filename: str, content_type: str, data: bytes) -> tuple[bytes, str, str]:
         payload = bytes(data)
         if not payload:
@@ -1003,14 +994,12 @@ class VaultManager:
         return payload, clean_content_type, suffix
 
 
-
     def note_media_directory(self, note_file: Path) -> Path:
         try:
             relative_note = note_file.resolve().relative_to(self.vault_path.resolve())
         except ValueError:
             relative_note = Path(note_file.name)
         return self.media_root_path / relative_note.with_suffix("")
-
 
 
 
@@ -1082,7 +1071,6 @@ class VaultManager:
             relative = relative[:-3]
         return relative.strip().strip("/")
 
-
     def consume_last_link_rewrite_result(self) -> dict[str, Any]:
         result = self._last_link_rewrite_result
         self._last_link_rewrite_result = {"updated": 0, "paths": []}
@@ -1111,7 +1099,6 @@ class VaultManager:
             seen.add(key)
             normalized.append((old_clean, new_clean))
         return normalized
-
 
 
     def rewrite_note_links_for_moved_paths(
@@ -1353,74 +1340,6 @@ class VaultManager:
             return True
         except ValueError:
             return False
-
-    def _parse_markdown_image_sources(self, markdown: str) -> list[str]:
-        sources: list[str] = []
-        for match in MARKDOWN_IMAGE_PATTERN.finditer(markdown):
-            target = _extract_markdown_link_target(match.group(1))
-            if target:
-                sources.append(target)
-        return sources
-
-    def _collect_referenced_media_assets(self) -> set[Path]:
-        referenced: set[Path] = set()
-        for note_file in self._iter_markdown_files_for_tag_updates():
-            try:
-                markdown = note_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-
-            for source in self._parse_markdown_image_sources(markdown):
-                try:
-                    resolved = self._resolve_media_source_path(note_file, source, allow_missing=True).resolve()
-                except ValueError:
-                    continue
-                referenced.add(resolved)
-        return referenced
-
-    def _cleanup_orphan_media_assets(self) -> None:
-        if not self.media_root_path.exists() or not self.media_root_path.is_dir():
-            return
-
-        referenced_assets = self._collect_referenced_media_assets()
-
-        for media_file in sorted(self.media_root_path.rglob("*"), reverse=True):
-            if not media_file.is_file():
-                continue
-            try:
-                resolved = media_file.resolve()
-            except OSError:
-                continue
-            if resolved in referenced_assets:
-                continue
-            try:
-                _unlink_path_with_retry(media_file, missing_ok=True)
-            except OSError:
-                continue
-
-        self._cleanup_empty_media_directories()
-
-    def _cleanup_empty_media_directories(self) -> None:
-        if not self.media_root_path.exists() or not self.media_root_path.is_dir():
-            return
-
-        removed = True
-        while removed:
-            removed = False
-            directories = sorted(
-                (path for path in self.media_root_path.rglob("*") if path.is_dir()),
-                key=lambda item: len(item.parts),
-                reverse=True,
-            )
-            for directory in directories:
-                try:
-                    directory.relative_to(self.media_root_path)
-                    if any(directory.iterdir()):
-                        continue
-                    directory.rmdir()
-                    removed = True
-                except OSError:
-                    continue
 
     def normalize_note_markdown_text(
         self,
@@ -2078,11 +1997,6 @@ class VaultManager:
         except json.JSONDecodeError:
             return {}
 
-    def write_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        payload = {k: v for k, v in config.items() if k not in {"assistant", "openai", "mode"}}
-        atomic_write_text(self.config_path, json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
-        return payload
-
     def read_ui_settings(self) -> dict[str, Any]:
         default_payload: dict[str, Any] = {
             "updated_at": "",
@@ -2157,7 +2071,6 @@ class VaultManager:
         payload = json.loads(self.tag_groups_path.read_text(encoding="utf-8"))
         groups = payload.get("groups", payload.get("tagGroups", [])) if isinstance(payload, dict) else payload
         return self._normalize_tag_groups(groups)
-
 
     def sync_tag_groups_with_index(self, indexer: VaultIndexer) -> list[dict[str, Any]]:
         groups = self.read_tag_groups()
@@ -2344,70 +2257,6 @@ class VaultManager:
             touched = self._rewrite_tag_references(
                 old_key=self._to_tag_key(old_group_id, old_tag_id),
                 new_key=self._to_tag_key(old_group_id, next_tag_id),
-                remove=False,
-            )
-            if touched > 0:
-                indexer.reindex_vault(self.vault_path)
-
-        groups = self._normalize_tag_groups(groups)
-        self._write_tag_groups(groups)
-        self.rebuild_all_tag_pages(groups, indexer)
-        return groups, touched
-
-    def move_tag(
-        self,
-        from_group: str,
-        tag_name: str,
-        to_group: str,
-        apply_to_notes: bool,
-        indexer: VaultIndexer,
-    ) -> tuple[list[dict[str, Any]], int]:
-        groups = self.read_tag_groups()
-        source_group = self._resolve_group_entry(groups, from_group)
-        if source_group is None:
-            raise ValueError(f"Tag group not found: {from_group}")
-
-        source_tag = self._resolve_tag_entry(source_group, tag_name)
-        if source_tag is None:
-            raise ValueError(f"Tag not found: {from_group}:{tag_name}")
-
-        clean_target_group = _normalize_tag_id(to_group)
-        if not clean_target_group:
-            raise ValueError("Target group cannot be empty")
-
-        target_group = self._resolve_group_entry(groups, clean_target_group)
-        if target_group is None:
-            target_group = {
-                "id": clean_target_group,
-                "displayName": clean_target_group,
-                "color": TAG_GROUP_DEFAULT_COLOR,
-                "tags": [],
-            }
-            groups.append(target_group)
-
-        target_existing = self._resolve_tag_entry(target_group, str(source_tag.get("id", "")))
-        if target_existing is None:
-            target_group.setdefault("tags", []).append(
-                {
-                    "id": str(source_tag.get("id", "")).strip(),
-                    "displayName": _normalize_label(str(source_tag.get("displayName", "")).strip())
-                    or str(source_tag.get("id", "")).strip(),
-                }
-            )
-            target_group["tags"] = self._sorted_tag_entries(target_group.get("tags", []))
-
-        source_group["tags"] = [
-            tag for tag in source_group.get("tags", []) if str(tag.get("id", "")).strip().lower() != str(source_tag.get("id", "")).strip().lower()
-        ]
-
-        old_group_id = str(source_group.get("id", "")).strip()
-        moved_tag_id = str(source_tag.get("id", "")).strip()
-        new_group_id = str(target_group.get("id", "")).strip()
-        touched = 0
-        if apply_to_notes:
-            touched = self._rewrite_tag_references(
-                old_key=self._to_tag_key(old_group_id, moved_tag_id),
-                new_key=self._to_tag_key(new_group_id, moved_tag_id),
                 remove=False,
             )
             if touched > 0:
@@ -2714,24 +2563,6 @@ class VaultManager:
         )
         return task_path
 
-    def _append_to_daily(
-        self,
-        note_path: Path,
-        note_id: str,
-        title: str,
-        created_at: str,
-        tag_keys: list[str],
-    ) -> None:
-        day = created_at[:10]
-        daily_path = self._ensure_daily_note(day, created_at)
-
-        existing = daily_path.read_text(encoding="utf-8")
-        tags_hint = f" | tags: {', '.join(tag_keys)}" if tag_keys else ""
-        line = f"- {created_at[11:19]} [{title}]({note_path.as_posix()}) (`{note_id}`){tags_hint}"
-        if line not in existing:
-            updated = existing.rstrip() + "\n" + line + "\n"
-            atomic_write_text(daily_path, updated, encoding='utf-8')
-
     def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
         daily_path = self._daily_note_path(day_iso)
         if daily_path.exists():
@@ -2764,13 +2595,6 @@ class VaultManager:
             except PermissionError:
                 # In some restricted environments, delete operations are blocked.
                 # We keep existing files and overwrite known targets below.
-                continue
-
-        # Clean up legacy index files from older tag explorer versions.
-        for legacy_index in self.tag_root_path.rglob("index.md"):
-            try:
-                _unlink_path_with_retry(legacy_index, missing_ok=True)
-            except OSError:
                 continue
 
         normalized_groups = self._normalize_tag_groups(groups)
@@ -2941,177 +2765,6 @@ class VaultManager:
     def _iter_markdown_files_for_tag_updates(self) -> list[Path]:
         from .inventory import markdown_sources
         return markdown_sources(self.vault_path)
-
-    def _migrate_legacy_inbox(self) -> None:
-        inbox_path = self.vault_path / "00_inbox"
-        if not inbox_path.exists() or not inbox_path.is_dir():
-            return
-
-        moved_paths: list[tuple[str, str]] = []
-        capture_root = self.daily_root_path / "captures"
-        capture_root.mkdir(parents=True, exist_ok=True)
-
-        for file_path in sorted(inbox_path.rglob("*.md")):
-            target_day = file_path.parent.name
-            meta, _body = parse_markdown(file_path)
-            raw_created_at = str(meta.get("created_at", "")).strip()
-            if len(raw_created_at) >= 10 and raw_created_at[4] == "-" and raw_created_at[7] == "-":
-                target_day = raw_created_at[:10]
-
-            target_dir = capture_root / target_day
-            target_dir.mkdir(parents=True, exist_ok=True)
-
-            target_path = target_dir / file_path.name
-            suffix = 2
-            while target_path.exists():
-                target_path = target_dir / f"{file_path.stem}_{suffix}{file_path.suffix}"
-                suffix += 1
-
-            _rename_path_with_retry(file_path, target_path)
-            moved_paths.append((file_path.as_posix(), target_path.as_posix()))
-
-        daily_root = self.daily_root_path
-        if moved_paths and daily_root.exists():
-            for daily_file in daily_root.rglob("*.md"):
-                content = daily_file.read_text(encoding="utf-8")
-                updated = content
-                for old_path, new_path in moved_paths:
-                    updated = updated.replace(old_path, new_path)
-                if updated != content:
-                    atomic_write_text(daily_file, updated, encoding='utf-8')
-
-        try:
-            _rmtree_with_retry(inbox_path)
-        except OSError:
-            pass
-
-    def _migrate_legacy_daily_notes_folder(self) -> None:
-        legacy_notes_path = self.daily_root_path / "notes"
-        if not legacy_notes_path.exists() or not legacy_notes_path.is_dir():
-            return
-
-        moved_paths: list[tuple[str, str]] = []
-        for source_path in sorted(legacy_notes_path.rglob("*.md")):
-            if not source_path.is_file():
-                continue
-
-            target_path = self._legacy_daily_target_path(source_path)
-            suffix = 2
-            while target_path.exists():
-                target_path = target_path.parent / f"{source_path.stem}_{suffix}{source_path.suffix}"
-                suffix += 1
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            moved = False
-            try:
-                _rename_path_with_retry(source_path, target_path)
-                moved = True
-            except OSError:
-                try:
-                    source_path.chmod(0o666)
-                except OSError:
-                    pass
-                try:
-                    shutil.copy2(source_path, target_path)
-                    for _ in range(3):
-                        try:
-                            source_path.chmod(0o666)
-                        except OSError:
-                            pass
-                        try:
-                            _unlink_path_with_retry(source_path, missing_ok=True)
-                            break
-                        except OSError:
-                            time.sleep(0.05)
-                    moved = True
-                except OSError:
-                    continue
-
-            if not moved:
-                continue
-            moved_paths.append(
-                (
-                    source_path.relative_to(self.vault_path).as_posix(),
-                    target_path.relative_to(self.vault_path).as_posix(),
-                )
-            )
-
-        if moved_paths:
-            for markdown_path in self._iter_markdown_files_for_tag_updates():
-                content = markdown_path.read_text(encoding="utf-8")
-                updated = content
-                for old_path, new_path in moved_paths:
-                    updated = updated.replace(old_path, new_path)
-                    updated = updated.replace(f"/{old_path}", f"/{new_path}")
-                if updated != content:
-                    atomic_write_text(markdown_path, updated, encoding='utf-8')
-
-        for directory in sorted(legacy_notes_path.rglob("*"), key=lambda item: len(item.parts), reverse=True):
-            if not directory.is_dir():
-                continue
-            try:
-                if any(directory.iterdir()):
-                    continue
-                directory.rmdir()
-            except OSError:
-                continue
-
-        try:
-            if not any(legacy_notes_path.iterdir()):
-                legacy_notes_path.rmdir()
-        except OSError:
-            pass
-
-    def _migrate_flat_daily_notes_to_months(self) -> None:
-        if not self.daily_root_path.exists() or not self.daily_root_path.is_dir():
-            return
-
-        for source_path in sorted(self.daily_root_path.glob("*.md")):
-            if not source_path.is_file() or not ISO_DAY_PATTERN.fullmatch(source_path.stem):
-                continue
-
-            target_path = self._daily_note_path(source_path.stem)
-            if source_path.resolve() == target_path.resolve():
-                continue
-
-            suffix = 2
-            while target_path.exists():
-                target_path = target_path.parent / f"{source_path.stem}_{suffix}{source_path.suffix}"
-                suffix += 1
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                _rename_path_with_retry(source_path, target_path)
-            except OSError:
-                try:
-                    _rename_path_with_retry(source_path, target_path)
-                except OSError:
-                    continue
-            if target_path.exists() and source_path.exists():
-                try:
-                    source_path.chmod(0o666)
-                except OSError:
-                    pass
-                try:
-                    _unlink_path_with_retry(source_path, missing_ok=True)
-                except OSError:
-                    pass
-
-    def _legacy_daily_target_path(self, source_path: Path) -> Path:
-        if ISO_DAY_PATTERN.fullmatch(source_path.stem):
-            return self._daily_note_path(source_path.stem)
-
-        try:
-            meta, _body = parse_markdown(source_path)
-        except OSError:
-            meta = {}
-
-        for raw_value in (meta.get("title"), meta.get("created_at"), meta.get("id")):
-            value = str(raw_value or "").strip()
-            if len(value) >= 10 and ISO_DAY_PATTERN.fullmatch(value[:10]):
-                return self._daily_note_path(value[:10])
-
-        return self.daily_root_path / source_path.name
 
     def _collect_custom_group_payloads(
         self, root: Path, favorites: set[str], seen: set[Path] | None = None

@@ -41,10 +41,6 @@ class FocusQuickCaptureRequest(BaseModel):
     date: str | None = None
 
 
-class NoteOpenRequest(BaseModel):
-    path: str
-
-
 class NoteSaveRequest(BaseModel):
     path: str
     content: str
@@ -89,13 +85,6 @@ class TagGroupRenameRequest(BaseModel):
 class TagGroupDeleteRequest(BaseModel):
     group_id: str = Field(alias="groupId")
     remove_from_notes: bool = Field(default=False, alias="removeFromNotes")
-
-
-class TagMoveRequest(BaseModel):
-    from_group: str = Field(alias="fromGroup")
-    tag_id: str = Field(alias="tagId")
-    to_group: str = Field(alias="toGroup")
-    apply_to_notes: bool = Field(default=True, alias="applyToNotes")
 
 
 class TagDeleteRequest(BaseModel):

@@ -1,7 +1,7 @@
 // Generated from Pydantic response models. Do not edit.
 import type { components } from './openapi.generated'
 export const API_CONTRACT_VERSION = '2.0.0' as const
-export const CONTRACT_SYNC_TYPES = ["VaultCounts","HealthResponse","BackendStateResponse","BackendChangeEvent","VaultOpenResponse","ReindexResponse","NoteBaseOpenStartResponse","OperationStatusResponse","VaultDeleteResponse","SearchRow","SearchResponse","FocusMitResponse","SuggestionResponse","CapturePreviewResponse","ParsedTaskResponse","SaveCaptureResponse","FocusMitSaveResponse","QuickCaptureFocusTodoResponse","DailyOpenResponse","TaskRow","TaskListResponse","TodoRow","TodoListResponse","TodoToggleResponse","TodoPromoteResponse","TaskDoneResponse","FocusDashboardAggregateStats","FocusDashboardAggregateResponse","GraphIndexResponse","GraphIndexStatusResponse","GraphIndexRebuildResponse","GraphStateResponse","NoteContentResponse","NoteSaveResponse","NoteMediaResponse","OpenNoteResponse","ReviewResponse","ReviewDashboardResponse","UiSettingsResponse","TagGroupsResponse","NoteGroupsResponse","TagOverviewResponse","TagMatchCandidate","TagMatchCandidatesResponse","GroupMutationResponse","NoteGroupAddResponse","NoteGroupRenameResponse","NoteGroupDeleteResponse","NoteGroupMoveResponse","NoteFavoritesResponse","NoteMutationResponse","OneNoteImportPreviewResponse","OneNoteImportResponse","OneNoteImportStatusResponse","NoteAddResponse","ErrorPayload","ErrorResponse"] as const
+export const CONTRACT_SYNC_TYPES = ["VaultCounts","HealthResponse","BackendStateResponse","BackendChangeEvent","VaultOpenResponse","ReindexResponse","NoteBaseOpenStartResponse","OperationStatusResponse","VaultDeleteResponse","SearchRow","SearchResponse","FocusMitResponse","SuggestionResponse","CapturePreviewResponse","ParsedTaskResponse","SaveCaptureResponse","FocusMitSaveResponse","QuickCaptureFocusTodoResponse","DailyOpenResponse","TaskRow","TaskListResponse","TodoRow","TodoListResponse","TodoToggleResponse","TodoPromoteResponse","TaskDoneResponse","FocusDashboardAggregateStats","FocusDashboardAggregateResponse","GraphIndexResponse","GraphIndexStatusResponse","GraphIndexRebuildResponse","GraphStateResponse","NoteContentResponse","NoteSaveResponse","NoteMediaResponse","ReviewDashboardResponse","UiSettingsResponse","TagGroupsResponse","NoteGroupsResponse","TagOverviewResponse","TagMatchCandidate","TagMatchCandidatesResponse","GroupMutationResponse","NoteGroupAddResponse","NoteGroupRenameResponse","NoteGroupDeleteResponse","NoteGroupMoveResponse","NoteFavoritesResponse","NoteMutationResponse","OneNoteImportPreviewResponse","OneNoteImportResponse","OneNoteImportStatusResponse","NoteAddResponse","ErrorPayload","ErrorResponse"] as const
 export type VaultCounts = components['schemas']['VaultCounts']
 export type HealthResponse = components['schemas']['HealthResponse']
 export type BackendStateResponse = components['schemas']['BackendStateResponse']
@@ -18,7 +18,7 @@ export type SuggestionResponse = components['schemas']['SuggestionResponse']
 export type CapturePreviewResponse = components['schemas']['CapturePreviewResponse']
 export type ParsedTaskResponse = components['schemas']['ParsedTaskResponse']
 export type SaveCaptureResponse = components['schemas']['SaveCaptureResponse']
-export type FocusMitSaveResponse = components['schemas']['SaveFocusMitResponse']
+export type FocusMitSaveResponse = components['schemas']['FocusMitSaveResponse']
 export type QuickCaptureFocusTodoResponse = components['schemas']['QuickCaptureFocusTodoResponse']
 export type DailyOpenResponse = components['schemas']['DailyOpenResponse']
 export type TaskRow = components['schemas']['TaskRowResponse']
@@ -37,8 +37,6 @@ export type GraphStateResponse = components['schemas']['GraphStateResponse']
 export type NoteContentResponse = components['schemas']['NoteContentResponse']
 export type NoteSaveResponse = components['schemas']['NoteSaveResponse']
 export type NoteMediaResponse = components['schemas']['NoteMediaResponse']
-export type OpenNoteResponse = components['schemas']['OpenNoteResponse']
-export type ReviewResponse = components['schemas']['ReviewResponse']
 export type ReviewDashboardResponse = components['schemas']['ReviewDashboardResponse']
 export type UiSettingsResponse = components['schemas']['UiSettingsResponse']
 export type TagGroupsResponse = components['schemas']['TagGroupsResponse']

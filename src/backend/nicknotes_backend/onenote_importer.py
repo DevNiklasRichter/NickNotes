@@ -806,14 +806,6 @@ class OneNoteLocalImporter:
         report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return report_path.relative_to(self.vault.vault_path).as_posix()
 
-    def _page_preview_payload(self, page: ImportPage) -> dict[str, Any]:
-        return {
-            "title": page.title,
-            "notebook": page.notebook,
-            "section": " / ".join(page.section_parts),
-            "sourcePath": str(page.source_path),
-        }
-
     def _safe_display_name(self, value: str) -> str:
         clean = " ".join(str(value or "").replace("_", " ").split())
         return clean or "OneNote"
@@ -826,16 +818,6 @@ class OneNoteLocalImporter:
         token = "".join(char if char.isalnum() or char in {" ", "_", "-"} else "_" for char in clean)
         token = "_".join(part for part in token.replace(" ", "_").split("_") if part)
         return token[:80] or "OneNote"
-
-    def _dedupe(self, values: list[str]) -> list[str]:
-        seen: set[str] = set()
-        result: list[str] = []
-        for value in values:
-            if value in seen:
-                continue
-            seen.add(value)
-            result.append(value)
-        return result
 
     def _progress(self, phase: str, processed: int, total: int, current_path: str | None) -> None:
         if self.progress_callback:
