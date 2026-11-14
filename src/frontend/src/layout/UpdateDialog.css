@@ -3,3 +3,9 @@
 .update-actions {display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;}
 .update-overlay {-webkit-app-region:no-drag;user-select:text;}
 .update-badge {margin-left:auto;-webkit-app-region:no-drag;font-size:var(--font-caption);padding:3px 9px;border-radius:var(--radius-control);border:1px solid var(--accent);color:var(--text);background:var(--surface);}
+.update-notes {margin:14px 0 4px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-control);max-height:40vh;overflow:auto;}
+.update-notes h3 {margin:0 0 6px;font-size:var(--font-ui);}
+.release-notes h4 {margin:12px 0 4px;font-size:var(--font-label);color:var(--muted);font-weight:600;}
+.release-notes h4:first-child {margin-top:0;}
+.release-notes ul {margin:0;padding-left:20px;}
+.release-notes li, .release-notes p {line-height:1.5;margin:3px 0;}

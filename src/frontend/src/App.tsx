@@ -10,6 +10,7 @@ import {connectionEpoch} from './app/apiClient';
 import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
+import {WhatsNewDialog} from './layout/WhatsNewDialog';
 import {CreateNoteBaseDialog} from './layout/CreateNoteBaseDialog';
 import {TagMatchDialog} from './tags/TagMatchDialog';
 import {flushSync} from 'react-dom';
@@ -166,6 +167,7 @@ function App() {
     const [quickOpen, setQuickOpen] = useState<{initialQuery:string;vaultPath:string;epoch:number;trigger:HTMLElement|null}|null>(null);
     const [shortcutHelp, setShortcutHelp] = useState(false);
     const [updatesOpen,setUpdatesOpen]=useState(false);
+    const [whatsNewOpen,setWhatsNewOpen]=useState(false);
     const openTabsRef = useRef<NoteTab[]>([]);
     const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState);
     const workspaceStateRef = useRef(workspaceState);
@@ -2562,12 +2564,12 @@ function App() {
         capture:()=>{setWritingSession(null);setCapturePinned(true);setCapturePanelOpen(value=>writingMode||!value)},focusCapture,
         notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
         focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
-        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),
+        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),whatsNew:()=>setWhatsNewOpen(true),
     };
     const appCommands:AppCommand[]=COMMANDS.map(spec=>{
         let enabled=vaultLoaded;
         if(['openNote','commandPalette','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
-        if(['quit','fullscreen','help','updates'].includes(spec.id))enabled=true;
+        if(['quit','fullscreen','help','updates','whatsNew'].includes(spec.id))enabled=true;
         if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
         if(spec.id==='closeAll')enabled=openTabs.length>0;
         if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
@@ -2604,6 +2606,7 @@ function App() {
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
       <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span><kbd>{shortcutLabel('openNote')}</kbd></button>
       <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
+      <WhatsNewDialog open={whatsNewOpen} onOpen={()=>setWhatsNewOpen(true)} onClose={()=>setWhatsNewOpen(false)}/>
       <NotificationCenter items={operatorNotifications} onDismiss={clearOperatorNotification}/>
     </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;
