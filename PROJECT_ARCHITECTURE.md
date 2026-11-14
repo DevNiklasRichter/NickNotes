@@ -302,7 +302,14 @@ Updates im Hauptprozess. Download und Installation sind getrennte
 Benutzeraktionen; vor der Installation wird ueber den Close-Guard gespeichert.
 Unsignierte Kandidaten aktivieren den Updater nicht. Pruefsummen und Windows-
 Signatur werden vor Installationsbereitschaft geprueft. Der Renderer erhaelt nur
-Status und feste IPC-Aktionen.
+Status, die Release Notes der angebotenen Version als Klartext und feste
+IPC-Aktionen.
+
+`CHANGELOG.md` ist fuer Anwender geschrieben und wird ins Frontend gebuendelt.
+**Hilfe → Was ist neu** zeigt den Abschnitt der laufenden Version; nach einem
+Versionswechsel oeffnet er sich einmal von selbst (zuletzt gesehene Version im
+`localStorage`, Erstinstallation bleibt still). Der Update-Dialog zeigt den
+Release-Text der angebotenen Version vor dem Download.
 
 ## Entwicklung und Auslieferung
 
@@ -320,6 +327,9 @@ Status und feste IPC-Aktionen.
   sind auf Commits gepinnt. Stabile Tags auf `main` erzeugen einen leeren
   Release-Entwurf. Signierung erfolgt ausschliesslich auf dem Release-Laptop des
   Benutzers; die Veroeffentlichung bleibt eine ausdrueckliche Aktion in GitHub.
+- `release:prepare -- <Version>` macht aus `[Unreleased]` den Abschnitt der
+  naechsten Version und setzt Paket- und Lockversion. Dependabot schlaegt
+  woechentlich gebuendelte npm-/pip-Updates und monatlich Action-Updates vor.
 - macOS-/Linux-Entwicklung ist zurueckgestellt.
 
 Details: [Windows-Auslieferung](doc/windows-release.md),

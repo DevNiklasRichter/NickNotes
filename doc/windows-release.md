@@ -145,6 +145,67 @@ aktivieren und die Windows-CI als Mergepflicht einrichten; diese Einstellungen
 wurden hier nicht umgestellt. Signierung ist keine Zusage, dass Windows niemals
 Warnungen anzeigt.
 
+## Release Notes
+
+`CHANGELOG.md` ist die einzige Quelle fuer Release Notes. Jede in der App
+bemerkbare Aenderung bekommt im selben PR eine verstaendliche Zeile unter
+`[Unreleased]` (Neu, Verbessert, Behoben, Wichtig beim Umstieg). Commit-Nachrichten
+bleiben technisch und englisch; sie sind keine Release Notes.
+
+Daraus entstehen drei Ansichten derselben Texte:
+
+- der GitHub-Release (Body = Abschnitt der Version; alles nach `---` ist
+  Downloadinformation und erscheint nicht in der App),
+- der Update-Dialog vor dem Download (Release-Body der angebotenen Version),
+- **Hilfe → Was ist neu** nach dem Update (im Paket gebuendelter Abschnitt).
+
+Eine neue Version vorbereiten:
+
+```powershell
+npm run release:prepare -- 2.1.0
+git switch -c release/2.1.0; git commit -am "release: 2.1.0"   # PR, gruene CI, Merge
+git switch main; git pull; git tag v2.1.0; git push origin v2.1.0
+```
+
+Der Tag startet die Release-CI, die alles erneut prueft und den Entwurf anlegt.
+Versionen folgen SemVer: Fehlerbehebungen erhoehen die dritte Stelle, neue
+Funktionen die zweite, ein Formatwechsel der NoteBase die erste. Testfassungen
+heissen `x.y.z-rc.n` und werden stabilen Clients nie angeboten.
+
+## Repository und Signierung
+
+Ein einziges oeffentliches Repository mit Quellcode und Releases ist fuer ein
+MIT-Projekt der uebliche Weg. Ein privates Entwicklungs- plus oeffentliches
+Release-Repository lohnt sich nur bei nicht oeffentlichem Quellcode; es verdoppelt
+Pflege und Updatepfad. Kostenlose Open-Source-Signierung setzt ohnehin ein
+oeffentliches Repository voraus. Vor der Umstellung: Verlauf auf Geheimnisse und
+persoenliche Daten pruefen, GitHub Secret Scanning und Private Vulnerability
+Reporting einschalten, `main` per Ruleset schuetzen (PR + gruene Windows-CI).
+
+Der Updater erwartet Releases unter `DevNiklasRichter/NickNotes`; solange das
+Repository privat ist, findet er keine Updates.
+
+Signierwege fuer eine Einzelperson (Stand November 2026):
+
+| Weg | Kosten | Herausgeber im Zertifikat | Wo signiert wird |
+| --- | --- | --- | --- |
+| Certum „Open Source Code Signing in the Cloud“ | etwa 50 EUR/Jahr | „Open Source Developer, <Name>“ | Laptop mit SimplySign Desktop; das Zertifikat erscheint im Windows-Zertifikatspeicher |
+| SignPath Foundation | kostenlos | „SignPath Foundation“ | GitHub Actions; jede Signatur wird manuell freigegeben |
+| Azure Artifact Signing | etwa 10 USD/Monat | eigener Name | nur fuer Einzelpersonen aus USA/Kanada, fuer Deutschland nicht verfuegbar |
+
+Empfehlung fuer den Start: Certum auf dem eigenen Laptop. Es passt zum
+vorhandenen Ablauf (`package:release` signiert ueber
+`NICKNOTES_CERTIFICATE_SUBJECT_NAME` aus dem Zertifikatspeicher), der eigene Name
+steht als Herausgeber im Installer, und es braucht keinen bereits erschienenen
+Release. SignPath kommt spaeter in Frage: Es verlangt einen schon
+veroeffentlichten Release, eine Seite „Code signing policy“ und MFA fuer alle
+Beteiligten, signiert nur in der CI gebaute Dateien und nennt SignPath als
+Herausgeber. Der Updater akzeptiert genau einen Herausgeber; ein spaeterer
+Wechsel braucht deshalb eine Uebergangsversion, noch mit dem alten Zertifikat
+signiert, die auch den neuen Herausgeber akzeptiert. Den Weg darum vor dem
+ersten stabilen Release festlegen. Kein Zertifikat beseitigt SmartScreen-Hinweise sofort; die
+Reputation waechst mit Downloads.
+
 ## Uebergabe an den Signier-Laptop
 
 Dieser Abschnitt ist eine Anleitung fuer spaeter; er wurde hier nicht ausgefuehrt.
