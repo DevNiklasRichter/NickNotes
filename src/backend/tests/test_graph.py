@@ -563,7 +563,7 @@ class GraphIndexTests(unittest.TestCase):
         self.vault.graph_state_path.write_text("[]", encoding="utf-8")
         fallback = read_graph_state(self.vault.graph_state_path)
         self.assertEqual(fallback["version"], 2)
-        self.assertEqual(fallback["activeMode"], "link")
+        self.assertEqual(fallback["activeMode"], "focus")
         backups = list(self.vault.system_path.glob("graph-state.json.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 

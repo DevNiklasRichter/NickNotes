@@ -388,8 +388,11 @@ function App() {
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
     const activeTab = paneActiveTabs[activePaneId] ?? null;
-    // With the graph in one pane, the note in the other pane is the one it centres on.
-    const graphNotePath = [activeTab, paneActiveTabs[activePaneId==='left'?'right':'left']].find(tab => tab?.kind === 'note')?.path ?? '';
+    // The graph centres on the note being edited: the active one, the one in the other pane, or the last one shown.
+    const visibleNotePath = [activeTab, paneActiveTabs[activePaneId==='left'?'right':'left']].find(tab => tab?.kind === 'note')?.path ?? '';
+    const [lastNotePath, setLastNotePath] = useState('');
+    if (visibleNotePath && visibleNotePath !== lastNotePath) setLastNotePath(visibleNotePath);
+    const graphNotePath = visibleNotePath || lastNotePath;
     const openTagActionDialog = useCallback((config: {
         kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
         title: string;
@@ -2767,7 +2770,7 @@ function App() {
               <div className="capture-panel-body">
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Notiz erfassen und optional To-do nennen" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
+                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt einen Termin" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
                 void saveCapture(markdown);
             }} onOpenWikiLink={(target) => {
                 openWikiLinkInEditor(target, activePaneId);

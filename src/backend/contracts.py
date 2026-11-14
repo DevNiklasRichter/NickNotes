@@ -229,11 +229,18 @@ class ParsedTaskResponse(_ContractModel):
     nextActionHint: str | None = None
 
 
+class CapturedTask(_ContractModel):
+    taskId: str
+    taskPath: str
+    dueDate: str
+
+
 class SaveCaptureResponse(_ContractModel):
     saved: bool = True
     noteId: str = ""
     date: str = ""
     notePath: str = ""
+    tasks: list[CapturedTask] = Field(default_factory=list)
     counts: VaultCounts = Field(default_factory=VaultCounts)
 
 

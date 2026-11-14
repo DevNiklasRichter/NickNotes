@@ -32,10 +32,11 @@ const properties = process.argv.includes('--properties')
 const tooltips = process.argv.includes('--tooltips')
 const searchCommands = process.argv.includes('--search-commands')
 const writing = process.argv.includes('--writing-mode')
+const inline = process.argv.includes('--inline')
 const feedback = process.argv.includes('--feedback')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1851,6 +1852,62 @@ async function verifyFeedback() {
   report.checks.feedbackReducedMotionAndThemes=true
 }
 
+async function verifyInlineSuggestions() {
+  await request('/tag-groups/add-group',{groupId:'projekt',displayName:'Projekt',color:'#81a1c1'})
+  await request('/tag-groups/add-tag',{groupId:'projekt',tagId:'umzug',displayName:'Umzug'})
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  await windowSize(1280,800); await theme('light'); await openNote('Arbeitsnotiz')
+  const editor=page.locator('.note-body-editor .cm-content').first()
+  const doc=()=>editor.evaluate(node=>node.cmTile.root.view.state.doc.toString())
+  const list=page.locator('.editor-command-list').first()
+  await editor.click(); await page.keyboard.press('Control+End')
+  await page.keyboard.type('\nSiehe [[Aufg')
+  await expect(list.getByRole('button').filter({hasText:'Aufgabe'}).first()).toBeVisible()
+  await capture('inline-link-light','[[ suggests notes while typing; a missing title can be linked as a new note')
+  await page.keyboard.press('Enter')
+  await expect.poll(doc).toContain('Siehe [[Aufgabe]]')
+  await page.keyboard.type(' zum #umz')
+  await expect(list.getByRole('button').filter({hasText:'Umzug'})).toBeVisible()
+  await capture('inline-tag-light','# suggests defined tags and inserts the tag syntax')
+  await page.keyboard.press('Enter')
+  await expect.poll(doc).toContain('{tag:projekt/umzug}')
+  await page.keyboard.type(' bis @mor')
+  await expect(list.getByRole('button').filter({hasText:'Morgen'})).toBeVisible()
+  await capture('inline-date-light','@ suggests dates in plain words and inserts an ISO date')
+  await page.keyboard.press('Enter')
+  await expect.poll(doc).toMatch(/bis @\d{4}-\d{2}-\d{2}/)
+  await page.keyboard.type(' und #xyz')
+  await page.keyboard.press('Enter')
+  await expect.poll(doc).toMatch(/#xyz\n/)  // no matching tag: Enter still starts a new line
+  report.checks.inlineLinkTagDateSuggestions=true
+
+  // A dated to-do in the quick capture becomes a task due that day.
+  await page.keyboard.press('Alt+q')
+  const captureEditor=page.locator('.capture-markdown-editor .cm-content')
+  await expect(captureEditor).toBeFocused()
+  await page.keyboard.type('- [ ] Angebot schicken @mor'); await page.keyboard.press('Enter')
+  const save=page.waitForResponse(res=>res.url().endsWith('/capture/save')&&res.request().method()==='POST')
+  await page.getByRole('button',{name:'Senden',exact:true}).click()
+  const saved=await (await save).json()
+  assert.equal(saved.tasks.length,1)
+  assert.ok(fs.readFileSync(saved.tasks[0].taskPath,'utf8').includes(`due_date: '${saved.tasks[0].dueDate}'`)||fs.readFileSync(saved.tasks[0].taskPath,'utf8').includes(`due_date: ${saved.tasks[0].dueDate}`))
+  await expect(page.getByText(/Task fällig am/)).toBeVisible()
+  await capture('capture-task-light','Quick capture: a to-do with @date became a due task; confirmation names the date')
+  report.checks.captureDatedTodoBecomesTask=true
+
+  // The graph centres on the open note.
+  await openNote('Arbeitsnotiz')
+  await page.keyboard.press('F8')
+  await page.locator('.activity-rail').getByRole('button',{name:'Wissensgraph',exact:true}).click()
+  await expect(page.locator('.graph-editor-canvas-shell')).toBeVisible()
+  await expect(page.getByRole('radio',{name:'Umgebung der Notiz'})).toBeChecked()
+  await capture('graph-focus-light','Graph shows the neighbourhood of the open note in the other pane; depth and tag filter in the sidebar')
+  await page.keyboard.press('F8')
+  report.checks.graphFollowsOpenNote=true
+  await page.locator('.activity-rail').getByRole('button',{name:'Notizen',exact:true}).click()
+  await theme('dark'); await openNote('Arbeitsnotiz')
+}
+
 async function verifyWritingMode() {
   await windowSize(1280,800);await theme('dark');await openNote('Arbeitsnotiz')
   const rail=page.locator('.activity-rail'),shell=page.locator('.workbench-shell')
@@ -2315,6 +2372,7 @@ try {
     if (searchCommands) await verifySearchCommands()
     if (feedback) await verifyFeedback()
     if (writing) await verifyWritingMode()
+    if (inline) await verifyInlineSuggestions()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

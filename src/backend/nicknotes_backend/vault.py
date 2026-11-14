@@ -414,6 +414,17 @@ def _normalize_mit_ids(raw_value: Any, limit: int = VAULT_MAX_DAILY_MIT_ITEMS) -
     return normalized
 
 
+DUE_TOKEN_PATTERN = re.compile(r"(?:^|\s)@(\d{4}-\d{2}-\d{2})(?=\s|$)")
+
+
+def _is_iso_day(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
 class VaultManager:
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
@@ -1948,7 +1959,7 @@ class VaultManager:
             "notePath": str(note_file),
         }
 
-    def promote_todo_to_task(self, todo_id: str, indexer: VaultIndexer) -> dict[str, Any]:
+    def promote_todo_to_task(self, todo_id: str, indexer: VaultIndexer, due_date: str | None = None) -> dict[str, Any]:
         todo = indexer.get_todo(todo_id)
         if not todo:
             raise ValueError("Todo not found")
@@ -1990,9 +2001,12 @@ class VaultManager:
                 project_tag = key.split(":", 1)[1]
                 break
 
+        title = updated.raw_text
+        if due_date:
+            title = " ".join(DUE_TOKEN_PATTERN.sub(" ", title).split()) or title
         parsed_task = ParsedTask(
-            title=updated.raw_text,
-            due_date=None,
+            title=title,
+            due_date=due_date,
             priority="M",
             status="open",
             project_tag=project_tag,
@@ -2474,8 +2488,20 @@ class VaultManager:
             next_body = f"{next_body}\n\n{block}\n"
         else:
             next_body = f"{block}\n"
+        known_todos = {row["id"] for row in indexer.list_todos() if row.get("note_path") == str(note_path)}
         atomic_write_text(note_path, dump_markdown(meta, next_body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, note_path)
+
+        # An open to-do with a date ("- [ ] Angebot schicken @2026-11-20") becomes a task due that day;
+        # the line stays in the daily note and points to the task like any promoted to-do.
+        tasks = []
+        for row in indexer.list_todos():
+            if row.get("note_path") != str(note_path) or row["id"] in known_todos or row.get("checked") or row.get("promoted"):
+                continue
+            due = DUE_TOKEN_PATTERN.search(str(row.get("raw_text", "")))
+            if due and _is_iso_day(due.group(1)):
+                created = self.promote_todo_to_task(row["id"], indexer, due_date=due.group(1))
+                tasks.append({"taskId": created["taskId"], "taskPath": created["taskPath"], "dueDate": due.group(1)})
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
@@ -2484,6 +2510,7 @@ class VaultManager:
             "note_id": str(meta.get("id", f"daily_{day}")),
             "date": day,
             "note_path": note_path,
+            "tasks": tasks,
         }
 
     def get_daily_mit(self, day_iso: str | None = None) -> dict[str, Any]:
