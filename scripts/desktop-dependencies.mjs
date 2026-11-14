@@ -3,7 +3,9 @@ import path from 'node:path'
 import {createRequire} from 'node:module'
 
 // Only dependencies directly used by Electron; renderer dependencies are bundled by Vite.
-export const DESKTOP_DEPENDENCIES=['electron-updater','semver','yaml']
+// Order matters: packages the app imports itself claim the top level first, so a different
+// version pinned by electron-updater is nested below it (as npm does).
+export const DESKTOP_DEPENDENCIES=['semver','yaml','electron-updater']
 export function stageDesktopDependencies(root,target){
   const packages=[],installed=new Map()
   function copy(name,from,parentTarget){
