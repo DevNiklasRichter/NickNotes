@@ -5,8 +5,8 @@ import {spawnSync} from 'node:child_process'
 
 export function ciScope(files,{full=false}={}){
   if(full)return {code:true,package:true}
-  const code=files.some(file=>!file.startsWith('doc/')&&!(file.indexOf('/')<0&&/\.md$/i.test(file)))
-  const packageChanged=files.some(file=>!/(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(file)&&!file.startsWith('src/backend/tests/')&&/^(src\/|build\/|requirements[^/]*|package(?:-lock)?\.json$|electron-builder|vite\.config|tsconfig|\.github\/workflows\/|scripts\/(?:build-|stage-|before-pack|desktop-dependencies|package-|verify-package|smoke-desktop|candidate-checksums|release-))/.test(file))
+  const code=files.some(file=>file==='CHANGELOG.md'||!file.startsWith('doc/')&&!(file.indexOf('/')<0&&/\.md$/i.test(file)))
+  const packageChanged=files.some(file=>!/(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(file)&&!file.startsWith('src/backend/tests/')&&/^(src\/|build\/|CHANGELOG\.md$|requirements[^/]*|package(?:-lock)?\.json$|electron-builder|vite\.config|tsconfig|\.github\/workflows\/|scripts\/(?:build-|stage-|before-pack|desktop-dependencies|package-|verify-package|smoke-desktop|candidate-checksums|release-))/.test(file))
   return {code,package:code&&packageChanged}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
