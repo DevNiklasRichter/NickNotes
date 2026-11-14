@@ -371,7 +371,7 @@ try{
   await page.screenshot({path:path.join(root,'.tmp/commands-menu.png')})
   await page.keyboard.press('Escape')
   await menu('Ansicht','closeAll')
-  await expect(page.getByText('Keine Notiz geoeffnet').first()).toBeVisible()
+  await expect(page.getByText('Keine Notiz geöffnet').first()).toBeVisible()
   await page.evaluate(()=>window.nicknotes.setUnsavedChanges(false))
   await app.close();app=null
   await launch()
