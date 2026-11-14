@@ -601,7 +601,7 @@ export class AppLifecycleService {
         const confirmed = await this.context.openTagActionDialog({
             kind: 'choice',
             title: 'NoteBase loeschen',
-            message: `Soll die NoteBase "${currentName}" wirklich mit allen Dateien geloescht werden?`,
+            message: `Soll die NoteBase "${currentName}" mit allen Dateien in den Papierkorb verschoben werden?`,
             actions: [
                 { id: 'delete', label: 'Loeschen', tone: 'danger' },
                 { id: 'cancel', label: 'Abbrechen' }
@@ -613,10 +613,10 @@ export class AppLifecycleService {
         const secondCheckDialog = await this.context.openTagActionDialog({
             kind: 'input',
             title: 'Loeschen bestaetigen',
-            message: 'Bitte "LOESCHEN" eingeben, um das vollstaendige Loeschen zu bestaetigen.',
+            message: 'Bitte "LOESCHEN" eingeben, um das Verschieben in den Papierkorb zu bestaetigen.',
             initialValue: '',
             actions: [
-                { id: 'confirm', label: 'Endgueltig loeschen', tone: 'danger' },
+                { id: 'confirm', label: 'In den Papierkorb', tone: 'danger' },
                 { id: 'cancel', label: 'Abbrechen' }
             ],
         });
@@ -652,7 +652,7 @@ export class AppLifecycleService {
             }
             removeStoredRecentNoteBasePath(response.deletedPath);
             this.refreshRecentNoteBases();
-            this.writer.setMessage(`NoteBase geloescht: ${response.deletedPath}`);
+            this.writer.setMessage(`NoteBase in den Papierkorb verschoben: ${response.deletedPath}`);
         }
         catch (caught) {
             this.writer.setError(String(caught));

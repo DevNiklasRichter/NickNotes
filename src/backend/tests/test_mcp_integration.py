@@ -13,7 +13,7 @@ class MCPIntegrationTests(unittest.TestCase):
         api.grant_store.path = self.root / 'profile' / 'grants.json'
         self.client = TestClient(api.app, base_url='http://127.0.0.1:8765', headers={'Authorization': f'Bearer {INTERNAL_TOKEN}'}, raise_server_exceptions=False)
         self.client.__enter__()
-        response = self.client.post('/vault/create', json={'parentPath': str(self.root), 'name':'TestVault'})
+        response = self.client.post('/notebase/create', json={'parentPath': str(self.root), 'name':'TestVault'})
         self.assertEqual(response.status_code, 200, response.text)
         self.read = self.client.post('/agents', json={'name':'reader','write':False}).json()
         self.write = self.client.post('/agents', json={'name':'writer','write':True}).json()
@@ -40,7 +40,7 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertTrue(denied['isError'])
         self.client.delete('/agents/'+self.read['id'])
         self.assertEqual(self.client.post('/mcp/',headers={'Authorization':'Bearer '+self.read['token']},json={}).status_code,401)
-        self.client.post('/vault/create',json={'parentPath':str(self.root),'name':'Other'})
+        self.client.post('/notebase/create',json={'parentPath':str(self.root),'name':'Other'})
         mismatch = self.call('get_workspace_context',{},self.write)
         self.assertTrue(mismatch['isError'])
     def test_write_revision_and_durable_idempotency(self):
@@ -64,5 +64,13 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertTrue(unknown['isError'])
         unchanged = self.call('read_note',{'path':data['path']},self.write)['structuredContent']
         self.assertEqual(unchanged['content'],actual['content'])
+        todo = self.call('add_todo',{'path':data['path'],'text':'Nachfassen','expected_revision':actual['revision'],'operation_id':'todo-0001'},self.write)
+        self.assertFalse(todo.get('isError',False),todo)
+        self.assertRegex(todo['structuredContent']['content'], r'- \[ \] Nachfassen <!-- nn:todo created=\S+ completed= --> \^nn-todo_[0-9a-f]{16}\n')
+        listed = self.call('list_work_items',{'kind':'todos'},self.write)['structuredContent']['items']
+        # The UI's stable block reference format gives the todo its identity.
+        self.assertEqual([item['id'] for item in listed], ['todo_'+item['block_ref'][len('nn-todo_'):] for item in listed])
+        self.assertEqual(len(listed),1)
+        actual = self.call('read_note',{'path':data['path']},self.write)['structuredContent']
         self.assertNotIn(self.write['token'], api.grant_store.path.read_text())
         self.assertEqual(len(list((self.root/'TestVault').glob('*.md'))),1)

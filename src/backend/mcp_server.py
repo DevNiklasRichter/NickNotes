@@ -201,7 +201,7 @@ def create_mcp(service, grants):
                 from .nicknotes_backend.graph_index import _extract_tags
                 checked_tags(vault, _extract_tags({}, text))
                 created = datetime.now().astimezone().isoformat(timespec='seconds')
-                line = f'- [ ] {text.strip()} <!-- nn:todo created={created} completed= --> ^todo-{uuid.uuid4().hex[:16]}'
+                line = f'- [ ] {text.strip()} <!-- nn:todo created={created} completed= --> ^nn-todo_{uuid.uuid4().hex[:16]}'
                 return service.save_note_content(NoteSaveRequest(path=path, content=current['content'].rstrip()+'\n\n'+line+'\n', expectedRevision=expected_revision))
             return receipt(vault, grant, operation_id, dict(action='todo', path=path, text=text, revision=expected_revision), execute)
 

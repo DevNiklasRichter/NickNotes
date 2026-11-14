@@ -325,7 +325,6 @@ class SaveNoteContentUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        vault_root = vault.vault_path.resolve()
         normalized_path = service._resolve_note_request_path(vault=vault, raw_path=req.path, allow_missing=True)
         actual = hashlib.sha256(normalized_path.read_bytes()).hexdigest() if normalized_path.exists() else None
         if actual != req.expected_revision:
@@ -346,69 +345,30 @@ class SaveNoteContentUseCase:
                 raise MarkdownFormatError('Unbekannte Prioritaet.')
         except (MarkdownFormatError,ValueError) as exc:
             raise ValidationDomainError(str(exc)) from exc
-        pre_state = {
-            "path": str(normalized_path),
-            "exists": normalized_path.exists(),
-            "content": normalized_path.read_text(encoding="utf-8") if normalized_path.exists() else "",
-            "file_name": normalized_path.name,
-        }
-
-        def _execute_save(context: dict[str, Any]) -> dict[str, Any]:
-            return vault.save_note_document(req.path, req.content, indexer)
-
-        def _rollback_save(context: dict[str, Any], step_output: dict[str, Any]) -> None:
-            result_path = Path(str(step_output.get("path"))).resolve()
-            previous_path = Path(pre_state["path"]).resolve()
-            indexer.remove_projection_for_path(str(result_path))
-            indexer.remove_projection_for_path(str(previous_path))
-            if pre_state["exists"]:
-                if result_path != previous_path:
-                    result_path.unlink(missing_ok=True)
-                previous_path.write_text(pre_state["content"], encoding="utf-8")
-                indexer.reindex_markdown_file(vault_root, previous_path)
-            else:
-                if result_path.exists():
-                    result_path.unlink(missing_ok=True)
-            # Uncommitted media may still belong to another editor draft.
-
-        def _sync_tags(context: dict[str, Any]) -> list[dict[str, Any]] | None:
-            result = context["save_note_document"]
-            if bool(result.get("tag_rebuild_required")):
-                return vault.sync_tag_groups_with_index(indexer)
-            return None
-
-        def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            result = context["save_note_document"]
-            tag_groups = context.get("sync_tag_groups")
-            return service.update_graph_after_note_save(
+        # A failure below leaves through the source journal of the coordinated
+        # operation, which restores the files and marks the projections for repair.
+        with service.state.projection_lock:
+            result = vault.save_note_document(req.path, req.content, indexer)
+            tag_groups = vault.sync_tag_groups_with_index(indexer) if result.get("tag_rebuild_required") else None
+            graph_status = service.update_graph_after_note_save(
                 vault=vault,
                 saved_path=Path(result["path"]),
-                previous_path=Path(pre_state["path"]),
+                previous_path=normalized_path,
                 tag_groups=tag_groups,
             )
-
-        return service._run_mutation_pipeline(
-            "save-note",
-            req,
-            steps=[
-                ("save_note_document", _execute_save, _rollback_save),
-                ("sync_tag_groups", _sync_tags, None),
-                ("update_graph", _update_graph, None),
-            ],
-            build_response=lambda context: {
+            stored = service._resolve_note_request_path(vault=vault, raw_path=result["path"]).read_bytes()
+            return {
                 "saved": True,
-                "path": str(context["save_note_document"]["path"]),
-                "revision": hashlib.sha256(service._resolve_note_request_path(vault=vault, raw_path=context["save_note_document"]["path"]).read_bytes()).hexdigest(),
-                "content": service._resolve_note_request_path(vault=vault, raw_path=context["save_note_document"]["path"]).read_bytes().decode('utf-8'),
-                "title": str(context["save_note_document"]["title"]),
+                "path": str(result["path"]),
+                "revision": hashlib.sha256(stored).hexdigest(),
+                "content": stored.decode('utf-8'),
+                "title": str(result["title"]),
                 "counts": service.counts(indexer),
-                "tagGroups": context.get("sync_tag_groups"),
-                "tagGroupsRebuilt": bool(context.get("sync_tag_groups") is not None),
-                "graphStatus": context["update_graph"],
+                "tagGroups": tag_groups,
+                "tagGroupsRebuilt": tag_groups is not None,
+                "graphStatus": graph_status,
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
-            },
-            lock_projection=True,
-        )
+            }
 
 
 class RenameNoteUseCase:
@@ -416,46 +376,15 @@ class RenameNoteUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        original_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
-        pre_state = {
-            "path": str(original_path),
-            "content": original_path.read_text(encoding="utf-8"),
-        }
-
-        def _execute_rename(context: dict[str, Any]) -> str:
+        service._resolve_note_request_path(vault=vault, raw_path=req.path)
+        with service.state.projection_lock:
             renamed_path = vault.rename_note_file(req.path, req.new_name, indexer)
-            return str(renamed_path)
-
-        def _rollback_rename(context: dict[str, Any], step_output: str) -> None:
-            renamed_path = Path(step_output)
-            original = Path(pre_state["path"])
-            if renamed_path.resolve() != original.resolve():
-                if renamed_path.exists():
-                    renamed_path.replace(original)
-            original.write_text(pre_state["content"], encoding="utf-8")
-            indexer.remove_projection_for_path(str(renamed_path))
-            indexer.remove_projection_for_path(str(original))
-            if original.exists():
-                indexer.reindex_markdown_file(vault.vault_path, original)
-
-        def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return service.rebuild_graph_projection(vault)
-
-        return service._run_mutation_pipeline(
-            "rename-note",
-            req,
-            steps=[
-                ("rename-note-file", _execute_rename, _rollback_rename),
-                ("update-graph", _update_graph, None),
-            ],
-            build_response=lambda context: {
-                "renamedPath": context["rename-note-file"],
+            return {
+                "renamedPath": str(renamed_path),
+                "graphStatus": service.rebuild_graph_projection(vault),
                 "counts": service.counts(indexer),
-                "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
-            },
-            lock_projection=True,
-        )
+            }
 
 
 class MoveNoteUseCase:
@@ -463,50 +392,15 @@ class MoveNoteUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        original_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
-        pre_state = {
-            "path": str(original_path),
-        }
-
-        def _execute_move(context: dict[str, Any]) -> dict[str, str]:
+        service._resolve_note_request_path(vault=vault, raw_path=req.path)
+        with service.state.projection_lock:
             moved_path = vault.move_note_file(req.path, req.target_group_key, indexer)
-            return {"fromPath": pre_state["path"], "movedPath": str(moved_path)}
-
-        def _rollback_move(context: dict[str, Any], step_output: dict[str, str]) -> None:
-            moved_path = Path(step_output.get("movedPath", pre_state["path"]))
-            original = Path(step_output.get("fromPath", pre_state["path"]))
-            if moved_path.resolve() != original.resolve():
-                moved_path.parent.mkdir(parents=True, exist_ok=True)
-                if moved_path.exists():
-                    moved_path.replace(original)
-            if moved_path.exists():
-                # If revert destination was not performed, best effort cleanup.
-                moved_path.unlink(missing_ok=True)
-            if original.exists():
-                indexer.remove_projection_for_path(str(moved_path))
-                indexer.reindex_markdown_file(vault.vault_path, original)
-            else:
-                indexer.remove_projection_for_path(str(moved_path))
-                # Could not fully restore moved file content; keep index best-effort.
-
-        def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return service.rebuild_graph_projection(vault)
-
-        return service._run_mutation_pipeline(
-            "move-note",
-            req,
-            steps=[
-                ("move-note-file", _execute_move, _rollback_move),
-                ("update-graph", _update_graph, None),
-            ],
-            build_response=lambda context: {
-                "movedPath": context["move-note-file"]["movedPath"],
+            return {
+                "movedPath": str(moved_path),
+                "graphStatus": service.rebuild_graph_projection(vault),
                 "counts": service.counts(indexer),
-                "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
-            },
-            lock_projection=True,
-        )
+            }
 
 
 class PreviewOneNoteImportUseCase:
@@ -532,10 +426,10 @@ class StartOneNoteImportUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        service.state.reset_import_status("Import wird vorbereitet ...")
+        service.state.imports.reset("Import wird vorbereitet ...")
 
         def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-            service.state.update_import_status(phase=phase, processed=processed, total=total, current_path=current_path)
+            service.state.imports.update(phase=phase, processed=processed, total=total, current_path=current_path)
 
         try:
             logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
@@ -545,7 +439,7 @@ class StartOneNoteImportUseCase:
             )
         except OneNoteImportError as exc:
             payload = exc.payload()
-            service.state.update_import_status(
+            service.state.imports.update(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=exc.message,
@@ -579,7 +473,7 @@ class StartOneNoteImportUseCase:
             except OSError:
                 pass
             detail = f"Unerwarteter Fehler beim OneNote-Import: {exc}"
-            service.state.update_import_status(
+            service.state.imports.update(
                 phase="Import fehlgeschlagen.",
                 done=True,
                 error=detail,
@@ -595,7 +489,7 @@ class StartOneNoteImportUseCase:
                 details={"exception": str(exc)},
             ) from exc
 
-        service.state.update_import_status(
+        service.state.imports.update(
             phase="NoteBase wird aktualisiert ...",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),
@@ -616,7 +510,7 @@ class StartOneNoteImportUseCase:
             "groups": vault.list_note_groups(),
             "graphStatus": graph_status,
         }
-        service.state.update_import_status(
+        service.state.imports.update(
             phase="Import abgeschlossen.",
             processed=result.get("importedPages", 0),
             total=max(result.get("importedPages", 0), 1),

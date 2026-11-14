@@ -12,6 +12,7 @@ from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
 from src.backend.nicknotes_backend.vault import VaultManager
 
 from src.backend import api as backend_api
+from src.backend.use_cases import GetFocusDashboardUseCase
 
 from src.backend.tests.http_client import TestClient
 
@@ -32,12 +33,12 @@ class PhaseEBackendTests(unittest.TestCase):
         self.indexer.close()
         shutil.rmtree(self.test_root, ignore_errors=True)
         if backend_api is not None:
-            backend_api.state.close()
+            backend_api.state.dispose_session()
 
     def test_capture_preview_returns_defined_tag_and_save_preserves_inline_reference(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        self.assertEqual(client.post('/vault/open', json={'path': str(self.vault_path)}).status_code, 200)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
         self.assertEqual(client.post('/tag-groups/add-group', json={'groupId': 'ux-vorschlag', 'displayName': 'Vorschlag'}).status_code, 200)
         self.assertEqual(client.post('/tag-groups/add-tag', json={'groupId': 'ux-vorschlag', 'tagId': 'synthese', 'displayName': 'Synthese'}).status_code, 200)
         definitions = self.vault.tag_groups_path.read_text(encoding='utf-8')
@@ -166,7 +167,7 @@ class PhaseEBackendTests(unittest.TestCase):
             {"checked": True, "completed_at": None, "updated_at": "2026-04-19T15:00:00"},
             {"checked": False, "completed_at": "2026-04-19T16:00:00", "updated_at": "2026-04-19T16:00:00"},
         ]
-        done_tasks, done_todos = backend_api._compute_done_today_counts(tasks=tasks, todos=todos, day_iso="2026-04-19")
+        done_tasks, done_todos = GetFocusDashboardUseCase._compute_done_today_counts(tasks=tasks, todos=todos, day_iso="2026-04-19")
         self.assertEqual(done_tasks, 1)
         self.assertEqual(done_todos, 1)
 
@@ -174,9 +175,9 @@ class PhaseEBackendTests(unittest.TestCase):
         self.indexer.close()
         self.vault.db_path.write_text("NOT A SQLITE DATABASE", encoding="utf-8")
 
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        response = client.post("/notebase/open", json={"path": str(self.vault_path)})
         self.assertEqual(response.status_code, 200)
 
         payload = response.json()
@@ -231,7 +232,7 @@ class PhaseEBackendTests(unittest.TestCase):
                 "updated_at": "2026-04-19T18:00:00",
             },
         ]
-        stats = backend_api._compute_focus_stats(tasks=tasks, todos=[], day_iso="2026-04-19")
+        stats = GetFocusDashboardUseCase._compute_focus_stats(tasks=tasks, todos=[], day_iso="2026-04-19")
         self.assertEqual(int(stats.get("overdueCount", 0)), 1)
         self.assertEqual(int(stats.get("blockedCount", 0)), 2)
         self.assertEqual(int(stats.get("waitingCount", 0)), 1)
@@ -242,9 +243,9 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertEqual(int(stats.get("unknownBlockerReferenceCount", 0)), 1)
 
     def test_focus_dashboard_endpoint_returns_aggregate_structure(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        open_response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        open_response = client.post("/notebase/open", json={"path": str(self.vault_path)})
         self.assertEqual(open_response.status_code, 200)
 
         daily_quick = client.post("/focus/quick-capture", json={"text": "Endpoint todo", "date": "2026-04-19"})
@@ -273,7 +274,7 @@ class PhaseEBackendTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        reindex_response = client.post("/vault/reindex")
+        reindex_response = client.post("/notebase/reindex")
         self.assertEqual(reindex_response.status_code, 200)
 
         response = client.get("/focus/dashboard?date=2026-04-19")
@@ -295,9 +296,9 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertIn("unknownBlockerReferenceCount", stats)
 
     def test_daily_open_today_endpoint_creates_then_reuses_daily(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        open_response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        open_response = client.post("/notebase/open", json={"path": str(self.vault_path)})
         self.assertEqual(open_response.status_code, 200)
 
         first = client.post("/daily/open-today?date=2026-04-20")
@@ -330,9 +331,9 @@ class PhaseEBackendTests(unittest.TestCase):
         )
         self.vault.add_quick_todo_to_daily(text="Review endpoint todo", indexer=self.indexer, day_iso="2026-04-20")
 
-        backend_api.state.close()
+        backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        open_response = client.post("/vault/open", json={"path": str(self.vault_path)})
+        open_response = client.post("/notebase/open", json={"path": str(self.vault_path)})
         self.assertEqual(open_response.status_code, 200)
 
         response = client.get("/review/dashboard?days=30&day=2026-04-21&top=5")

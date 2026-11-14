@@ -30,9 +30,6 @@ type MutableExplorerNode = ExplorerNode & {
 }
 
 const PROTECTED_ROOTS = new Set([
-  '01_daily',
-  '02_tags',
-  '03_tasks',
   'daily',
   'tags',
   'tasks',
@@ -54,7 +51,7 @@ function toDateSortKey(name: string): number {
 function toRootToken(groupKey: string): string {
   const clean = normalizeGroupKey(groupKey)
   const root = clean.split('/')[0] || ''
-  return root.toLowerCase().replace(/^\d+_/, '')
+  return root.toLowerCase()
 }
 
 function normalizeGroupKey(value: string): string {
@@ -409,8 +406,8 @@ export function buildExplorerTree({
       updatedAt: undefined,
       updatedAtMs: 0,
       favorite: group?.favorite ?? false,
-      canCreateNotes: group?.canCreateNotes ?? !['daily', 'tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
-      canCreateGroups: group?.canCreateGroups ?? !['daily', 'tags', 'tasks', 'system'].includes(toRootToken(cleanKey)),
+      canCreateNotes: group?.canCreateNotes ?? !['daily', 'tags', 'tasks', '.system'].includes(toRootToken(cleanKey)),
+      canCreateGroups: group?.canCreateGroups ?? !['daily', 'tags', 'tasks', '.system'].includes(toRootToken(cleanKey)),
       canDelete: group?.canDelete ?? !PROTECTED_ROOTS.has(cleanKey),
       parentId: parentNode?.id ?? null,
       parentKey,
@@ -429,7 +426,7 @@ export function buildExplorerTree({
   }
 
   for (const group of normalizedGroups) {
-    if (!group.key || toRootToken(group.key) === 'system') {
+    if (!group.key || toRootToken(group.key) === '.system') {
       continue
     }
     ensureFolder(group.key, group)
@@ -437,7 +434,7 @@ export function buildExplorerTree({
 
   for (const file of files) {
     const relativePath = toRelativePath(file.path, vaultPath)
-    if (!relativePath || toRootToken(relativePath) === 'system') {
+    if (!relativePath || toRootToken(relativePath) === '.system') {
       continue
     }
 

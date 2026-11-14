@@ -112,7 +112,7 @@ function normalizeLabel(value: string): string {
 
 function normalizeRootToken(groupKey: string): string {
   const root = normalizeGroupKey(groupKey).split('/')[0] || ''
-  return root.toLowerCase().replace(/^\d+_/, '')
+  return root.toLowerCase()
 }
 
 function isPinnedRoot(groupKey: string): boolean {

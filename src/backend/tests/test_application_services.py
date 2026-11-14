@@ -56,7 +56,7 @@ class BackendApiServiceTests(unittest.TestCase):
         request = backend_api.VaultCreateRequest(parentPath="C:/temp", name="TestVault")
         expected = {"path": "C:/temp", "created": True}
         with mock.patch.object(backend_api.backend_api_service, "create_vault", return_value=expected) as spy:
-            result = backend_api.create_vault(request)
+            result = backend_api.create_notebase(request)
             self.assertIs(result, expected)
             spy.assert_called_once_with(request)
 
@@ -64,7 +64,7 @@ class BackendApiServiceTests(unittest.TestCase):
         request = backend_api.VaultOpenRequest(path="C:/temp")
         expected = {"vaultPath": "C:/temp"}
         with mock.patch.object(backend_api.backend_api_service, "open_vault", return_value=expected) as spy:
-            result = backend_api.open_vault(request)
+            result = backend_api.open_notebase(request)
             self.assertIs(result, expected)
             spy.assert_called_once_with(request)
 
@@ -111,19 +111,21 @@ class BackendApiServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             vault_path = Path(tmpdir) / "RecentBase"
             (vault_path / ".system").mkdir(parents=True)
-            (vault_path / ".system" / "config.json").write_text("{}", encoding="utf-8")
+            (vault_path / ".system" / "config.json").write_text('{"vault_id": "recent"}', encoding="utf-8")
 
             request = backend_api.NoteBaseDeleteRequest(path=str(vault_path), confirmDelete=True)
-            result = self.service.delete_notebase(request)
+            # The Recycle Bin itself is not exercised by unattended tests.
+            with mock.patch("src.backend.application_services.move_to_trash") as trash:
+                result = self.service.delete_notebase(request)
 
+            trash.assert_called_once_with(vault_path.resolve())
             self.assertTrue(result["deleted"])
             self.assertEqual(result["deletedPath"], str(vault_path.resolve()))
-            self.assertFalse(vault_path.exists())
             self.assertFalse(result["vaultLoaded"])
             self.assertFalse(backend_api.state.vault)
 
 
-    def test_save_note_content_executes_transaction_with_recovery_log(self) -> None:
+    def test_save_note_content_updates_projections_under_lock(self) -> None:
         fake_path = self._mock_note_path("note.md", exists=True, content="title: A\\n\\nbody")
         request = backend_api.NoteSaveRequest(expectedRevision=hashlib.sha256(fake_path.read_bytes()).hexdigest(), path="note.md", content="title: B\\n\\nbody")
         vault = mock.MagicMock()
@@ -153,47 +155,11 @@ class BackendApiServiceTests(unittest.TestCase):
                     result = self.service.save_note_content(request)
                     self.assertTrue(result.get("saved"))
                     self.assertEqual(result.get("path"), "note.md")
-                    self.assertEqual(result["operationLog"]["status"], "completed")
-                    self.assertTrue(
-                        any(step["name"] == "save_note_document" for step in result["operationLog"]["steps"])
-                    )
                     update_graph.assert_called_once()
                     projection_lock.__enter__.assert_called_once()
                     projection_lock.__exit__.assert_called_once()
         finally:
             backend_api.state._session.projection_lock = previous_lock
-
-    def test_save_note_content_rolls_back_on_graph_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            rollback_path = Path(tmpdir) / "rollback.md"
-            fake_path = self._mock_note_path(str(rollback_path), exists=True, content="title: Rollback\\n\\nbody")
-            request = backend_api.NoteSaveRequest(expectedRevision=hashlib.sha256(fake_path.read_bytes()).hexdigest(), path=str(rollback_path), content="title: Updated\\n\\nbody")
-            vault = mock.MagicMock()
-            vault.vault_path = Path("C:/dummy")
-            vault.save_note_document.return_value = {
-                "path": str(rollback_path),
-                "title": "Updated",
-                "tag_rebuild_required": False,
-            }
-            vault.sync_tag_groups_with_index.return_value = None
-            vault.consume_last_link_rewrite_result.return_value = {"updated": 0, "paths": []}
-            indexer = mock.MagicMock()
-
-            with mock.patch.object(self.service, "_resolve_note_request_path", return_value=fake_path), mock.patch.object(
-                self.service,
-                "require_loaded",
-                return_value=(vault, indexer),
-            ), mock.patch.object(self.service, "counts", return_value={"notes": 1}):
-                    with mock.patch.object(
-                        self.service,
-                        "update_graph_after_note_save",
-                        side_effect=RuntimeError("graph broken"),
-                    ):
-                        with self.assertRaises(Exception):
-                            self.service.save_note_content(request)
-                    self.assertTrue(
-                        any("rollback.md" in str(args[0]) for args in indexer.remove_projection_for_path.call_args_list for args in [args[0]])
-                    )
 
     def test_delete_note_content_runs_transaction(self) -> None:
         fake_path = self._mock_note_path("delete-me.md", exists=True, content="title: Delete\\n\\nbody")
@@ -218,7 +184,6 @@ class BackendApiServiceTests(unittest.TestCase):
             ) as rebuild:
                 result = self.service.delete_note(request)
                 self.assertTrue(result["deleted"])
-                self.assertEqual(result["operationLog"]["status"], "completed")
                 vault.delete_note_file.assert_called_once_with("delete-me.md", indexer)
                 rebuild.assert_called_once()
                 projection_lock.__enter__.assert_called_once()
@@ -249,7 +214,6 @@ class BackendApiServiceTests(unittest.TestCase):
             try:
                 result = self.service.rename_note(request)
                 self.assertTrue(result["renamedPath"].endswith("note-new.md"))
-                self.assertEqual(result["operationLog"]["status"], "completed")
                 vault.rename_note_file.assert_called_once_with("note.md", "note-new.md", indexer)
                 rebuild.assert_called_once()
                 projection_lock.__enter__.assert_called_once()
@@ -280,7 +244,6 @@ class BackendApiServiceTests(unittest.TestCase):
             try:
                 result = self.service.move_note(request)
                 self.assertEqual(result["movedPath"], str(Path("C:/dummy/02_tasks/note.md")))
-                self.assertEqual(result["operationLog"]["status"], "completed")
                 vault.move_note_file.assert_called_once_with("note.md", "02_tasks", indexer)
                 rebuild.assert_called_once()
                 projection_lock.__enter__.assert_called_once()

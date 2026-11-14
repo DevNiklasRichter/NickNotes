@@ -1,7 +1,7 @@
 """Pruned, vault-bound Markdown inventory shared by every projection."""
 import os
 from pathlib import Path
-EXCLUDED = {'.system','system','99_system','.media','tags','02_tags','02_entities'}
+EXCLUDED = {'.system','.media','tags'}
 
 def is_source(root: Path, path: Path) -> bool:
     root, path = root.resolve(), path.resolve()

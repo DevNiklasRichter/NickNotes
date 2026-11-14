@@ -30,9 +30,9 @@ class SourceJournal:
             relative = path.relative_to(self.root)
         except ValueError:
             raise ValueError('Source operation escaped the NoteBase.')
-        if relative.parts[0] in {'.system', 'system', '99_system'} and path not in {self.vault.tag_groups_path.resolve(), self.vault.config_path.resolve()}:
+        if relative.parts[0] == '.system' and path not in {self.vault.tag_groups_path.resolve(), self.vault.config_path.resolve()}:
             return
-        if relative.parts[0] in {self.vault.tag_root_name, '02_tags'}:
+        if relative.parts[0] == self.vault.tag_root_name:
             return
         if path in self.before or path.is_dir():
             return

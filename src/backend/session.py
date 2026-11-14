@@ -5,6 +5,7 @@ from functools import wraps
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 from .nicknotes_backend.vault import VaultManager
 from .nicknotes_backend.indexer import VaultIndexer
@@ -61,7 +62,7 @@ class GraphRuntimeStatus:
 
 
 @dataclass
-class NoteBaseLoadStatus:
+class ProgressStatus:
     active: bool = False
     done: bool = False
     error: str | None = None
@@ -76,6 +77,58 @@ class NoteBaseLoadStatus:
     finished_at: float | None = None
 
 
+_PROGRESS_FIELDS = {"phase", "processed", "total", "current_path", "error", "error_code", "error_details", "result"}
+
+
+class ProgressTracker:
+    """Thread-safe progress of one background operation (NoteBase open, import)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.status = ProgressStatus()
+
+    def reset(self, phase: str) -> None:
+        with self.lock:
+            self.status = ProgressStatus(active=True, phase=phase, started_at=time.time())
+
+    def clear(self) -> None:
+        with self.lock:
+            self.status = ProgressStatus()
+
+    def update(self, *, done: bool | None = None, **changes: Any) -> None:
+        """Apply the given fields; ``None`` leaves a field unchanged."""
+        unknown = set(changes) - _PROGRESS_FIELDS
+        if unknown:
+            raise TypeError(f"Unknown progress field: {sorted(unknown)}")
+        with self.lock:
+            for name, value in changes.items():
+                if value is not None:
+                    setattr(self.status, name, value)
+            if done is not None:
+                self.status.done = done
+                self.status.active = not done
+                if done:
+                    self.status.finished_at = time.time()
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            status = self.status
+            return {
+                "active": status.active,
+                "done": status.done,
+                "error": status.error,
+                "errorCode": status.error_code,
+                "errorDetails": status.error_details,
+                "phase": status.phase,
+                "processed": status.processed,
+                "total": status.total,
+                "currentPath": status.current_path,
+                "result": status.result,
+                "startedAt": status.started_at,
+                "finishedAt": status.finished_at,
+            }
+
+
 @dataclass
 class VaultSession:
     vault: VaultManager | None = None
@@ -85,19 +138,17 @@ class VaultSession:
     graph_status: GraphRuntimeStatus = field(default_factory=GraphRuntimeStatus)
     watcher_stop: threading.Event | None = None
     watcher_thread: threading.Thread | None = None
-    load_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
-    load_lock: threading.Lock = field(default_factory=threading.Lock)
-    import_status: NoteBaseLoadStatus = field(default_factory=NoteBaseLoadStatus)
-    import_lock: threading.Lock = field(default_factory=threading.Lock)
+    load: ProgressTracker = field(default_factory=ProgressTracker)
+    imports: ProgressTracker = field(default_factory=ProgressTracker)
 
     def dispose(self) -> None:
+        # The load tracker survives: opening a NoteBase disposes the previous session itself.
         self.stop_graph_watcher()
         if self.indexer:
             self.indexer.close()
             self.indexer = None
         self.vault = None
-        with self.import_lock:
-            self.import_status = NoteBaseLoadStatus()
+        self.imports.clear()
         self.graph_status = GraphRuntimeStatus()
 
     def start_graph_watcher(self, runtime: "RuntimeState", baseline=None) -> None:
@@ -123,127 +174,11 @@ class VaultSession:
         self.watcher_thread = None
         self.graph_status.watcher_enabled = False
 
-    def reset_load_status(self, phase: str) -> None:
-        with self.load_lock:
-            self.load_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
-
-    def update_load_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        with self.load_lock:
-            status = self.load_status
-            if phase is not None:
-                status.phase = phase
-            if processed is not None:
-                status.processed = processed
-            if total is not None:
-                status.total = total
-            if current_path is not None:
-                status.current_path = current_path
-            if error is not None:
-                status.error = error
-            if error_code is not None:
-                status.error_code = error_code
-            if error_details is not None:
-                status.error_details = error_details
-            if result is not None:
-                status.result = result
-            if done is not None:
-                status.done = done
-                status.active = not done
-                if done:
-                    status.finished_at = time.time()
-
-    def get_load_status(self) -> dict[str, Any]:
-        with self.load_lock:
-            status = self.load_status
-            return {
-                "active": status.active,
-                "done": status.done,
-                "error": status.error,
-                "errorCode": status.error_code,
-                "errorDetails": status.error_details,
-                "phase": status.phase,
-                "processed": status.processed,
-                "total": status.total,
-                "currentPath": status.current_path,
-                "result": status.result,
-                "startedAt": status.started_at,
-                "finishedAt": status.finished_at,
-            }
-
-    def reset_import_status(self, phase: str) -> None:
-        with self.import_lock:
-            self.import_status = NoteBaseLoadStatus(active=True, phase=phase, started_at=time.time())
-
-    def update_import_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        with self.import_lock:
-            status = self.import_status
-            if phase is not None:
-                status.phase = phase
-            if processed is not None:
-                status.processed = processed
-            if total is not None:
-                status.total = total
-            if current_path is not None:
-                status.current_path = current_path
-            if error is not None:
-                status.error = error
-            if error_code is not None:
-                status.error_code = error_code
-            if error_details is not None:
-                status.error_details = error_details
-            if result is not None:
-                status.result = result
-            if done is not None:
-                status.done = done
-                status.active = not done
-                if done:
-                    status.finished_at = time.time()
-
-    def get_import_status(self) -> dict[str, Any]:
-        with self.import_lock:
-            status = self.import_status
-            return {
-                "active": status.active,
-                "done": status.done,
-                "error": status.error,
-                "errorCode": status.error_code,
-                "errorDetails": status.error_details,
-                "phase": status.phase,
-                "processed": status.processed,
-                "total": status.total,
-                "currentPath": status.current_path,
-                "result": status.result,
-                "startedAt": status.started_at,
-                "finishedAt": status.finished_at,
-            }
-
 
 @dataclass
 class RuntimeState:
+    """One backend process owns one session; operations serialize on ``operation_lock``."""
+
     _session: VaultSession = field(default_factory=VaultSession)
     session_lock: threading.Lock = field(default_factory=threading.Lock)
     operation_lock: threading.RLock = field(default_factory=threading.RLock)
@@ -253,130 +188,55 @@ class RuntimeState:
     handled_files: dict[Path, tuple[int, int] | None] = field(default_factory=dict)
     last_change: dict[str, Any] = field(default_factory=dict)
 
-    def record_change(self, operation: str, paths: list[Path]):
+    def record_change(self, operation: str, paths: list[Path]) -> None:
         self.change_version += 1
-        self.last_change = {'version':self.change_version, 'operation':operation, 'paths':[str(path) for path in paths[:1000]], 'truncated':len(paths)>1000}
+        self.last_change = {'version': self.change_version, 'operation': operation, 'paths': [str(path) for path in paths[:1000]], 'truncated': len(paths) > 1000}
         for path in paths:
             try:
                 stat = path.stat()
                 self.handled_files[path.resolve()] = (stat.st_mtime_ns, stat.st_size)
             except OSError:
                 self.handled_files[path.resolve()] = None
-        while len(self.handled_files)>2048:
+        while len(self.handled_files) > 2048:
             self.handled_files.pop(next(iter(self.handled_files)))
-
 
     @property
     def vault(self) -> VaultManager | None:
         return self._session.vault
 
-    @vault.setter
-    def vault(self, value: VaultManager | None) -> None:
-        self._session.vault = value
-
     @property
     def indexer(self) -> VaultIndexer | None:
         return self._session.indexer
-
-    @indexer.setter
-    def indexer(self, value: VaultIndexer | None) -> None:
-        self._session.indexer = value
 
     @property
     def parser(self) -> CaptureParser:
         return self._session.parser
 
-    @parser.setter
-    def parser(self, value: CaptureParser) -> None:
-        self._session.parser = value
-
-
-
     @property
     def graph_status(self) -> GraphRuntimeStatus:
         return self._session.graph_status
-
-    @graph_status.setter
-    def graph_status(self, value: GraphRuntimeStatus) -> None:
-        self._session.graph_status = value
 
     @property
     def projection_lock(self) -> threading.RLock:
         return self._session.projection_lock
 
     @property
-    def watcher_stop(self) -> threading.Event | None:
-        return self._session.watcher_stop
-
-    @watcher_stop.setter
-    def watcher_stop(self, value: threading.Event | None) -> None:
-        self._session.watcher_stop = value
+    def load(self) -> ProgressTracker:
+        return self._session.load
 
     @property
-    def watcher_thread(self) -> threading.Thread | None:
-        return self._session.watcher_thread
+    def imports(self) -> ProgressTracker:
+        return self._session.imports
 
-    @watcher_thread.setter
-    def watcher_thread(self, value: threading.Thread | None) -> None:
-        self._session.watcher_thread = value
-
-    @property
-    def load_status(self) -> NoteBaseLoadStatus:
-        return self._session.load_status
-
-    @load_status.setter
-    def load_status(self, value: NoteBaseLoadStatus) -> None:
-        self._session.load_status = value
-
-    @property
-    def load_lock(self) -> threading.Lock:
-        return self._session.load_lock
-
-    @property
-    def import_status(self) -> NoteBaseLoadStatus:
-        return self._session.import_status
-
-    @import_status.setter
-    def import_status(self, value: NoteBaseLoadStatus) -> None:
-        self._session.import_status = value
-
-    @property
-    def import_lock(self) -> threading.Lock:
-        return self._session.import_lock
-
-    @property
-    def session(self) -> VaultSession:
-        return self._session
-
-    def start_session(
-        self,
-        *,
-        vault: VaultManager | None,
-        indexer: VaultIndexer | None,
-        parser: CaptureParser | None = None,
-    ) -> None:
+    def start_session(self, *, vault: VaultManager | None, indexer: VaultIndexer | None) -> None:
         with self.operation_lock, self.session_lock:
             self._session.dispose()
             self.generation = uuid.uuid4().hex
             self.handled_files.clear()
             self._session.vault = vault
             self._session.indexer = indexer
-            if parser is not None:
-                self._session.parser = parser
-
-    def stop_session(self) -> None:
-        with self.operation_lock, self.session_lock:
-            self._session.stop_graph_watcher()
-            if self._session.indexer:
-                self._session.indexer.close()
 
     def dispose_session(self) -> None:
-        with self.operation_lock, self.session_lock:
-            self._session.dispose()
-            self.generation = uuid.uuid4().hex
-            self.handled_files.clear()
-
-    def close(self) -> None:
         with self.operation_lock, self.session_lock:
             self._session.dispose()
             self.generation = uuid.uuid4().hex
@@ -389,65 +249,3 @@ class RuntimeState:
     def stop_graph_watcher(self) -> None:
         with self.operation_lock, self.session_lock:
             self._session.stop_graph_watcher()
-
-    def reset_load_status(self, phase: str) -> None:
-        self._session.reset_load_status(phase)
-
-    def update_load_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        self._session.update_load_status(
-            phase=phase,
-            processed=processed,
-            total=total,
-            current_path=current_path,
-            done=done,
-            error=error,
-            error_code=error_code,
-            error_details=error_details,
-            result=result,
-        )
-
-    def get_load_status(self) -> dict[str, Any]:
-        return self._session.get_load_status()
-
-    def reset_import_status(self, phase: str) -> None:
-        self._session.reset_import_status(phase)
-
-    def update_import_status(
-        self,
-        *,
-        phase: str | None = None,
-        processed: int | None = None,
-        total: int | None = None,
-        current_path: str | None = None,
-        done: bool | None = None,
-        error: str | None = None,
-        error_code: str | None = None,
-        error_details: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> None:
-        self._session.update_import_status(
-            phase=phase,
-            processed=processed,
-            total=total,
-            current_path=current_path,
-            done=done,
-            error=error,
-            error_code=error_code,
-            error_details=error_details,
-            result=result,
-        )
-
-    def get_import_status(self) -> dict[str, Any]:
-        return self._session.get_import_status()

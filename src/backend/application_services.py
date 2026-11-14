@@ -7,7 +7,6 @@ import base64
 import binascii
 import json
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -16,7 +15,7 @@ from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolder
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from .config import (
     REVIEW_DASHBOARD_DEFAULT_DAYS,
@@ -49,8 +48,9 @@ from .errors import (
     NotFoundDomainError,
     ValidationDomainError,
 )
-from .operation_context import get_operation_context
-from .nicknotes_backend.source_journal import pending_recovery
+from .nicknotes_backend.source_journal import active_journal, pending_recovery
+from .nicknotes_backend.file_io import atomic_write_text
+from .nicknotes_backend.trash import move_to_trash
 
 """Application layer entry points for NickNotes backend API controllers."""
 
@@ -112,12 +112,7 @@ class BackendApiService:
                 operation=operation,
                 vault_id=str(resolved),
             )
-        config_markers = (
-            resolved / ".system" / "config.json",
-            resolved / "system" / "config.json",
-            resolved / "99_system" / "config.json",
-        )
-        if not any(marker.exists() for marker in config_markers):
+        if not (resolved / ".system" / "config.json").exists():
             raise ValidationDomainError(
                 "Target folder is not a NickNotes NoteBase.",
                 operation=operation,
@@ -399,7 +394,7 @@ class BackendApiService:
                 applied += 1
                 changed = True
             if changed:
-                note_file.write_text(next_markdown, encoding="utf-8")
+                atomic_write_text(note_file, next_markdown)
                 touched.append(note_file)
         return applied, touched
 
@@ -491,94 +486,13 @@ class BackendApiService:
             )
 
         relative = file_path.relative_to(vault_root)
-        if any(part.startswith(".") or part.lower() in {"system", "99_system"} for part in relative.parts):
+        if any(part.startswith(".") for part in relative.parts):
             raise ValidationDomainError("Internal files are not accessible as notes.")
         if file_path.suffix.lower() not in {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".toml", ".log"}:
             raise ValidationDomainError("Unsupported document type.")
         if file_path.exists() and file_path.stat().st_size > 5 * 1024 * 1024:
             raise ValidationDomainError("Document is too large (maximum 5 MB).")
         return file_path
-
-    def _run_mutation_pipeline(
-        self,
-        operation: str,
-        request: Any,
-        *,
-        steps: list[tuple[str, Callable[[dict[str, Any]], Any], Callable[[dict[str, Any], Any], None] | None]],
-        build_response: Callable[[dict[str, Any]], dict[str, Any]],
-        lock_projection: bool = False,
-    ) -> dict[str, Any]:
-        context_meta = get_operation_context()
-        context: dict[str, Any] = {"request": request}
-        recovery_log: dict[str, Any] = {
-            "operation": operation,
-            "operationId": context_meta.operation_id,
-            "vaultId": context_meta.vault_id,
-            "status": "running",
-            "steps": [],
-        }
-
-        completed_steps: list[tuple[str, Callable[[dict[str, Any], Any], None] | None, Any]] = []
-
-        try:
-            def run_steps() -> None:
-                for step_name, execute_step, rollback_step in steps:
-                    step_entry: dict[str, Any] = {"name": step_name, "status": "running"}
-                    recovery_log["steps"].append(step_entry)
-                    try:
-                        step_result = execute_step(context)
-                        context[step_name] = step_result
-                        step_entry["status"] = "completed"
-                        completed_steps.append((step_name, rollback_step, step_result))
-                    except DomainError as exc:
-                        step_entry["status"] = "failed"
-                        step_entry["error"] = exc.public_message
-                        step_entry["errorCode"] = exc.error_code
-                        recovery_log["status"] = "failed"
-                        recovery_log["errorCode"] = exc.error_code
-                        raise
-                    except Exception as exc:
-                        step_entry["status"] = "failed"
-                        mapped_error = InfrastructureDomainError(
-                            "Operation failed unexpectedly.",
-                            operation=operation,
-                            vault_id=context_meta.vault_id,
-                            internal_message=str(exc),
-                        )
-                        step_entry["error"] = mapped_error.public_message
-                        step_entry["errorCode"] = mapped_error.error_code
-                        recovery_log["status"] = "failed"
-                        logger.exception("Operation step failed: %s", step_name)
-                        rollback_errors: list[str] = []
-                        for completed_name, rollback, step_output in reversed(completed_steps):
-                            if rollback is None:
-                                continue
-                            try:
-                                rollback(context, step_output)
-                                context[f"{completed_name}:rollback"] = "done"
-                            except Exception as rollback_exc:  # pragma: no cover - best-effort recovery
-                                rollback_errors.append(f"{completed_name}: {rollback_exc}")
-                        if rollback_errors:
-                            recovery_log["rollbackErrors"] = rollback_errors
-                            recovery_log["rollbackStatus"] = "failed"
-                        else:
-                            recovery_log["rollbackStatus"] = "attempted"
-                        raise mapped_error
-
-            if lock_projection:
-                with self.state.projection_lock:
-                    run_steps()
-                    recovery_log["status"] = "completed"
-                    response = build_response(context)
-            else:
-                run_steps()
-                recovery_log["status"] = "completed"
-                response = build_response(context)
-            response["operationLog"] = recovery_log
-            return response
-        except DomainError:
-            context["recovery"] = recovery_log
-            raise
 
     def health(self) -> dict[str, Any]:
         return {"ok": True, "vaultLoaded": self.state.vault is not None, "capabilities": self._capabilities}
@@ -617,14 +531,14 @@ class BackendApiService:
                 vault_id=str(vault_path),
             )
         runtime = self.state
-        with runtime.load_lock:
-            if runtime.load_status.active:
+        with runtime.load.lock:
+            if runtime.load.status.active:
                 raise ConflictDomainError(
                     "A NoteBase is already being loaded.",
                     operation="start_notebase_open",
                     vault_id=str(vault_path),
                 )
-        runtime.reset_load_status("NoteBase wird vorbereitet ...")
+        runtime.load.reset("NoteBase wird vorbereitet ...")
         thread = threading.Thread(
             target=self._open_notebase_background,
             args=(SimpleNamespace(path=str(vault_path)),),
@@ -636,7 +550,7 @@ class BackendApiService:
 
     def _open_notebase_background(self, req: Any) -> None:
         def update_progress(phase: str, processed: int, total: int, current_path: str | None) -> None:
-            self.state.update_load_status(
+            self.state.load.update(
                 phase=phase,
                 processed=processed,
                 total=total,
@@ -645,20 +559,20 @@ class BackendApiService:
 
         try:
             result = self._open_vault_impl(req, progress_callback=update_progress)
-            self.state.update_load_status(
+            self.state.load.update(
                 phase="NoteBase ist bereit.",
                 done=True,
                 error=None,
                 result=result,
             )
         except DomainError as exc:
-            self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
+            self.state.load.update(phase="Laden fehlgeschlagen.", done=True, error=str(exc.public_message), result=None)
         except (OSError, ValueError, RuntimeError) as exc:
             logger.exception("Could not open NoteBase in background.")
-            self.state.update_load_status(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
+            self.state.load.update(phase="Laden fehlgeschlagen.", done=True, error=str(exc), result=None)
 
     def get_notebase_open_status(self) -> dict[str, Any]:
-        return self.state.get_load_status()
+        return self.state.load.snapshot()
 
     @coordinated
     def create_vault(self, req: VaultCreateRequest) -> dict[str, Any]:
@@ -719,18 +633,6 @@ class BackendApiService:
             ) from exc
 
     @coordinated
-    def open_notebase(self, req: VaultOpenRequest) -> dict[str, Any]:
-        return self.open_vault(req)
-
-    @coordinated
-    def create_notebase(self, req: VaultCreateRequest) -> dict[str, Any]:
-        return self.create_vault(req)
-
-    @coordinated
-    def reindex_notebase(self) -> dict[str, Any]:
-        return self.reindex_vault()
-
-    @coordinated
     def preview_onenote_import(self, req: OneNoteImportPreviewRequest) -> dict[str, Any]:
         return PreviewOneNoteImportUseCase().execute(self, req)
 
@@ -739,7 +641,7 @@ class BackendApiService:
         return StartOneNoteImportUseCase().execute(self, req)
 
     def get_onenote_import_status(self) -> dict[str, Any]:
-        return self.state.get_import_status()
+        return self.state.imports.snapshot()
 
     @coordinated(mutation=True, lifecycle=True)
     def rename_notebase(self, req: NoteBaseRenameRequest) -> dict[str, Any]:
@@ -813,6 +715,19 @@ class BackendApiService:
         else:
             vault, _indexer = self.require_loaded()
             target = vault.vault_path.resolve()
+        # Removal needs the identity NickNotes itself wrote; a folder that merely
+        # contains a similarly named file is not enough.
+        try:
+            identity = json.loads((target / ".system" / "config.json").read_text(encoding="utf-8")).get("vault_id")
+        except (OSError, ValueError, AttributeError):
+            identity = None
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValidationDomainError(
+                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht geloescht. "
+                "Oeffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
+                operation="delete_notebase",
+                vault_id=str(target),
+            )
         if not req.confirm_delete:
             raise ValidationDomainError(
                 "confirmDelete must be true to delete a NoteBase",
@@ -824,10 +739,12 @@ class BackendApiService:
         try:
             if is_current:
                 self.state.dispose_session()
-            shutil.rmtree(target)
+            # Recoverable by design: the folder goes to the Recycle Bin, never straight to deletion.
+            move_to_trash(target)
         except OSError as exc:
-            raise InfrastructureDomainError(
-                "Could not delete NoteBase.",
+            # A 409 keeps the reason visible; 5xx messages are replaced by a generic text.
+            raise ConflictDomainError(
+                f"Die NoteBase wurde nicht geloescht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
                 operation="delete_notebase",
                 vault_id=str(target),
                 internal_message=str(exc),
@@ -1011,7 +928,11 @@ class BackendApiService:
             while done_path.exists() and done_path != src:
                 done_path = done_dir / f"{src.stem}_{suffix}{src.suffix}"
                 suffix += 1
-        done_path.write_text(dump_markdown(meta, body), encoding="utf-8")
+        if src != done_path:
+            # Back up the original before it disappears; the new file is recorded by its write.
+            if journal := active_journal.get():
+                journal.record(src)
+        atomic_write_text(done_path, dump_markdown(meta, body))
         if src != done_path and src.exists():
             src.unlink()
 
@@ -1078,11 +999,6 @@ class BackendApiService:
         vault, _indexer = self.require_loaded()
         items: list[dict[str, Any]] = []
         root = vault.vault_path.resolve()
-        hide_legacy_daily = (root / "daily").is_dir()
-        hide_legacy_tags = (root / "tags").is_dir()
-        hide_legacy_tasks = (root / "tasks").is_dir()
-        hide_dot_system = (root / ".system").is_dir()
-        hide_legacy_system = (root / "system").is_dir()
         text_extensions = {
             ".md",
             ".txt",
@@ -1115,17 +1031,7 @@ class BackendApiService:
             except (OSError, ValueError):
                 continue
             top = relative.split("/", 1)[0]
-            if top in {".system", "system", "99_system", "02_entities", ".media"}:
-                continue
-            if hide_legacy_daily and top == "01_daily":
-                continue
-            if hide_legacy_tags and top == "02_tags":
-                continue
-            if hide_legacy_tasks and top == "03_tasks":
-                continue
-            if hide_dot_system and top == "system":
-                continue
-            if hide_legacy_system and top == "99_system":
+            if top in {".system", ".media"}:
                 continue
 
             extension = file_path.suffix.lower()
@@ -1610,40 +1516,15 @@ class BackendApiService:
     @coordinated(mutation=True)
     def delete_note(self, req: NoteFileDeleteRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
-        note_path = self._resolve_note_request_path(vault=vault, raw_path=req.path)
-        pre_state = {
-            "path": str(note_path),
-            "content": note_path.read_text(encoding="utf-8"),
-        }
-
-        def _execute_delete(context: dict[str, Any]) -> str:
+        self._resolve_note_request_path(vault=vault, raw_path=req.path)
+        with self.state.projection_lock:
             vault.delete_note_file(req.path, indexer)
-            return pre_state["path"]
-
-        def _rollback_delete(context: dict[str, Any], step_output: str) -> None:
-            note_path = Path(step_output)
-            note_path.parent.mkdir(parents=True, exist_ok=True)
-            note_path.write_text(pre_state["content"], encoding="utf-8")
-            indexer.reindex_markdown_file(vault.vault_path, note_path)
-
-        def _update_graph(context: dict[str, Any]) -> dict[str, Any]:
-            return self.rebuild_graph_projection(vault)
-
-        return self._run_mutation_pipeline(
-            "delete-note",
-            req,
-            steps=[
-                ("delete-note-file", _execute_delete, _rollback_delete),
-                ("update-graph", _update_graph, None),
-            ],
-            build_response=lambda context: {
+            return {
                 "deleted": True,
+                "graphStatus": self.rebuild_graph_projection(vault),
                 "counts": self.counts(indexer),
-                "graphStatus": context["update-graph"],
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
-            },
-            lock_projection=True,
-        )
+            }
 
     @coordinated(mutation=True)
     def move_note(self, req: NoteFileMoveRequest) -> dict[str, Any]:

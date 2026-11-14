@@ -277,7 +277,7 @@ def update_graph_index_for_file(
 
     if not relative_path or not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
         return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
-    if relative_path.split("/", 1)[0] in {".system", "system", "99_system", ".media"}:
+    if relative_path.split("/", 1)[0] in {".system", ".media"}:
         return _finalize_incremental_index(index, tag_groups, files, nodes_by_id, edges_by_id, diagnostics)
 
     try:

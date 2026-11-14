@@ -10,7 +10,7 @@ from src.backend.errors import DomainError
 
 class ApiErrorContractTests(unittest.TestCase):
     def setUp(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
 
     def test_validation_domain_error_is_standardized(self) -> None:
         client = TestClient(backend_api.app)
@@ -25,7 +25,7 @@ class ApiErrorContractTests(unittest.TestCase):
                 vault_id="C:/tmp/test",
             ),
         ):
-            response = client.post("/vault/open", json={"path": "C:/tmp/test"})
+            response = client.post("/notebase/open", json={"path": "C:/tmp/test"})
             self.assertEqual(response.status_code, 400)
             payload = response.json()
             self.assertEqual(payload.get("ok"), False)
@@ -41,7 +41,7 @@ class ApiErrorContractTests(unittest.TestCase):
             "open_vault",
             side_effect=RuntimeError("Internal sqlite detail with secret"),
         ):
-            response = client.post("/vault/open", json={"path": "C:/tmp/test"})
+            response = client.post("/notebase/open", json={"path": "C:/tmp/test"})
             self.assertEqual(response.status_code, 500)
             payload = response.json()
             self.assertEqual(payload.get("ok"), False)

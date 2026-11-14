@@ -8,7 +8,7 @@ from src.backend import api as backend_api
 
 class ApiCorsTests(unittest.TestCase):
     def setUp(self) -> None:
-        backend_api.state.close()
+        backend_api.state.dispose_session()
 
     def _preflight_headers(self, origin: str) -> dict[str, str]:
         return {
