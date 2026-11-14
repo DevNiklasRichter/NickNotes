@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="340" viewBox="0 0 720 340">
+<rect width="720" height="340" rx="16" fill="#15232f"/>
+<path d="M0 76H720" stroke="#4d6473"/>
+<g font-family="Segoe UI, Arial, sans-serif" fill="#f5f7fa">
+  <text x="30" y="48" font-size="26" font-weight="600">Delta · Montageinsel</text>
+  <text x="564" y="47" font-size="16">SIMULATION</text>
+  <rect x="30" y="106" width="660" height="86" rx="8" fill="#213541"/>
+  <circle cx="56" cy="149" r="9" fill="#81dfac"/>
+  <text x="78" y="155" font-size="22">Bereit zum Start</text>
+  <text x="510" y="155" font-size="18">Format Standard</text>
+  <rect x="30" y="211" width="660" height="60" rx="8" fill="#3c3323"/>
+  <text x="52" y="248" font-size="18" fill="#ffe0a3">DL-104 · Format am Bedienplatz bestätigen</text>
+  <text x="30" y="310" fill="#b5c5cd" font-size="16">Ansicht für den Bedienworkshop am 23.11.2026</text>
+</g>
+</svg>

@@ -21,6 +21,7 @@
     "dev:electron": "electron .",
     "dev:backend": "python -m src.backend.server",
     "build": "tsc -b && vite build",
+    "readme:media": "node scripts/capture-readme-media.mjs",
     "lint": "eslint src/frontend/src",
     "preview": "vite preview",
     "test:frontend": "vitest run --root src/frontend",
