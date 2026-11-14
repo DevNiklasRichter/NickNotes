@@ -326,7 +326,7 @@ export function GraphNetworkView({
     <section className={`graph-network-shell ${compactChrome ? 'compact-chrome' : ''}`}>
       {!compactChrome && largeGraph ? (
         <p className="graph-warning">
-          Groesserer Graph sichtbar. Layout laeuft ohne Animation; Filter koennen die Ansicht fluessiger machen.
+          Größerer Graph sichtbar. Layout läuft ohne Animation; Filter können die Ansicht flüssiger machen.
         </p>
       ) : null}
       {initError ? <p className="graph-error">{initError}</p> : null}
@@ -429,9 +429,9 @@ function GraphSelectionPanel({
     return (
       <aside className="graph-selection-panel">
         <h3>Details</h3>
-        <p className="empty-copy">Knoten oder Kante auswaehlen.</p>
+        <p className="empty-copy">Knoten oder Kante auswählen.</p>
         <button className="muted graph-reset-button" onClick={onClearSelection}>
-          Auswahl zuruecksetzen
+          Auswahl zurücksetzen
         </button>
       </aside>
     )
@@ -454,7 +454,7 @@ function GraphSelectionPanel({
           </ul>
         </div>
         <button className="muted graph-reset-button" onClick={onClearSelection}>
-          Auswahl zuruecksetzen
+          Auswahl zurücksetzen
         </button>
       </aside>
     )
@@ -480,7 +480,7 @@ function GraphSelectionPanel({
               }
             }}
           >
-            Notiz oeffnen
+            Notiz öffnen
           </button>
         ) : null}
         <button className="muted graph-reset-button" onClick={() => onShowNeighbors(selected.node.id)}>
@@ -490,7 +490,7 @@ function GraphSelectionPanel({
           Fokus auf diesen Node
         </button>
         <button className="muted graph-reset-button" onClick={onClearSelection}>
-          Auswahl zuruecksetzen
+          Auswahl zurücksetzen
         </button>
       </div>
       <div className="graph-selection-block">
@@ -550,10 +550,10 @@ function GraphNodeContextMenu({
         Im Explorer anzeigen
       </ContextMenuItem>
       <ContextMenuItem onClick={() => onOpen(menu.node)} disabled={!canOpen}>
-        Im Editor oeffnen
+        Im Editor öffnen
       </ContextMenuItem>
       <ContextMenuItem onClick={onClose}>
-        Schliessen
+        Schließen
       </ContextMenuItem>
     </ContextMenu>
   )

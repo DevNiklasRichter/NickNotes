@@ -11,9 +11,17 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
     service = BackendApiService(runtime=runtime)
     snapshot = baseline if baseline is not None else graph_watcher_snapshot(vault.vault_path)
     pending = {}
-    while not stop_event.wait(2):
+    # Scan every two seconds while a client is polling, every ten once it has gone quiet (hidden window).
+    while not stop_event.wait(2 if time.monotonic() - runtime.client_seen < 30 else 10):
         try:
             current = graph_watcher_snapshot(vault.vault_path)
+            # A directory listing can lag behind the file; confirm each apparent change on the file itself.
+            for path in [path for path in set(current) | set(snapshot) if current.get(path) != snapshot.get(path)]:
+                try:
+                    stat = path.stat()
+                    current[path] = (stat.st_mtime_ns, stat.st_size)
+                except OSError:
+                    current.pop(path, None)
             now = time.monotonic()
             for path in set(current) | set(snapshot):
                 if current.get(path) != snapshot.get(path):
@@ -51,13 +59,13 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
                     vault.rebuild_task_status_links(indexer)
                     vault.sync_tag_groups_with_index(indexer)
                     if len(real)<=8 and not any(path.name=='tag_groups.json' for path in real):
-                        graph=read_graph_index(vault.graph_index_path)
+                        stored=graph=read_graph_index(vault.graph_index_path)
                         if service.graph_index_needs_rebuild(graph):
                             service.rebuild_graph_projection(vault)
                         else:
                             for path in real:
                                 graph=update_graph_index_for_file(vault_path=vault.vault_path,tag_groups=vault.read_tag_groups(),index=graph,file_path=path)
-                            write_graph_index(vault.graph_index_path,graph)
+                            if graph is not stored:write_graph_index(vault.graph_index_path,graph)
                     else:
                         service.rebuild_graph_projection(vault)
                 runtime.record_change('external-files', real)
@@ -68,7 +76,7 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
             finally:
                 runtime.operation_lock.release()
         except Exception:
-            runtime.graph_status.last_error = 'Eine externe Aenderung konnte nicht indexiert werden. Bitte Markdown und Dateizugriff pruefen.'
+            runtime.graph_status.last_error = 'Eine externe Änderung konnte nicht indexiert werden. Bitte Markdown und Dateizugriff prüfen.'
             for path in pending:
                 pending[path] = time.monotonic()+10
             logging.getLogger(__name__).exception('External change projection failed')
@@ -76,16 +84,11 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
 
 def graph_watcher_snapshot(vault_path: Path) -> dict[Path, tuple[int, int]]:
     root = vault_path.resolve()
-    snapshot: dict[Path, tuple[int, int]] = {}
-    from .inventory import markdown_sources
-    sources = markdown_sources(root)
-    tag_file = root / '.system' / 'tag_groups.json'
-    if tag_file.exists():
-        sources.append(tag_file)
-    for path in sources:
-        try:
-            stat = path.stat()
-            snapshot[path] = (stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            continue
+    from .inventory import source_stats
+    snapshot = source_stats(root)
+    try:
+        stat = (root / '.system' / 'tag_groups.json').stat()
+        snapshot[root / '.system' / 'tag_groups.json'] = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        pass
     return snapshot

@@ -47,7 +47,7 @@ export function StatusBar({ progress, prefs, notification, noteBaseName, counts,
       <div className="status-bar-right">
         {prefs.showTotalNotes ? <span className="status-item">Notizen: {counts.notes}</span> : null}
         {prefs.showOpenTasks ? <span className="status-item">Tasks offen: {counts.openTasks}</span> : null}
-        {prefs.showDueToday ? <span className="status-item">Heute faellig: {dueTodayCount}</span> : null}
+        {prefs.showDueToday ? <span className="status-item">Heute fällig: {dueTodayCount}</span> : null}
         {prefs.showNoteBaseName ? <span className="status-item">NoteBase: {noteBaseName}</span> : null}
       </div>
     </footer>

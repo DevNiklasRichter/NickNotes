@@ -46,7 +46,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       </header>
 
       <button className="todo-open-dashboard-button" onClick={() => void handleOpenGraphDashboard()} disabled={!vaultLoaded || graph.rebuilding}>
-        Graph oeffnen
+        Graph öffnen
       </button>
 
       <section className="todo-sidebar-section graph-sidebar-search-section">
@@ -57,7 +57,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             className="explorer-search-input graph-sidebar-search-input"
             value={graph.filters.searchText}
             onChange={(event) => graph.updateFilters({ searchText: event.target.value })}
-            placeholder="Search"
+            placeholder="Suchen"
           />
         </div>
         <div className="graph-search-mode-options" role="radiogroup" aria-label="Suchdarstellung">
@@ -95,7 +95,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       <section className="todo-sidebar-section">
         <div className="todo-section-header">
           <h4>Filter</h4>
-          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} aria-label="Filter zuruecksetzen" data-tooltip="Filter zuruecksetzen">
+          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} aria-label="Filter zurücksetzen" data-tooltip="Filter zurücksetzen">
             <LucideNamedIcon name="FilterX" size={13} />
           </button>
         </div>
@@ -106,7 +106,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
               <span
                 className="graph-filter-info-icon"
                 tabIndex={0} role="img" aria-label="Hinweis zum Kantengewicht"
-                data-tooltip="Mindestgewicht fuer Kanten: Hoehere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
+                data-tooltip="Mindestgewicht für Kanten: Höhere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
               >
                 <LucideNamedIcon name="Info" size={13} />
               </span>
@@ -135,7 +135,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             <div className="focus-sidebar-check-grid">
               {renderCheckbox('showLinkEdges', 'Links', 'Direkte WikiLinks von einer Datei zu einer anderen Datei.')}
               {renderCheckbox('showTagUsageEdges', 'Tag-Nutzung', 'Verbindung von einer Datei zu einem Tag, den sie verwendet.')}
-              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Gemeinsame Tags der ausgewaehlten Notiz mit maximal 50 Nachbarn. Waehle zuerst einen Notizknoten.')}
+              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Gemeinsame Tags der ausgewählten Notiz mit maximal 50 Nachbarn. Wähle zuerst einen Notizknoten.')}
             </div>
           </div>
         </div>

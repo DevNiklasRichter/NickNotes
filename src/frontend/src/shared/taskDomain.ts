@@ -5,31 +5,31 @@ export type TaskStatus = (typeof TASK_STATUSES)[number]
 export type TaskPriority = (typeof TASK_PRIORITIES)[number]
 
 export const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: 'new_topic', label: 'New Topic' },
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'on_hold', label: 'On Hold' },
-  { value: 'done', label: 'Done' },
+  { value: 'new_topic', label: 'Neues Thema' },
+  { value: 'open', label: 'Offen' },
+  { value: 'in_progress', label: 'In Arbeit' },
+  { value: 'on_hold', label: 'Pausiert' },
+  { value: 'done', label: 'Erledigt' },
 ]
 
 export const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
+  { value: 'low', label: 'Niedrig' },
+  { value: 'medium', label: 'Mittel' },
+  { value: 'high', label: 'Hoch' },
 ]
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  new_topic: 'New Topic',
-  open: 'Open',
-  in_progress: 'In Progress',
-  on_hold: 'On Hold',
-  done: 'Done',
+  new_topic: 'Neues Thema',
+  open: 'Offen',
+  in_progress: 'In Arbeit',
+  on_hold: 'Pausiert',
+  done: 'Erledigt',
 }
 
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
+  low: 'Niedrig',
+  medium: 'Mittel',
+  high: 'Hoch',
 }
 
 export function normalizeTaskStatusValue(raw: string): TaskStatus {

@@ -12,9 +12,9 @@
   min-height: 0;
   max-height: calc(100vh - 2.2rem);
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-dialog);
   background: var(--surface);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow);
   display: block;
   overflow: hidden;
   position: relative;
@@ -72,7 +72,7 @@
   width: 100%;
   min-width: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text);
   display: grid;
@@ -198,107 +198,6 @@
   min-width: 0;
 }
 
-.settings-subsection {
-  display: grid;
-  gap: 0;
-  padding: 0.78rem 0;
-}
-
-.settings-subsection > * + * {
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.settings-subsection-header {
-  min-height: 32px;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.7rem;
-  align-items: center;
-  padding: 0 0 0.46rem;
-}
-
-.settings-subsection-header strong {
-  color: var(--text);
-  font-size: var(--font-ui);
-  font-weight: 760;
-}
-
-.settings-subsection-header span {
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--font-caption);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.theme-profile-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.45rem;
-  padding: 0.7rem 0;
-}
-
-.theme-profile-actions .danger {
-  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
-  color: color-mix(in srgb, var(--danger) 78%, var(--text));
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
-.theme-profile-note {
-  margin: 0;
-  padding: 0.72rem 0;
-  color: var(--muted);
-  font-size: var(--font-label);
-}
-
-.theme-profile-editor {
-  display: grid;
-}
-
-.theme-token-group {
-  display: grid;
-  gap: 0.52rem;
-  padding: 0.78rem 0;
-}
-
-.theme-token-group h4 {
-  color: var(--muted);
-  font-size: var(--font-label);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.theme-token-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.42rem 0.58rem;
-}
-
-.theme-token-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(72px, 0.8fr) 34px minmax(92px, 1fr);
-  align-items: center;
-  gap: 0.42rem;
-  color: var(--muted);
-  font-size: var(--font-label);
-}
-
-.theme-token-row input[type='color'] {
-  width: 32px;
-  height: 28px;
-  min-width: 32px;
-  padding: 1px;
-  border-radius: 6px;
-}
-
-.theme-token-row input:not([type='color']) {
-  min-width: 0;
-  font-family: 'Consolas', 'Cascadia Mono', monospace;
-  font-size: var(--font-caption);
-}
-
 .settings-toggle-row {
   cursor: pointer;
 }
@@ -310,7 +209,7 @@
   margin: 0;
   appearance: none;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--muted) 24%, transparent);
   position: relative;
   transition:
@@ -325,7 +224,7 @@
   height: 14px;
   left: 2px;
   top: 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   transition: transform 120ms ease;
@@ -363,13 +262,7 @@
 }
 
 .settings-modal-actions .settings-save-feedback {display: grid; justify-content: start; min-width: 0;}
-.settings-save-feedback p {margin: 0; padding: var(--space-2); background: var(--error-bg); color: var(--error-text); border: 1px solid var(--error-border); border-radius: var(--radius-sm); overflow-wrap: anywhere;}
-
-.settings-modal-actions .primary {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
+.settings-save-feedback p {margin: 0; padding: var(--space-2); background: var(--error-bg); color: var(--error-text); border: 1px solid var(--error-border); border-radius: var(--radius-control); overflow-wrap: anywhere;}
 
 .settings-section-body .import-tool-panel {
   padding: 0.75rem 0;
@@ -417,10 +310,6 @@
 
   .settings-row {
     grid-template-columns: 1fr;
-  }
-
-  .settings-subsection-header {
-    display: grid;
   }
 
   .settings-modal-actions {

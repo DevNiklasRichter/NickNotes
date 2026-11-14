@@ -50,7 +50,7 @@ def create_mcp(service, grants):
             grant = grants.current(principal.get())
             vault, indexer = service.require_loaded()
             if not grant or grant['vaultId'] != vault.read_config()['vault_id'] or Path(grant['vaultPath']) != vault.vault_path.resolve():
-                raise ValidationDomainError('Diese Agent-Freigabe gilt nicht fuer die aktuell geoeffnete NoteBase.')
+                raise ValidationDomainError('Diese Agent-Freigabe gilt nicht für die aktuell geöffnete NoteBase.')
             if writing and not grant['write']:
                 raise ValidationDomainError('Diese Agent-Freigabe erlaubt nur Lesen.')
             yield vault, indexer, grant
@@ -66,7 +66,7 @@ def create_mcp(service, grants):
             if previous['fingerprint'] != fingerprint:
                 raise ConflictDomainError('operation_id wurde bereits mit anderen Argumenten verwendet.')
             if previous['state'] != 'completed':
-                raise ConflictDomainError('Vorheriger Versuch wurde unterbrochen. Bitte vorhandene Notizen pruefen, bevor erneut angelegt wird.')
+                raise ConflictDomainError('Vorheriger Versuch wurde unterbrochen. Bitte vorhandene Notizen prüfen, bevor erneut angelegt wird.')
             return previous['result'] | {'replayed': True}
         atomic_write_text(path, json.dumps({'state': 'started', 'fingerprint': fingerprint}))
         try:
@@ -139,7 +139,7 @@ def create_mcp(service, grants):
         """Create a Markdown note or standalone task. Retry with the same operation_id to avoid duplicates."""
         with access(True) as (vault, _, grant):
             if kind not in {'note', 'task'} or not title.strip() or len(body.encode()) > 4*1024*1024:
-                raise ValidationDomainError('Titel, Art oder Textumfang ist ungueltig.')
+                raise ValidationDomainError('Titel, Art oder Textumfang ist ungültig.')
             if due_date:
                 from datetime import date
                 date.fromisoformat(due_date)
@@ -192,7 +192,7 @@ def create_mcp(service, grants):
         from datetime import datetime
         import uuid
         if not text.strip() or '\n' in text:
-            raise ValidationDomainError('Ein Todo benoetigt einen einzeiligen Text.')
+            raise ValidationDomainError('Ein Todo benötigt einen einzeiligen Text.')
         with access(True) as (vault, _, grant):
             def execute():
                 current = service.read_note_content(path)
@@ -214,7 +214,7 @@ def create_mcp(service, grants):
             if todo_id:
                 from .nicknotes_backend.todos import toggle_todo_checkbox
                 if checked is None:
-                    raise ValidationDomainError('Fuer ein Todo checked explizit angeben.')
+                    raise ValidationDomainError('Für ein Todo checked explizit angeben.')
                 body, changed = toggle_todo_checkbox(body, str(meta.get('id', '')), todo_id, checked)
                 if changed is None:
                     raise ValidationDomainError('Todo in dieser Notiz nicht gefunden.')
@@ -228,7 +228,7 @@ def create_mcp(service, grants):
                     meta['status'] = status
                 if priority is not None:
                     if priority not in {'low','medium','high'}:
-                        raise ValidationDomainError('Prioritaet muss low, medium oder high sein.')
+                        raise ValidationDomainError('Priorität muss low, medium oder high sein.')
                     meta['priority'] = priority
                 if due_date is not None:
                     if due_date:

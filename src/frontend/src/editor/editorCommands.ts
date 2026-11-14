@@ -34,7 +34,7 @@ export const markdownCommands: readonly MarkdownCommand[] = [
     id: 'heading-1',
     title: 'Heading 1',
     description: 'Setzt eine H1-Ueberschrift (#).',
-    keywords: ['h1', 'title', 'headline', 'ueberschrift'],
+    keywords: ['h1', 'title', 'headline', 'überschrift'],
   },
   {
     id: 'heading-2',
@@ -51,25 +51,25 @@ export const markdownCommands: readonly MarkdownCommand[] = [
   {
     id: 'bullet-list',
     title: 'Bullet List',
-    description: 'Fuegt einen Listenpunkt ein (-).',
+    description: 'Fügt einen Listenpunkt ein (-).',
     keywords: ['list', 'bullet', 'ul', 'punktliste'],
   },
   {
     id: 'numbered-list',
     title: 'Numbered List',
-    description: 'Fuegt einen nummerierten Listenpunkt ein (1.).',
+    description: 'Fügt einen nummerierten Listenpunkt ein (1.).',
     keywords: ['list', 'ordered', 'ol', 'nummeriert'],
   },
   {
     id: 'task-list',
     title: 'Task List',
-    description: 'Fuegt einen Task-Listenpunkt ein (- [ ]).',
+    description: 'Fügt einen Task-Listenpunkt ein (- [ ]).',
     keywords: ['task', 'todo', 'checkbox', 'checkliste'],
   },
   {
     id: 'blockquote',
     title: 'Blockquote',
-    description: 'Fuegt ein Zitat ein (>).',
+    description: 'Fügt ein Zitat ein (>).',
     keywords: ['quote', 'zitat', 'callout'],
   },
   {
@@ -87,25 +87,25 @@ export const markdownCommands: readonly MarkdownCommand[] = [
   {
     id: 'code-block-text',
     title: 'Code Block',
-    description: 'Fuegt einen einfachen Codeblock ein.',
+    description: 'Fügt einen einfachen Codeblock ein.',
     keywords: ['codeblock', 'plain', 'text', 'fenced', 'plaintext'],
   },
   {
     id: 'table',
     title: 'Table',
-    description: 'Fuegt eine Markdown-Tabelle ein.',
+    description: 'Fügt eine Markdown-Tabelle ein.',
     keywords: ['table', 'tabelle', 'grid', 'zeilen', 'spalten'],
   },
   {
     id: 'hyperlink',
     title: 'Hyperlink',
-    description: 'Fuegt einen Markdown-Link ein [Text](URL).',
+    description: 'Fügt einen Markdown-Link ein [Text](URL).',
     keywords: ['url', 'web', 'markdown-link'],
   },
   {
     id: 'divider',
     title: 'Divider',
-    description: 'Fuegt eine horizontale Trennlinie ein (---).',
+    description: 'Fügt eine horizontale Trennlinie ein (---).',
     keywords: ['divider', 'hr', 'trennlinie'],
   },
 ]

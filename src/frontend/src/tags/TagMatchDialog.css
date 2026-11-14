@@ -5,7 +5,7 @@
   overflow: auto;
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-dialog);
   background: var(--surface);
   box-shadow: var(--shadow);
   padding: var(--space-4);
@@ -60,7 +60,7 @@
 .tag-match-location {color: var(--muted); font-size: var(--font-label); overflow-wrap: anywhere;}
 .tag-match-status {font-size: var(--font-label); color: var(--muted);}
 .tag-match-status:empty {display: none;}
-.tag-match-error {padding: var(--space-2); border: 1px solid var(--error-border); border-radius: var(--radius-sm); background: var(--error-bg); color: var(--error-text); overflow-wrap: anywhere;}
+.tag-match-error {padding: var(--space-2); border: 1px solid var(--error-border); border-radius: var(--radius-control); background: var(--error-bg); color: var(--error-text); overflow-wrap: anywhere;}
 
 .tag-match-compare-grid {
   min-height: 0;
@@ -73,7 +73,7 @@
   min-width: 0;
   min-height: 0;
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
   padding: 0.6rem;
   display: grid;
@@ -93,7 +93,7 @@
   max-height: 440px;
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   padding: 1rem;
   color: var(--text);
@@ -109,7 +109,7 @@
 }
 
 .tag-match-highlight {
-  border-radius: 3px;
+  border-radius: 2px;
   background: color-mix(in srgb, #f0c24f 42%, transparent);
   color: var(--text);
   padding: 0.04rem 0.14rem;
@@ -142,7 +142,6 @@
   justify-content: flex-end;
 }
 
-.tag-match-apply-actions .primary {border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft);}
 
 .tag-match-empty {
   display: grid;

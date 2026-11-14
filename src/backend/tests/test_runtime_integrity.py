@@ -47,6 +47,47 @@ class RuntimeIntegrityTests(unittest.TestCase):
                 service.add_note(NoteCreateRequest(groupKey='',title='Actual content change'))
                 self.assertGreater(service.state.change_version,before)
             finally:service.state.dispose_session()
+    def test_retired_theme_profiles_are_dropped_from_ui_settings(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            service=BackendApiService()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Themes'))
+                vault=service.state.vault
+                atomic_write_text(vault.ui_settings_path,json.dumps({'app':{'theme':'dark','activeThemeId':'forest','capturePinned':False,
+                    'themes':[{'id':'forest','name':'Wald','baseTheme':'dark','colors':{'text':'#dcece2'}}]}}))
+                self.assertEqual(vault.read_ui_settings()['app'],{'theme':'dark','capturePinned':False})
+                saved=vault.update_ui_settings({'theme':'light','colorProfiles':[{'id':'x'}]})['app']
+                self.assertEqual(saved,{'theme':'light','capturePinned':False})
+                self.assertNotIn('forest',vault.ui_settings_path.read_text(encoding='utf-8'))
+            finally:service.state.dispose_session()
+    def test_graph_follows_rename_and_ignores_prose_only_saves(self):
+        import hashlib
+        from src.backend.commands import NoteFileRenameRequest,NoteSaveRequest
+        from src.backend.nicknotes_backend.graph_storage import read_graph_index
+        with tempfile.TemporaryDirectory() as directory:
+            service=BackendApiService()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Graph'))
+                vault=service.state.vault
+                target=Path(service.add_note(NoteCreateRequest(groupKey='',title='Ziel'))['notePath'])
+                source=Path(service.add_note(NoteCreateRequest(groupKey='',title='Quelle'))['notePath'])
+                def save(path,text):
+                    return Path(service.save_note_content(NoteSaveRequest(path=str(path),content=path.read_text(encoding='utf-8')+text,expectedRevision=hashlib.sha256(path.read_bytes()).hexdigest()))['path'])
+                def links():
+                    index=read_graph_index(vault.graph_index_path)
+                    ids={entry.id:path for path,entry in index.files.items()}
+                    return sorted((ids[edge.source],ids[edge.target]) for edge in index.edges if edge.type=='link')
+                source=save(source,'\nSiehe [[Ziel]].\n')
+                self.assertEqual(links(),[(source.name,target.name)])
+                before=vault.graph_index_path.read_bytes()
+                source=save(source,'\nNur Text, keine neuen Verweise.\n')
+                self.assertEqual(vault.graph_index_path.read_bytes(),before)
+                renamed=Path(service.rename_note(NoteFileRenameRequest(path=str(target),newName='Neues Ziel'))['renamedPath'])
+                self.assertNotIn(target.name,read_graph_index(vault.graph_index_path).files)
+                self.assertEqual(links(),[(source.name,renamed.name)])
+                self.assertIn(f'[[{renamed.stem}]]',source.read_text(encoding='utf-8'))
+            finally:service.state.dispose_session()
     def test_watcher_retries_projection_failure_without_another_source_edit(self):
         from unittest.mock import patch
         from src.backend.nicknotes_backend.graph_watcher import graph_watcher_loop, graph_watcher_snapshot

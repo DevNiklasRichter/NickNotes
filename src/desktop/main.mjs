@@ -131,7 +131,7 @@ function validateLocalDirectoryPath(rawPath) {
     return { allowed: false, code: 'empty_path', message: 'Pfad fehlt.' }
   }
   if (!path.isAbsolute(cleanPath)) {
-    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade koennen geoeffnet werden.' }
+    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade können geöffnet werden.' }
   }
   try {
     const resolvedPath = path.resolve(cleanPath)
@@ -177,9 +177,10 @@ function validateExternalUrl(rawUrl) {
 
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
-  const backgroundColor = isDark ? '#1f252f' : '#eef1f5'
-  const titleBarColor = isDark ? '#1f252f' : '#eceef2'
-  const titleBarSymbolColor = isDark ? '#a7afbd' : '#6a727f'
+  // Mirrors --surface, --bg-layer-1 and --muted in src/frontend/src/index.css.
+  const backgroundColor = isDark ? '#1e2023' : '#f8f8f9'
+  const titleBarColor = isDark ? '#191b1e' : '#eeeef0'
+  const titleBarSymbolColor = isDark ? '#a3a9b3' : '#5f6672'
   nativeTheme.themeSource = isDark ? 'dark' : 'light'
 
   win.setBackgroundColor(backgroundColor)
@@ -251,11 +252,11 @@ function createWindow() {
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#eceef2',
-      symbolColor: '#6a727f',
+      color: startupTheme==='dark'?'#191b1e':'#eeeef0',
+      symbolColor: startupTheme==='dark'?'#a3a9b3':'#5f6672',
       height: 34,
     },
-    backgroundColor: startupTheme==='dark'?'#1f252f':'#f3f4f6',
+    backgroundColor: startupTheme==='dark'?'#1e2023':'#f8f8f9',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false,
@@ -417,7 +418,7 @@ app.whenReady().then(async () => {
       }
       return { ok: true, code: 'ok', message: '' }
     } catch {
-      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geoeffnet werden.' }
+      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geöffnet werden.' }
     }
   })
 

@@ -83,39 +83,6 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
     return sorted(set(values), key=lambda item: item.lower())
 
 
-THEME_COLOR_TOKENS = {
-    "text",
-    "muted",
-    "surface",
-    "editorNoteBg",
-    "surfaceStrong",
-    "surfaceContrast",
-    "line",
-    "lineStrong",
-    "accent",
-    "accentStrong",
-    "accentSoft",
-    "codeBg",
-    "tableRow",
-    "bgLayer1",
-    "bgLayer2",
-    "bgLayer3",
-    "okBg",
-    "okBorder",
-    "okText",
-    "errorBg",
-    "errorBorder",
-    "errorText",
-    "success",
-    "warning",
-    "danger",
-    "info",
-    "neutral",
-    "highlight",
-    "graphNote",
-    "graphTask",
-    "graphTag",
-}
 TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
 TASK_PRIORITIES = ("low", "medium", "high")
 TASK_LINK_NOTE_TYPE = "task_link"
@@ -144,20 +111,6 @@ def _normalize_tag_color(value: str) -> str:
         return clean
     return TAG_GROUP_DEFAULT_COLOR
 
-
-def _normalize_css_color(value: Any) -> str:
-    clean = str(value or "").strip()
-    if re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", clean):
-        return clean.lower()
-    if re.fullmatch(r"rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*(0|1|0?\.\d+))?\s*\)", clean, flags=re.IGNORECASE):
-        return clean
-    return ""
-
-
-def _normalize_color_profile_id(value: Any) -> str:
-    clean = str(value or "").strip().lower()
-    clean = re.sub(r"[^a-z0-9_-]+", "-", clean).strip("-")
-    return clean[:64]
 
 def _tag_ref_for_suggestion(tag: TagSuggestion) -> tuple[str, str, str]:
     group_slug = slugify(str(tag.category))
@@ -470,7 +423,7 @@ class VaultManager:
         root = self.vault_path.resolve()
         for path in (self.system_path, self.media_root_path, self.daily_root_path, self.tasks_root_path, self.tag_root_path):
             if not path.resolve().is_relative_to(root):
-                raise ValueError("Ein interner NoteBase-Ordner verweist ausserhalb der NoteBase.")
+                raise ValueError("Ein interner NoteBase-Ordner verweist außerhalb der NoteBase.")
 
     def ensure_structure(self) -> None:
         from .source_journal import SourceJournal, active_journal
@@ -582,8 +535,8 @@ class VaultManager:
             if (self.vault_path / name / "config.json").is_file():
                 raise ValueError(
                     f'Diese NoteBase verwendet noch den alten Systemordner "{name}". '
-                    "Oeffne sie einmal mit NickNotes 2.1.0-rc.4 oder benenne den Ordner in \".system\" um. "
-                    "Es wurde nichts veraendert."
+                    "Öffne sie einmal mit NickNotes 2.1.0-rc.4 oder benenne den Ordner in \".system\" um. "
+                    "Es wurde nichts verändert."
                 )
 
     def list_note_groups(self) -> list[dict[str, Any]]:
@@ -606,7 +559,7 @@ class VaultManager:
 
         parent_path = self._resolve_group_path(parent_key)
         if self._is_creation_locked_path(parent_path):
-            raise ValueError("In daily-, tags- und tasks-Ordnern koennen keine neuen Gruppen angelegt werden.")
+            raise ValueError("In daily-, tags- und tasks-Ordnern können keine neuen Gruppen angelegt werden.")
 
         candidate = token
         suffix = 2
@@ -633,7 +586,7 @@ class VaultManager:
     ) -> dict[str, Any]:
         root_dir = self._resolve_group_path(group_key)
         if self._is_creation_locked_path(root_dir):
-            raise ValueError("In daily-, tags- und tasks-Ordnern koennen keine neuen Notizen oder Tasks angelegt werden.")
+            raise ValueError("In daily-, tags- und tasks-Ordnern können keine neuen Notizen oder Tasks angelegt werden.")
 
         kind = _normalize_note_type(note_type)
         now = datetime.now()
@@ -720,15 +673,15 @@ class VaultManager:
         source = self._resolve_group_path(group_key)
         source_key = self._to_group_key(source)
         if self._is_protected_root(source_key):
-            raise ValueError("Die Basisordner daily, tags und tasks koennen nicht verschoben werden.")
+            raise ValueError("Die Basisordner daily, tags und tasks können nicht verschoben werden.")
         if self._is_system_path(source):
             raise ValueError("Systemordner kann nicht verschoben werden.")
 
         target_parent = self._resolve_group_path(target_parent_key)
         if self._is_tag_path(target_parent):
-            raise ValueError("Ordner koennen nicht in den Tag-Bereich verschoben werden.")
+            raise ValueError("Ordner können nicht in den Tag-Bereich verschoben werden.")
         if self._is_system_path(target_parent):
-            raise ValueError("Ordner koennen nicht in den Systembereich verschoben werden.")
+            raise ValueError("Ordner können nicht in den Systembereich verschoben werden.")
         if self._is_same_or_descendant(source, target_parent):
             raise ValueError("Ein Ordner kann nicht in sich selbst oder einen Unterordner verschoben werden.")
 
@@ -754,9 +707,9 @@ class VaultManager:
         target = self._resolve_group_path(group_key)
         relative = self._to_group_key(target)
         if self._is_protected_root(relative):
-            raise ValueError("Die Basisordner daily, tags und tasks koennen nicht geloescht werden.")
+            raise ValueError("Die Basisordner daily, tags und tasks können nicht gelöscht werden.")
         if self._is_system_path(target):
-            raise ValueError("Systemordner kann nicht geloescht werden.")
+            raise ValueError("Systemordner kann nicht gelöscht werden.")
 
         deleted_targets = self._collect_note_link_keys_for_tree(target)
         _rmtree_with_retry(target)
@@ -833,9 +786,9 @@ class VaultManager:
         task_payload = self._task_link_payload_from_file(file_path)
         target_group = self._resolve_group_path(target_group_key)
         if self._is_tag_path(target_group):
-            raise ValueError("Notizen koennen nicht in den Tag-Bereich verschoben werden.")
+            raise ValueError("Notizen können nicht in den Tag-Bereich verschoben werden.")
         if self._is_system_path(target_group):
-            raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
+            raise ValueError("Notizen können nicht in den Systembereich verschoben werden.")
 
         target_dir = target_group
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -872,9 +825,9 @@ class VaultManager:
 
         target_group = self._resolve_group_path(target_group_key)
         if self._is_tag_path(target_group):
-            raise ValueError("Notizen koennen nicht in den Tag-Bereich verschoben werden.")
+            raise ValueError("Notizen können nicht in den Tag-Bereich verschoben werden.")
         if self._is_system_path(target_group):
-            raise ValueError("Notizen koennen nicht in den Systembereich verschoben werden.")
+            raise ValueError("Notizen können nicht in den Systembereich verschoben werden.")
 
         target_dir = target_group
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -999,11 +952,11 @@ class VaultManager:
         if not payload:
             raise ValueError("Die Bilddatei ist leer.")
         if len(payload) > VAULT_MAX_MEDIA_ASSET_BYTES:
-            raise ValueError("Bilddatei ist zu gross (maximal 20 MB).")
+            raise ValueError("Bilddatei ist zu groß (maximal 20 MB).")
 
         clean_content_type = (content_type or "").split(";", 1)[0].strip().lower()
         if clean_content_type and not clean_content_type.startswith("image/"):
-            raise ValueError("Nur Bilddateien koennen eingefuegt werden.")
+            raise ValueError("Nur Bilddateien können eingefügt werden.")
 
         suffix = Path(filename or "").suffix.lower()
         if suffix == ".jpe":
@@ -1353,10 +1306,10 @@ class VaultManager:
         try:
             resolved.relative_to(self.vault_path.resolve())
         except ValueError as exc:
-            raise ValueError("Ungueltige Bildreferenz.") from exc
+            raise ValueError("Ungültige Bildreferenz.") from exc
 
         if not self._is_inside_media_root(resolved):
-            raise ValueError("Bildreferenzen muessen auf .media zeigen.")
+            raise ValueError("Bildreferenzen müssen auf .media zeigen.")
 
         if not allow_missing and (not resolved.exists() or not resolved.is_file()):
             raise ValueError(f"Bilddatei nicht gefunden: {clean_source}")
@@ -1649,7 +1602,7 @@ class VaultManager:
         raw_type = str(raw_meta.get("type", "")).strip().lower()
         is_tag_overview_file = file_path.name.lower() == "overview.md" and self._is_tag_path(file_path.parent)
         if raw_type == "tag_index" or is_tag_overview_file:
-            raise ValueError("Tag-Overview-Notizen sind schreibgeschuetzt und werden automatisch erzeugt.")
+            raise ValueError("Tag-Overview-Notizen sind schreibgeschützt und werden automatisch erzeugt.")
 
         previous_path = str(file_path)
         previous_content = file_path.read_text(encoding="utf-8")
@@ -2125,52 +2078,11 @@ class VaultManager:
 
     def _normalize_ui_app_settings(self, app_settings: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(app_settings)
-
-        raw_profiles = normalized.get("themes")
-        if not isinstance(raw_profiles, list):
-            raw_profiles = normalized.get("colorProfiles")
-        clean_profiles: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        if isinstance(raw_profiles, list):
-            for raw_profile in raw_profiles:
-                if not isinstance(raw_profile, dict):
-                    continue
-                profile_id = _normalize_color_profile_id(raw_profile.get("id"))
-                if not profile_id or profile_id in {"light", "dark"} or profile_id in seen_ids:
-                    continue
-                seen_ids.add(profile_id)
-                name = _normalize_label(str(raw_profile.get("name", "")))[:80] or "Eigenes Profil"
-                base_theme = str(raw_profile.get("baseTheme", "")).strip().lower()
-                if base_theme not in {"light", "dark"}:
-                    base_theme = "light"
-                raw_colors = raw_profile.get("colors")
-                clean_colors: dict[str, str] = {}
-                if isinstance(raw_colors, dict):
-                    for token, raw_color in raw_colors.items():
-                        if str(token) not in THEME_COLOR_TOKENS:
-                            continue
-                        color = _normalize_css_color(raw_color)
-                        if color:
-                            clean_colors[str(token)] = color
-                if clean_colors:
-                    clean_profiles.append(
-                        {
-                            "id": profile_id,
-                            "name": name,
-                            "baseTheme": base_theme,
-                            "colors": clean_colors,
-                        }
-                    )
-        normalized.pop("colorProfiles", None)
-        normalized["themes"] = clean_profiles
-
-        active_profile_id = _normalize_color_profile_id(normalized.get("activeThemeId") or normalized.get("activeColorProfileId"))
-        valid_profile_ids = {"light", "dark", *seen_ids}
-        if active_profile_id not in valid_profile_ids:
-            theme = str(normalized.get("theme", "")).strip().lower()
-            active_profile_id = theme if theme in {"light", "dark"} else "light"
-        normalized.pop("activeColorProfileId", None)
-        normalized["activeThemeId"] = active_profile_id
+        # Only the two built-in themes exist; settings written by the former theme editor are dropped.
+        for retired in ("themes", "colorProfiles", "activeThemeId", "activeColorProfileId"):
+            normalized.pop(retired, None)
+        if normalized.get("theme") not in {"light", "dark"}:
+            normalized.pop("theme", None)
         return normalized
 
     def update_ui_settings(
@@ -2869,7 +2781,7 @@ class VaultManager:
             "## Letzte Notizen",
         ]
         if not rows:
-            body_lines.append("- Noch keine verknuepften Notizen.")
+            body_lines.append("- Noch keine verknüpften Notizen.")
         else:
             for row in rows[:40]:
                 body_lines.append(

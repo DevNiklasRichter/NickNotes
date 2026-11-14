@@ -130,7 +130,7 @@ export class NoteCaptureService {
       this.writer.setSuggestions([])
       this.writer.setSelectedTagKeys([])
       this.writer.setIgnoredCaptureTagKeys([])
-      this.writer.setMessage(`Quick Capture in Daily ${response.date} gespeichert.`)
+      this.writer.setMessage(`Schnellerfassung in der Tagesnotiz ${response.date} gespeichert.`)
       await this.context.emitMutation?.({
         kind: 'capture-saved',
         refresh: {

@@ -27,7 +27,7 @@ def coordinated(function=None, *, mutation: bool = False, invalidate: bool = Tru
         with self.state.operation_lock:
             expected = expected_session.get()
             if expected and expected != self.state.generation:
-                raise ConflictDomainError("Die geoeffnete NoteBase hat sich geaendert. Bitte erneut laden.")
+                raise ConflictDomainError("Die geöffnete NoteBase hat sich geändert. Bitte erneut laden.")
             vault = self.state.vault
             dirty = vault.system_path/'projection-dirty.json' if vault else None
             if vault and dirty.exists() and not self.state.repairing and function.__name__ not in {'get_state','counts','require_loaded'} and not pending_recovery(vault):
@@ -43,7 +43,7 @@ def coordinated(function=None, *, mutation: bool = False, invalidate: bool = Tru
                 if active_journal.get() is not None:
                     return function(self, *args, **kwargs)
                 if pending_recovery(vault):
-                    raise ConflictDomainError("Eine unterbrochene Aenderung muss zuerst in den Einstellungen geprueft werden.")
+                    raise ConflictDomainError("Eine unterbrochene Änderung muss zuerst in den Einstellungen geprüft werden.")
                 with SourceJournal(vault, function.__name__) as journal:
                     result = function(self, *args, **kwargs)
                 # View preferences do not invalidate Markdown, search or open drafts.
@@ -186,6 +186,7 @@ class RuntimeState:
     repairing: bool = False
     change_version: int = 0
     handled_files: dict[Path, tuple[int, int] | None] = field(default_factory=dict)
+    client_seen: float = field(default_factory=time.monotonic)  # last /state poll; paces the watcher
     last_change: dict[str, Any] = field(default_factory=dict)
 
     def record_change(self, operation: str, paths: list[Path]) -> None:

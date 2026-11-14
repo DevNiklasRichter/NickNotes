@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from .markdown_io import parse_markdown, snapshot_operation, prefetch_markdown
+from .markdown_io import document_snapshots, parse_markdown, snapshot_operation, prefetch_markdown
 from .projection_registry import INDEXER_SCHEMA_VERSION
 from .models import ParsedTask, TagRef
 from .parser import slugify
@@ -582,10 +582,14 @@ class VaultIndexer:
     @batch_projection
     def reindex_markdown_file(self, vault_path: Path, file_path: Path) -> dict[str, int]:
         resolved = file_path.resolve()
-        preserved_todo_rows = self._todo_rows_for_path(str(resolved))
         if not resolved.is_file() or not is_source(vault_path, resolved):
             self.remove_projection_for_path(str(resolved))
             return {"notes": 0, "tasks": 0}
+        return self._reindex_source(resolved)
+
+    def _reindex_source(self, resolved: Path) -> dict[str, int]:
+        """Reindex one file that the inventory has already accepted as a source."""
+        preserved_todo_rows = self._todo_rows_for_path(str(resolved))
         meta, _ = parse_markdown(resolved)
         kind = str(meta.get('type', 'note')).lower().replace('-', '_')
         if kind in {'tag_index', 'task_link'}:
@@ -611,13 +615,21 @@ class VaultIndexer:
         for path in deleted:
             self.remove_projection_for_path(path)
         changed=[]
-        for processed,path in enumerate(sources,1):
+        def differs(path):
             stat=path.stat()
-            if stored.get(str(path))!=(stat.st_mtime_ns,stat.st_size):
-                self.reindex_markdown_file(vault_path,path)
-                changed.append(str(path))
-            if progress_callback:
-                progress_callback('Quellen werden abgeglichen ...',processed,len(sources),str(path))
+            return stored.get(str(path))!=(stat.st_mtime_ns,stat.st_size)
+        # Cold reads dominate a first open, so each batch is read in parallel before it is indexed.
+        with document_snapshots():
+            for start in range(0,len(sources),256):
+                batch=sources[start:start+256]
+                pending={path for path in batch if differs(path)}
+                prefetch_markdown(sorted(pending))
+                for processed,path in enumerate(batch,start+1):
+                    if path in pending:
+                        self._reindex_source(path)
+                        changed.append(str(path))
+                    if progress_callback:
+                        progress_callback('Quellen werden abgeglichen ...',processed,len(sources),str(path))
         return {'notes':self.conn.execute('SELECT COUNT(*) FROM notes').fetchone()[0], 'tasks':self.conn.execute('SELECT COUNT(*) FROM tasks').fetchone()[0], 'changed':len(changed), 'deleted':len(deleted)}
 
     def _prune_orphan_tags(self, cur: sqlite3.Cursor) -> None:
@@ -1275,11 +1287,11 @@ class VaultIndexer:
             INDEXER_REVIEW_BACKLOG_DELTA_WARNING_MIN,
             int(new_work_period * INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_FACTOR) + INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_OFFSET,
         ):
-            risk_reasons.append("Backlog steigt im gewaehlten Zeitraum.")
+            risk_reasons.append("Backlog steigt im gewählten Zeitraum.")
         if completion_ratio < INDEXER_REVIEW_COMPLETION_RATIO_WARNING and new_work_period >= INDEXER_REVIEW_MIN_NEW_WORK_FOR_RATIO:
             risk_reasons.append("Erledigungsquote liegt unter 75%.")
         if overdue_open_tasks >= INDEXER_REVIEW_OVERDUE_WARNING:
-            risk_reasons.append("Viele offene ueberfaellige Tasks.")
+            risk_reasons.append("Viele offene überfällige Tasks.")
         if open_total_now >= INDEXER_REVIEW_NEW_WORK_WARNING_MIN:
             risk_reasons.append("Hoher aktueller Gesamt-Backlog.")
 

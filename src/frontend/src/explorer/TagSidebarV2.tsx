@@ -348,8 +348,8 @@ export function TagSidebar({
               className="explorer-search-input"
               value={filterQuery}
               onChange={(event) => {setFilterQuery(event.target.value); setSearchCursor(-1)}}
-              placeholder="Search"
-              aria-label="Tags und Gruppen filtern" data-tooltip={filterQuery ? 'Enter: naechster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
+              placeholder="Suchen"
+              aria-label="Tags und Gruppen filtern" data-tooltip={filterQuery ? 'Enter: nächster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') {
@@ -380,7 +380,7 @@ export function TagSidebar({
             ) : null}
           </div>
         </div>
-        <p className="tag-explorer-hint">Klick auf einen Tag laedt die zugehoerige Overview-Notiz.</p>
+        <p className="tag-explorer-hint">Klick auf einen Tag lädt die zugehörige Overview-Notiz.</p>
       </header>
 
       <section
@@ -624,7 +624,7 @@ export function TagSidebar({
                   }}
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
-                  <span>Gruppe loeschen</span>
+                  <span>Gruppe löschen</span>
                 </ContextMenuItem>
               </>
             ) : null}
@@ -653,7 +653,7 @@ export function TagSidebar({
                   }}
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
-                  <span>Tag loeschen</span>
+                  <span>Tag löschen</span>
                 </ContextMenuItem>
               </>
             ) : null}

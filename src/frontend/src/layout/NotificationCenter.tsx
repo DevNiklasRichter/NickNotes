@@ -12,13 +12,13 @@ function NotificationDialog({items,onDismiss,onClose}:{items:OperatorNotificatio
     if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose()}
   }}>
     <header><h2 id="notification-heading">Meldungen</h2><button aria-label="Meldungen schließen" onClick={onClose}><LucideNamedIcon name="X" size={16}/></button></header>
-    <p>Fehler bleiben hier, bis du sie bestätigst. Wiederhole fehlgeschlagene Aktionen bewusst am ursprünglichen Vorgang; deine Entwürfe bleiben erhalten.</p>
+    <p>Hinweise verschwinden von selbst. Fehler bleiben hier, bis du sie bestätigst. Wiederhole fehlgeschlagene Aktionen bewusst am ursprünglichen Vorgang; deine Entwürfe bleiben erhalten.</p>
     {items.length===0?<p>Keine offenen Meldungen.</p>:<ul>{items.slice().reverse().map(item=><li key={item.id} className={item.severity}>
-      <strong>{labels[item.severity]}</strong><p>{item.message}</p><button onClick={event=>{
+      <strong>{labels[item.severity]}</strong><p>{item.message}</p>{item.severity==='info'||item.severity==='warn'?null:<button onClick={event=>{
         // Keep focus on an available control after removing its own row.
         event.currentTarget.closest('.notification-dialog')?.querySelector<HTMLButtonElement>('header button')?.focus()
         onDismiss(item.id)
-      }}>Bestätigen</button>
+      }}>Bestätigen</button>}
     </li>)}</ul>}
   </div></div>
 }

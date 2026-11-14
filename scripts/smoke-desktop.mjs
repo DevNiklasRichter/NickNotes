@@ -128,7 +128,7 @@ try {
  if(await saveSettings.isEnabled()){await saveSettings.click();await expect(saveSettings).toBeDisabled()}
  await page.getByRole('button',{name:'Einstellungen schliessen'}).click()
  // Exercise the existing dashboards and split layout through their visible controls.
- const dashboards=[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Review','.review-canvas'],['Wissensgraph','.graph-editor-canvas-shell']]
+ const dashboards=[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Rückblick','.review-canvas'],['Wissensgraph','.graph-editor-canvas-shell']]
  for(const [title,selector] of dashboards){
   await page.locator('.activity-rail').getByRole('button',{name:title,exact:true}).click()
   await expect(page.locator(selector).first()).toBeVisible({timeout:15000})

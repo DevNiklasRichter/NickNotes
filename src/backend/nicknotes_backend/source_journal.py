@@ -41,7 +41,7 @@ class SourceJournal:
         content = path.read_bytes() if path.exists() else None
         self.size += len(content or b'')
         if self.size > 64 * 1024 * 1024:
-            raise ValueError('Aenderung ist zu gross fuer die sichere Wiederherstellung (64 MB).')
+            raise ValueError('Änderung ist zu groß für die sichere Wiederherstellung (64 MB).')
         self.before[path] = content
         if content is not None:
             atomic_write_bytes(self.directory / f'{len(self.before)-1}.bak', content)

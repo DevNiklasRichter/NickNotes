@@ -80,7 +80,7 @@ MeineNoteBase/
   .system/
     config.json                  Formatversion 2, stabile vault_id
     tag_groups.json              einzige Tagdefinitionsquelle
-    ui_settings.json             Themes und portable UI-Einstellungen
+    ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
@@ -155,10 +155,21 @@ meldet eine Aenderungsversion. `BackendChangeEvent` nennt Version, Operation,
 betroffene Pfade und Trunkierung. Der Renderer verwendet Pfade nur bei einer
 lueckenlosen Version; sonst folgt der vollstaendige Dokumentabgleich.
 
-Bekannte Grenzen: Der Watcher scannt alle zwei Sekunden das Inventar, der
-Renderer fragt `/state` alle 2,5 Sekunden ab. Umbenennen und Verschieben bauen
-den Graph vollstaendig neu auf; `graph-index.json` wird je Save komplett
-geschrieben. `explorer_files` durchsucht den Ordner statt den Index.
+Der Watcher liest alle zwei Sekunden Zeit und Größe aus dem Verzeichnislisting,
+ohne Dateien zu öffnen, und bestätigt nur scheinbare Änderungen an der Datei.
+Fragt 30 Sekunden kein Client `/state` ab (verstecktes Fenster), prüft er nur
+noch alle zehn Sekunden; der Renderer pausiert seine Abfrage, solange das Fenster
+verborgen ist. Der eingelesene Graph bleibt im Speicher, solange
+`graph-index.json` unverändert ist. Ein Save ohne Änderung an ID, Titel, Tags
+oder Verweisen fasst den Graph nicht an; Umbenennen und Verschieben
+aktualisieren nur die betroffenen Dateien (ab neun umgeschriebenen Notizen
+Vollaufbau). Der Erstaufbau liest Quelldateien stapelweise parallel.
+`scripts/benchmark-notebase.py` misst Öffnen, Speichern und Umbenennen auf einem
+synthetischen Bestand.
+
+Bekannte Grenzen: Ein Save mit geänderten Tags oder Verweisen löst alle Verweise
+neu auf und schreibt `graph-index.json` vollständig. Link-Rewrite beim
+Umbenennen liest jede Notiz.
 
 ## Frontend
 
@@ -199,7 +210,9 @@ Regeln, die Aenderungen einhalten muessen:
 - **Ansichtszustand ist fluechtig oder UI-Setting.** Schreibmodus, Filter und
   Layout erzeugen keine fachliche Aenderungsversion und schreiben kein Markdown.
 - **Gestaltung** folgt den Tokens in `index.css` und dem
-  [UI-Styleguide](doc/ui-styleguide.md). `layout/WorkbenchShell.css` besitzt das
+  [UI-Styleguide](doc/ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
+  Farben stehen nur in `index.css`, Buttons, Eingaben und Auswahlfelder sind dort
+  einmal definiert. `layout/WorkbenchShell.css` besitzt das
   Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen. Geplante
   Vereinheitlichung: [UI-Modernisierung](doc/ui-modernization-plan-2026-11-12.md).
 

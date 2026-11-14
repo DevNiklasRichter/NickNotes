@@ -895,12 +895,12 @@ class MarkdownTableWidget extends WidgetType {
       handler({
         anchor: event instanceof MouseEvent ? {...anchor, x: event.clientX, y: event.clientY} : anchor,
         actions: [
-          action('Zeile darueber einfuegen', () => insertRowAt(rowTarget)),
-          action('Zeile darunter einfuegen', () => insertRowAt(rowTarget + 1)),
-          action('Spalte links einfuegen', () => insertColumnAt(columnIndex)),
-          action('Spalte rechts einfuegen', () => insertColumnAt(columnIndex + 1)),
-          action('Zeile loeschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1),
-          action('Spalte loeschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1),
+          action('Zeile darüber einfügen', () => insertRowAt(rowTarget)),
+          action('Zeile darunter einfügen', () => insertRowAt(rowTarget + 1)),
+          action('Spalte links einfügen', () => insertColumnAt(columnIndex)),
+          action('Spalte rechts einfügen', () => insertColumnAt(columnIndex + 1)),
+          action('Zeile löschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1),
+          action('Spalte löschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1),
         ],
         dismiss: () => {
           closeContextMenu()

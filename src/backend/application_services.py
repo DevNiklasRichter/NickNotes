@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import logging
 import hashlib
 import os
@@ -433,23 +434,53 @@ class BackendApiService:
                 if not vault.graph_index_path.exists():
                     index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
                 else:
-                    index = read_graph_index(vault.graph_index_path)
-                    if self.graph_index_needs_rebuild(index):
+                    stored = read_graph_index(vault.graph_index_path)
+                    if self.graph_index_needs_rebuild(stored):
                         index = build_graph_index(vault_path=vault.vault_path, tag_groups=groups)
                     else:
                         index = update_graph_index_for_file(
                             vault_path=vault.vault_path,
                             tag_groups=groups,
-                            index=index,
+                            index=stored,
                             file_path=saved_path,
                             previous_path=previous_path if previous_path.resolve() != saved_path.resolve() else None,
                         )
+                        if index is stored:
+                            return self.graph_index_status(vault, index)
                 write_graph_index(vault.graph_index_path, index)
                 return self.graph_index_status(vault, index)
             except Exception as exc:
                 runtime.graph_status.last_error = str(exc)
                 logger.exception("Incremental graph update failed.")
                 return self.graph_index_status(vault)
+            finally:
+                runtime.graph_status.is_updating = False
+
+    @coordinated
+    def update_graph_after_note_move(self, *, vault: Any, previous_path: Path, moved_path: Path, rewritten: list[str]) -> dict[str, Any]:
+        """Update the graph for one renamed or moved note and the notes whose links were rewritten."""
+        runtime = self.state
+        with runtime.projection_lock:
+            stored = read_graph_index(vault.graph_index_path)
+            # Each touched file re-resolves every link once; beyond a few files a full build is cheaper.
+            if not vault.graph_index_path.exists() or self.graph_index_needs_rebuild(stored) or len(rewritten) > 8:
+                return self.rebuild_graph_projection(vault)
+            runtime.graph_status.is_updating = True
+            runtime.graph_status.last_error = None
+            try:
+                groups = vault.read_tag_groups()
+                index = update_graph_index_for_file(vault_path=vault.vault_path, tag_groups=groups, index=stored, file_path=moved_path, previous_path=previous_path)
+                for raw in rewritten:
+                    touched = Path(raw) if Path(raw).is_absolute() else vault.vault_path / raw
+                    if touched.resolve() != moved_path.resolve():
+                        index = update_graph_index_for_file(vault_path=vault.vault_path, tag_groups=groups, index=index, file_path=touched)
+                if index is not stored:
+                    write_graph_index(vault.graph_index_path, index)
+                return self.graph_index_status(vault, index)
+            except Exception as exc:
+                runtime.graph_status.last_error = str(exc)
+                logger.exception("Incremental graph update after move failed.")
+                return self.rebuild_graph_projection(vault)
             finally:
                 runtime.graph_status.is_updating = False
 
@@ -500,6 +531,7 @@ class BackendApiService:
     @coordinated
     def get_state(self) -> dict[str, Any]:
         runtime = self.state
+        runtime.client_seen = time.monotonic()
         if not runtime.vault or not runtime.indexer:
             return {"vaultLoaded": False}
         return {
@@ -723,8 +755,8 @@ class BackendApiService:
             identity = None
         if not isinstance(identity, str) or not identity.strip():
             raise ValidationDomainError(
-                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht geloescht. "
-                "Oeffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
+                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht gelöscht. "
+                "Öffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
                 operation="delete_notebase",
                 vault_id=str(target),
             )
@@ -744,7 +776,7 @@ class BackendApiService:
         except OSError as exc:
             # A 409 keeps the reason visible; 5xx messages are replaced by a generic text.
             raise ConflictDomainError(
-                f"Die NoteBase wurde nicht geloescht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
+                f"Die NoteBase wurde nicht gelöscht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
                 operation="delete_notebase",
                 vault_id=str(target),
                 internal_message=str(exc),
@@ -1075,7 +1107,7 @@ class BackendApiService:
             payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValidationDomainError(
-                f"Ungueltige Bilddaten: {exc}",
+                f"Ungültige Bilddaten: {exc}",
                 operation="add_note_media_asset",
                 vault_id=str(vault.vault_path),
                 internal_message=str(exc),
