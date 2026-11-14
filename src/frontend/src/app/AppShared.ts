@@ -18,21 +18,6 @@ export type FocusDashboardAggregateStats = ContractFocusDashboardAggregateStats;
 export type FocusDashboardAggregateResponse = ContractFocusDashboardAggregateResponse;
 export type GraphIndexStatus = ContractGraphIndexStatus;
 export type BackendState = ContractBackendState;
-export type ParsedTask = {
-    title: string;
-    dueDate: string | null;
-    priority: string;
-    status: string;
-    projectTag: string | null;
-    tags: string[];
-    estimateMinutes?: number | null;
-    completedAt?: string | null;
-    blockedByIds?: string[];
-    waitingFor?: string | null;
-    followUpDate?: string | null;
-    blockedReason?: string | null;
-    nextActionHint?: string | null;
-};
 export type TodoGroupingMode = 'note' | 'tag' | 'tag_group' | 'updated_at';
 export type TodoStatusFilterValue = 'open' | 'done';
 export type TodoPromotionFilterValue = 'promoted' | 'unpromoted';
@@ -76,19 +61,6 @@ export type MediaUploadResponse = {
     mediaPath: string;
     markdownPath: string;
     fileName: string;
-};
-export type ReviewDaily = {
-    date: string;
-    new_notes: number;
-    open_tasks: number;
-    done_today: number;
-};
-export type ReviewWeekly = {
-    from: string;
-    to: string;
-    notes_total: number;
-    tasks_open: number;
-    tasks_done: number;
 };
 export type ReviewDashboardWindow = 'today' | '7d' | '30d' | '90d';
 export type ReviewBacklogMode = 'grouped' | 'stacked';

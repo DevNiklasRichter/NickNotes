@@ -322,7 +322,7 @@ type FocusScoreConfig = {
   }
 }
 
-// Centralized scoring configuration for Phase F tuning.
+// Centralized scoring configuration.
 export const focusScoringConfig: FocusScoreConfig = {
   taskBase: {
     priority: { high: 55, medium: 34, low: 18 },
