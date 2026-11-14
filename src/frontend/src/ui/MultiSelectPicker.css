@@ -1,6 +1,6 @@
 .nn-multiselect {min-width: 0;}
 /* Looks like a native select: same surface, border and chevron size. */
-.nn-multiselect-trigger {width: 100%; min-height: 30px; border: 1px solid var(--line); background: var(--surface-contrast); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2);}
+.nn-multiselect-trigger {width: 100%; min-height: 28px; border: 1px solid var(--line); background: var(--surface-contrast); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2);}
 .nn-multiselect-trigger span {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;}
 .nn-multiselect-trigger:hover:not(:disabled) {border-color: var(--line-strong); background: var(--surface-contrast);}
 .nn-multiselect.is-open .nn-multiselect-trigger {border-color: var(--accent);}

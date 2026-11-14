@@ -12,10 +12,10 @@ App-Zoom skaliert das gesamte Interface. Keine globale Schriftgrößenregel mit
 
 | Rolle | Token | Größe bei 100 % | Einsatz |
 | --- | --- | --- | --- |
-| Zusatzinformation | `--font-caption` | 12 px | Zeitstempel, Status, Abschnittslabels |
-| Beschriftung | `--font-label` | 13 px | Navigation, Explorer, kompakte Aktionen |
-| Oberflächentext | `--font-ui` | 13 px | Formulare, Dialoge, allgemeiner UI-Text |
-| Abschnitt | `--font-section` | 15 px | Property- und Bereichsüberschriften |
+| Zusatzinformation | `--font-caption` | 11,5 px | Zeitstempel, Status, Abschnittslabels |
+| Beschriftung | `--font-label` | 12,5 px | Navigation, Explorer, kompakte Aktionen |
+| Oberflächentext | `--font-ui` | 12,5 px | Formulare, Dialoge, allgemeiner UI-Text |
+| Abschnitt | `--font-section` | 14 px | Property- und Bereichsüberschriften |
 | Notiztext | `--font-editor` | 15 px | CodeMirror-Fließtext; Zeilenhöhe 1,7 |
 | Notiztitel | `--font-note-title` | 28–32 px | Dokumenttitel; eigener Split-Token |
 
@@ -24,7 +24,8 @@ Kein universelles UI-Label-Token auf deren Inlineelemente anwenden.
 Die Abstandsskala `--space-1/2/3/4/6` entspricht 4/8/12/16/24 px. Neue
 Oberflächengruppen verwenden diese Skala; bestehende funktionsspezifische
 Geometrie bleibt dort definiert, wo sie benötigt wird. Kompakte Listen bleiben
-kompakt, die Hauptnavigation bietet mindestens 36 px hohe Schaltflächen.
+kompakt (Menüzeilen und Auswahlfelder 28 px), die Hauptnavigation bietet
+mindestens 32 px hohe Schaltflächen.
 
 ## Farbe, Rand und Feedback
 
@@ -35,7 +36,7 @@ kompakt, die Hauptnavigation bietet mindestens 36 px hohe Schaltflächen.
 | Fensterhintergrund | `--bg-layer-1/2/3` | bestehende Ebenen des Fensterlayouts |
 | Notizfläche | `--editor-note-bg` | unabhängig konfigurierbare Editorfläche |
 | Rand | `--line`, `--line-strong` | ruhige Trennung, stärkerer Rand bei Bedarf |
-| Akzent | `--accent`, `--accent-strong`, `--accent-soft` | Auswahl, Hervorhebung und interaktive Zustände |
+| Akzent | `--accent`, `--accent-strong`, `--accent-soft` | Auswahl, Primäraktion und Fokus; neutral (Graphit hell, Hellgrau dunkel), kein Blau |
 | Tastaturfokus | `--focus-ring` | sichtbare 2-px-Kontur mit 2-px-Abstand |
 | Erfolg/Fehler | `--ok-bg/border/text`, `--error-bg/border/text` | Meldungsfläche mit Text; fachliche Statusfarben ergänzend |
 

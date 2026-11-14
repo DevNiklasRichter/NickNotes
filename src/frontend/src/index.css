@@ -9,17 +9,17 @@
   --surface-contrast: #ffffff;
   --line: #dddee2;
   --line-strong: #c9cbd1;
-  --accent: #3d7fe0;
-  --accent-strong: #2f68bc;
-  --accent-soft: rgba(61, 127, 224, 0.16);
+  --accent: #4b5059;
+  --accent-strong: #24272c;
+  --accent-soft: rgba(31, 35, 40, 0.1);
   --code-bg: #f0f0f3;
   --table-row: #f3f3f5;
   --bg-layer-1: #eeeef0;
   --bg-layer-2: #e8e8eb;
   --bg-layer-3: #e2e2e6;
-  --ok-bg: #edf4ff;
-  --ok-border: #c8daf8;
-  --ok-text: #1f355b;
+  --ok-bg: #f1f1f3;
+  --ok-border: #dddee2;
+  --ok-text: #1f2328;
   --error-bg: #fff0f1;
   --error-border: #efc7cc;
   --error-text: #8a2d3b;
@@ -48,7 +48,7 @@
   --layout-panel-gap: 0.35rem;
   --layout-panel-padding: 0.35rem;
   --layout-rail-width: 9.5rem;
-  --layout-rail-button-size: 2.25rem;
+  --layout-rail-button-size: 2rem;
   --layout-launch-pad: 1.5rem;
   --layout-launch-card-padding: 1.2rem;
   --layout-launch-progress-track-height: 0.625rem;
@@ -69,7 +69,7 @@
   --explorer-section-header-pad-y: 0.32rem;
   --explorer-section-header-pad-x: 0.5rem;
   --explorer-section-title-size: var(--font-caption);
-  --explorer-row-height: 1.75rem;
+  --explorer-row-height: 1.625rem;
   --explorer-row-height-compact: 1.5rem;
 
   font-family: var(--font-family-ui);
@@ -81,10 +81,10 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   --font-family-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-caption: .75rem;
-  --font-label: .8125rem;
-  --font-ui: .8125rem;
-  --font-section: .9375rem;
+  --font-caption: .71875rem;
+  --font-label: .78125rem;
+  --font-ui: .78125rem;
+  --font-section: .875rem;
   --font-editor: .9375rem;
   --font-note-title: clamp(1.75rem, 1.6rem + 0.5vw, 2rem);
   --font-note-title-split: clamp(1.5rem, 1.4rem + 0.3vw, 1.7rem);
@@ -107,17 +107,17 @@
   --surface-contrast: #2a2d33;
   --line: #383c44;
   --line-strong: #484d57;
-  --accent: #6ea7f3;
-  --accent-strong: #4f8fe8;
-  --accent-soft: rgba(110, 167, 243, 0.24);
+  --accent: #c3c8d0;
+  --accent-strong: #e8eaed;
+  --accent-soft: rgba(255, 255, 255, 0.11);
   --code-bg: #24272c;
   --table-row: #2c3036;
   --bg-layer-1: #191b1e;
   --bg-layer-2: #15171a;
   --bg-layer-3: #17191c;
-  --ok-bg: #23344f;
-  --ok-border: #325073;
-  --ok-text: #d9e9ff;
+  --ok-bg: #25282d;
+  --ok-border: #383c44;
+  --ok-text: #e8eaed;
   --error-bg: #4d2a33;
   --error-border: #7a3f4c;
   --error-text: #ffdce2;
@@ -177,7 +177,7 @@ textarea {
   color: var(--text);
   border: 1px solid transparent;
   border-radius: var(--radius-control);
-  padding: 0.3rem 0.65rem;
+  padding: 0.25rem 0.6rem;
 }
 
 input,
@@ -195,8 +195,8 @@ textarea:hover:not(:disabled) {
 
 select {
   appearance: none;
-  min-height: 30px;
-  padding: 0.2rem 1.7rem 0.2rem 0.5rem;
+  min-height: 28px;
+  padding: 0.15rem 1.7rem 0.15rem 0.5rem;
   background-image: var(--select-chevron);
   background-repeat: no-repeat;
   background-position: right 0.45rem center;

@@ -1,14 +1,14 @@
 .app-menu-bar {display:flex;align-items:center;gap:2px;margin-left:18px;-webkit-app-region:no-drag;user-select:none;}
 .app-menu-root {position:relative;}
 .app-menu-root>button {border:0;background:transparent;padding:4px 10px;font-size:var(--font-caption);color:var(--text);border-radius:var(--radius-control);}
-.app-menu-root>button:hover,.app-menu-root>button[aria-expanded=true] {background:var(--surface-contrast);}
+.app-menu-root>button:hover,.app-menu-root>button[aria-expanded=true] {background:var(--control-bg-hover);}
 .app-menu-dropdown {position:absolute;left:0;top:calc(100% + 4px);z-index:1000;min-width:330px;max-height:calc(100vh - 65px);overflow:auto;padding:5px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-menu);box-shadow:var(--shadow);}
-.app-menu-dropdown>button {display:grid;grid-template-columns:16px 1fr auto;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--text);padding:7px 9px;text-align:left;font-size:var(--font-caption);border-radius:var(--radius-control);white-space:nowrap;}
-.app-menu-dropdown>button:hover:not(:disabled),.app-menu-dropdown>button:focus-visible {background:var(--surface-contrast);outline:1px solid var(--accent);outline-offset:-1px;}
+.app-menu-dropdown>button {display:grid;grid-template-columns:16px 1fr auto;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--text);padding:4px 9px;text-align:left;font-size:var(--font-caption);border-radius:var(--radius-control);white-space:nowrap;}
+.app-menu-dropdown>button:hover:not(:disabled),.app-menu-dropdown>button:focus-visible {background:var(--control-bg-hover);}
 .app-menu-dropdown>button:disabled {opacity:.4;cursor:default;}
 .app-menu-dropdown kbd,.shortcut-reference kbd {color:var(--muted);font:inherit;font-size:var(--font-caption);white-space:nowrap;}
 .app-menu-check {color:var(--accent);}
-.app-menu-dropdown>button:is([data-command="save"],[data-command="settings"],[data-command="find"],[data-command="split"],[data-command="sidebar"],[data-command="notes"],[data-command="fullscreen"]) {border-top:1px solid var(--line);border-radius:0;margin-top:4px;padding-top:10px;}
+.app-menu-dropdown>button:is([data-command="save"],[data-command="settings"],[data-command="find"],[data-command="split"],[data-command="sidebar"],[data-command="notes"],[data-command="fullscreen"]) {border-top:1px solid var(--line);border-radius:0;margin-top:3px;padding-top:7px;}
 .command-dialog {width:min(700px,90vw);max-height:80vh;overflow:auto;padding:22px;border:1px solid var(--line);border-radius:var(--radius-dialog);background:var(--surface);box-shadow:var(--shadow);color:var(--text);}
 .command-dialog-header {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;}
 .command-dialog-header h2 {margin:0;font-size:var(--font-ui);}
