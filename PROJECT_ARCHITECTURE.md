@@ -82,13 +82,21 @@ MeineNoteBase/
     tag_groups.json              einzige Tagdefinitionsquelle
     ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
+    migrations/                  Konfigurationssicherungen und Nachweise
+
+%LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
     graph-state.json             Graph-UI-Zustand, Version 2
-    migrations/                  Konfigurationssicherungen und Nachweise
+    task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
-    mcp-operations/               Wiederholungsbelege, keine zweite Inhaltsquelle
+    mcp-operations/              Wiederholungsbelege, keine zweite Inhaltsquelle
 ```
+
+Projektionen und Journale liegen bewusst ausserhalb der NoteBase, damit ein
+Sync-Ordner (z. B. OneDrive als Backup) nur Inhalte hochlaedt. Eine verschobene
+oder kopierte NoteBase baut sie beim Oeffnen neu auf; Altdateien in `.system/`
+werden dabei entfernt, offene Journale uebernommen.
 
 Frontmatter wird mit sicherem YAML gelesen. Unbekannte verschachtelte Felder
 bleiben erhalten; doppelte Schluessel und unsichere Typen werden abgelehnt.

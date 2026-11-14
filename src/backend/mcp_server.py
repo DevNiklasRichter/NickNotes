@@ -61,7 +61,7 @@ def create_mcp(service, grants):
             raise ValidationDomainError('operation_id muss 8 bis 100 sichere Zeichen enthalten.')
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         key = hashlib.sha256(f"{grant['id']}:{operation_id}".encode()).hexdigest()
-        path = vault.system_path / 'mcp-operations' / f'{key}.json'
+        path = vault.operations_path / f'{key}.json'
         if path.exists():
             previous = json.loads(path.read_text(encoding='utf-8'))
             if previous['fingerprint'] != fingerprint:

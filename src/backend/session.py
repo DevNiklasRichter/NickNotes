@@ -29,7 +29,7 @@ def coordinated(function=None, *, mutation: bool = False, invalidate: bool = Tru
             if expected and expected != self.state.generation:
                 raise ConflictDomainError("Die geöffnete NoteBase hat sich geändert. Bitte erneut laden.")
             vault = self.state.vault
-            dirty = vault.system_path/'projection-dirty.json' if vault else None
+            dirty = vault.projection_dirty_path if vault else None
             if vault and dirty.exists() and not self.state.repairing and function.__name__ not in {'get_state','counts','require_loaded'} and not pending_recovery(vault):
                 self.state.repairing = True
                 try:

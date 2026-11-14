@@ -97,7 +97,7 @@ class OpenVaultUseCase:
                 graph_status = service.rebuild_graph_projection(vault)
             else:
                 graph_status = service.graph_index_status(vault, existing_graph)
-            (vault.system_path/'projection-dirty.json').unlink(missing_ok=True)
+            vault.projection_dirty_path.unlink(missing_ok=True)
             try:
                 service.state.start_session(vault=vault, indexer=indexer)
                 service.state.start_graph_watcher(baseline)

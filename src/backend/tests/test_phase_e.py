@@ -189,7 +189,7 @@ class PhaseEBackendTests(unittest.TestCase):
 
         payload = response.json()
         self.assertEqual(payload.get("vaultPath"), str(self.vault_path))
-        backups = list(self.vault.system_path.glob("index.db.*.corrupt.*.bak"))
+        backups = list(self.vault.local_path.glob("index.db.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
         self.assertTrue(self.vault.db_path.exists())
 

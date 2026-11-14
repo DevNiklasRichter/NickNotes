@@ -49,6 +49,7 @@ from .errors import (
     NotFoundDomainError,
     ValidationDomainError,
 )
+from .nicknotes_backend.local_data import notebase_data_path
 from .nicknotes_backend.source_journal import active_journal, pending_recovery
 from .nicknotes_backend.file_io import atomic_write_text
 from .nicknotes_backend.trash import move_to_trash
@@ -723,6 +724,10 @@ class BackendApiService:
             if is_current:
                 self.state.dispose_session()
             old_path.rename(new_path)
+            # Keep the device-local index instead of rebuilding it under the new path.
+            old_local, new_local = notebase_data_path(old_path), notebase_data_path(new_path)
+            if old_local.is_dir() and not new_local.exists():
+                old_local.rename(new_local)
         except OSError as exc:
             raise InfrastructureDomainError(
                 "Could not rename NoteBase.",

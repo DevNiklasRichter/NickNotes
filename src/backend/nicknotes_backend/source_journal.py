@@ -12,7 +12,7 @@ class SourceJournal:
     def __init__(self, vault, operation):
         self.vault = vault
         self.root = vault.vault_path.resolve()
-        self.directory = vault.system_path / 'recovery' / uuid.uuid4().hex
+        self.directory = vault.recovery_path / uuid.uuid4().hex
         self.operation = operation
         self.before = {}
         self.size = 0
@@ -26,6 +26,8 @@ class SourceJournal:
     def record(self, path):
         from .file_io import atomic_write_bytes
         path = Path(path).resolve()
+        if path.is_relative_to(self.vault.local_path.resolve()):
+            return  # Device-local projections and journals are derived, never sources.
         try:
             relative = path.relative_to(self.root)
         except ValueError:
@@ -91,7 +93,7 @@ class SourceJournal:
                 self.state = 'restored'
             except OSError:
                 self.state = 'recovery_required'
-            atomic_write_text(self.vault.system_path / 'projection-dirty.json', json.dumps({'operation': self.operation, 'sources': self.state}))
+            atomic_write_text(self.vault.projection_dirty_path, json.dumps({'operation': self.operation, 'sources': self.state}))
         else:
             self.state = 'committed'
         self._manifest()
@@ -127,14 +129,14 @@ class SourceJournal:
 
 
 def pending_recovery(vault):
-    parent = vault.system_path / 'recovery'
+    parent = vault.recovery_path
     if not parent.exists():
         return []
     pending = []
     for manifest in parent.glob('*/manifest.json'):
         try:
             if json.loads(manifest.read_text()).get('state') not in {'committed', 'restored', 'kept'}:
-                pending.append(str(manifest.relative_to(vault.vault_path)))
+                pending.append(str(manifest))
         except (OSError, ValueError):
-            pending.append(str(manifest.relative_to(vault.vault_path)))
+            pending.append(str(manifest))
     return pending
