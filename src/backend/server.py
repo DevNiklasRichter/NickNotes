@@ -1,102 +1,86 @@
+"""Backend entry point.
+
+`--service` runs the per-user NickNotes service: it announces port, token and version in
+`service.json` (user profile) so the app and the login autostart share one process.
+`--owner-pid` ties the service to the app when it should not outlive it.
+Without `--service` the server runs in the foreground for development and scripts.
+"""
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import secrets
 import sys
 import threading
-import time
+from pathlib import Path
 
 import uvicorn
 
-
-def _process_exists(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        try:
-            import ctypes
-        except ImportError:
-            return True
-
-        process_query_limited_information = 0x1000
-        still_active = 259
-        from ctypes import wintypes
-        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-        if not handle:
-            return False
-        exit_code = ctypes.c_ulong()
-        try:
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return False
-            return int(exit_code.value) == still_active
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+from .service_control import control
 
 
-def _start_parent_watchdog() -> None:
-    raw_parent_pid = os.environ.get("NICKNOTES_PARENT_PID", "").strip()
-    if not raw_parent_pid:
+def _option(name: str) -> str | None:
+    if name in sys.argv:
+        index = sys.argv.index(name)
+        return sys.argv[index + 1] if index + 1 < len(sys.argv) else None
+    return None
+
+
+def _version() -> str:
+    # The frozen build carries its release version next to the executable.
+    marker = Path(sys.executable).with_name('version.txt')
+    if getattr(sys, 'frozen', False) and marker.is_file():
+        return marker.read_text(encoding='utf-8').strip()
+    return 'dev'
+
+
+def _redirect_output(log_path: Path) -> None:
+    # A windowless build has no console; keep a small log instead of losing errors.
+    if sys.stdout is not None and sys.stderr is not None:
         return
-    try:
-        parent_pid = int(raw_parent_pid)
-    except ValueError:
-        return
-    if parent_pid <= 0:
-        return
-
-    def watch_parent() -> None:
-        while True:
-            time.sleep(2)
-            if not _process_exists(parent_pid):
-                os._exit(0)
-
-    thread = threading.Thread(target=watch_parent, name="nicknotes-parent-watchdog", daemon=True)
-    thread.start()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if log_path.exists() and log_path.stat().st_size > 1024 * 1024:
+        log_path.replace(log_path.with_suffix('.old.log'))
+    stream = open(log_path, 'a', encoding='utf-8', buffering=1)
+    sys.stdout = sys.stdout or stream
+    sys.stderr = sys.stderr or stream
 
 
 def main() -> None:
-    desktop = os.environ.get("NICKNOTES_DESKTOP_BOOT") == "1"
-    if desktop:
-        boot = json.loads(sys.stdin.readline())
-        os.environ["NICKNOTES_API_TOKEN"] = boot["token"]
-        os.environ["NICKNOTES_PARENT_PID"] = str(boot["parent_pid"])
-        os.environ["NICKNOTES_USER_DATA"] = boot["user_data"]
-        port = int(boot["port"])
-    else:
-        port = int(os.environ.get("NICKNOTES_PORT", "8765"))
-    _start_parent_watchdog()
+    from .nicknotes_backend.local_data import user_data_path
+    from .nicknotes_backend.file_io import atomic_write_text
+    service = '--service' in sys.argv
+    port = int(os.environ.get("NICKNOTES_PORT", "8765"))
+    info_path = user_data_path() / 'service.json'
+    if service:
+        _redirect_output(user_data_path() / 'service.log')
+        os.environ["NICKNOTES_API_TOKEN"] = secrets.token_urlsafe(32)
+        owner = _option('--owner-pid')
+        control.owner_pid = int(owner) if owner and owner.isdigit() else None
+        control.version = _version()
+        threading.Thread(target=control.watch, name="nicknotes-owner-watchdog", daemon=True).start()
     from .api import app
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False))
-    if desktop:
-        def control():
-            for line in sys.stdin:
-                try:
-                    if json.loads(line).get("command") == "shutdown":
-                        server.should_exit = True
-                        return
-                except (ValueError, AttributeError):
-                    continue
-            server.should_exit = True
-        threading.Thread(target=control, name="nicknotes-control", daemon=True).start()
+    control.server = server
+
     async def run():
         task = asyncio.create_task(server.serve())
         while not server.started and not task.done():
             await asyncio.sleep(0.03)
-        if server.started:
-            print(json.dumps({"event": "ready", "port": port}), flush=True)
+        if server.started and service:
+            atomic_write_text(info_path, json.dumps({'port': port, 'pid': os.getpid(), 'token': os.environ["NICKNOTES_API_TOKEN"], 'version': control.version}))
         await task
-    asyncio.run(run())
+
+    try:
+        asyncio.run(run())
+    finally:
+        if service:
+            try:
+                if json.loads(info_path.read_text(encoding='utf-8')).get('pid') == os.getpid():
+                    info_path.unlink()
+            except (OSError, ValueError):
+                pass
 
 
 if __name__ == "__main__":
