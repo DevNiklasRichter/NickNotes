@@ -107,6 +107,8 @@ jobs:
         if: always()
         with:
           name: NickNotes-Windows-quality
+          # Evidence lives in .tmp; upload-artifact skips dot directories unless asked.
+          include-hidden-files: true
           path: |
             .tmp/commands-smoke-result.json
             .tmp/startup-smoke-result.json
