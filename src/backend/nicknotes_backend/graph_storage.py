@@ -13,12 +13,26 @@ from .projection_registry import GRAPH_STATE_SCHEMA_VERSION, quarantine_projecti
 GRAPH_STATE_VERSION = GRAPH_STATE_SCHEMA_VERSION
 
 
+# The parsed projection of the open NoteBase, valid while the file on disk is the one it came from.
+_cached: tuple[Path, tuple[int, int], GraphIndex] | None = None
+
+
+def _signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
 def read_graph_index(path: Path) -> GraphIndex:
+    global _cached
     if not path.exists():
         return GraphIndex.empty()
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return graph_index_from_dict(payload)
+        signature = _signature(path)
+        if _cached and _cached[0] == path and _cached[1] == signature:
+            return _cached[2]
+        index = graph_index_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        _cached = (path, signature, index)
+        return index
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         quarantine_projection_file(path, projection="graph-index")
         return GraphIndex.empty(
@@ -31,14 +45,17 @@ def read_graph_index(path: Path) -> GraphIndex:
 
 
 def write_graph_index(path: Path, index: GraphIndex) -> None:
+    global _cached
+    _cached = None
     atomic_write_text(path, json.dumps(index.to_dict(), ensure_ascii=False, separators=(',', ':')))
+    _cached = (path, _signature(path), index)
 
 
 def default_graph_state() -> dict[str, Any]:
     return {
         "version": GRAPH_STATE_VERSION,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "activeMode": "link",
+        "activeMode": "focus",  # neighbourhood of the open note
         "filters": {},
         "layout": {},
         "viewport": {"zoom": 1, "pan": {"x": 0, "y": 0}},

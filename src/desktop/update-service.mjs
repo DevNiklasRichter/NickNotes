@@ -1,3 +1,12 @@
+/** GitHub hands the release body over as HTML; keep the changelog part as plain `### Heading` / `- item` lines. */
+export function releaseNotesText(notes) {
+  const html=Array.isArray(notes)?notes.map(item=>item?.note??'').join('\n'):String(notes??'')
+  return html.split(/<hr\s*\/?>/i)[0]
+    .replace(/<li[^>]*>/gi,'\n- ').replace(/<h[1-6][^>]*>/gi,'\n### ').replace(/<\/(?:p|h[1-6]|li|ul|ol)>|<br\s*\/?>/gi,'\n')
+    .replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&')
+    .split('\n').map(line=>line.trim()).filter(Boolean).join('\n').slice(0,6000)
+}
+
 /** Public stable releases only; no network/download/installation without the corresponding action. */
 export function createUpdateService({version,enabled,loadUpdater,notify,prepareInstall}) {
   let state={phase:enabled?'idle':'disabled',currentVersion:version,message:enabled?'Noch nicht nach Updates gesucht.':'Updates sind in dieser unsignierten Testversion deaktiviert.'}
@@ -12,9 +21,9 @@ export function createUpdateService({version,enabled,loadUpdater,notify,prepareI
     updater.on('error',fail)
     updater.on('update-available',info=>{
       if(!acceptable(info)){fail(new Error('Der angebotene Versionsstand ist kein neuer stabiler Release.'));return}
-      publish({phase:'available',version:info.version,percent:undefined,message:`NickNotes ${info.version} ist verfügbar.`})
+      publish({phase:'available',version:info.version,notes:releaseNotesText(info.releaseNotes),percent:undefined,message:`NickNotes ${info.version} ist verfügbar.`})
     })
-    updater.on('update-not-available',()=>publish({phase:'current',version:undefined,percent:undefined,message:'Du verwendest die aktuelle stabile Version.'}))
+    updater.on('update-not-available',()=>publish({phase:'current',version:undefined,notes:undefined,percent:undefined,message:'Du verwendest die aktuelle stabile Version.'}))
     updater.on('download-progress',progress=>publish({phase:'downloading',percent:Math.max(0,Math.min(100,Math.round(progress.percent))),message:'Update wird heruntergeladen …'}))
     updater.on('update-downloaded',info=>{
       if(!acceptable(info)){fail(new Error('Der Download ist kein neuer stabiler Release.'));return}

@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('nicknotes', {
   getBackendUrl: () => ipcRenderer.invoke('backend:url'),
   getBackendToken: () => ipcRenderer.invoke('backend:token'),
   getBackendStatus: () => ipcRenderer.invoke('backend:status'),
+  getBackgroundService: () => ipcRenderer.invoke('service:background'),
+  setBackgroundService: (enabled) => ipcRenderer.invoke('service:set-background', Boolean(enabled)),
   readCaptureDraft: () => ipcRenderer.invoke('capture:draft-read'),
   writeCaptureDraft: (text) => ipcRenderer.invoke('capture:draft-write',text),
   getUpdateState: () => ipcRenderer.invoke('updates:state'),

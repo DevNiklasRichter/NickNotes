@@ -1,18 +1,17 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, protocol, net } from 'electron'
-import {Worker} from 'node:worker_threads'
 import fs from 'node:fs'
-import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {CaptureDraftStore} from './capture-draft-store.mjs'
 import {createWindowCloseGuard} from './window-close-guard.mjs'
 import {createUpdateService} from './update-service.mjs'
+import {createBackendService} from './backend-service.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const BACKEND_PORT = Number(process.env.NICKNOTES_PORT || 8765)
-const API_TOKEN = randomBytes(32).toString('hex')
+let API_TOKEN = ''
 const PROJECT_ROOT = path.resolve(__dirname, '../..')
 const startupStarted=performance.now()
 let startupMetricsWrite=Promise.resolve()
@@ -46,9 +45,8 @@ backendReadyPromise.catch(()=>{}) // The renderer receives the same failure thro
 let draftStore
 let startupTheme='light'
 try {const saved=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'window-state.json'),'utf8'));if(saved.theme==='dark')startupTheme='dark'} catch { /* First launch uses a neutral light background. */ }
-let backendProcess = null
+let backendAttached = false
 let mainWindow = null
-let backendStopping = false
 const closeGuards = new Map()
 let releaseConfig={updatesEnabled:false}
 if(app.isPackaged){
@@ -73,7 +71,7 @@ const updates=createUpdateService({
     if(!guard)return false
     return guard.requestClose(async()=>{
       await draftStore?.flush()
-      await stopBackend()
+      await stopBackend({force:true})  // the installer replaces the service executable
       try{install()}catch(error){
         if(!win.isDestroyed())await startBackend()
         throw error
@@ -131,7 +129,7 @@ function validateLocalDirectoryPath(rawPath) {
     return { allowed: false, code: 'empty_path', message: 'Pfad fehlt.' }
   }
   if (!path.isAbsolute(cleanPath)) {
-    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade koennen geoeffnet werden.' }
+    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade können geöffnet werden.' }
   }
   try {
     const resolvedPath = path.resolve(cleanPath)
@@ -177,9 +175,10 @@ function validateExternalUrl(rawUrl) {
 
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
-  const backgroundColor = isDark ? '#1f252f' : '#eef1f5'
-  const titleBarColor = isDark ? '#1f252f' : '#eceef2'
-  const titleBarSymbolColor = isDark ? '#a7afbd' : '#6a727f'
+  // Mirrors --surface, --bg-layer-1 and --muted in src/frontend/src/index.css.
+  const backgroundColor = isDark ? '#1e2023' : '#f8f8f9'
+  const titleBarColor = isDark ? '#191b1e' : '#eeeef0'
+  const titleBarSymbolColor = isDark ? '#a3a9b3' : '#5f6672'
   nativeTheme.themeSource = isDark ? 'dark' : 'light'
 
   win.setBackgroundColor(backgroundColor)
@@ -205,41 +204,29 @@ function resolvePythonBinary() {
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 
+const PACKAGED_BACKEND=process.platform==='win32'?'nicknotes-backend.exe':'nicknotes-backend'
+const backendService=createBackendService({
+  executable:app.isPackaged?path.join(process.resourcesPath,'backend',PACKAGED_BACKEND):resolvePythonBinary(),
+  args:app.isPackaged?[]:['-m','src.backend.server'],
+  cwd:app.isPackaged?path.join(process.resourcesPath,'backend'):PROJECT_ROOT,
+  version:app.isPackaged?app.getVersion():'dev',port:BACKEND_PORT,inheritOutput:!app.isPackaged,
+})
+
+// "Reachable in the background": login autostart of the service, which then also outlives the app.
+const loginItem=()=>({path:path.join(process.resourcesPath,'backend',PACKAGED_BACKEND),args:['--service'],name:'NickNotes Dienst'})
+const backgroundEnabled=()=>app.isPackaged&&process.platform==='win32'&&app.getLoginItemSettings(loginItem()).openAtLogin
+const backgroundState=()=>({available:app.isPackaged&&process.platform==='win32',enabled:backgroundEnabled()})
+
 async function startBackend() {
-  const packaged = path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'nicknotes-backend.exe' : 'nicknotes-backend')
-  backendStopping = false
   startupMark('backend-spawn-start')
-  const worker=new Worker(new URL('./backend-worker.mjs',import.meta.url),{workerData:{
-    executable:app.isPackaged?packaged:resolvePythonBinary(),args:app.isPackaged?[]:['-m','src.backend.server'],
-    cwd:app.isPackaged?app.getPath('userData'):PROJECT_ROOT,
-    boot:{token:API_TOKEN,port:BACKEND_PORT,parent_pid:process.pid,user_data:app.getPath('userData')},
-  }})
-  backendProcess=worker
-  worker.once('exit',()=>{if(backendProcess===worker)backendProcess=null})
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Backend antwortet nicht.')), 45000)
-    worker.on('message',message=>{
-      if(message.event==='spawned')startupMark('backend-spawned')
-      if(message.event==='ready'){clearTimeout(timer);resolve()}
-      if(message.event==='error'||message.event==='exit'){
-        clearTimeout(timer);reject(new Error(message.message??`Backend wurde beendet (${message.code}). Möglicherweise ist Port ${BACKEND_PORT} belegt.`))
-      }
-    })
-    worker.once('error',error=>{clearTimeout(timer);reject(error)})
-    worker.once('exit',code=>{clearTimeout(timer);reject(new Error(`Backend-Worker wurde beendet (${code}).`))})
-  })
+  const info=await backendService.ensure(backgroundEnabled()?null:process.pid)
+  API_TOKEN=info.token;backendAttached=true
 }
 
-async function stopBackend() {
-  const child = backendProcess
-  if (!child || backendStopping) return
-  backendStopping = true
-  let timer
-  const stopped=new Promise(resolve=>child.once('exit',resolve))
-  child.postMessage('stop')
-  await Promise.race([stopped,new Promise(resolve=>{timer=setTimeout(resolve,6500)})])
-  clearTimeout(timer)
-  if(backendProcess===child){await child.terminate();backendProcess=null}
+async function stopBackend({force=false}={}) {
+  if(!backendAttached||(!force&&backgroundEnabled()))return
+  backendAttached=false
+  await backendService.stop()
 }
 
 function createWindow() {
@@ -251,11 +238,11 @@ function createWindow() {
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#eceef2',
-      symbolColor: '#6a727f',
+      color: startupTheme==='dark'?'#191b1e':'#eeeef0',
+      symbolColor: startupTheme==='dark'?'#a3a9b3':'#5f6672',
       height: 34,
     },
-    backgroundColor: startupTheme==='dark'?'#1f252f':'#f3f4f6',
+    backgroundColor: startupTheme==='dark'?'#1e2023':'#f8f8f9',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false,
@@ -368,6 +355,13 @@ app.whenReady().then(async () => {
 
   handle('backend:token', async () => {await backendReadyPromise;return API_TOKEN})
   handle('backend:status', () => backendStatus)
+  handle('service:background', () => backgroundState())
+  handle('service:set-background', async (_event, enabled) => {
+    if(!backgroundState().available)throw new Error('Nur in der installierten App unter Windows verfügbar.')
+    app.setLoginItemSettings({...loginItem(),openAtLogin:Boolean(enabled)})
+    await backendService.setOwner(enabled?null:process.pid)
+    return backgroundState()
+  })
   handle('updates:state',()=>updates.getState())
   handle('updates:check',()=>updates.check())
   handle('updates:download',()=>updates.download())
@@ -417,7 +411,7 @@ app.whenReady().then(async () => {
       }
       return { ok: true, code: 'ok', message: '' }
     } catch {
-      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geoeffnet werden.' }
+      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geöffnet werden.' }
     }
   })
 
@@ -458,7 +452,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { app.quit() })
 let quitting = false
 app.on('will-quit', event => {
-  if (quitting || (!backendProcess&&!draftStore)) return
+  if (quitting || (!backendAttached&&!draftStore)) return
   event.preventDefault(); quitting = true;updates.dispose()
   void Promise.allSettled([stopBackend(),draftStore?.flush()]).finally(() => app.quit())
 })

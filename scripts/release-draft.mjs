@@ -26,8 +26,9 @@ if(process.argv.includes('--prepare')){
   const revision=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).stdout.trim()
   const runs=JSON.parse(gh(['run','list','--repo',repo,'--workflow','windows.yml','--commit',revision,'--json','conclusion,headBranch']).stdout)
   if(!runs.some(run=>run.conclusion==='success'&&run.headBranch===tag))throw new Error('The tagged commit needs a successful Windows CI run before attaching release assets.')
-  fs.writeFileSync(bodyFile,result.notes+'\n\nWindows x64 · MIT · signierter Offline-Installer. Automatische Updates für veröffentlichte stabile Versionen.\n\nVor Veröffentlichung die manuelle Installations-/Upgradeabnahme abschließen.\n')
+  // Everything after the rule is download information; the app shows only the part above it.
+  fs.writeFileSync(bodyFile,result.notes+'\n\n---\n\nWindows x64 · MIT · signierter Offline-Installer. Automatische Updates für veröffentlichte stabile Versionen.\n')
   gh(['release','upload',tag,...result.assets.map(name=>path.join(result.directory,name)),'--repo',repo,'--clobber'])
   gh(['release','edit',tag,'--repo',repo,'--notes-file',bodyFile])
-  console.log('Signed assets attached to draft. Review the Windows acceptance and explicitly Publish in GitHub when ready.')
+  console.log('Signed assets attached to draft. Finish the Windows acceptance, then explicitly Publish in GitHub.')
 }else throw new Error('Use --prepare (CI) or --upload (signing laptop). Publishing is deliberately manual.')

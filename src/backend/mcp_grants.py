@@ -11,12 +11,10 @@ import secrets
 import threading
 import uuid
 from .nicknotes_backend.file_io import atomic_write_text
+from .nicknotes_backend.local_data import user_data_path
 from .nicknotes_backend.source_journal import active_journal
 
 principal = ContextVar('nicknotes_mcp_principal', default=None)
-
-def user_data_path():
-    return Path(os.environ.get('NICKNOTES_USER_DATA') or Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'NickNotes')
 
 class GrantStore:
     def __init__(self, path=None):

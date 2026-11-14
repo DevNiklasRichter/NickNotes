@@ -10,6 +10,7 @@ import {connectionEpoch} from './app/apiClient';
 import {AppMenuBar} from './layout/AppMenuBar';
 import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
+import {WhatsNewDialog} from './layout/WhatsNewDialog';
 import {CreateNoteBaseDialog} from './layout/CreateNoteBaseDialog';
 import {TagMatchDialog} from './tags/TagMatchDialog';
 import {flushSync} from 'react-dom';
@@ -50,8 +51,8 @@ import { useTagMatchWorkflowState, type TagMatchCandidate } from './app/tagMatch
 import {useMutationRefresh} from './app/useMutationRefresh';
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
-import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, DEFAULT_LIGHT_COLOR_PROFILE, DEFAULT_DARK_COLOR_PROFILE, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, applyColorProfileToDocument, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areColorProfilesEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
-import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus, ColorProfile } from './app/AppShared';
+import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
+import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus } from './app/AppShared';
 function resolveGraphNodePath(path: string, vaultPath: string): string {
     const cleanPath = normalizeLabel(path);
     if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
@@ -91,11 +92,6 @@ function App() {
     const capturePreviewLastTextRef = useRef('');
     const [backendUrl, setBackendUrl] = useState(window.nicknotes?.getBackendUrl?'':DEFAULT_BACKEND_URL);
     const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme);
-    const [activeColorProfileId, setActiveColorProfileId] = useState<string>(getPreferredTheme());
-    const [colorProfiles, setColorProfiles] = useState<ColorProfile[]>([
-        { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
-        { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } }
-    ]);
     const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath);
     const [recentNoteBases, setRecentNoteBases] = useState<RecentNoteBase[]>(getStoredRecentNoteBases);
     const [vaultLoaded, setVaultLoaded] = useState(false);
@@ -139,11 +135,6 @@ function App() {
     const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS });
     const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS });
     const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme);
-    const [savedActiveColorProfileId, setSavedActiveColorProfileId] = useState<string>(getPreferredTheme());
-    const [savedColorProfiles, setSavedColorProfiles] = useState<ColorProfile[]>([
-        { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
-        { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } }
-    ]);
     const [savedDisplayName, setSavedDisplayName] = useState(DEFAULT_DISPLAY_NAME);
     const [savedSidebarOpen, setSavedSidebarOpen] = useState(true);
     const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS });
@@ -176,6 +167,7 @@ function App() {
     const [quickOpen, setQuickOpen] = useState<{initialQuery:string;vaultPath:string;epoch:number;trigger:HTMLElement|null}|null>(null);
     const [shortcutHelp, setShortcutHelp] = useState(false);
     const [updatesOpen,setUpdatesOpen]=useState(false);
+    const [whatsNewOpen,setWhatsNewOpen]=useState(false);
     const openTabsRef = useRef<NoteTab[]>([]);
     const [workspaceState, dispatchWorkspace] = useReducer(workspaceReducer, undefined, createInitialWorkspaceState);
     const workspaceStateRef = useRef(workspaceState);
@@ -324,19 +316,13 @@ function App() {
     }, []);
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
-        const activeProfile = colorProfiles.find((profile) => profile.id === activeColorProfileId) ?? colorProfiles.find((profile) => profile.id === theme);
-        if (activeProfile) {
-            applyColorProfileToDocument(activeProfile);
-        }
         if (window.nicknotes?.setWindowTheme) {
             void window.nicknotes.setWindowTheme(theme).catch(() => {
                 // Best effort bridge for desktop titlebar.
             });
         }
-    }, [activeColorProfileId, colorProfiles, theme]);
+    }, [theme]);
     const settingsDirty = useMemo(() => theme !== savedTheme ||
-        activeColorProfileId !== savedActiveColorProfileId ||
-        !areColorProfilesEqual(colorProfiles, savedColorProfiles) ||
         displayName !== savedDisplayName ||
         sidebarOpen !== savedSidebarOpen ||
         !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
@@ -345,8 +331,6 @@ function App() {
         displayName,
         explorerOptions,
         savedDisplayName,
-        savedActiveColorProfileId,
-        savedColorProfiles,
         savedExplorerOptions,
         savedSidebarOpen,
         savedStatusBarPrefs,
@@ -355,9 +339,7 @@ function App() {
         sidebarOpen,
         statusBarPrefs,
         taskFeatureSettings,
-        theme,
-        activeColorProfileId,
-        colorProfiles
+        theme
     ]);
     useLayoutEffect(() => {
         settingsDirtyRef.current = settingsDirty;
@@ -408,6 +390,11 @@ function App() {
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
     const activeTab = paneActiveTabs[activePaneId] ?? null;
+    // The graph centres on the note being edited: the active one, the one in the other pane, or the last one shown.
+    const visibleNotePath = [activeTab, paneActiveTabs[activePaneId==='left'?'right':'left']].find(tab => tab?.kind === 'note')?.path ?? '';
+    const [lastNotePath, setLastNotePath] = useState('');
+    if (visibleNotePath && visibleNotePath !== lastNotePath) setLastNotePath(visibleNotePath);
+    const graphNotePath = visibleNotePath || lastNotePath;
     const openTagActionDialog = useCallback((config: {
         kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
         title: string;
@@ -529,8 +516,6 @@ function App() {
         getBackendUrl: () => backendUrl,
         snapshot: {
             getTheme: () => theme,
-            getActiveColorProfileId: () => activeColorProfileId,
-            getColorProfiles: () => colorProfiles,
             getDisplayName: () => displayName,
             getVaultPath: () => vaultPath,
             isSidebarOpen: () => sidebarOpen,
@@ -551,16 +536,12 @@ function App() {
         },
         writer: {
             setTheme,
-            setActiveColorProfileId,
-            setColorProfiles,
             setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedActiveColorProfileId,
-            setSavedColorProfiles,
             setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
@@ -680,16 +661,12 @@ function App() {
     const appSettingsService = new AppSettingsService({
         snapshot: {
             getTheme: () => theme,
-            getActiveColorProfileId: () => activeColorProfileId,
-            getColorProfiles: () => colorProfiles,
             getDisplayName: () => displayName,
             isSidebarOpen: () => sidebarOpen,
             getStatusBarPrefs: () => statusBarPrefs,
             getTaskFeatureSettings: () => taskFeatureSettings,
             getExplorerOptions: () => explorerOptions,
             getSavedTheme: () => savedTheme,
-            getSavedActiveColorProfileId: () => savedActiveColorProfileId,
-            getSavedColorProfiles: () => savedColorProfiles,
             getSavedDisplayName: () => savedDisplayName,
             getSavedSidebarOpen: () => savedSidebarOpen,
             getSavedStatusBarPrefs: () => savedStatusBarPrefs,
@@ -698,16 +675,12 @@ function App() {
         },
         writer: {
             setTheme,
-            setActiveColorProfileId,
-            setColorProfiles,
             setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedActiveColorProfileId,
-            setSavedColorProfiles,
             setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
@@ -747,8 +720,6 @@ function App() {
     const discardSettings = appSettingsService.discardSettings;
     const requestSaveSettings = () => {void saveSettings();};
     const setSettingsDisplayName = appSettingsService.setDisplayName;
-    const setSettingsColorProfiles = appSettingsService.setColorProfiles;
-    const handleActiveColorProfileChange = appSettingsService.handleActiveColorProfileChange;
     const openSettingsDialog = appSettingsService.openSettingsDialog;
     const closeSettingsDialog = () => {
         commitFocusedSettingsField();
@@ -1067,7 +1038,7 @@ function App() {
                 id: nextTabId,
                 kind: 'todo_dashboard',
                 path: TODO_DASHBOARD_TAB_PATH,
-                title: 'Todo Dashboard',
+                title: 'To-dos',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1105,7 +1076,7 @@ function App() {
                 id: nextTabId,
                 kind: 'task_dashboard',
                 path: TASK_DASHBOARD_TAB_PATH,
-                title: 'Task Dashboard',
+                title: 'Tasks',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1143,7 +1114,7 @@ function App() {
                 id: nextTabId,
                 kind: 'focus_dashboard',
                 path: FOCUS_DASHBOARD_TAB_PATH,
-                title: 'Focus Dashboard',
+                title: 'Fokus',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1181,7 +1152,7 @@ function App() {
                 id: nextTabId,
                 kind: 'review_dashboard',
                 path: REVIEW_DASHBOARD_TAB_PATH,
-                title: 'Review Dashboard',
+                title: 'Rückblick',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1261,7 +1232,7 @@ function App() {
                 counts: VaultCounts;
             }>(backendUrl, `/daily/open-today?date=${encodeURIComponent(todayIso)}`, { method: 'POST' });
             setCounts(response.counts);
-            setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geoeffnet: ${response.date}`);
+            setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geöffnet: ${response.date}`);
             setError('');
             await emitMutationEvent({
                 kind: response.created ? 'note-created' : 'note-saved',
@@ -1323,7 +1294,7 @@ function App() {
             }),
         });
         setCounts(response.counts);
-        setMessage(`Todo fuer heute erfasst: ${response.todoText}`);
+        setMessage(`Todo für heute erfasst: ${response.todoText}`);
         await emitMutationEvent({
             kind: 'focus-updated',
             refresh: {
@@ -1364,7 +1335,7 @@ function App() {
             }>(backendUrl, `/todos/${encodeURIComponent(todoId)}/promote`, {
                 method: 'POST',
             });
-            const verb = response.created === false ? 'bereits verknuepft' : 'zu Task promoted';
+            const verb = response.created === false ? 'bereits verknüpft' : 'zu Task promoted';
             setMessage(`Todo ${verb}: ${response.taskId}`);
             await emitMutationEvent({
                 kind: 'todo-updated',
@@ -1418,7 +1389,7 @@ function App() {
         if (tab.kind !== 'note' || !tab.dirty) {
             return true;
         }
-        const decision = await askTagChoice(`Ungespeicherte Aenderungen in "${tab.title}"`, 'Was soll passieren?', [
+        const decision = await askTagChoice(`Ungespeicherte Änderungen in "${tab.title}"`, 'Was soll passieren?', [
             { id: 'save', label: 'Speichern', tone: 'primary' },
             { id: 'discard', label: 'Verwerfen', tone: 'danger' }
         ]);
@@ -1723,7 +1694,7 @@ function App() {
             return true;
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-            setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gueltiges ISO-Datum eingeben.');
+            setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gültiges ISO-Datum eingeben.');
             return false;
         }
         setTaskFieldErrorByPath(tabPath, 'follow_up_date', '');
@@ -1957,7 +1928,7 @@ function App() {
         if (!settingsDirtyRef.current && dirtyTabs.length === 0) {
             return true;
         }
-        const decision = await askTagChoice('Ungespeicherte Aenderungen', 'Vor dem Wechsel der NoteBase speichern?', [
+        const decision = await askTagChoice('Ungespeicherte Änderungen', 'Vor dem Wechsel der NoteBase speichern?', [
             { id: 'save', label: 'Speichern', tone: 'primary' },
             { id: 'discard', label: 'Nicht speichern', tone: 'danger' }
         ]);
@@ -2464,7 +2435,7 @@ function App() {
       onDisplayNameChange={setCreateNoteBaseDisplayName} onNameChange={setCreateNoteBaseName}
       onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
       onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
-    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
+    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onThemeChange={appSettingsService.setThemeMode} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
     const tagMatchWorkflowModal = tagMatchWorkflow.open ? <TagMatchDialog
       loading={tagMatchWorkflow.loading} applying={tagMatchWorkflow.applying}
       error={tagMatchWorkflow.error} status={tagMatchWorkflow.status} needsRescan={tagMatchWorkflow.needsRescan}
@@ -2593,12 +2564,12 @@ function App() {
         capture:()=>{setWritingSession(null);setCapturePinned(true);setCapturePanelOpen(value=>writingMode||!value)},focusCapture,
         notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
         focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
-        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),
+        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),whatsNew:()=>setWhatsNewOpen(true),
     };
     const appCommands:AppCommand[]=COMMANDS.map(spec=>{
         let enabled=vaultLoaded;
         if(['openNote','commandPalette','openVault','newVault'].includes(spec.id))enabled=!noteBaseOpenStatus?.active;
-        if(['quit','fullscreen','help','updates'].includes(spec.id))enabled=true;
+        if(['quit','fullscreen','help','updates','whatsNew'].includes(spec.id))enabled=true;
         if(['closeTab','closeOthers','nextTab','previousTab'].includes(spec.id))enabled=Boolean(activeTab);
         if(spec.id==='closeAll')enabled=openTabs.length>0;
         if(spec.id==='switchPane')enabled=vaultLoaded&&workspaceState.layoutMode==='split';
@@ -2614,7 +2585,7 @@ function App() {
             else if(spec.id==='switchPane')disabledReason='Zuerst den Editor teilen.';
             else if(spec.id==='writingMode')disabledReason='Zuerst den Editor öffnen.';
             else if(['closeTab','closeOthers','closeAll','nextTab','previousTab'].includes(spec.id))disabledReason='Keine Ansicht geöffnet.';
-            else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Quick Capture öffnen.';
+            else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Schnellerfassung öffnen.';
             else if(activeTab?.loading)disabledReason='Die Notiz wird noch geladen.';
             else if(activeTab?.readOnly)disabledReason='Diese Notiz ist schreibgeschützt.';
             else disabledReason='Eine bearbeitbare Notiz öffnen.';
@@ -2635,6 +2606,7 @@ function App() {
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
       <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span><kbd>{shortcutLabel('openNote')}</kbd></button>
       <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
+      <WhatsNewDialog open={whatsNewOpen} onOpen={()=>setWhatsNewOpen(true)} onClose={()=>setWhatsNewOpen(false)}/>
       <NotificationCenter items={operatorNotifications} onDismiss={clearOperatorNotification}/>
     </div>);
     const noteBaseProgressTotal = noteBaseOpenStatus?.total ?? 0;
@@ -2653,28 +2625,24 @@ function App() {
         <div className="window-content">
           <div className="launch-shell">
             <div className="launch-card">
-              <h1>Hallo {displayName}</h1>
-              <p>Waehle eine NoteBase aus und wir laden sie direkt automatisch.</p>
-
-              <label htmlFor="launch-display-name" className="field-label">
-                Anrede
-              </label>
-              <input id="launch-display-name" value={displayName} onChange={(event) => setSettingsDisplayName(event.target.value)} placeholder={`z. B. ${DEFAULT_DISPLAY_NAME}`}/>
+              <h1>Willkommen bei NickNotes</h1>
+              <p>Öffne eine vorhandene NoteBase oder lege eine neue an.</p>
 
               <div className="launch-actions">
-                <button onClick={() => void pickAndOpenVault()} disabled={noteBaseOpenStatus?.active}>
-                  NoteBase laden
+                <button className="primary" onClick={() => void pickAndOpenVault()} disabled={noteBaseOpenStatus?.active}>
+                  NoteBase öffnen
                 </button>
                 <button onClick={() => void createVault()} disabled={noteBaseOpenStatus?.active}>
                   NoteBase erstellen
                 </button>
-                <button onClick={toggleThemeMode}>
-                  {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+                <button className="launch-theme-toggle" onClick={toggleThemeMode} aria-pressed={theme === 'dark'}>
+                  <LucideNamedIcon name={theme === 'dark' ? 'Moon' : 'Sun'} size={14}/>
+                  {theme === 'dark' ? 'Dunkel' : 'Hell'}
                 </button>
               </div>
               <label htmlFor="launch-capture-draft" className="field-label">Schnellerfassungsentwurf</label>
               <textarea id="launch-capture-draft" data-launch-capture value={captureText} onChange={event=>setCaptureText(event.target.value)} rows={7} placeholder="Gedanken festhalten, während die NoteBase geladen wird …"/>
-              <small>Der Entwurf bleibt lokal erhalten. Nach dem Laden einer NoteBase kannst du ihn über Quick Capture absenden.</small>
+              <small>Der Entwurf bleibt lokal erhalten. Nach dem Laden einer NoteBase kannst du ihn über Schnellerfassung absenden.</small>
 
               {noteBaseOpenStatus?.active || noteBaseOpenStatus?.done ? (<div className="launch-progress" role="status" aria-live="polite">
                   <div className="launch-progress-header">
@@ -2700,7 +2668,7 @@ function App() {
       {windowTitlebar}
       {commandDialogs}
       <div className="window-content">
-        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
+        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} activeNotePath={graphNotePath} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
         <div className={`workbench-shell${writingMode?' is-writing':''}`} style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
       <ActivityRail sidebarView={sidebarView} noteBaseName={noteBaseName} onOpenSidebarView={view=>{
           if(['todos','tasks','focus','review','graph'].includes(view))void executeCommand(view);
@@ -2708,7 +2676,7 @@ function App() {
       }} onOpenSettings={openSettingsDialog}/>
 
       {sidebarOpen ? (<aside className="left-sidebar">
-          <WorkbenchSidebarContent sidebarView={sidebarView} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
+          <WorkbenchSidebarContent sidebarView={sidebarView} activeTabKind={activeTab?.kind ?? null} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
                 void renameNoteBase();
             }} onDeleteNoteBase={() => {
                 void deleteNoteBase();
@@ -2791,13 +2759,13 @@ function App() {
           {showCaptureInline ? (<div className={`capture-resize-handle ${captureResizing ? 'active' : ''}`} onPointerDown={(event) => {
                 event.preventDefault();
                 setCaptureResizing(true);
-            }} data-tooltip="Quick Capture Hoehe anpassen"/>) : null}
+            }} data-tooltip="Schnellerfassung Höhe anpassen"/>) : null}
 
           {showCaptureInline ? (<section className="workspace-panel capture-workspace-panel">
               <div className="panel-header-row">
-                <h3>Quick Capture</h3>
+                <h3>Schnellerfassung</h3>
                 <div className="panel-inline-actions">
-                  <button className="icon-button compact muted" onClick={closeCapturePanel} aria-label={commandTitle('capture','Quick Capture schließen')} data-tooltip={commandTitle('capture','Quick Capture schließen')}>
+                  <button className="icon-button compact muted" onClick={closeCapturePanel} aria-label={commandTitle('capture','Schnellerfassung schließen')} data-tooltip={commandTitle('capture','Schnellerfassung schließen')}>
                     <LucideNamedIcon name="X" size={14}/>
                   </button>
                 </div>
@@ -2805,7 +2773,7 @@ function App() {
               <div className="capture-panel-body">
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Notiz erfassen und optional To-do nennen" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
+                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt einen Termin" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
                 void saveCapture(markdown);
             }} onOpenWikiLink={(target) => {
                 openWikiLinkInEditor(target, activePaneId);
@@ -2821,7 +2789,7 @@ function App() {
         </div>
         {!showCaptureInline ? (<div className="bottom-dock">
             <button className="dock-tab" onClick={openCaptureFromDock} data-tooltip={commandTitle('capture')}>
-              Quick Capture
+              Schnellerfassung
             </button>
           </div>) : null}
       </section>
@@ -2835,17 +2803,17 @@ function App() {
           <ContextMenuItem onClick={() => {
                 void closeEditorTab(tabContextTarget.id);
             }}>
-            Registerkarte schliessen
+            Registerkarte schließen
           </ContextMenuItem>
           <ContextMenuItem onClick={() => {
                 void closeOtherEditorTabs(tabContextTarget.id);
             }} disabled={openTabs.length <= 1}>
-            Alle anderen Registerkarten schliessen
+            Alle anderen Registerkarten schließen
           </ContextMenuItem>
           <ContextMenuItem onClick={() => {
                 void closeAllEditorTabs();
             }} disabled={openTabs.length === 0}>
-            Alle Registerkarten schliessen
+            Alle Registerkarten schließen
           </ContextMenuItem>
         </ContextMenu>) : null}
 

@@ -62,8 +62,8 @@
   justify-content: flex-start;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   font-size: var(--font-label);
@@ -71,14 +71,12 @@
 }
 
 .activity-rail button:hover {
-  background: var(--surface-contrast);
-  border-color: var(--line);
+  background: var(--control-bg);
   color: var(--text);
 }
 
 .activity-rail button.active {
-  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface-contrast));
-  border-color: color-mix(in srgb, var(--line) 65%, var(--accent));
+  background: var(--accent-soft);
   color: var(--text);
 }
 
@@ -120,26 +118,6 @@
   z-index: 2;
   border-right: 1px solid var(--line);
   background: var(--surface-contrast);
-}
-
-.sidebar-content {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.sidebar-content h3,
-.sidebar-content h4 { margin: 0; }
-
-.sidebar-content h3 {
-  color: var(--muted);
-  font-size: var(--font-caption);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .main-region {
@@ -191,5 +169,6 @@
 .is-writing .bottom-dock, .is-writing .note-properties-details {display: none;}
 .is-writing > .main-region {grid-column: 1; grid-template-rows: minmax(0, 1fr);}
 .is-writing .workspace-grid.with-capture-column {grid-template-rows: minmax(0, 1fr);}
-.editor-tab-actions .workspace-writing-button {display: inline-flex; align-items: center; gap: var(--space-1); min-height: 26px; border: 1px solid var(--line); border-radius: var(--radius-md); background: transparent; color: var(--muted); padding: var(--space-1) var(--space-2); white-space: nowrap; font-size: var(--font-caption); line-height: 1.2;}
-.editor-tab-actions .workspace-writing-button.active {border-color: var(--accent); background: var(--accent-soft); color: var(--text);}
+.editor-tab-actions .workspace-writing-button {display: inline-flex; align-items: center; gap: var(--space-1); min-height: 26px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--muted); padding: var(--space-1) var(--space-2); white-space: nowrap; font-size: var(--font-caption); line-height: 1.2;}
+.editor-tab-actions .workspace-writing-button:hover {background: var(--control-bg); color: var(--text);}
+.editor-tab-actions .workspace-writing-button.active {background: var(--accent-soft); color: var(--text);}

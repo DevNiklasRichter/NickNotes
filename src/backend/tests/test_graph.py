@@ -163,7 +163,7 @@ class GraphIndexTests(unittest.TestCase):
         self.assertEqual(fallback["version"], 2)
         self.assertEqual(fallback["nodes"], [])
         self.assertTrue(any(item["type"] == "graphIndexReadFailed" for item in fallback["diagnostics"]))
-        backups = list(self.vault.system_path.glob("graph-index.json.*.corrupt.*.bak"))
+        backups = list(self.vault.local_path.glob("graph-index.json.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 
         rebuilt = build_graph_index(self.vault_path, self.vault.read_tag_groups())
@@ -563,7 +563,7 @@ class GraphIndexTests(unittest.TestCase):
         self.vault.graph_state_path.write_text("[]", encoding="utf-8")
         fallback = read_graph_state(self.vault.graph_state_path)
         self.assertEqual(fallback["version"], 2)
-        self.assertEqual(fallback["activeMode"], "link")
+        self.assertEqual(fallback["activeMode"], "focus")
         backups = list(self.vault.system_path.glob("graph-state.json.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 
@@ -577,11 +577,11 @@ class GraphIndexTests(unittest.TestCase):
         loaded = self.vault._read_task_status_link_index()
         self.assertEqual(loaded, {"task_abc": "tasks/open/task-abc.md"})
 
-        corrupted = self.vault.system_path / "task_status_links.json"
+        corrupted = self.vault.task_status_links_path
         corrupted.write_text("{not json", encoding="utf-8")
         recovered = self.vault._read_task_status_link_index()
         self.assertEqual(recovered, {})
-        backups = list(self.vault.system_path.glob("task_status_links.json.*.corrupt.*.bak"))
+        backups = list(self.vault.local_path.glob("task_status_links.json.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 
     def test_graph_state_migrates_legacy_payload_and_watcher_ignores_system(self) -> None:

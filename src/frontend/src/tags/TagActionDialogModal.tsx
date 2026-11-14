@@ -53,7 +53,7 @@ type TagActionDialogModalProps = {
 }
 
 const TAG_ID_INPUT_HINT =
-  'Erlaubt sind nur a-z, 0-9 und "-". Umlaute, Sonderzeichen und Leerzeichen sind fuer Tag-IDs nicht erlaubt.'
+  'Erlaubt sind nur a-z, 0-9 und "-". Umlaute, Sonderzeichen und Leerzeichen sind für Tag-IDs nicht erlaubt.'
 
 type ColorSelectionSource = 'preset' | 'custom'
 
@@ -137,7 +137,7 @@ function TagColorPicker({ colorPresets, selectedColor, onSelectColor }: TagColor
                 commitCustomColor(event.currentTarget.value)
               }
             }}
-            aria-label="Eigene Farbe auswaehlen"
+            aria-label="Eigene Farbe auswählen"
           />
         </label>
       </div>

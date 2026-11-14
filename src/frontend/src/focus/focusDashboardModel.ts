@@ -1477,9 +1477,9 @@ function toNextActionReasons(item: FocusPrimaryItem, todayIso: string): string[]
     reasons.push('MIT')
   }
   if (dueSignals.isOverdue) {
-    reasons.push('ueberfaellig')
+    reasons.push('überfällig')
   } else if (dueSignals.dueToday) {
-    reasons.push('heute faellig')
+    reasons.push('heute fällig')
   } else if (hasFollowUpDueNow(item, todayIso) && item.hasExternalWaiting) {
     reasons.push('follow-up heute')
   }
@@ -1611,13 +1611,13 @@ function toMitSuggestionReasons(item: FocusPrimaryItem, todayIso: string, includ
   if (item.kind === 'task') {
     const priority = normalizeTaskPriorityValue(item.priority || 'medium')
     if (priority === 'high') {
-      reasons.push('hohe Prioritaet')
+      reasons.push('hohe Priorität')
     }
   }
   if (dueSignals.isOverdue) {
-    reasons.push('ueberfaellig')
+    reasons.push('überfällig')
   } else if (dueSignals.dueToday) {
-    reasons.push('heute faellig')
+    reasons.push('heute fällig')
   }
   if (item.estimateMinutes !== null) {
     reasons.push(`${item.estimateMinutes}m`)
@@ -1734,7 +1734,7 @@ function toCapacitySummary(args: {
         ? 'Heute gut ausbalanciert.'
         : capacityStatus === 'heavy'
           ? 'Heute eher voll.'
-          : 'Heute ueberladen - Fokus schaerfen.'
+          : 'Heute überladen - Fokus schärfen.'
   return { estimatedLoadTodayMinutes, capacityStatus, capacityMessage }
 }
 

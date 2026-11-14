@@ -15,17 +15,17 @@ export function GraphDashboardCanvas() {
       {showLargeGraphNotice ? (
         <div className="graph-warning graph-editor-overlay graph-dismissible-notice">
           <span>
-            Groesserer Graph sichtbar ({graph.filtered.nodes.length} Nodes, {graph.filtered.edges.length} Edges). Filter sind in der Sidebar.
+            Größerer Graph sichtbar ({graph.filtered.nodes.length} Nodes, {graph.filtered.edges.length} Edges). Filter sind in der Sidebar.
           </span>
           <button className="icon-button compact muted" onClick={() => setDismissedLargeGraphNoticeKey(largeGraphNoticeKey)} aria-label="Hinweis ausblenden" data-tooltip="Hinweis ausblenden">
             x
           </button>
         </div>
       ) : null}
-      {graph.viewTruncated || graph.relatedTruncated ? <p className="graph-warning graph-editor-overlay" role="status">Begrenzter Ausschnitt: maximal 500 Knoten und 1.500 Verbindungen; gemeinsame Tags fuer die Auswahl maximal 50 Nachbarn. Suche oder Fokus grenzen weiter ein.</p> : null}
+      {graph.viewTruncated || graph.relatedTruncated ? <p className="graph-warning graph-editor-overlay" role="status">Begrenzter Ausschnitt: maximal 500 Knoten und 1.500 Verbindungen; gemeinsame Tags für die Auswahl maximal 50 Nachbarn. Suche oder Fokus grenzen weiter ein.</p> : null}
       {graph.loading ? <p className="graph-editor-empty">Graph wird geladen ...</p> : null}
       {!graph.loading && graph.index && graph.index.nodes.length === 0 ? (
-        <p className="graph-editor-empty">Keine Graph-Daten vorhanden. Oeffne die Graph-Sidebar zum Neuaufbau.</p>
+        <p className="graph-editor-empty">Keine Graph-Daten vorhanden. Öffne die Graph-Sidebar zum Neuaufbau.</p>
       ) : null}
       <GraphNetworkView
         nodes={graph.filtered.nodes}

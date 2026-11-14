@@ -2,6 +2,9 @@
 
 import type {UpdateState} from './app/updateTypes'
 
+/** Login autostart of the local service; only the installed Windows app offers it. */
+type BackgroundService = {available:boolean; enabled:boolean}
+
 declare global {
   interface Window {
     nicknotesStartup?: {deferUi:(callback:()=>void)=>void;mount:(callback:(ready:()=>void,failed:(error:unknown)=>void)=>void)=>void}
@@ -9,6 +12,8 @@ declare global {
       startupTheme?:'light'|'dark'
       startupMark?:(event:'quick-entry-enabled'|'quick-entry-ready'|'ui-rendered'|'workspace-ready')=>void
       getBackendStatus?:()=>Promise<{phase:'starting'|'ready'|'error';message:string}>
+      getBackgroundService?:()=>Promise<BackgroundService>
+      setBackgroundService?:(enabled:boolean)=>Promise<BackgroundService>
       onBackendStatus?:(handler:(status:{phase:'starting'|'ready'|'error';message:string})=>void)=>()=>void
       readCaptureDraft?:()=>Promise<string>
       writeCaptureDraft?:(text:string)=>Promise<void>

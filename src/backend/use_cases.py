@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT
 from .nicknotes_backend.dates import calendar_day
-from .nicknotes_backend.markdown_io import parse_markdown_text, MarkdownFormatError
+from .nicknotes_backend.markdown_io import parse_markdown_text, snapshot_operation, MarkdownFormatError
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.onenote_importer import (
     OneNoteImportError,
@@ -46,11 +46,14 @@ class OpenVaultUseCase:
                 return VaultIndexer(vault.db_path)
             raise
 
+    @snapshot_operation  # index and graph build share one parse of every source file
     def execute(self, service: "BackendApiService", req: Any, *, progress_callback: Any | None = None) -> dict[str, Any]:
         vault_path = Path(req.path).expanduser().resolve()
         if not vault_path.exists():
             raise ValidationDomainError(f"NoteBase path not found: {vault_path}", operation="open_vault", vault_id=str(vault_path))
 
+        if service.state is service._runtime:
+            service.sessions.release(vault_path)
         service.state.dispose_session()
         indexer = None
         try:
@@ -96,7 +99,7 @@ class OpenVaultUseCase:
                 graph_status = service.rebuild_graph_projection(vault)
             else:
                 graph_status = service.graph_index_status(vault, existing_graph)
-            (vault.system_path/'projection-dirty.json').unlink(missing_ok=True)
+            vault.projection_dirty_path.unlink(missing_ok=True)
             try:
                 service.state.start_session(vault=vault, indexer=indexer)
                 service.state.start_graph_watcher(baseline)
@@ -328,21 +331,21 @@ class SaveNoteContentUseCase:
         normalized_path = service._resolve_note_request_path(vault=vault, raw_path=req.path, allow_missing=True)
         actual = hashlib.sha256(normalized_path.read_bytes()).hexdigest() if normalized_path.exists() else None
         if actual != req.expected_revision:
-            raise ConflictDomainError('Die Notiz wurde zwischenzeitlich geaendert. Bitte neu laden; dein Entwurf bleibt erhalten.')
+            raise ConflictDomainError('Die Notiz wurde zwischenzeitlich geändert. Bitte neu laden; dein Entwurf bleibt erhalten.')
         try:
             if len(req.content.encode('utf-8'))>5*1024*1024:
-                raise MarkdownFormatError('Eine Notiz darf maximal 5 MB gross sein.')
+                raise MarkdownFormatError('Eine Notiz darf maximal 5 MB groß sein.')
             incoming, _ = parse_markdown_text(req.content)
             existing, _ = parse_markdown_text(normalized_path.read_text(encoding='utf-8'))
             for identity in ('id','node_id'):
                 if existing.get(identity) and incoming.get(identity) != existing[identity]:
-                    raise MarkdownFormatError('Die stabile Notiz-ID darf beim Speichern nicht geaendert oder entfernt werden.')
+                    raise MarkdownFormatError('Die stabile Notiz-ID darf beim Speichern nicht geändert oder entfernt werden.')
             if incoming.get('due_date'):
                 date.fromisoformat(str(incoming['due_date']))
             if 'status' in incoming and str(incoming['status']).lower().replace('-','_').replace(' ','_') not in {'new_topic','open','in_progress','on_hold','done'}:
                 raise MarkdownFormatError('Unbekannter Task-Status.')
             if 'priority' in incoming and str(incoming['priority']).lower() not in {'l','m','h','low','medium','high'}:
-                raise MarkdownFormatError('Unbekannte Prioritaet.')
+                raise MarkdownFormatError('Unbekannte Priorität.')
         except (MarkdownFormatError,ValueError) as exc:
             raise ValidationDomainError(str(exc)) from exc
         # A failure below leaves through the source journal of the coordinated
@@ -376,14 +379,15 @@ class RenameNoteUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        service._resolve_note_request_path(vault=vault, raw_path=req.path)
+        previous_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
         with service.state.projection_lock:
             renamed_path = vault.rename_note_file(req.path, req.new_name, indexer)
+            link_rewrite = vault.consume_last_link_rewrite_result()
             return {
                 "renamedPath": str(renamed_path),
-                "graphStatus": service.rebuild_graph_projection(vault),
+                "graphStatus": service.update_graph_after_note_move(vault=vault, previous_path=previous_path, moved_path=Path(renamed_path), rewritten=link_rewrite["paths"]),
                 "counts": service.counts(indexer),
-                "linkRewrite": vault.consume_last_link_rewrite_result(),
+                "linkRewrite": link_rewrite,
             }
 
 
@@ -392,14 +396,15 @@ class MoveNoteUseCase:
 
     def execute(self, service: "BackendApiService", req: Any) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
-        service._resolve_note_request_path(vault=vault, raw_path=req.path)
+        previous_path = service._resolve_note_request_path(vault=vault, raw_path=req.path)
         with service.state.projection_lock:
             moved_path = vault.move_note_file(req.path, req.target_group_key, indexer)
+            link_rewrite = vault.consume_last_link_rewrite_result()
             return {
                 "movedPath": str(moved_path),
-                "graphStatus": service.rebuild_graph_projection(vault),
+                "graphStatus": service.update_graph_after_note_move(vault=vault, previous_path=previous_path, moved_path=Path(moved_path), rewritten=link_rewrite["paths"]),
                 "counts": service.counts(indexer),
-                "linkRewrite": vault.consume_last_link_rewrite_result(),
+                "linkRewrite": link_rewrite,
             }
 
 

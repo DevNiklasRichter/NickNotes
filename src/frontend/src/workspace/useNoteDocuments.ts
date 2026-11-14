@@ -52,7 +52,7 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
             return true;
         }
         if (targetTab.readOnly) {
-            context.setMessage('Diese Tag-Overview wird automatisch generiert und ist schreibgeschuetzt.');
+            context.setMessage('Diese Tag-Overview wird automatisch generiert und ist schreibgeschützt.');
             return true;
         }
         const baseDocument = targetTab.parsedDocument ?? parseNoteDocument(targetTab.content, targetTab.title || toNoteDisplayName(targetTab.path));

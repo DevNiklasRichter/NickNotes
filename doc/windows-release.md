@@ -35,7 +35,7 @@ Der Installer arbeitet pro Benutzer, benoetigt keine erhoehten Rechte und laesst
 - App-Profil und lokale MCP-Freigaben: Benutzerprofil von NickNotes, standardmaessig `%APPDATA%\NickNotes`.
 - NoteBase: vom Benutzer gewaehlter Ort; keine Schreibvorgaenge in den Installationsordner.
 - Tests: `NICKNOTES_USER_DATA` und `NICKNOTES_PORT` fuer ein isoliertes Profil und einen eigenen Port.
-- Ein App-Prozess pro Benutzerprofil. Der eigene Backendprozess wird ueber seine Pipe beendet. Fremde Prozesse auf einem belegten Port werden nicht beendet.
+- Ein App-Prozess und ein NickNotes-Dienst pro Benutzerprofil. Ohne Hintergrundbetrieb endet der Dienst mit der App; mit Hintergrundbetrieb startet er per `HKCU\…\Run` mit Windows. Installer und Deinstallation beenden ihn; die Deinstallation entfernt den Autostart. Fremde Prozesse auf einem belegten Port werden nicht beendet.
 
 Der Renderer verwendet `nicknotes://app`, eine Content-Security-Policy, Context Isolation und eine schmale IPC-Bridge. Das Backend bindet ausschliesslich Loopback. Der interne App-Schluessel wird beim Start erzeugt und nicht in URLs oder der NoteBase gespeichert.
 
@@ -43,7 +43,7 @@ Der Renderer verwendet `nicknotes://app`, eine Content-Security-Policy, Context 
 
 Formatversion 2 entfernt die alten Assistant-/Provider-Einstellungen und konsolidiert Tagdefinitionen in `.system/tag_groups.json`. Vorherige Konfigurationen und Migrationsnachweise bleiben lokal in `.system/migrations`. Widerspruechliche Definitionsquellen brechen vor inhaltlichen Aenderungen ab. Veraltete Projektionen werden neu aufgebaut. Aeltere Programmfassungen verstehen die neue Todo-Historie nicht vollstaendig; ein Downgrade ist deshalb kein unterstuetzter Rueckweg. Fuer einen Rueckweg die gesicherte NoteBase mit der passenden Programmfassung verwenden.
 
-Unterbrochene Quelldateiaktionen stehen unter `.system/recovery`. Die App bietet in **Einstellungen → Allgemein** Wiederherstellung oder bewusstes Beibehalten an. Vor einer Wiederherstellung wird der aktuelle Stand erneut gesichert. Ein Index kann daraus neu aufgebaut werden; er ist kein Ersatz fuer eine Datensicherung.
+Unterbrochene Quelldateiaktionen stehen geraetelokal unter `%LOCALAPPDATA%/NickNotes/notebases/<NoteBase>/recovery`. Die App bietet in **Einstellungen → Allgemein** Wiederherstellung oder bewusstes Beibehalten an. Vor einer Wiederherstellung wird der aktuelle Stand erneut gesichert. Ein Index kann daraus neu aufgebaut werden; er ist kein Ersatz fuer eine Datensicherung.
 
 Alte lokal gespeicherte Assistant-Schluessel werden nicht mehr gelesen. Falls eine
 Vorversion `%APPDATA%\NickNotes\assistant-secrets.json` angelegt hat, ist diese
@@ -144,6 +144,74 @@ oeffentlichen Umschaltung im Repository Private Vulnerability Reporting
 aktivieren und die Windows-CI als Mergepflicht einrichten; diese Einstellungen
 wurden hier nicht umgestellt. Signierung ist keine Zusage, dass Windows niemals
 Warnungen anzeigt.
+
+## Release Notes
+
+`CHANGELOG.md` ist die einzige Quelle fuer Release Notes. Jede in der App
+bemerkbare Aenderung bekommt im selben PR eine verstaendliche Zeile unter
+`[Unreleased]` (Neu, Verbessert, Behoben, Wichtig beim Umstieg). Commit-Nachrichten
+bleiben technisch und englisch; sie sind keine Release Notes.
+
+Daraus entstehen drei Ansichten derselben Texte:
+
+- der GitHub-Release (Body = Abschnitt der Version; alles nach `---` ist
+  Downloadinformation und erscheint nicht in der App),
+- der Update-Dialog vor dem Download (Release-Body der angebotenen Version),
+- **Hilfe → Was ist neu** nach dem Update (im Paket gebuendelter Abschnitt).
+
+Eine neue Version vorbereiten:
+
+```powershell
+npm run release:prepare -- 2.1.0
+git switch -c release/2.1.0; git commit -am "release: 2.1.0"   # PR, gruene CI, Merge
+git switch main; git pull; git tag v2.1.0; git push origin v2.1.0
+```
+
+Der Tag startet die Release-CI, die alles erneut prueft und den Entwurf anlegt.
+Versionen folgen SemVer: Fehlerbehebungen erhoehen die dritte Stelle, neue
+Funktionen die zweite, ein Formatwechsel der NoteBase die erste. Testfassungen
+heissen `x.y.z-rc.n` und werden stabilen Clients nie angeboten.
+
+## Repository und Signierung
+
+Ein einziges oeffentliches Repository mit Quellcode und Releases ist fuer ein
+MIT-Projekt der uebliche Weg. Ein privates Entwicklungs- plus oeffentliches
+Release-Repository lohnt sich nur bei nicht oeffentlichem Quellcode; es verdoppelt
+Pflege und Updatepfad. Kostenlose Open-Source-Signierung setzt ohnehin ein
+oeffentliches Repository voraus. Vor der Umstellung: Verlauf auf Geheimnisse und
+persoenliche Daten pruefen, GitHub Secret Scanning und Private Vulnerability
+Reporting einschalten, `main` per Ruleset schuetzen (PR + gruene Windows-CI).
+
+Der Updater erwartet Releases unter `DevNiklasRichter/NickNotes`; solange das
+Repository privat ist, findet er keine Updates.
+
+Signierwege fuer eine Einzelperson (Stand November 2026):
+
+| Weg | Kosten | Herausgeber im Zertifikat | Wo signiert wird |
+| --- | --- | --- | --- |
+| Certum „Open Source Code Signing in the Cloud“ | etwa 50 EUR/Jahr | „Open Source Developer, <Name>“ | Laptop mit SimplySign Desktop; das Zertifikat erscheint im Windows-Zertifikatspeicher |
+| SignPath Foundation | kostenlos | „SignPath Foundation“ | GitHub Actions; jede Signatur wird manuell freigegeben |
+| Azure Artifact Signing | etwa 10 USD/Monat | eigener Name | nur fuer Einzelpersonen aus USA/Kanada, fuer Deutschland nicht verfuegbar |
+
+Entscheidung (14. November 2026): **SignPath Foundation**, kostenlos. Herausgeber
+im Installer ist dann „SignPath Foundation“, nicht der eigene Name. Daraus folgt:
+
+1. Signiert wird in GitHub Actions, nicht mehr auf einem Laptop. Die Release-CI
+   baut, schickt die Dateien an SignPath, ein Freigabeberechtigter bestaetigt die
+   Signatur, die CI haengt die signierten Dateien an den Entwurf. Der
+   Laptop-Ablauf unten bleibt nur als Rueckfallweg mit eigenem Zertifikat.
+2. Voraussetzungen fuer die Aufnahme: oeffentliches Repository, ein bereits
+   veroeffentlichter (unsignierter) Release, MFA fuer GitHub und SignPath, ein
+   Abschnitt „Code signing policy“ in README mit Rollen und Datenschutzhinweis
+   (Updatepruefung gegen GitHub).
+3. `NICKNOTES_PUBLISHER_NAME` wird „SignPath Foundation“. Der Updater akzeptiert
+   genau einen Herausgeber; diesen Wert vor dem ersten stabilen Release festlegen.
+4. Der erste oeffentliche Release ist deshalb unsigniert (Pre-Release ohne
+   Auto-Update); erst danach folgt die Aufnahme bei SignPath und der erste
+   signierte stabile Release.
+
+Kein Zertifikat beseitigt SmartScreen-Hinweise sofort; die Reputation waechst mit
+Downloads.
 
 ## Uebergabe an den Signier-Laptop
 

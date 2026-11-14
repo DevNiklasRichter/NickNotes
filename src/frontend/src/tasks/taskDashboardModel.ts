@@ -3,6 +3,8 @@ import {
   normalizeTagCandidate,
   normalizeTaskPriorityValue,
   normalizeTaskStatusValue,
+  TASK_PRIORITY_LABELS,
+  TASK_STATUS_LABELS,
   type TaskDashboardFilters,
   type TaskDashboardGroupingMode,
   type TaskDueBucket,
@@ -25,26 +27,15 @@ const STATUS_ORDER: TaskStatus[] = ['new_topic', 'open', 'in_progress', 'on_hold
 const PRIORITY_ORDER: TaskPriority[] = ['high', 'medium', 'low']
 const DUE_BUCKET_ORDER: TaskDueBucket[] = ['overdue', 'tomorrow', 'this_week', 'later', 'none']
 
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  new_topic: 'New Topic',
-  open: 'Open',
-  in_progress: 'In Progress',
-  on_hold: 'On Hold',
-  done: 'Done',
-}
-
-const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-}
+const STATUS_LABELS = TASK_STATUS_LABELS
+const PRIORITY_LABELS = TASK_PRIORITY_LABELS
 
 const DUE_BUCKET_LABELS: Record<TaskDueBucket, string> = {
-  overdue: 'Ueberfaellig',
+  overdue: 'Überfällig',
   tomorrow: 'Morgen',
   this_week: 'Diese Woche',
-  later: 'Spaeter',
-  none: 'Ohne Faelligkeit',
+  later: 'Später',
+  none: 'Ohne Fälligkeit',
 }
 
 export function toTaskDashboardTodayIso(baseDate?: Date): string {

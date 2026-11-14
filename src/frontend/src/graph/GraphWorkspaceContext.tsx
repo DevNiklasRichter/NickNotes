@@ -32,6 +32,8 @@ type GraphWorkspaceProviderProps = {
   enabled?: boolean
   graphUpdateToken: number
   latestGraphStatus: GraphIndexStatus | null
+  /** Absolute path of the note shown in the editor; the "Umgebung" view centres on it. */
+  activeNotePath?: string
   onOpenNodePath?: (path: string, title: string, nodeType: 'note' | 'task') => void
   onRevealNodePath?: (path: string) => void
   children: ReactNode
@@ -43,6 +45,7 @@ export function GraphWorkspaceProvider({
   enabled = true,
   graphUpdateToken,
   latestGraphStatus,
+  activeNotePath = '',
   onOpenNodePath,
   onRevealNodePath,
   children,
@@ -123,6 +126,18 @@ export function GraphWorkspaceProvider({
 
   }, [graphUpdateToken, index?.updated_at, latestGraphStatus, loadGraph, vaultLoaded])
 
+  // Follow the open note; selecting another node in the graph still re-centres until the next note switch.
+  const activeNodeId = useMemo(() => {
+    const normalized = activeNotePath.replace(/\\/g, '/').toLowerCase()
+    if (!normalized || !index) return ''
+    return index.nodes.find(node => node.path && normalized.endsWith('/' + node.path.toLowerCase()))?.id ?? ''
+  }, [activeNotePath, index])
+  const [followedNodeId, setFollowedNodeId] = useState('')
+  if (activeNodeId && activeNodeId !== followedNodeId) {
+    setFollowedNodeId(activeNodeId)
+    setFocusNodeId(activeNodeId)
+  }
+
   const [related, setRelated] = useState<{focus: string; edges: GraphEdge[]; total: number; truncated: boolean}>({focus: '', edges: [], total: 0, truncated: false})
   const focusPath = index?.nodes.find(node => node.id === focusNodeId)?.path
   useEffect(() => {
@@ -199,7 +214,7 @@ export function GraphWorkspaceProvider({
     loadGraph,
     triggerRebuild,
     resetFilters: () => {
-      setMode('link')
+      setMode(DEFAULT_GRAPH_STATE.activeMode)
       setViewMode('graph')
       setFilters({ ...DEFAULT_GRAPH_FILTERS })
     },

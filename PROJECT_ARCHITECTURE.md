@@ -34,7 +34,20 @@ Electron (Fenster, Ressourcen, Prozesslebensdauer, vertrauensgebundene IPC)
                      SQLite FTS5 / Graph / Uebersichten
 ```
 
-Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
+Ein Backendprozess pro Windows-Benutzer: der NickNotes-Dienst
+(`server.py --service`). Die App startet ihn nicht als Kind, sondern verbindet
+sich ueber `service.json` im Benutzerprofil (Port, PID, App-Token, Version) und
+startet ihn nur, wenn keiner laeuft oder eine andere Version laeuft. So schreibt
+weiterhin genau ein Prozess in jede NoteBase. Die App zeigt eine aktive NoteBase;
+`SessionRegistry` haelt daneben NoteBases offen, die Agenten-Freigaben
+benoetigen, und schliesst sie nach 10 Minuten ohne Zugriff.
+
+**Hintergrundbetrieb** (nur installierte Windows-App, Schalter unter
+Agent-Verbindungen, beim ersten Anlegen einer Freigabe eingeschaltet): Autostart
+per `HKCU\…\Run` („NickNotes Dienst“), der Dienst laeuft nach dem Schliessen der
+App weiter. Ist er aus, setzt die App ihre PID als Besitzer (`/service/owner`);
+der Dienst endet dann mit ihr. Installer und Updater beenden den Dienst vor dem
+Ersetzen der Dateien; die Deinstallation entfernt den Autostart.
 
 | Modul (`src/backend`) | Zustaendigkeit |
 | --- | --- |
@@ -43,7 +56,8 @@ Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
 | `security.py` | Loopback-Grenze: Host, Origin, App-Token, Eingabegroesse. |
 | `application_services.py` | Transportunabhaengige Operationen. Importiert weder FastAPI noch Routing. |
 | `use_cases.py` | Mehrschrittige Ablaeufe: Oeffnen, Speichern, Umbenennen, Verschieben, Fokus, Import. |
-| `session.py` | `RuntimeState`, `VaultSession`, Operationssperre, Sessiongeneration, `@coordinated`, `ProgressTracker`. |
+| `session.py` | `RuntimeState`, `VaultSession`, `SessionRegistry`, Operationssperre, Sessiongeneration, `@coordinated`, `ProgressTracker`. |
+| `server.py`, `service_control.py` | Dienstmodus, `service.json`, Besitzer-Watchdog, geordnetes Beenden. |
 | `commands.py`, `contracts.py`, `errors.py` | Eingaben, Antworten, Domain-Fehler. |
 | `nicknotes_backend/vault.py` | Fachlogik auf Dateien: Notizen, Tasks, Tags, Medien, Link-Rewrite, Migration. |
 | `nicknotes_backend/indexer.py` | SQLite-Projektion und Volltextsuche. |
@@ -54,13 +68,17 @@ Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
 Kein zweiter Fachkern fuer MCP und kein allgemeines Serviceframework.
 
 **Sicherheit.** Uvicorn lauscht nur auf Loopback (Standardport 8765). Ein
-zufaelliger App-Schluessel geht ueber die Prozesspipe an das Backend und ueber eng
-begrenzte IPC an den Renderer. Host, Origin, Pfade und Eingabegroessen werden
+zufaelliger App-Schluessel entsteht im Dienst, liegt in `service.json` im
+Benutzerprofil und geht ueber eng begrenzte IPC an den Renderer; Vertrauensgrenze
+ist der angemeldete Windows-Benutzer. Host, Origin, Pfade und Eingabegroessen werden
 geprueft. Electron verwendet Context Isolation, Sandbox, CSP und `nicknotes://app`;
 IPC akzeptiert nur den App-Hauptframe. Fremde Prozesse auf belegten Ports werden
-nicht beendet. Pipe und Parent-Watchdog beenden den eigenen Backendprozess.
+nicht beendet. Ohne Hintergrundbetrieb beendet der Besitzer-Watchdog den Dienst mit der App.
 
-**MCP.** Freigaben gelten fuer eine NoteBase und besitzen getrenntes Schreibrecht.
+**MCP.** Eine Freigabe gilt genau fuer eine NoteBase und besitzt getrenntes
+Schreibrecht; sie erreicht ihre NoteBase auch, wenn die App eine andere zeigt.
+`search_notes` sortiert Volltexttreffer nach dem Link-Graphen nach,
+`get_note_context` liefert Links, Backlinks und Tag-Nachbarn.
 Nur Token-Hashes liegen im geraetelokalen Profil; Rechte werden bei jedem Aufruf
 geprueft. Keine Shell, freie Host-Dateioperationen oder NoteBase-Loeschung per
 MCP. Erstellen/Anhaengen besitzen persistente Wiederholungsbelege; mehrdeutig
@@ -80,15 +98,23 @@ MeineNoteBase/
   .system/
     config.json                  Formatversion 2, stabile vault_id
     tag_groups.json              einzige Tagdefinitionsquelle
-    ui_settings.json             Themes und portable UI-Einstellungen
+    ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
+    graph-state.json             Graph-Anordnung und -Filter, Version 2
+    migrations/                  Konfigurationssicherungen und Nachweise
+
+%LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
-    graph-state.json             Graph-UI-Zustand, Version 2
-    migrations/                  Konfigurationssicherungen und Nachweise
+    task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
-    mcp-operations/               Wiederholungsbelege, keine zweite Inhaltsquelle
+    mcp-operations/              Wiederholungsbelege, keine zweite Inhaltsquelle
 ```
+
+Projektionen und Journale liegen bewusst ausserhalb der NoteBase, damit ein
+Sync-Ordner (z. B. OneDrive als Backup) nur Inhalte hochlaedt. Eine verschobene
+oder kopierte NoteBase baut sie beim Oeffnen neu auf; Altdateien in `.system/`
+werden dabei entfernt, offene Journale uebernommen.
 
 Frontmatter wird mit sicherem YAML gelesen. Unbekannte verschachtelte Felder
 bleiben erhalten; doppelte Schluessel und unsichere Typen werden abgelehnt.
@@ -97,11 +123,22 @@ Datei-, Frontmatter-, Tiefe- und Aliaslimits begrenzen die Verarbeitung. Stabile
 Manuelle `tags`/`related` und aus dem Body abgeleitete `tags_auto`/`related_auto`
 werden gemeinsam projiziert. Task-Typen gelten unabhaengig vom Ordner.
 
-To-dos erhalten beim Bearbeiten stabile Blockreferenzen und Zeitfelder direkt
-im Markdown (`<!-- nn:todo created=... completed=... --> ^nn-todo_...`).
+To-dos erhalten beim Bearbeiten und bei der Schnellerfassung im Fokus dieselben
+stabilen Blockreferenzen und Zeitfelder im Markdown
+(`<!-- nn:todo created=... --> ^nn-todo_...`). `completed=...` wird nur mit einem
+Erledigungszeitpunkt geschrieben. Bestehende Marker mit leerem `completed=`
+bleiben lesbar.
 Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
 einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
 im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.
+
+Beim Senden der Schnellerfassung wird ein offenes To-do mit Termin
+(`- [ ] Angebot schicken @2026-11-20`) per Promotion zur Task mit diesem
+Faelligkeitsdatum; die Zeile bleibt in der Tagesnotiz stehen. In anderen Notizen
+ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
+Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
+dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der
+gerade bearbeiteten Notiz (1 oder 2 Ebenen, optional nach einem Tag gefiltert).
 
 Die Ordnernamen `daily`, `tags`, `tasks`, `.media` und `.system` sind fest. Die
 frueheren Namen (`system`, `99_system`, `01_daily`, `02_tags`, `03_tasks`) werden
@@ -155,10 +192,21 @@ meldet eine Aenderungsversion. `BackendChangeEvent` nennt Version, Operation,
 betroffene Pfade und Trunkierung. Der Renderer verwendet Pfade nur bei einer
 lueckenlosen Version; sonst folgt der vollstaendige Dokumentabgleich.
 
-Bekannte Grenzen: Der Watcher scannt alle zwei Sekunden das Inventar, der
-Renderer fragt `/state` alle 2,5 Sekunden ab. Umbenennen und Verschieben bauen
-den Graph vollstaendig neu auf; `graph-index.json` wird je Save komplett
-geschrieben. `explorer_files` durchsucht den Ordner statt den Index.
+Der Watcher liest alle zwei Sekunden Zeit und Größe aus dem Verzeichnislisting,
+ohne Dateien zu öffnen, und bestätigt nur scheinbare Änderungen an der Datei.
+Fragt 30 Sekunden kein Client `/state` ab (verstecktes Fenster), prüft er nur
+noch alle zehn Sekunden; der Renderer pausiert seine Abfrage, solange das Fenster
+verborgen ist. Der eingelesene Graph bleibt im Speicher, solange
+`graph-index.json` unverändert ist. Ein Save ohne Änderung an ID, Titel, Tags
+oder Verweisen fasst den Graph nicht an; Umbenennen und Verschieben
+aktualisieren nur die betroffenen Dateien (ab neun umgeschriebenen Notizen
+Vollaufbau). Der Erstaufbau liest Quelldateien stapelweise parallel.
+`scripts/benchmark-notebase.py` misst Öffnen, Speichern und Umbenennen auf einem
+synthetischen Bestand.
+
+Bekannte Grenzen: Ein Save mit geänderten Tags oder Verweisen löst alle Verweise
+neu auf und schreibt `graph-index.json` vollständig. Link-Rewrite beim
+Umbenennen liest jede Notiz.
 
 ## Frontend
 
@@ -199,9 +247,10 @@ Regeln, die Aenderungen einhalten muessen:
 - **Ansichtszustand ist fluechtig oder UI-Setting.** Schreibmodus, Filter und
   Layout erzeugen keine fachliche Aenderungsversion und schreiben kein Markdown.
 - **Gestaltung** folgt den Tokens in `index.css` und dem
-  [UI-Styleguide](doc/ui-styleguide.md). `layout/WorkbenchShell.css` besitzt das
-  Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen. Geplante
-  Vereinheitlichung: [UI-Modernisierung](doc/ui-modernization-plan-2026-11-12.md).
+  [UI-Styleguide](doc/ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
+  Farben stehen nur in `index.css`, Buttons, Eingaben und Auswahlfelder sind dort
+  einmal definiert. `layout/WorkbenchShell.css` besitzt das
+  Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen.
 
 `npm run ux:baseline` erfasst die echte Entwicklungsoberflaeche mit eigenem
 Profil und synthetischer NoteBase unter `.tmp/` (Screenshots, Layoutmesswerte,
@@ -209,35 +258,20 @@ Bediennachweise). Schalter wie `--menus`, `--settings-dialog` oder `--properties
 pruefen einzelne Bereiche. Das ist eine UX-Baseline, keine Installerabnahme oder
 vollstaendige Accessibilityfreigabe.
 
-Bedienung und Nachweise einzelner Bereiche:
-[Tasten und Menues](doc/keyboard-and-menus.md),
-[Kontextmenues](doc/context-menus-2026-11-10.md),
-[Tagmenues](doc/tag-menus-2026-11-10.md),
-[Graphmenues](doc/graph-menus-2026-11-10.md),
-[Editormenues](doc/editor-menus-2026-11-10.md),
-[Sortierung und NoteBase-Menues](doc/sidebar-menus-2026-11-10.md),
-[Tagvorschlaege](doc/tag-suggestions-2026-11-10.md),
-[NoteBase-Erstellung](doc/create-notebase-dialog-2026-11-10.md),
-[Tag-Matching](doc/tag-matching-dialog-2026-11-10.md),
-[Einstellungen](doc/settings-dialog-2026-11-11.md),
-[Mehrfachfilter](doc/multiselect-filters-2026-11-12.md),
-[Editor-Eigenschaften](doc/editor-properties-2026-11-12.md),
-[Tooltips](doc/tooltips-2026-11-13.md),
-[Suche und App-Befehle](doc/search-commands-2026-11-13.md),
-[Navigation und Schreibraum](doc/navigation-writing-2026-11-13.md),
-[Restmodernisierung](doc/remaining-modernization-2026-11-13.md),
-[UX-Baseline](doc/ux-baseline-2026-11-10.md),
-[Gestaltungsgrundlage](doc/ui-foundations-2026-11-10.md).
+Bedienung: [Tasten und Menues](doc/keyboard-and-menus.md).
 
 ## Start und Desktop
 
 Der Desktop registriert IPC und oeffnet sein Fenster vor der Backend-
 Bereitschaft. `index.html` und das abhaengigkeitsfreie `public/startup.js`
 stellen eine kleine Schnellerfassung bereit; erst danach laedt `bootstrap.ts`
-React und die Editoren. Der Pythonprozess startet nach der ersten gezeichneten
-Eingabe (Fallback nach drei Sekunden). `backend-worker.mjs` besitzt Prozessstart
-und Kontrollpipe ausserhalb des Electron-Hauptthreads. Die Backend-URL wird vor
-der Bereitschaft ermittelt, der Token erst danach freigegeben.
+React und die Editoren. Nach der ersten gezeichneten Eingabe (Fallback nach drei
+Sekunden) verbindet sich `backend-service.mjs` mit dem laufenden Dienst oder
+startet ihn ueber `backend-worker.mjs` losgeloest ausserhalb des
+Electron-Hauptthreads. Laeuft der Dienst schon (Autostart), entfaellt der
+Python-Kaltstart. Die Backend-URL wird vor der Bereitschaft ermittelt, der Token
+erst danach freigegeben. Das gepackte Backend hat kein Konsolenfenster und
+schreibt im Dienstmodus nach `service.log`.
 
 Ein noch nicht abgesendeter Quick-Capture-Entwurf liegt als `capture-draft.md`
 im geraetelokalen Profil (`capture-draft-store.mjs`). Erst **Senden** schreibt
@@ -249,7 +283,14 @@ Updates im Hauptprozess. Download und Installation sind getrennte
 Benutzeraktionen; vor der Installation wird ueber den Close-Guard gespeichert.
 Unsignierte Kandidaten aktivieren den Updater nicht. Pruefsummen und Windows-
 Signatur werden vor Installationsbereitschaft geprueft. Der Renderer erhaelt nur
-Status und feste IPC-Aktionen.
+Status, die Release Notes der angebotenen Version als Klartext und feste
+IPC-Aktionen.
+
+`CHANGELOG.md` ist fuer Anwender geschrieben und wird ins Frontend gebuendelt.
+**Hilfe → Was ist neu** zeigt den Abschnitt der laufenden Version; nach einem
+Versionswechsel oeffnet er sich einmal von selbst (zuletzt gesehene Version im
+`localStorage`, Erstinstallation bleibt still). Der Update-Dialog zeigt den
+Release-Text der angebotenen Version vor dem Download.
 
 ## Entwicklung und Auslieferung
 
@@ -267,12 +308,13 @@ Status und feste IPC-Aktionen.
   sind auf Commits gepinnt. Stabile Tags auf `main` erzeugen einen leeren
   Release-Entwurf. Signierung erfolgt ausschliesslich auf dem Release-Laptop des
   Benutzers; die Veroeffentlichung bleibt eine ausdrueckliche Aktion in GitHub.
+- `release:prepare -- <Version>` macht aus `[Unreleased]` den Abschnitt der
+  naechsten Version und setzt Paket- und Lockversion. Dependabot schlaegt
+  woechentlich gebuendelte npm-/pip-Updates und monatlich Action-Updates vor.
 - macOS-/Linux-Entwicklung ist zurueckgestellt.
 
 Details: [Windows-Auslieferung](doc/windows-release.md),
-[GitHub-Pipeline](doc/github-pipeline.md),
-[Releasepruefung](doc/release-candidate-2026-11-08.md),
-[Implementierungsplan](doc/implementation-plan.md).
+[GitHub-Pipeline](doc/github-pipeline.md).
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur

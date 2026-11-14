@@ -22,7 +22,7 @@ export function useExternalChanges({backendUrl, vaultLoaded, tabs, setTabs, setC
   const receive = useEffectEvent(async (state: BackendStateResponse,previous:number,signal:AbortSignal) => {
     const epoch=connectionEpoch()
     if (state.counts) setCounts(state.counts)
-    if (state.pendingRecovery.length) warn('Eine unterbrochene Aenderung benoetigt eine Pruefung. Details und Wiederherstellung stehen in den Einstellungen.')
+    if (state.pendingRecovery.length) warn('Eine unterbrochene Änderung benötigt eine Prüfung. Details und Wiederherstellung stehen in den Einstellungen.')
     // The last event is sufficient only for an unbroken version sequence.
     const paths=changedDocumentPaths(state,previous)
     const affected=tabs.current.filter(tab=>tab.kind==='note'&&!tab.loading&&(!paths||paths.has(normalizeFilePathKey(tab.path))))
@@ -59,8 +59,11 @@ export function useExternalChanges({backendUrl, vaultLoaded, tabs, setTabs, setC
       } catch { /* Transient disconnection is handled by the connection state. Drafts stay local. */ }
       finally {polling = false}
     }
-    void poll()
-    const timer = window.setInterval(() => { void poll() }, 2500)
-    return () => {controller.abort(); window.clearInterval(timer)}
+    // A hidden window does not poll; the backend watcher slows down with it. Becoming visible catches up at once.
+    const tick = () => { if (!document.hidden) void poll() }
+    tick()
+    const timer = window.setInterval(tick, 2500)
+    document.addEventListener('visibilitychange', tick)
+    return () => {controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', tick)}
   }, [backendUrl, vaultLoaded])
 }

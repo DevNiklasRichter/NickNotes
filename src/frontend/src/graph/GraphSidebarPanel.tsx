@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { GraphFilters } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import { useGraphWorkspace } from './useGraphWorkspace'
@@ -5,6 +6,8 @@ import { useGraphWorkspace } from './useGraphWorkspace'
 export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vaultLoaded: boolean; onOpenGraphDashboard: () => void }) {
   const graph = useGraphWorkspace()
   const graphUnavailable = !graph.graphStatus?.available || !graph.index || graph.index.nodes.length === 0
+  const tagNodes = useMemo(() => (graph.index?.nodes ?? []).filter(node => node.type === 'tag')
+    .sort((left, right) => `${left.group}${left.label}`.localeCompare(`${right.group}${right.label}`, 'de')), [graph.index])
 
   const handleOpenGraphDashboard = async () => {
     if (!vaultLoaded) {
@@ -46,8 +49,40 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       </header>
 
       <button className="todo-open-dashboard-button" onClick={() => void handleOpenGraphDashboard()} disabled={!vaultLoaded || graph.rebuilding}>
-        Graph oeffnen
+        Graph öffnen
       </button>
+
+      <section className="todo-sidebar-section">
+        <h4>Ansicht</h4>
+        <div className="graph-search-mode-options" role="radiogroup" aria-label="Graph-Ansicht">
+          <label data-tooltip="Nur die geöffnete Notiz und ihre Verbindungen">
+            <input type="radio" name="graph-view" checked={graph.mode === 'focus'} onChange={() => graph.setMode('focus')} />
+            <span>Umgebung der Notiz</span>
+          </label>
+          <label data-tooltip="Alle Notizen, Tasks und Tags">
+            <input type="radio" name="graph-view" checked={graph.mode !== 'focus'} onChange={() => graph.setMode('link')} />
+            <span>Ganzer Graph</span>
+          </label>
+        </div>
+        <div className="todo-filter-rows">
+          {graph.mode === 'focus' ? (
+            <label className="todo-filter-row">
+              <span className="todo-filter-row-label">Tiefe</span>
+              <select value={graph.filters.focusDepth} onChange={(event) => graph.updateFilters({ focusDepth: event.target.value === '2' ? 2 : 1 })}>
+                <option value={1}>Direkte Verbindungen</option>
+                <option value={2}>Zwei Ebenen</option>
+              </select>
+            </label>
+          ) : null}
+          <label className="todo-filter-row">
+            <span className="todo-filter-row-label">Tag</span>
+            <select value={graph.filters.tag} onChange={(event) => graph.updateFilters({ tag: event.target.value })}>
+              <option value="">Alle</option>
+              {tagNodes.map(node => <option key={node.id} value={node.id}>{node.group ? `${node.group} · ${node.label}` : node.label}</option>)}
+            </select>
+          </label>
+        </div>
+      </section>
 
       <section className="todo-sidebar-section graph-sidebar-search-section">
         <h4>Suche</h4>
@@ -57,7 +92,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             className="explorer-search-input graph-sidebar-search-input"
             value={graph.filters.searchText}
             onChange={(event) => graph.updateFilters({ searchText: event.target.value })}
-            placeholder="Search"
+            placeholder="Suchen"
           />
         </div>
         <div className="graph-search-mode-options" role="radiogroup" aria-label="Suchdarstellung">
@@ -95,7 +130,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
       <section className="todo-sidebar-section">
         <div className="todo-section-header">
           <h4>Filter</h4>
-          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} aria-label="Filter zuruecksetzen" data-tooltip="Filter zuruecksetzen">
+          <button className="icon-button compact muted todo-section-reset-button" onClick={graph.resetFilters} aria-label="Filter zurücksetzen" data-tooltip="Filter zurücksetzen">
             <LucideNamedIcon name="FilterX" size={13} />
           </button>
         </div>
@@ -106,7 +141,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
               <span
                 className="graph-filter-info-icon"
                 tabIndex={0} role="img" aria-label="Hinweis zum Kantengewicht"
-                data-tooltip="Mindestgewicht fuer Kanten: Hoehere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
+                data-tooltip="Mindestgewicht für Kanten: Höhere Werte blenden schwache Beziehungen aus. Link-Kanten und gemeinsame Tags bleiben nur sichtbar, wenn ihr berechnetes Gewicht mindestens diesem Wert entspricht."
               >
                 <LucideNamedIcon name="Info" size={13} />
               </span>
@@ -135,7 +170,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             <div className="focus-sidebar-check-grid">
               {renderCheckbox('showLinkEdges', 'Links', 'Direkte WikiLinks von einer Datei zu einer anderen Datei.')}
               {renderCheckbox('showTagUsageEdges', 'Tag-Nutzung', 'Verbindung von einer Datei zu einem Tag, den sie verwendet.')}
-              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Gemeinsame Tags der ausgewaehlten Notiz mit maximal 50 Nachbarn. Waehle zuerst einen Notizknoten.')}
+              {renderCheckbox('showSharedTagEdges', 'Gemeinsame Tags', 'Gemeinsame Tags der ausgewählten Notiz mit maximal 50 Nachbarn. Wähle zuerst einen Notizknoten.')}
             </div>
           </div>
         </div>

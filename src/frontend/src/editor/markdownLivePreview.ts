@@ -895,12 +895,12 @@ class MarkdownTableWidget extends WidgetType {
       handler({
         anchor: event instanceof MouseEvent ? {...anchor, x: event.clientX, y: event.clientY} : anchor,
         actions: [
-          action('Zeile darueber einfuegen', () => insertRowAt(rowTarget)),
-          action('Zeile darunter einfuegen', () => insertRowAt(rowTarget + 1)),
-          action('Spalte links einfuegen', () => insertColumnAt(columnIndex)),
-          action('Spalte rechts einfuegen', () => insertColumnAt(columnIndex + 1)),
-          action('Zeile loeschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1),
-          action('Spalte loeschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1),
+          action('Zeile darüber einfügen', () => insertRowAt(rowTarget)),
+          action('Zeile darunter einfügen', () => insertRowAt(rowTarget + 1)),
+          action('Spalte links einfügen', () => insertColumnAt(columnIndex)),
+          action('Spalte rechts einfügen', () => insertColumnAt(columnIndex + 1)),
+          action('Zeile löschen', () => rowIndex !== null && deleteRowAt(rowIndex), rowIndex === null || draftRows.length <= 1),
+          action('Spalte löschen', () => deleteColumnAt(columnIndex), draftHeaders.length <= 1),
         ],
         dismiss: () => {
           closeContextMenu()
@@ -1615,7 +1615,7 @@ function decorateTaskLines(
           const markerFrom = line.from + match[1].length
           const markerTo = markerFrom + 3
           const checked = match[2].toLowerCase() === 'x'
-          const metadata = /\s+<!-- nn:todo created=[^ ]* completed=[^ ]* -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/.exec(line.text)
+          const metadata = /\s+<!-- nn:todo created=[^ ]*(?: completed=[^ ]*)? -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/.exec(line.text)
           if (metadata) {
             const from = line.from + metadata.index
             addSyntaxVisibilityRange(entries, from, line.to, intersectsSelection(from, line.to, selections))

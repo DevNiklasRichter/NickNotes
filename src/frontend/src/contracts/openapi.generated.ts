@@ -1058,6 +1058,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Service Info */
+        get: operations["service_info_service_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/service/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Service Owner */
+        post: operations["set_service_owner_service_owner_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/service/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Shutdown Service */
+        post: operations["shutdown_service_service_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/graph/related": {
         parameters: {
             query?: never;
@@ -1219,6 +1270,17 @@ export interface components {
             text: string;
             /** Selectedtagkeys */
             selectedTagKeys?: string[];
+        };
+        /** CapturedTask */
+        CapturedTask: {
+            /** Taskid */
+            taskId: string;
+            /** Taskpath */
+            taskPath: string;
+            /** Duedate */
+            dueDate: string;
+        } & {
+            [key: string]: unknown;
         };
         /** DailyOpenResponse */
         DailyOpenResponse: {
@@ -2311,6 +2373,8 @@ export interface components {
              * @default
              */
             notePath: string;
+            /** Tasks */
+            tasks: components["schemas"]["CapturedTask"][];
             counts: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;
@@ -2374,6 +2438,11 @@ export interface components {
             path: string;
         } & {
             [key: string]: unknown;
+        };
+        /** ServiceOwnerRequest */
+        ServiceOwnerRequest: {
+            /** Pid */
+            pid?: number | null;
         };
         /** SuggestionResponse */
         SuggestionResponse: {
@@ -5124,6 +5193,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    service_info_service_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    set_service_owner_service_owner_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceOwnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    shutdown_service_service_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

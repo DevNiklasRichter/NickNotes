@@ -99,7 +99,12 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertNotEqual(redone_completed_at, "2001-01-01T00:00:00")
 
     def test_todo_toggle_sets_and_clears_completed_at(self) -> None:
-        self.vault.add_quick_todo_to_daily(text="Phase E todo", indexer=self.indexer, day_iso="2026-04-19")
+        result = self.vault.add_quick_todo_to_daily(text="Phase E todo", indexer=self.indexer, day_iso="2026-04-19")
+        note_path = Path(result["note_path"])
+        self.assertRegex(
+            note_path.read_text(encoding="utf-8"),
+            r"- \[ \] Phase E todo <!-- nn:todo created=\S+ --> \^nn-todo_[0-9a-f]{16}",
+        )
         todos = self.indexer.list_todos()
         target = next((item for item in todos if item.get("raw_text") == "Phase E todo"), None)
         self.assertIsNotNone(target)
@@ -117,6 +122,7 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertTrue(bool(checked_todo.get("checked")))
         self.assertTrue(str(checked_todo.get("completed_at", "")).strip())
         self.assertEqual(str(checked_todo.get("created_at", "")).strip(), created_at)
+        self.assertRegex(note_path.read_text(encoding="utf-8"), r" completed=\S+ -->")
 
         self.vault.toggle_todo(todo_id=todo_id, indexer=self.indexer, checked=False)
         unchecked_todo = self.indexer.get_todo(todo_id)
@@ -125,6 +131,7 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertFalse(bool(unchecked_todo.get("checked")))
         self.assertIsNone(unchecked_todo.get("completed_at"))
         self.assertEqual(str(unchecked_todo.get("created_at", "")).strip(), created_at)
+        self.assertNotIn(" completed=", note_path.read_text(encoding="utf-8"))
 
     def test_save_capture_appends_quick_capture_block_to_daily(self) -> None:
         selected_tags = [
@@ -182,7 +189,7 @@ class PhaseEBackendTests(unittest.TestCase):
 
         payload = response.json()
         self.assertEqual(payload.get("vaultPath"), str(self.vault_path))
-        backups = list(self.vault.system_path.glob("index.db.*.corrupt.*.bak"))
+        backups = list(self.vault.local_path.glob("index.db.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
         self.assertTrue(self.vault.db_path.exists())
 

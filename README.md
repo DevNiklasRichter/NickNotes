@@ -129,9 +129,6 @@ Der eingebaute Assistant wurde durch einen lokalen, authentifizierten MCP-Zugang
 ersetzt. **Einstellungen → Agent-Verbindungen** erstellt widerrufbare Freigaben
 mit getrenntem Schreibrecht. [MCP-Anleitung](doc/mcp-connections.md).
 
-[Umsetzungsplan](doc/implementation-plan.md) und
-[Pruefbericht](doc/release-candidate-2026-11-08.md) dokumentieren den aktuellen Stand.
-
 ## Repo-Hygiene
 
 Nicht eingecheckt werden lokale Abhaengigkeiten, Build-Ausgaben, Test-Runtimes, Logdateien, lokale NoteBases und generierte Projektionen wie `.venv/`, `node_modules/`, `dist/`, `.tmp/`, `*NoteBase/` oder `.system/index.db`.
