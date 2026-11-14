@@ -122,7 +122,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
     return (
       <div className="review-canvas">
         <div className="review-canvas-header">
-          <h2>Review Dashboard</h2>
+          <h2>Rückblick</h2>
           <p className="muted-copy">Keine Review-Daten geladen.</p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
     <div className="review-canvas">
       <div className="review-canvas-header">
         <div className="review-canvas-header-top">
-          <h2>Review Dashboard</h2>
+          <h2>Rückblick</h2>
           <div className="review-window-switcher" role="tablist" aria-label="Review Zeitraum">
             {WINDOW_OPTIONS.map((option) => (
               <button

@@ -458,7 +458,7 @@ export function FocusDashboardCanvas({
     <div className="focus-canvas">
       <div className="focus-canvas-header">
         <div className="focus-canvas-header-top">
-          <h2>Focus Dashboard</h2>
+          <h2>Fokus</h2>
           <div className="focus-header-switchers">
             <div className="focus-mode-switcher" role="tablist" aria-label="Fokusmodus">
               {MODE_OPTIONS.map((option) => (

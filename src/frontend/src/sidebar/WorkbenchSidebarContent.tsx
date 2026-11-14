@@ -538,7 +538,7 @@ export function WorkbenchSidebarContent({
   }
 
   const renderTodoMultiSelect = (key: TodoDropdownKey, selected: string[], options: MultiSelectPickerOption[], allLabel: string, onToggle: (value: string) => void) => {
-    const names: Record<TodoDropdownKey, string> = {status: 'Status', tag_groups: 'Tag-Gruppe', tags: 'Tags', promotions: 'Promotion'}
+    const names: Record<TodoDropdownKey, string> = {status: 'Status', tag_groups: 'Tag-Gruppe', tags: 'Tags', promotions: 'Als Task'}
     return <MultiSelectPicker key={`todo-${key}`} label={`To-dos: ${names[key]}`} selectedValues={selected} options={options} allLabel={allLabel} disabled={!vaultLoaded} onToggle={onToggle}/>
   }
   const renderTaskMultiSelect = (key: TaskDropdownKey, selected: string[], options: MultiSelectPickerOption[], allLabel: string, onToggle: (value: string) => void) => {
@@ -684,7 +684,7 @@ export function WorkbenchSidebarContent({
                 </button>
               </div>
             </div>
-            <h3>Todos</h3>
+            <h3>To-dos</h3>
             <div className="explorer-toolbar-right">
               <button
                 className="icon-button compact"
@@ -785,7 +785,7 @@ export function WorkbenchSidebarContent({
             <div className="todo-filter-divider" />
 
             <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Promotion</span>
+              <span className="todo-filter-row-label">Als Task</span>
               {renderTodoMultiSelect(
                 'promotions',
                 todoFilters.promotions,

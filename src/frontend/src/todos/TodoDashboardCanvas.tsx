@@ -323,10 +323,8 @@ export function TodoDashboardCanvas({
   return (
     <div className="todo-canvas">
       <div className="todo-canvas-header">
-        <h2>Todo Dashboard</h2>
-        <p>
-          Treffer: {totalHits} | Offene Tasks: {openTaskCount} | Gruppierung: {filters.grouping}
-        </p>
+        <h2>To-dos</h2>
+        <p>{totalHits === 1 ? '1 To-do' : `${totalHits} To-dos`} · {openTaskCount === 1 ? '1 offener Task' : `${openTaskCount} offene Tasks`}</p>
       </div>
 
       <div className="todo-canvas-body">

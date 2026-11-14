@@ -2287,6 +2287,9 @@ try {
     await openNote('Arbeitsnotiz')
     report.checks.keyboardQuickOpen = true
     await capture('note-light', 'Markdown note and long explorer list, light, 1280×800')
+    await windowSize(1280, 800, 1.25)
+    await capture('note-zoom-light', 'Same note, light, Electron zoom 125%, content size 1280×800')
+    await windowSize(1280, 800)
     await theme('dark')
     await capture('note-dark', 'Same note, dark, 1280×800')
     await windowSize(1600, 1000)

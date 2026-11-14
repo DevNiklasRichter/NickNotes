@@ -142,7 +142,6 @@
   justify-content: flex-end;
 }
 
-.tag-match-apply-actions .primary {border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft);}
 
 .tag-match-empty {
   display: grid;
