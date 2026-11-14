@@ -563,8 +563,8 @@ class GraphIndexTests(unittest.TestCase):
         self.vault.graph_state_path.write_text("[]", encoding="utf-8")
         fallback = read_graph_state(self.vault.graph_state_path)
         self.assertEqual(fallback["version"], 2)
-        self.assertEqual(fallback["activeMode"], "link")
-        backups = list(self.vault.local_path.glob("graph-state.json.*.corrupt.*.bak"))
+        self.assertEqual(fallback["activeMode"], "focus")
+        backups = list(self.vault.system_path.glob("graph-state.json.*.corrupt.*.bak"))
         self.assertEqual(len(backups), 1)
 
     def test_task_status_links_roundtrip_and_corrupt_fallback(self) -> None:

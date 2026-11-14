@@ -236,6 +236,10 @@ export type GraphFilters = {
     minimumEdgeWeight: number;
     searchText: string;
     searchMode: 'filter' | 'highlight';
+    /** Rings around the focused note in the "Umgebung" view. */
+    focusDepth: 1 | 2;
+    /** Tag node id (`tag:group/tag`); only files using it stay visible. Empty shows all. */
+    tag: string;
 };
 export type GraphNodePosition = {
     x: number;

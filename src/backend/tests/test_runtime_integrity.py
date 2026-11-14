@@ -109,6 +109,23 @@ class RuntimeIntegrityTests(unittest.TestCase):
                 self.assertFalse(local.exists())  # moved along, no orphaned projection folder
                 self.assertTrue(moved.db_path.exists())
             finally:service.state.dispose_session()
+    def test_dated_capture_todo_becomes_a_due_task(self):
+        from src.backend.commands import CaptureSaveRequest
+        from src.backend.nicknotes_backend.markdown_io import parse_markdown
+        with tempfile.TemporaryDirectory() as directory:
+            service=BackendApiService()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Capture'))
+                text='Telefonat mit Kunde\n- [ ] Angebot schicken @2026-11-20\n- [ ] Ohne Termin\n- [ ] Kein Datum @2026-02-31\nMail an max@firma.de'
+                saved=service.save_capture(CaptureSaveRequest(text=text,selectedTagKeys=[]))
+                self.assertEqual([task['dueDate'] for task in saved['tasks']],['2026-11-20'])
+                meta,body=parse_markdown(Path(saved['tasks'][0]['taskPath']))
+                self.assertEqual((meta['title'],meta['due_date']),('Angebot schicken','2026-11-20'))
+                daily=Path(saved['notePath']).read_text(encoding='utf-8')
+                self.assertIn('Angebot schicken @2026-11-20',daily)  # the capture keeps what was typed
+                self.assertIn('nn:todo:promoted:',daily)
+                self.assertEqual(len(service.state.indexer.list_tasks(include_done=True)),1)
+            finally:service.state.dispose_session()
     def test_watcher_retries_projection_failure_without_another_source_edit(self):
         from unittest.mock import patch
         from src.backend.nicknotes_backend.graph_watcher import graph_watcher_loop, graph_watcher_snapshot

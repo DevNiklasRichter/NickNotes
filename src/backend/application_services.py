@@ -826,6 +826,7 @@ class BackendApiService:
             "noteId": result["note_id"],
             "date": result["date"],
             "notePath": str(result["note_path"]),
+            "tasks": result["tasks"],
             "counts": self.counts(indexer),
         }
 

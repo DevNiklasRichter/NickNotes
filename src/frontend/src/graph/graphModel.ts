@@ -22,10 +22,12 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilters = {
   minimumEdgeWeight: 0,
   searchText: '',
   searchMode: 'filter',
+  focusDepth: 1,
+  tag: '',
 }
 
 export const DEFAULT_GRAPH_STATE: GraphState = {
-  activeMode: 'link',
+  activeMode: 'focus',  // the neighbourhood of the open note; the whole graph is one click away
   viewMode: 'graph',
   filters: { ...DEFAULT_GRAPH_FILTERS },
   viewport: { zoom: 1, pan: { x: 0, y: 0 } },
@@ -99,7 +101,14 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
     edgeTypes.add('sharedTag')
   }
 
+  // A tag filter keeps the tag itself and every file that uses it.
+  const taggedFiles = filters.tag
+    ? new Set(index.edges.filter(edge => edge.type === 'tagUsage' && edge.target === filters.tag).map(edge => edge.source))
+    : null
   const nodes = index.nodes.filter((node) => {
+    if (taggedFiles && node.id !== filters.tag && !taggedFiles.has(node.id)) {
+      return false
+    }
     if (node.type === 'note' && !filters.showNotes) {
       return false
     }
@@ -126,7 +135,7 @@ export function filterGraph(index: GraphIndex | null, mode: GraphMode, filters: 
     return visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
   })
 
-  const selected = mode === 'focus' ? applyFocusLimit(nodes, edges, focusNodeId) : {nodes, edges}
+  const selected = mode === 'focus' ? applyFocusLimit(nodes, edges, focusNodeId, filters.focusDepth) : {nodes, edges}
   const limitedNodes = selected.nodes.slice(0, 500)
   const limitedIds = new Set(limitedNodes.map(node => node.id))
   const limitedEdges = selected.edges.filter(edge => limitedIds.has(edge.source) && limitedIds.has(edge.target)).slice(0, 1500)
@@ -176,32 +185,48 @@ function normalizeGraphFilters(value: unknown): GraphFilters {
         : DEFAULT_GRAPH_FILTERS.minimumEdgeWeight,
     searchText: typeof source.searchText === 'string' ? source.searchText : DEFAULT_GRAPH_FILTERS.searchText,
     searchMode: source.searchMode === 'highlight' ? 'highlight' : DEFAULT_GRAPH_FILTERS.searchMode,
+    focusDepth: source.focusDepth === 2 ? 2 : 1,
+    tag: typeof source.tag === 'string' ? source.tag : '',
   }
 }
 
-function applyFocusLimit(nodes: GraphNode[], edges: GraphEdge[], focusNodeId: string): FilteredGraph {
+const FOCUS_NODE_LIMIT = 150
+
+/** The focused note and everything within `depth` connections, strongest first and capped, so a popular tag cannot flood the view. */
+export function applyFocusLimit(nodes: GraphNode[], edges: GraphEdge[], focusNodeId: string, depth: 1 | 2 = 1): FilteredGraph {
   const fileNodes = nodes.filter((node) => node.type === 'note' || node.type === 'task')
   const focusNode = nodes.find((node) => node.id === focusNodeId) ?? fileNodes[0] ?? nodes[0]
   if (!focusNode) {
     return { nodes: [], edges: [] }
   }
-  const allFocusEdges = edges.filter(edge => edge.source === focusNode.id || edge.target === focusNode.id)
-  const focusEdges = edges
-    .filter((edge) => edge.source === focusNode.id || edge.target === focusNode.id)
-    .sort((left, right) => right.weight - left.weight || left.type.localeCompare(right.type))
-    .slice(0, 120)
-  const nodeIds = new Set<string>([focusNode.id])
-  for (const edge of focusEdges) {
-    nodeIds.add(edge.source)
-    nodeIds.add(edge.target)
-    if (nodeIds.size >= 100) {
-      break
+  const byNode = new Map<string, GraphEdge[]>()
+  for (const edge of edges) {
+    for (const end of [edge.source, edge.target]) {
+      const list = byNode.get(end)
+      if (list) list.push(edge)
+      else byNode.set(end, [edge])
     }
   }
-  const limitedNodes = nodes.filter((node) => nodeIds.has(node.id)).slice(0, 100)
-  const limitedIds = new Set(limitedNodes.map((node) => node.id))
-  const limitedEdges = focusEdges.filter((edge) => limitedIds.has(edge.source) && limitedIds.has(edge.target))
-  return { nodes: limitedNodes, edges: limitedEdges, truncated: allFocusEdges.length > limitedEdges.length }
+  const strongestFirst = (left: GraphEdge, right: GraphEdge) => right.weight - left.weight || left.type.localeCompare(right.type)
+  const nodeIds = new Set<string>([focusNode.id])
+  let ring = [focusNode.id]
+  let truncated = false
+  for (let level = 0; level < depth && ring.length; level += 1) {
+    const next: string[] = []
+    for (const id of ring) {
+      for (const edge of [...(byNode.get(id) ?? [])].sort(strongestFirst)) {
+        const other = edge.source === id ? edge.target : edge.source
+        if (nodeIds.has(other)) continue
+        if (nodeIds.size >= FOCUS_NODE_LIMIT) { truncated = true; break }
+        nodeIds.add(other)
+        next.push(other)
+      }
+    }
+    ring = next
+  }
+  const limitedNodes = nodes.filter((node) => nodeIds.has(node.id))
+  const limitedEdges = edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+  return { nodes: limitedNodes, edges: limitedEdges, truncated }
 }
 
 function toGraphMode(value: unknown): GraphMode {

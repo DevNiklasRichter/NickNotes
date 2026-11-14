@@ -1271,6 +1271,17 @@ export interface components {
             /** Selectedtagkeys */
             selectedTagKeys?: string[];
         };
+        /** CapturedTask */
+        CapturedTask: {
+            /** Taskid */
+            taskId: string;
+            /** Taskpath */
+            taskPath: string;
+            /** Duedate */
+            dueDate: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** DailyOpenResponse */
         DailyOpenResponse: {
             /**
@@ -2362,6 +2373,8 @@ export interface components {
              * @default
              */
             notePath: string;
+            /** Tasks */
+            tasks: components["schemas"]["CapturedTask"][];
             counts: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;

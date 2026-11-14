@@ -388,6 +388,11 @@ function App() {
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
     const activeTab = paneActiveTabs[activePaneId] ?? null;
+    // The graph centres on the note being edited: the active one, the one in the other pane, or the last one shown.
+    const visibleNotePath = [activeTab, paneActiveTabs[activePaneId==='left'?'right':'left']].find(tab => tab?.kind === 'note')?.path ?? '';
+    const [lastNotePath, setLastNotePath] = useState('');
+    if (visibleNotePath && visibleNotePath !== lastNotePath) setLastNotePath(visibleNotePath);
+    const graphNotePath = visibleNotePath || lastNotePath;
     const openTagActionDialog = useCallback((config: {
         kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
         title: string;
@@ -2660,7 +2665,7 @@ function App() {
       {windowTitlebar}
       {commandDialogs}
       <div className="window-content">
-        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
+        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} activeNotePath={graphNotePath} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
         <div className={`workbench-shell${writingMode?' is-writing':''}`} style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
       <ActivityRail sidebarView={sidebarView} noteBaseName={noteBaseName} onOpenSidebarView={view=>{
           if(['todos','tasks','focus','review','graph'].includes(view))void executeCommand(view);
@@ -2765,7 +2770,7 @@ function App() {
               <div className="capture-panel-body">
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Notiz erfassen und optional To-do nennen" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
+                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt einen Termin" tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
                 void saveCapture(markdown);
             }} onOpenWikiLink={(target) => {
                 openWikiLinkInEditor(target, activePaneId);

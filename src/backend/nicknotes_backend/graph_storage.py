@@ -55,7 +55,7 @@ def default_graph_state() -> dict[str, Any]:
     return {
         "version": GRAPH_STATE_VERSION,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "activeMode": "link",
+        "activeMode": "focus",  # neighbourhood of the open note
         "filters": {},
         "layout": {},
         "viewport": {"zoom": 1, "pan": {"x": 0, "y": 0}},

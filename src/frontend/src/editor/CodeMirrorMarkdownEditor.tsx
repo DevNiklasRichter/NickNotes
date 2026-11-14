@@ -12,6 +12,7 @@ import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, LanguageDescription } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap, openSearchPanel } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { dateSuggestions, detectInlineTrigger, type InlineMatch, type InlineTrigger } from './inlineSuggestions'
 import {
   Decoration,
   type DecorationSet,
@@ -46,6 +47,7 @@ type PaletteAnchor = {
 type PaletteState =
   | {
       mode: 'slash'
+      trigger: InlineTrigger
       query: string
       from: number
       to: number
@@ -156,11 +158,7 @@ export type MarkdownEditorTagSuggestion = {
 
 const EMPTY_TAG_SUGGESTIONS: MarkdownEditorTagSuggestion[] = []
 
-type SlashMatch = {
-  from: number
-  to: number
-  query: string
-}
+type SlashMatch = InlineMatch
 
 type TagSuggestionMenu = ContextMenuAnchor & {
   suggestion: MarkdownEditorTagSuggestion
@@ -420,25 +418,9 @@ function detectSlashMatch(view: EditorView): SlashMatch | null {
   if (!selection.empty) {
     return null
   }
-
   const cursor = selection.head
   const line = view.state.doc.lineAt(cursor)
-  const prefix = line.text.slice(0, cursor - line.from)
-  const match = prefix.match(/(?:^|\s)\/([\w-]*)$/)
-  if (!match) {
-    return null
-  }
-
-  const slashIndex = prefix.lastIndexOf('/')
-  if (slashIndex < 0) {
-    return null
-  }
-
-  return {
-    from: line.from + slashIndex,
-    to: cursor,
-    query: match[1] ?? '',
-  }
+  return detectInlineTrigger(line.text.slice(0, cursor - line.from), line.text.slice(cursor - line.from), line.from)
 }
 
 function resolveSlashAnchor(view: EditorView, position: number, host: HTMLElement | null): PaletteAnchor {
@@ -591,6 +573,14 @@ type PaletteItem =
       kind: 'tag-direct'
       group: TagGroupDefinition
       tag: TagDefinition
+    }
+  | {
+      /** Plain text replacing the typed trigger, e.g. a date or a link to a note that does not exist yet. */
+      kind: 'insert'
+      key: string
+      title: string
+      description: string
+      text: string
     }
 
 function splitLinkTargetPath(target: MarkdownLinkTarget): string[] {
@@ -754,6 +744,30 @@ export function CodeMirrorMarkdownEditor({
   const paletteItems = useMemo<PaletteItem[]>(() => {
     if (!paletteState) {
       return []
+    }
+
+    if (paletteState.mode === 'slash' && paletteState.trigger === '[[') {
+      const query = paletteState.query.trim()
+      const lower = query.toLowerCase()
+      const matches = query
+        ? buildLinkPaletteItems(linkTargets, [], query)
+        : buildLinkPaletteItems(linkTargets, [], '').filter(item => item.kind === 'note-link')
+      const exists = linkTargets.some(target => target.title.toLowerCase() === lower || target.target.toLowerCase() === lower)
+      const create: PaletteItem[] = query && !exists
+        ? [{kind: 'insert', key: `new-${query}`, title: `„${query}“ verlinken`, description: 'Noch keine Notiz mit diesem Titel', text: `[[${query}]]`}]
+        : []
+      return [...matches.slice(0, 30), ...create]
+    }
+
+    if (paletteState.mode === 'slash' && paletteState.trigger === '#') {
+      const query = paletteState.query.trim().toLowerCase()
+      return tagGroups.flatMap(group => group.tags
+        .filter(tag => `${group.id}/${tag.id} ${group.displayName} ${tag.displayName}`.toLowerCase().includes(query))
+        .map<PaletteItem>(tag => ({ kind: 'tag-direct', group, tag }))).slice(0, 30)
+    }
+
+    if (paletteState.mode === 'slash' && paletteState.trigger === '@') {
+      return dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.iso}`}))
     }
 
     if (paletteState.mode === 'slash') {
@@ -1029,6 +1043,15 @@ export function CodeMirrorMarkdownEditor({
       })
     }
 
+    const insertPlainText = (view: EditorView, from: number, to: number, text: string): void => {
+      view.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
+        scrollIntoView: true,
+        userEvent: 'input.type',
+      })
+    }
+
     const insertWikiLinkSyntax = (view: EditorView, from: number, to: number, target: string): void => {
       const syntax = `[[${target}]]`
       const cursor = from + syntax.length
@@ -1052,6 +1075,11 @@ export function CodeMirrorMarkdownEditor({
 
       const available = paletteItemsRef.current
       if (available.length === 0) {
+        // Typing "#xyz" without a matching tag must not swallow Enter.
+        if (current.mode === 'slash') {
+          setPaletteState(null)
+          return false
+        }
         return true
       }
 
@@ -1181,6 +1209,16 @@ export function CodeMirrorMarkdownEditor({
         return true
       }
 
+      if (item.kind === 'insert') {
+        if (current.mode !== 'slash') {
+          return false
+        }
+        insertPlainText(view, current.from, current.to, item.text)
+        setPaletteState(null)
+        view.focus()
+        return true
+      }
+
       if (item.kind === 'tag') {
         if (current.mode !== 'tag-item') {
           return false
@@ -1222,6 +1260,7 @@ export function CodeMirrorMarkdownEditor({
         if (!previous || previous.mode !== 'slash') {
           return {
             mode: 'slash',
+            trigger: slash.trigger,
             query: slash.query,
             from: slash.from,
             to: slash.to,
@@ -1230,8 +1269,9 @@ export function CodeMirrorMarkdownEditor({
           }
         }
 
-        const selectedIndex = previous.query === slash.query ? previous.selectedIndex : 0
+        const selectedIndex = previous.query === slash.query && previous.trigger === slash.trigger ? previous.selectedIndex : 0
         if (
+          previous.trigger === slash.trigger &&
           previous.query === slash.query &&
           previous.from === slash.from &&
           previous.to === slash.to &&
@@ -1243,6 +1283,7 @@ export function CodeMirrorMarkdownEditor({
 
         return {
           ...previous,
+          trigger: slash.trigger,
           query: slash.query,
           from: slash.from,
           to: slash.to,
@@ -1925,6 +1966,15 @@ export function CodeMirrorMarkdownEditor({
       view.focus()
       return
     }
+    if (item.kind === 'insert') {
+      if (current.mode !== 'slash') {
+        return
+      }
+      view.dispatch({ changes: { from: current.from, to: current.to, insert: item.text }, selection: { anchor: current.from + item.text.length }, scrollIntoView: true, userEvent: 'input.type' })
+      setPaletteState(null)
+      view.focus()
+      return
+    }
     if (item.kind === 'tag') {
       if (current.mode !== 'tag-item') {
         return
@@ -2140,7 +2190,7 @@ export function CodeMirrorMarkdownEditor({
               />
             </div>
           ) : (
-            <div className="editor-command-slash-meta">/{paletteState.query || ''}</div>
+            <div className="editor-command-slash-meta">{paletteState.mode === 'slash' ? paletteState.trigger : '/'}{paletteState.query || ''}</div>
           )}
 
           {paletteState.mode === 'tag-item' ? (
@@ -2157,7 +2207,9 @@ export function CodeMirrorMarkdownEditor({
             {paletteItems.length === 0 ? <div className="editor-command-empty">Kein passender Eintrag.</div> : null}
             {paletteItems.map((item, index) => {
               const title =
-                item.kind === 'command'
+                item.kind === 'insert'
+                  ? item.title
+                  : item.kind === 'command'
                   ? item.command.title
                   : item.kind === 'tag-root'
                     ? item.title
@@ -2171,7 +2223,9 @@ export function CodeMirrorMarkdownEditor({
                             ? item.group.displayName
                             : `${item.tag.displayName}`
               const description =
-                item.kind === 'command'
+                item.kind === 'insert'
+                  ? item.description
+                  : item.kind === 'command'
                   ? item.command.description
                   : item.kind === 'tag-root'
                     ? item.description
@@ -2182,10 +2236,12 @@ export function CodeMirrorMarkdownEditor({
                         : item.kind === 'note-link'
                           ? `${item.target.noteType === 'task' ? 'Task' : 'Notiz'} - [[${item.target.target}]]`
                           : item.kind === 'tag-group'
-                            ? `${item.group.id} Ã¢â‚¬Â¢ ${item.group.tags.length} Tags`
-                            : `${item.group.displayName} (${item.group.id}) Ã¢â‚¬Â¢ {tag:${item.group.id}/${item.tag.id}}`
+                            ? `${item.group.id} · ${item.group.tags.length} Tags`
+                            : `${item.group.displayName} (${item.group.id}) · {tag:${item.group.id}/${item.tag.id}}`
               const key =
-                item.kind === 'command'
+                item.kind === 'insert'
+                  ? item.key
+                  : item.kind === 'command'
                   ? item.command.id
                   : item.kind === 'tag-root'
                     ? 'tag-root'

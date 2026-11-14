@@ -113,7 +113,7 @@ export class NoteCaptureService {
     }
 
     try {
-      const response = await apiRequest<{ counts: VaultCounts; date: string }>(
+      const response = await apiRequest<{ counts: VaultCounts; date: string; tasks?: Array<{ taskId: string; dueDate: string }> }>(
         this.backendUrl,
         '/capture/save',
         {
@@ -130,12 +130,16 @@ export class NoteCaptureService {
       this.writer.setSuggestions([])
       this.writer.setSelectedTagKeys([])
       this.writer.setIgnoredCaptureTagKeys([])
-      this.writer.setMessage(`Schnellerfassung in der Tagesnotiz ${response.date} gespeichert.`)
+      const tasks = response.tasks ?? []
+      const due = tasks.map(task => new Date(`${task.dueDate}T00:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })).join(', ')
+      this.writer.setMessage(`Schnellerfassung in der Tagesnotiz ${response.date} gespeichert.${
+        tasks.length === 1 ? ` Task fällig am ${due} angelegt.` : tasks.length > 1 ? ` ${tasks.length} Tasks angelegt (fällig ${due}).` : ''}`)
       await this.context.emitMutation?.({
         kind: 'capture-saved',
         refresh: {
           search: true,
           todos: true,
+          tasks: (response.tasks ?? []).length > 0,
           review: true,
           noteGroups: true,
           explorerSidebar: true,
