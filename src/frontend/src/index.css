@@ -2,21 +2,21 @@
   --motion-fast: 140ms;
   color-scheme: light;
   --text: #1f2328;
-  --muted: #626b78;
-  --surface: #f3f4f6;
-  --editor-note-bg: #f6f7f9;
-  --surface-strong: #eceef2;
-  --surface-contrast: #fbfbfc;
-  --line: #d6dae1;
-  --line-strong: #c6cbd4;
+  --muted: #5f6672;
+  --surface: #f8f8f9;
+  --editor-note-bg: #f8f8f9;
+  --surface-strong: #efeff1;
+  --surface-contrast: #ffffff;
+  --line: #dddee2;
+  --line-strong: #c9cbd1;
   --accent: #3d7fe0;
   --accent-strong: #2f68bc;
   --accent-soft: rgba(61, 127, 224, 0.16);
-  --code-bg: #f2f4f8;
-  --table-row: #f7f8fa;
-  --bg-layer-1: #eceef2;
-  --bg-layer-2: #e6e8ed;
-  --bg-layer-3: #e0e3ea;
+  --code-bg: #f0f0f3;
+  --table-row: #f3f3f5;
+  --bg-layer-1: #eeeef0;
+  --bg-layer-2: #e8e8eb;
+  --bg-layer-3: #e2e2e6;
   --ok-bg: #edf4ff;
   --ok-border: #c8daf8;
   --ok-text: #1f355b;
@@ -34,6 +34,12 @@
   --graph-tag: #c98989;
   --shadow: 0 10px 26px rgba(22, 29, 39, 0.08);
   --shadow-dark: 0 16px 34px rgba(0, 0, 0, 0.32);
+  --radius-control: 6px;
+  --radius-menu: 8px;
+  --radius-dialog: 12px;
+  --radius-pill: 999px;
+  --control-bg: color-mix(in srgb, var(--text) 6%, transparent);
+  --control-bg-hover: color-mix(in srgb, var(--text) 11%, transparent);
   --radius-xs: 3px;
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -99,22 +105,22 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --text: #edf0f5;
-  --muted: #a7afbd;
-  --surface: #1f242d;
-  --editor-note-bg: #1f242d;
-  --surface-strong: #262c36;
-  --surface-contrast: #2b313d;
-  --line: #3b4351;
-  --line-strong: #4a5466;
+  --text: #e8eaed;
+  --muted: #a3a9b3;
+  --surface: #1e2023;
+  --editor-note-bg: #1e2023;
+  --surface-strong: #25282d;
+  --surface-contrast: #2a2d33;
+  --line: #383c44;
+  --line-strong: #484d57;
   --accent: #6ea7f3;
   --accent-strong: #4f8fe8;
   --accent-soft: rgba(110, 167, 243, 0.24);
-  --code-bg: #232a35;
-  --table-row: #313949;
-  --bg-layer-1: #1f252f;
-  --bg-layer-2: #171c26;
-  --bg-layer-3: #1a202b;
+  --code-bg: #24272c;
+  --table-row: #2c3036;
+  --bg-layer-1: #191b1e;
+  --bg-layer-2: #15171a;
+  --bg-layer-3: #17191c;
   --ok-bg: #23344f;
   --ok-border: #325073;
   --ok-text: #d9e9ff;
@@ -135,6 +141,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 42%, transparent) transparent;
 }
 
 body {

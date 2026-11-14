@@ -1543,7 +1543,7 @@ export function ExplorerSidebar({
               className="explorer-search-input"
               value={filterQuery}
               onChange={(event) => setFilterQuery(event.target.value)}
-              placeholder="Search"
+              placeholder="Suchen"
             />
             {filterQuery ? (
               <button

@@ -348,7 +348,7 @@ export function TagSidebar({
               className="explorer-search-input"
               value={filterQuery}
               onChange={(event) => {setFilterQuery(event.target.value); setSearchCursor(-1)}}
-              placeholder="Search"
+              placeholder="Suchen"
               aria-label="Tags und Gruppen filtern" data-tooltip={filterQuery ? 'Enter: naechster Treffer, Shift+Enter: vorheriger Treffer' : 'Tags und Gruppen filtern'}
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {

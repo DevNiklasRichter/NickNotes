@@ -4732,18 +4732,18 @@ textarea {
   border: 1px solid var(--line);
   background: var(--surface-contrast);
   color: var(--text);
-  border-radius: 10px;
-  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-control);
+  padding: 0.4rem 0.7rem;
 }
 
 button {
   cursor: pointer;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+  border-color: transparent;
+  background: var(--control-bg);
 }
 
-button:hover {
-  border-color: var(--accent);
-  box-shadow: none;
+button:hover:not(:disabled) {
+  background: var(--control-bg-hover);
 }
 
 button:focus-visible,
@@ -4752,18 +4752,16 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--focus-ring);
   border-color: var(--accent);
-  box-shadow: none;
   outline-offset: 2px;
 }
 
-button:active {
-  transform: translateY(1px);
+button:focus-visible {
+  border-color: transparent;
 }
 
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-  box-shadow: none;
 }
 
 @media (max-width: 1250px) {
@@ -5357,7 +5355,7 @@ button:disabled {
 }
 
 .editor-tabs.workspace-toolbar {
-  --tab-edge-color: color-mix(in srgb, var(--line-strong) 78%, var(--text));
+  --tab-edge-color: var(--line);
   --tab-edge-width: 1px;
   position: relative;
   align-items: flex-end;
@@ -5484,10 +5482,10 @@ button:disabled {
   display: flex;
   align-items: center;
   position: relative;
-  border: var(--tab-edge-width) solid color-mix(in srgb, var(--line) 20%, transparent);
-  border-radius: 0;
+  border: var(--tab-edge-width) solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
   background: transparent;
-  color: color-mix(in srgb, var(--muted) 32%, transparent);
+  color: var(--muted);
   flex: 0 0 auto;
 }
 
@@ -5500,17 +5498,19 @@ button:disabled {
   box-shadow: none;
 }
 
-.pane-tab:not(.active) {
-  background: color-mix(in srgb, var(--surface) 18%, transparent);
+.pane-tab:not(.active):hover {
+  background: var(--control-bg);
+  color: var(--text);
 }
 
-.pane-tab:not(.active) .tab-kind-icon,
-.pane-tab:not(.active) .tab-close {
-  color: color-mix(in srgb, var(--muted) 28%, transparent);
+.pane-tab .tab-open,
+.pane-tab .tab-close {
+  background: transparent;
+  color: inherit;
 }
 
-.pane-tab:not(.active) .tab-open {
-  opacity: 0.46;
+.pane-tab .tab-close:hover {
+  background: var(--control-bg-hover);
 }
 
 .pane-tab[draggable='true'] {

@@ -57,7 +57,7 @@ export function GraphSidebarPanel({ vaultLoaded, onOpenGraphDashboard }: { vault
             className="explorer-search-input graph-sidebar-search-input"
             value={graph.filters.searchText}
             onChange={(event) => graph.updateFilters({ searchText: event.target.value })}
-            placeholder="Search"
+            placeholder="Suchen"
           />
         </div>
         <div className="graph-search-mode-options" role="radiogroup" aria-label="Suchdarstellung">

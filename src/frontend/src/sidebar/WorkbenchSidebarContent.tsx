@@ -704,7 +704,7 @@ export function WorkbenchSidebarContent({
                 className="explorer-search-input"
                 value={todoFilters.query}
                 onChange={(event) => setTodoFilter({ query: event.target.value })}
-                placeholder="Search"
+                placeholder="Suchen"
                 aria-label="Todos durchsuchen" data-tooltip="Todos durchsuchen"
               />
               {todoFilters.query ? (
@@ -847,7 +847,7 @@ export function WorkbenchSidebarContent({
                 className="explorer-search-input"
                 value={taskFilters.query}
                 onChange={(event) => setTaskFilter({ query: event.target.value })}
-                placeholder="Search"
+                placeholder="Suchen"
                 aria-label="Tasks durchsuchen" data-tooltip="Tasks durchsuchen"
               />
               {taskFilters.query ? (
@@ -1015,7 +1015,7 @@ export function WorkbenchSidebarContent({
                 className="explorer-search-input"
                 value={focusFilters.query}
                 onChange={(event) => setFocusFilter({ query: event.target.value })}
-                placeholder="Search"
+                placeholder="Suchen"
                 aria-label="Focus durchsuchen" data-tooltip="Focus durchsuchen"
               />
               {focusFilters.query ? (
