@@ -5,6 +5,10 @@ updates:
     directory: /
     schedule: {interval: weekly, day: monday}
     open-pull-requests-limit: 5
+    # Major versions (TypeScript, ESLint, Electron, Node types …) are upgraded deliberately, not by bot.
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
@@ -12,6 +16,9 @@ updates:
     directory: /
     schedule: {interval: weekly, day: monday}
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
     groups:
       pip-minor-patch:
         update-types: [minor, patch]
