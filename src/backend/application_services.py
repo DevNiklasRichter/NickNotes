@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import threading
-from .session import RuntimeState, coordinated
+from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
 from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteOpenRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagMoveRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
@@ -49,6 +49,7 @@ from .errors import (
     NotFoundDomainError,
     ValidationDomainError,
 )
+from .nicknotes_backend.local_data import notebase_data_path
 from .nicknotes_backend.source_journal import active_journal, pending_recovery
 from .nicknotes_backend.file_io import atomic_write_text
 from .nicknotes_backend.trash import move_to_trash
@@ -63,10 +64,12 @@ class BackendApiService:
     def __init__(self, runtime: Any | None = None, capabilities: dict[str, Any] | None = None) -> None:
         self._runtime = runtime if runtime is not None else RuntimeState()
         self._capabilities = capabilities or {}
+        self.sessions = SessionRegistry(self)
 
     @property
     def state(self) -> RuntimeState:
-        return self._runtime
+        # Agent calls bind the session of their own NoteBase; everything else uses the app's.
+        return bound_runtime.get() or self._runtime
 
     @coordinated
     def require_loaded(self) -> tuple[Any, Any]:
@@ -723,6 +726,10 @@ class BackendApiService:
             if is_current:
                 self.state.dispose_session()
             old_path.rename(new_path)
+            # Keep the device-local index instead of rebuilding it under the new path.
+            old_local, new_local = notebase_data_path(old_path), notebase_data_path(new_path)
+            if old_local.is_dir() and not new_local.exists():
+                old_local.rename(new_local)
         except OSError as exc:
             raise InfrastructureDomainError(
                 "Could not rename NoteBase.",

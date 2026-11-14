@@ -3,6 +3,7 @@ import {_electron as electron, expect as baseExpect} from '@playwright/test'
 import electronBinary from 'electron'
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
+import {createHash} from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import {parse as parseYaml} from 'yaml'
@@ -2408,7 +2409,11 @@ try {
     report.checks.externalConflict409AndDraftPreserved = true
     await capture('conflict-light', 'Real revision conflict after external edit; local draft retained')
 
-    const recovery = path.join(vaultPath, '.system', 'recovery', '11111111111111111111111111111111')
+    // Journals are device-local (backend local_data.notebase_data_path).
+    const resolvedVault = fs.realpathSync.native(vaultPath)
+    const vaultKey = createHash('sha256').update(process.platform === 'win32' ? resolvedVault.toLowerCase() : resolvedVault).digest('hex').slice(0, 16)
+    const vaultName = (path.basename(vaultPath).match(/[\p{L}\p{N}_-]/gu) || []).join('').slice(0, 40) || 'notebase'
+    const recovery = path.join(scratch, 'profile', 'notebases', `${vaultName}-${vaultKey}`, 'recovery', '11111111111111111111111111111111')
     fs.mkdirSync(recovery, {recursive: true})
     fs.copyFileSync(notePath, path.join(recovery, '0.bak'))
     fs.writeFileSync(path.join(recovery, 'manifest.json'), JSON.stringify({

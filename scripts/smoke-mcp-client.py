@@ -30,7 +30,7 @@ async def main():
                 note_created=await client.call_tool('create_note',{'title':'SDK Note','body':'Knowledge','tags':['project:sdk'],'operation_id':'sdk-create-note-0001'})
                 assert not note_created.isError,note_created
                 note_path=note_created.structuredContent['path']
-                related=await client.call_tool('get_related_notes',{'path':note_path,'limit':5})
+                related=await client.call_tool('get_note_context',{'path':note_path,'limit':5})
                 assert any(item['title']=='SDK Task' and 'project:sdk' in item['sharedTags'] for item in related.structuredContent['items']),related
                 filtered=await client.call_tool('search_notes',{'query':'SDK','tag':'project:sdk','limit':10})
                 assert len(filtered.structuredContent['items'])==2,filtered

@@ -12,7 +12,10 @@ import sys
 import time
 import uuid
 
+import os
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+scratch = Path(__file__).resolve().parents[1] / '.tmp' / ('notebase-benchmark-' + uuid.uuid4().hex[:8])
+os.environ['NICKNOTES_USER_DATA'] = str(scratch / 'profile')  # keep projections out of the real profile
 from src.backend.application_services import BackendApiService
 from src.backend.commands import NoteFileRenameRequest, NoteSaveRequest, VaultCreateRequest, VaultOpenRequest
 
@@ -22,8 +25,7 @@ parser.add_argument('--profile', choices=['open', 'reopen', 'first-save', 'save'
 parser.add_argument('--callees', default='')
 args = parser.parse_args()
 
-scratch = Path(__file__).resolve().parents[1] / '.tmp' / ('notebase-benchmark-' + uuid.uuid4().hex[:8])
-scratch.mkdir(parents=True)
+scratch.mkdir(parents=True, exist_ok=True)
 timings: dict[str, float] = {}
 
 
@@ -70,7 +72,7 @@ try:
     saved = timed('save', lambda: save(first['path'], '\nZweite Änderung.\n'))
     timed('rename', lambda: service.rename_note(NoteFileRenameRequest(path=saved['path'], newName='Umbenannt')))
     for name in ('index.db', 'graph-index.json'):
-        timings[name + ' MB'] = round((root / '.system' / name).stat().st_size / 1e6, 2)
+        timings[name + ' MB'] = round((service.state.vault.local_path / name).stat().st_size / 1e6, 2)
     print(json.dumps({'notes': args.count, **timings}))
 finally:
     service.state.dispose_session()

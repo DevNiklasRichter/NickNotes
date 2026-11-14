@@ -132,11 +132,11 @@ class JournaledWriteTests(unittest.TestCase):
 
         vault = self.service.state.vault
         self.assertEqual(Path(current['path']).read_text(encoding='utf-8'), current['content'])
-        self.assertTrue((vault.system_path / 'projection-dirty.json').exists())
+        self.assertTrue(vault.projection_dirty_path.exists())
         # The next operation repairs the projections and the same draft can be saved again.
         saved = self.service.save_note_content(request)
         self.assertIn('Neuer Absatz', saved['content'])
-        self.assertFalse((vault.system_path / 'projection-dirty.json').exists())
+        self.assertFalse(vault.projection_dirty_path.exists())
         self.assertEqual([row['path'] for row in self.service.search_notes('Absatz')['items']], [saved['path']])
 
     def test_completing_a_task_is_backed_up_and_reported(self):

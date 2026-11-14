@@ -1615,7 +1615,7 @@ function decorateTaskLines(
           const markerFrom = line.from + match[1].length
           const markerTo = markerFrom + 3
           const checked = match[2].toLowerCase() === 'x'
-          const metadata = /\s+<!-- nn:todo created=[^ ]* completed=[^ ]* -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/.exec(line.text)
+          const metadata = /\s+<!-- nn:todo created=[^ ]*(?: completed=[^ ]*)? -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/.exec(line.text)
           if (metadata) {
             const from = line.from + metadata.index
             addSyntaxVisibilityRange(entries, from, line.to, intersectsSelection(from, line.to, selections))

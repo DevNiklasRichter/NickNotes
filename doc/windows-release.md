@@ -35,7 +35,7 @@ Der Installer arbeitet pro Benutzer, benoetigt keine erhoehten Rechte und laesst
 - App-Profil und lokale MCP-Freigaben: Benutzerprofil von NickNotes, standardmaessig `%APPDATA%\NickNotes`.
 - NoteBase: vom Benutzer gewaehlter Ort; keine Schreibvorgaenge in den Installationsordner.
 - Tests: `NICKNOTES_USER_DATA` und `NICKNOTES_PORT` fuer ein isoliertes Profil und einen eigenen Port.
-- Ein App-Prozess pro Benutzerprofil. Der eigene Backendprozess wird ueber seine Pipe beendet. Fremde Prozesse auf einem belegten Port werden nicht beendet.
+- Ein App-Prozess und ein NickNotes-Dienst pro Benutzerprofil. Ohne Hintergrundbetrieb endet der Dienst mit der App; mit Hintergrundbetrieb startet er per `HKCU\…\Run` mit Windows. Installer und Deinstallation beenden ihn; die Deinstallation entfernt den Autostart. Fremde Prozesse auf einem belegten Port werden nicht beendet.
 
 Der Renderer verwendet `nicknotes://app`, eine Content-Security-Policy, Context Isolation und eine schmale IPC-Bridge. Das Backend bindet ausschliesslich Loopback. Der interne App-Schluessel wird beim Start erzeugt und nicht in URLs oder der NoteBase gespeichert.
 
@@ -43,7 +43,7 @@ Der Renderer verwendet `nicknotes://app`, eine Content-Security-Policy, Context 
 
 Formatversion 2 entfernt die alten Assistant-/Provider-Einstellungen und konsolidiert Tagdefinitionen in `.system/tag_groups.json`. Vorherige Konfigurationen und Migrationsnachweise bleiben lokal in `.system/migrations`. Widerspruechliche Definitionsquellen brechen vor inhaltlichen Aenderungen ab. Veraltete Projektionen werden neu aufgebaut. Aeltere Programmfassungen verstehen die neue Todo-Historie nicht vollstaendig; ein Downgrade ist deshalb kein unterstuetzter Rueckweg. Fuer einen Rueckweg die gesicherte NoteBase mit der passenden Programmfassung verwenden.
 
-Unterbrochene Quelldateiaktionen stehen unter `.system/recovery`. Die App bietet in **Einstellungen → Allgemein** Wiederherstellung oder bewusstes Beibehalten an. Vor einer Wiederherstellung wird der aktuelle Stand erneut gesichert. Ein Index kann daraus neu aufgebaut werden; er ist kein Ersatz fuer eine Datensicherung.
+Unterbrochene Quelldateiaktionen stehen geraetelokal unter `%LOCALAPPDATA%/NickNotes/notebases/<NoteBase>/recovery`. Die App bietet in **Einstellungen → Allgemein** Wiederherstellung oder bewusstes Beibehalten an. Vor einer Wiederherstellung wird der aktuelle Stand erneut gesichert. Ein Index kann daraus neu aufgebaut werden; er ist kein Ersatz fuer eine Datensicherung.
 
 Alte lokal gespeicherte Assistant-Schluessel werden nicht mehr gelesen. Falls eine
 Vorversion `%APPDATA%\NickNotes\assistant-secrets.json` angelegt hat, ist diese

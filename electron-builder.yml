@@ -33,6 +33,7 @@ nsis:
   createDesktopShortcut: false
   createStartMenuShortcut: true
   runAfterFinish: false
+  include: build/installer.nsh
   artifactName: NickNotes-Setup-${version}-${arch}.${ext}
 publish:
   provider: github

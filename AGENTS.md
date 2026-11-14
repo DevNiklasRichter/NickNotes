@@ -7,7 +7,7 @@ Vor Aenderungen immer zuerst [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) 
 - NickNotes ist eine lokale, Windows-first Desktop-App fuer eine portable Markdown-NoteBase.
 - Benutzerfreundlichkeit und eine klare, ruhige User Experience haben im Frontend hoechste Prioritaet.
 - Notizen und eigenstaendige Tasks sind immer Markdown-Dateien. Sie sind die fachliche Single Source of Truth.
-- `.system/index.db`, Graph-Dateien und generierte Uebersichten sind nur ableitbare Projektionen oder Hilfsdaten. Sie muessen aus der NoteBase wiederherstellbar sein.
+- `index.db`, Graph-Dateien (geraetelokal unter `%LOCALAPPDATA%/NickNotes/notebases/`) und generierte Uebersichten sind nur ableitbare Projektionen oder Hilfsdaten. Sie muessen aus der NoteBase wiederherstellbar sein.
 - Tags werden eindeutig als `gruppe:tag` definiert und im Markdown als `{tag:gruppe/tag}` referenziert. Die zentrale Tag-Definition liegt in `.system/tag_groups.json`.
 
 ## Arbeitsregeln

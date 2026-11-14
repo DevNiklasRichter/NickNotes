@@ -88,6 +88,27 @@ class RuntimeIntegrityTests(unittest.TestCase):
                 self.assertEqual(links(),[(source.name,renamed.name)])
                 self.assertIn(f'[[{renamed.stem}]]',source.read_text(encoding='utf-8'))
             finally:service.state.dispose_session()
+    def test_projections_stay_out_of_the_notebase_folder(self):
+        from src.backend.commands import NoteBaseRenameRequest
+        with tempfile.TemporaryDirectory() as directory:
+            service=BackendApiService()
+            try:
+                service.create_vault(VaultCreateRequest(parentPath=directory,name='Synced'))
+                vault=service.state.vault
+                service.add_note(NoteCreateRequest(groupKey='',title='Inhalt'))
+                self.assertTrue(vault.db_path.exists() and vault.graph_index_path.exists())
+                self.assertFalse(vault.db_path.is_relative_to(vault.vault_path.resolve()))
+                self.assertEqual(sorted(path.name for path in vault.system_path.iterdir()),['config.json','favorite_folders.json','tag_groups.json','ui_settings.json'])
+                service.state.dispose_session()
+                (vault.system_path/'index.db').write_bytes(b'old');(vault.system_path/'mcp-operations').mkdir()
+                service.open_vault(VaultOpenRequest(path=str(vault.vault_path)))
+                self.assertFalse((vault.system_path/'index.db').exists() or (vault.system_path/'mcp-operations').exists())
+                local=vault.local_path
+                service.rename_notebase(NoteBaseRenameRequest(newName='Umbenannt'))
+                moved=service.state.vault
+                self.assertFalse(local.exists())  # moved along, no orphaned projection folder
+                self.assertTrue(moved.db_path.exists())
+            finally:service.state.dispose_session()
     def test_watcher_retries_projection_failure_without_another_source_edit(self):
         from unittest.mock import patch
         from src.backend.nicknotes_backend.graph_watcher import graph_watcher_loop, graph_watcher_snapshot

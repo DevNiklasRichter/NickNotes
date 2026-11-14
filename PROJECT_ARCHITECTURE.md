@@ -34,7 +34,20 @@ Electron (Fenster, Ressourcen, Prozesslebensdauer, vertrauensgebundene IPC)
                      SQLite FTS5 / Graph / Uebersichten
 ```
 
-Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
+Ein Backendprozess pro Windows-Benutzer: der NickNotes-Dienst
+(`server.py --service`). Die App startet ihn nicht als Kind, sondern verbindet
+sich ueber `service.json` im Benutzerprofil (Port, PID, App-Token, Version) und
+startet ihn nur, wenn keiner laeuft oder eine andere Version laeuft. So schreibt
+weiterhin genau ein Prozess in jede NoteBase. Die App zeigt eine aktive NoteBase;
+`SessionRegistry` haelt daneben NoteBases offen, die Agenten-Freigaben
+benoetigen, und schliesst sie nach 10 Minuten ohne Zugriff.
+
+**Hintergrundbetrieb** (nur installierte Windows-App, Schalter unter
+Agent-Verbindungen, beim ersten Anlegen einer Freigabe eingeschaltet): Autostart
+per `HKCU\…\Run` („NickNotes Dienst“), der Dienst laeuft nach dem Schliessen der
+App weiter. Ist er aus, setzt die App ihre PID als Besitzer (`/service/owner`);
+der Dienst endet dann mit ihr. Installer und Updater beenden den Dienst vor dem
+Ersetzen der Dateien; die Deinstallation entfernt den Autostart.
 
 | Modul (`src/backend`) | Zustaendigkeit |
 | --- | --- |
@@ -43,7 +56,8 @@ Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
 | `security.py` | Loopback-Grenze: Host, Origin, App-Token, Eingabegroesse. |
 | `application_services.py` | Transportunabhaengige Operationen. Importiert weder FastAPI noch Routing. |
 | `use_cases.py` | Mehrschrittige Ablaeufe: Oeffnen, Speichern, Umbenennen, Verschieben, Fokus, Import. |
-| `session.py` | `RuntimeState`, `VaultSession`, Operationssperre, Sessiongeneration, `@coordinated`, `ProgressTracker`. |
+| `session.py` | `RuntimeState`, `VaultSession`, `SessionRegistry`, Operationssperre, Sessiongeneration, `@coordinated`, `ProgressTracker`. |
+| `server.py`, `service_control.py` | Dienstmodus, `service.json`, Besitzer-Watchdog, geordnetes Beenden. |
 | `commands.py`, `contracts.py`, `errors.py` | Eingaben, Antworten, Domain-Fehler. |
 | `nicknotes_backend/vault.py` | Fachlogik auf Dateien: Notizen, Tasks, Tags, Medien, Link-Rewrite, Migration. |
 | `nicknotes_backend/indexer.py` | SQLite-Projektion und Volltextsuche. |
@@ -54,13 +68,17 @@ Ein Backendprozess und eine aktive NoteBase pro Appinstanz.
 Kein zweiter Fachkern fuer MCP und kein allgemeines Serviceframework.
 
 **Sicherheit.** Uvicorn lauscht nur auf Loopback (Standardport 8765). Ein
-zufaelliger App-Schluessel geht ueber die Prozesspipe an das Backend und ueber eng
-begrenzte IPC an den Renderer. Host, Origin, Pfade und Eingabegroessen werden
+zufaelliger App-Schluessel entsteht im Dienst, liegt in `service.json` im
+Benutzerprofil und geht ueber eng begrenzte IPC an den Renderer; Vertrauensgrenze
+ist der angemeldete Windows-Benutzer. Host, Origin, Pfade und Eingabegroessen werden
 geprueft. Electron verwendet Context Isolation, Sandbox, CSP und `nicknotes://app`;
 IPC akzeptiert nur den App-Hauptframe. Fremde Prozesse auf belegten Ports werden
-nicht beendet. Pipe und Parent-Watchdog beenden den eigenen Backendprozess.
+nicht beendet. Ohne Hintergrundbetrieb beendet der Besitzer-Watchdog den Dienst mit der App.
 
-**MCP.** Freigaben gelten fuer eine NoteBase und besitzen getrenntes Schreibrecht.
+**MCP.** Eine Freigabe gilt genau fuer eine NoteBase und besitzt getrenntes
+Schreibrecht; sie erreicht ihre NoteBase auch, wenn die App eine andere zeigt.
+`search_notes` sortiert Volltexttreffer nach dem Link-Graphen nach,
+`get_note_context` liefert Links, Backlinks und Tag-Nachbarn.
 Nur Token-Hashes liegen im geraetelokalen Profil; Rechte werden bei jedem Aufruf
 geprueft. Keine Shell, freie Host-Dateioperationen oder NoteBase-Loeschung per
 MCP. Erstellen/Anhaengen besitzen persistente Wiederholungsbelege; mehrdeutig
@@ -82,13 +100,21 @@ MeineNoteBase/
     tag_groups.json              einzige Tagdefinitionsquelle
     ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
+    migrations/                  Konfigurationssicherungen und Nachweise
+
+%LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
     graph-state.json             Graph-UI-Zustand, Version 2
-    migrations/                  Konfigurationssicherungen und Nachweise
+    task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
-    mcp-operations/               Wiederholungsbelege, keine zweite Inhaltsquelle
+    mcp-operations/              Wiederholungsbelege, keine zweite Inhaltsquelle
 ```
+
+Projektionen und Journale liegen bewusst ausserhalb der NoteBase, damit ein
+Sync-Ordner (z. B. OneDrive als Backup) nur Inhalte hochlaedt. Eine verschobene
+oder kopierte NoteBase baut sie beim Oeffnen neu auf; Altdateien in `.system/`
+werden dabei entfernt, offene Journale uebernommen.
 
 Frontmatter wird mit sicherem YAML gelesen. Unbekannte verschachtelte Felder
 bleiben erhalten; doppelte Schluessel und unsichere Typen werden abgelehnt.
@@ -97,8 +123,11 @@ Datei-, Frontmatter-, Tiefe- und Aliaslimits begrenzen die Verarbeitung. Stabile
 Manuelle `tags`/`related` und aus dem Body abgeleitete `tags_auto`/`related_auto`
 werden gemeinsam projiziert. Task-Typen gelten unabhaengig vom Ordner.
 
-To-dos erhalten beim Bearbeiten stabile Blockreferenzen und Zeitfelder direkt
-im Markdown (`<!-- nn:todo created=... completed=... --> ^nn-todo_...`).
+To-dos erhalten beim Bearbeiten und bei der Schnellerfassung im Fokus dieselben
+stabilen Blockreferenzen und Zeitfelder im Markdown
+(`<!-- nn:todo created=... --> ^nn-todo_...`). `completed=...` wird nur mit einem
+Erledigungszeitpunkt geschrieben. Bestehende Marker mit leerem `completed=`
+bleiben lesbar.
 Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
 einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
 im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.
@@ -247,10 +276,13 @@ Bedienung und Nachweise einzelner Bereiche:
 Der Desktop registriert IPC und oeffnet sein Fenster vor der Backend-
 Bereitschaft. `index.html` und das abhaengigkeitsfreie `public/startup.js`
 stellen eine kleine Schnellerfassung bereit; erst danach laedt `bootstrap.ts`
-React und die Editoren. Der Pythonprozess startet nach der ersten gezeichneten
-Eingabe (Fallback nach drei Sekunden). `backend-worker.mjs` besitzt Prozessstart
-und Kontrollpipe ausserhalb des Electron-Hauptthreads. Die Backend-URL wird vor
-der Bereitschaft ermittelt, der Token erst danach freigegeben.
+React und die Editoren. Nach der ersten gezeichneten Eingabe (Fallback nach drei
+Sekunden) verbindet sich `backend-service.mjs` mit dem laufenden Dienst oder
+startet ihn ueber `backend-worker.mjs` losgeloest ausserhalb des
+Electron-Hauptthreads. Laeuft der Dienst schon (Autostart), entfaellt der
+Python-Kaltstart. Die Backend-URL wird vor der Bereitschaft ermittelt, der Token
+erst danach freigegeben. Das gepackte Backend hat kein Konsolenfenster und
+schreibt im Dienstmodus nach `service.log`.
 
 Ein noch nicht abgesendeter Quick-Capture-Entwurf liegt als `capture-draft.md`
 im geraetelokalen Profil (`capture-draft-store.mjs`). Erst **Senden** schreibt

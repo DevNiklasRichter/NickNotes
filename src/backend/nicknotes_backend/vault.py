@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .indexer import VaultIndexer
+from .local_data import RETIRED_SYSTEM_FILES, notebase_data_path
 from .file_io import atomic_write_text, atomic_write_bytes
 from .migrations import migrate_configuration, validate_configuration
 from .source_journal import active_journal
@@ -27,7 +28,7 @@ from .task_domain import (
     slugify,
     task_status_folder_token as _task_status_folder_token,
 )
-from .todos import mark_todo_promoted, toggle_todo_checkbox
+from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
     TASK_ESTIMATE_MINUTES_MAX,
@@ -438,9 +439,10 @@ class VaultManager:
     def _ensure_structure(self) -> None:
         self.validate_roots()
         migrate_configuration(self)
-        for path in (self.daily_root_path, self.tag_root_path, self.tasks_root_path, self.media_root_path, self.system_path):
+        for path in (self.daily_root_path, self.tag_root_path, self.tasks_root_path, self.media_root_path, self.system_path, self.local_path):
             path.mkdir(parents=True, exist_ok=True)
         self._ensure_task_status_folders()
+        self._remove_retired_projections()
 
         if not self.config_path.exists():
             atomic_write_text(self.config_path, json.dumps({'format_version': 2, 'vault_id': str(uuid.uuid4())}, indent=2), encoding='utf-8')
@@ -472,14 +474,32 @@ class VaultManager:
         self.media_root_path = self.vault_path / self.media_root_name
         self.system_path = self.vault_path / self.system_root_name
 
-        self.db_path = self.system_path / "index.db"
         self.config_path = self.system_path / "config.json"
         self.tag_groups_path = self.system_path / "tag_groups.json"
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
         self.ui_settings_path = self.system_path / "ui_settings.json"
-        self.task_status_links_path = self.system_path / "task_status_links.json"
-        self.graph_index_path = self.system_path / "graph-index.json"
-        self.graph_state_path = self.system_path / "graph-state.json"
+        # Derived projections and journals are device-local (see local_data).
+        self.local_path = notebase_data_path(self.vault_path)
+        self.db_path = self.local_path / "index.db"
+        self.graph_index_path = self.local_path / "graph-index.json"
+        self.graph_state_path = self.local_path / "graph-state.json"
+        self.projection_dirty_path = self.local_path / "projection-dirty.json"
+        self.recovery_path = self.local_path / "recovery"
+        self.operations_path = self.local_path / "mcp-operations"
+        self.task_status_links_path = self.local_path / "task_status_links.json"
+
+    def _remove_retired_projections(self) -> None:
+        """Projections used to live in `.system`; keep pending journals, drop the rest."""
+        for name in RETIRED_SYSTEM_FILES:
+            (self.system_path / name).unlink(missing_ok=True)
+        old_recovery = self.system_path / "recovery"
+        if old_recovery.is_dir() and not old_recovery.is_symlink():
+            self.recovery_path.mkdir(parents=True, exist_ok=True)
+            for entry in old_recovery.iterdir():
+                if not (self.recovery_path / entry.name).exists():
+                    shutil.move(str(entry), str(self.recovery_path / entry.name))
+            shutil.rmtree(old_recovery, ignore_errors=True)
+        shutil.rmtree(self.system_path / "mcp-operations", ignore_errors=True)
 
     def _ensure_task_status_folders(self) -> None:
         self.tasks_root_path.mkdir(parents=True, exist_ok=True)
@@ -2553,7 +2573,8 @@ class VaultManager:
         meta["tags"] = _ensure_string_list(meta.get("tags", []))
         meta["updated_at"] = now_iso
 
-        todo_line = f"- [ ] {clean_text} <!-- nn:todo created={now_iso} completed= --> ^todo-{uuid.uuid4().hex[:16]}"
+        block_ref = f"nn-todo_{uuid.uuid4().hex[:16]}"
+        todo_line = "- [ ] " + format_todo_tail(clean_text, block_ref, now_iso)
         if body.strip():
             next_body = body.rstrip() + "\n" + todo_line + "\n"
         else:

@@ -1,17 +1,24 @@
 # NickNotes: lokale Agent-Verbindungen
 
-NickNotes startet seinen MCP-Server zusammen mit der Desktop-App. Es gibt keinen eingebauten Chat, keine Provider-Konfiguration und keinen LLM-Aufruf aus NickNotes.
+Der MCP-Server laeuft im lokalen NickNotes-Dienst. Mit **Im Hintergrund erreichbar** startet der Dienst mit Windows und bleibt nach dem Schliessen der App aktiv; Agenten erreichen die NoteBase dann, ohne dass die App offen ist. Es gibt keinen eingebauten Chat, keine Provider-Konfiguration und keinen LLM-Aufruf aus NickNotes.
 
-1. Eine NoteBase oeffnen.
+1. Die NoteBase oeffnen, mit der der Agent arbeiten soll.
 2. **Einstellungen → Agent-Verbindungen** oeffnen.
-3. Eine benannte Freigabe erstellen. Standard ist **nur Lesen**; Schreiben bewusst einschalten.
-4. Die einmal angezeigte Konfiguration in den gewuenschten Client uebernehmen. Den Schluessel wie ein Passwort behandeln.
-5. NickNotes und genau diese NoteBase geoeffnet lassen.
+3. Eine benannte Freigabe erstellen. Standard ist **nur Lesen**; Schreiben bewusst einschalten. Die erste Freigabe schaltet den Hintergrundbetrieb ein (abschaltbar).
+4. Die einmal angezeigte Konfiguration in den gewuenschten Client uebernehmen (Claude Code, Codex oder MCP-JSON). Den Schluessel wie ein Passwort behandeln.
+
+Eine Freigabe gilt genau fuer **eine** NoteBase. So schreibt ein Agent nie versehentlich in eine andere. Zeigt die App gerade eine andere NoteBase, oeffnet der Dienst die freigegebene im Hintergrund und schliesst sie nach 10 Minuten ohne Zugriff.
+
+## Claude Code
+
+```bash
+claude mcp add --transport http --scope user nicknotes http://127.0.0.1:8765/mcp/ --header "Authorization: Bearer DEIN_SCHLUESSEL"
+```
 
 Transport: Streamable HTTP. Standardadresse: `http://127.0.0.1:8765/mcp/`.
 Authentifizierung: `Authorization: Bearer <Schluessel>`. Der normale interne App-Schluessel funktioniert hier nicht.
 
-Freigaben gelten fuer die NoteBase-ID **und** ihren lokalen Pfad. Andere geoeffnete NoteBases sind nicht zugaenglich. Nach einem Umzug oder auf einem anderen Geraet eine neue lokale Freigabe erstellen. Widerrufen wirkt auch auf bereits verbundene Clients; der naechste Request wird abgelehnt. NickNotes speichert ausserhalb der NoteBase nur den Hash eines Schluessels.
+Freigaben gelten fuer die NoteBase-ID **und** ihren lokalen Pfad. Andere NoteBases sind nicht zugaenglich. Nach einem Umzug oder auf einem anderen Geraet eine neue lokale Freigabe erstellen. Widerrufen wirkt auch auf bereits verbundene Clients; der naechste Request wird abgelehnt. NickNotes speichert ausserhalb der NoteBase nur den Hash eines Schluessels.
 
 ## Codex
 
@@ -33,9 +40,9 @@ Eine Konfiguration mit dem echten Schluessel nicht ins Repository einchecken. Di
 | --- | --- |
 | `get_workspace_context` | NoteBase, Rechte, Ordner und Format erklaeren |
 | `list_tags` | Verbindliche Gruppen und Tags auflisten |
-| `search_notes` | Volltextsuche mit Relevanz, Ausschnitt, Seiten, Tag- und Typfilter |
+| `search_notes` | Volltextsuche, nach Wissensgraph nachsortiert (mit anderen Treffern verlinkte Notizen steigen); je Treffer Tags, Backlinks und verlinkte Treffer; Seiten, Tag- und Typfilter |
 | `read_note` | Markdown plus SHA-256-Revision lesen |
-| `get_related_notes` | Direkte Verweise und gemeinsame Tags mit Begruendung; standardmaessig 50, maximal 200 Treffer |
+| `get_note_context` | Links, Backlinks und gewichtete Tag-Nachbarn einer Notiz; mit `depth=2` auch die Notizen hinter direkten Links samt Verbindung |
 | `list_work_items` | Tasks und Checkbox-Todos mit Herkunft, Status und Terminen |
 
 | Schreiben | Zweck |

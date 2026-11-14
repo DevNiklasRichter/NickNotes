@@ -18,7 +18,7 @@ def _entries(directory, payload):
 def list_recovery(vault):
     result = []
     for relative in pending_recovery(vault):
-        path = vault.vault_path / relative
+        path = Path(relative)
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))
             result.append({'id':path.parent.name,'operation':payload.get('operation','Unknown'),'paths':[entry.get('path','') for entry in _entries(path.parent,payload)],'manifest':relative})
@@ -30,9 +30,9 @@ def list_recovery(vault):
 def resolve_recovery(vault, identity, action):
     if not re.fullmatch('[a-f0-9]{32}',identity) or action not in {'restore','keep'}:
         raise ValueError('Invalid recovery action.')
-    directory = (vault.system_path/'recovery'/identity).resolve()
-    if not directory.is_relative_to(vault.system_path.resolve()/'recovery'):
-        raise ValueError('Recovery directory is outside the NoteBase.')
+    directory = (vault.recovery_path/identity).resolve()
+    if not directory.is_relative_to(vault.recovery_path.resolve()):
+        raise ValueError('Recovery directory is outside the local journal.')
     manifest = directory/'manifest.json'
     payload = json.loads(manifest.read_text(encoding='utf-8'))
     if action == 'keep':

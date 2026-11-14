@@ -107,6 +107,7 @@ from .nicknotes_backend.recovery import list_recovery, resolve_recovery
 from .nicknotes_backend.source_journal import pending_recovery
 from .operation_context import clear_operation_context, get_operation_context, set_operation_context
 from .security import LocalApiSecurity
+from .service_control import control as service_control
 from .session import RuntimeState, expected_session
 
 
@@ -174,6 +175,7 @@ async def lifespan(app):
         try:
             yield
         finally:
+            backend_api_service.sessions.close_idle(float('inf'))
             state.dispose_session()
 
 app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.4", lifespan=lifespan)
@@ -687,6 +689,25 @@ def create_agent_grant(req: AgentGrantRequest):
 def revoke_agent_grant(identity: str):
     grant_store.revoke(identity)
     return {'revoked': True}
+
+
+class ServiceOwnerRequest(BaseModel):
+    pid: int | None = Field(default=None, ge=1)
+
+@app.get('/service')
+def service_info():
+    return {'version': service_control.version, 'pid': os.getpid(), 'ownerPid': service_control.owner_pid}
+
+@app.post('/service/owner')
+def set_service_owner(req: ServiceOwnerRequest):
+    # With an owner the service ends with the app; without one it stays reachable for agents.
+    service_control.owner_pid = req.pid
+    return {'ownerPid': service_control.owner_pid}
+
+@app.post('/service/shutdown')
+def shutdown_service():
+    service_control.shutdown()
+    return {'stopping': True}
 
 @app.get('/graph/related')
 def graph_related(path: str, limit: int = 50):

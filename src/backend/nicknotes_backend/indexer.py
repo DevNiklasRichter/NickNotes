@@ -69,6 +69,7 @@ class VaultIndexer:
         self._batch_depth = 0
         self.db_path = db_path
         self._lock = threading.RLock()
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.create_function("local_day",1,calendar_day)

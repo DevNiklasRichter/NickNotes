@@ -52,6 +52,8 @@ class OpenVaultUseCase:
         if not vault_path.exists():
             raise ValidationDomainError(f"NoteBase path not found: {vault_path}", operation="open_vault", vault_id=str(vault_path))
 
+        if service.state is service._runtime:
+            service.sessions.release(vault_path)
         service.state.dispose_session()
         indexer = None
         try:
@@ -97,7 +99,7 @@ class OpenVaultUseCase:
                 graph_status = service.rebuild_graph_projection(vault)
             else:
                 graph_status = service.graph_index_status(vault, existing_graph)
-            (vault.system_path/'projection-dirty.json').unlink(missing_ok=True)
+            vault.projection_dirty_path.unlink(missing_ok=True)
             try:
                 service.state.start_session(vault=vault, indexer=indexer)
                 service.state.start_graph_watcher(baseline)
