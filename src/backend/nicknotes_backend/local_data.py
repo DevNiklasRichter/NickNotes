@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 # Files that older versions kept inside `.system`; they are rebuilt locally on open.
-RETIRED_SYSTEM_FILES = ('index.db', 'index.db-wal', 'index.db-shm', 'graph-index.json', 'graph-state.json', 'projection-dirty.json', 'task_status_links.json')
+RETIRED_SYSTEM_FILES = ('index.db', 'index.db-wal', 'index.db-shm', 'graph-index.json', 'projection-dirty.json', 'task_status_links.json')
 
 
 def user_data_path() -> Path:

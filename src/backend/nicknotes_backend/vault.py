@@ -478,11 +478,11 @@ class VaultManager:
         self.tag_groups_path = self.system_path / "tag_groups.json"
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
         self.ui_settings_path = self.system_path / "ui_settings.json"
+        self.graph_state_path = self.system_path / "graph-state.json"  # your graph arrangement travels with the NoteBase
         # Derived projections and journals are device-local (see local_data).
         self.local_path = notebase_data_path(self.vault_path)
         self.db_path = self.local_path / "index.db"
         self.graph_index_path = self.local_path / "graph-index.json"
-        self.graph_state_path = self.local_path / "graph-state.json"
         self.projection_dirty_path = self.local_path / "projection-dirty.json"
         self.recovery_path = self.local_path / "recovery"
         self.operations_path = self.local_path / "mcp-operations"

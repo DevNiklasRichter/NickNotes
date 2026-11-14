@@ -100,12 +100,12 @@ MeineNoteBase/
     tag_groups.json              einzige Tagdefinitionsquelle
     ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
+    graph-state.json             Graph-Anordnung und -Filter, Version 2
     migrations/                  Konfigurationssicherungen und Nachweise
 
 %LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
     index.db                     SQLite-Projektion, Schema 4
     graph-index.json             Graph-Projektion, Version 2
-    graph-state.json             Graph-UI-Zustand, Version 2
     task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
     mcp-operations/              Wiederholungsbelege, keine zweite Inhaltsquelle
