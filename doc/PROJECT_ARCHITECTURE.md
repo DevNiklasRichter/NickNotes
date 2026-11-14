@@ -84,7 +84,7 @@ geprueft. Keine Shell, freie Host-Dateioperationen oder NoteBase-Loeschung per
 MCP. Erstellen/Anhaengen besitzen persistente Wiederholungsbelege; mehrdeutig
 unterbrochene Wiederholungen werden als Konflikt gemeldet. Per MCP angelegte
 To-dos verwenden dieselbe Referenz `^nn-todo_…` wie die Oberflaeche.
-Details: [MCP](doc/mcp-connections.md).
+Details: [MCP](mcp-connections.md).
 
 ## NoteBase und Format
 
@@ -185,7 +185,7 @@ unveraenderter Projektionen.
 Der Graph speichert explizite Links und Tag-Nutzung, keine Shared-Tag-Allpaare.
 `related_files` bewertet eine Nachbarschaft bei Bedarf (50, maximal 200 Treffer)
 und scannt dafuer linear die Dateieintraege. Die UI begrenzt globale Ausschnitte
-auf 500 Knoten/1.500 Kanten. Details: [Graph](doc/graph-feature.md).
+auf 500 Knoten/1.500 Kanten. Details: [Graph](graph-feature.md).
 
 Ein Polling-Watcher verarbeitet externe Aenderungen unter derselben Sperre und
 meldet eine Aenderungsversion. `BackendChangeEvent` nennt Version, Operation,
@@ -247,7 +247,7 @@ Regeln, die Aenderungen einhalten muessen:
 - **Ansichtszustand ist fluechtig oder UI-Setting.** Schreibmodus, Filter und
   Layout erzeugen keine fachliche Aenderungsversion und schreiben kein Markdown.
 - **Gestaltung** folgt den Tokens in `index.css` und dem
-  [UI-Styleguide](doc/ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
+  [UI-Styleguide](ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
   Farben stehen nur in `index.css`, Buttons, Eingaben und Auswahlfelder sind dort
   einmal definiert. `layout/WorkbenchShell.css` besitzt das
   Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen.
@@ -258,7 +258,7 @@ Bediennachweise). Schalter wie `--menus`, `--settings-dialog` oder `--properties
 pruefen einzelne Bereiche. Das ist eine UX-Baseline, keine Installerabnahme oder
 vollstaendige Accessibilityfreigabe.
 
-Bedienung: [Tasten und Menues](doc/keyboard-and-menus.md).
+Bedienung: [Tasten und Menues](keyboard-and-menus.md).
 
 ## Start und Desktop
 
@@ -276,7 +276,7 @@ schreibt im Dienstmodus nach `service.log`.
 Ein noch nicht abgesendeter Quick-Capture-Entwurf liegt als `capture-draft.md`
 im geraetelokalen Profil (`capture-draft-store.mjs`). Erst **Senden** schreibt
 ueber den Capture-Service in die NoteBase. Das Theme liegt als Startcache in
-`window-state.json`. Details: [Startverhalten](doc/startup-and-recovery.md).
+`window-state.json`. Details: [Startverhalten](startup-and-recovery.md).
 
 `update-service.mjs` koordiniert ausschliesslich veroeffentlichte stabile
 Updates im Hauptprozess. Download und Installation sind getrennte
@@ -312,9 +312,14 @@ Release-Text der angebotenen Version vor dem Download.
   naechsten Version und setzt Paket- und Lockversion. Dependabot schlaegt
   woechentlich gebuendelte npm-/pip-Updates und monatlich Action-Updates vor.
 - macOS-/Linux-Entwicklung ist zurueckgestellt.
+- `examples/demo-notebase` ist eine erfundene Beispiel-NoteBase (nur Markdown und
+  `.system/tag_groups.json`, keine Projektionen). `npm run readme:media` startet
+  die echte App darauf und erzeugt die Screenshots und GIFs in `doc/media` (GIFs
+  brauchen ffmpeg). README und `doc/media` zeigen immer diese NoteBase.
+- Anwender-Einstieg ist `README.md`; Entwicklerdetails stehen in `CONTRIBUTING.md`.
 
-Details: [Windows-Auslieferung](doc/windows-release.md),
-[GitHub-Pipeline](doc/github-pipeline.md).
+Details: [Windows-Auslieferung](windows-release.md),
+[GitHub-Pipeline](github-pipeline.md).
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur
