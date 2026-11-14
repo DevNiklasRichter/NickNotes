@@ -304,6 +304,18 @@ def update_graph_index_for_file(
     tags = _extract_tags(meta, body)
     links = _extract_links(meta, body, relative_path)
 
+    # Most saves change prose only. With identity, title, tags and links unchanged no node,
+    # edge or diagnostic can differ, so the caller keeps the projection it already has.
+    if (
+        previous_relative_path is None
+        and current_file_entry is not None
+        and (current_file_entry.id, current_file_entry.type, current_file_entry.title) == (file_id, note_type, title)
+        and list(current_file_entry.tags) == list(tags)
+        and list(current_file_entry.links) == [link["target"] for link in links]
+        and index.source.get("tag_groups_hash") == _stable_json_hash(tag_groups)
+    ):
+        return index
+
     files[relative_path] = GraphFileEntry(
         id=file_id,
         type=note_type,

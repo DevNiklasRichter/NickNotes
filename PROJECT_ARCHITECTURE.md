@@ -155,10 +155,21 @@ meldet eine Aenderungsversion. `BackendChangeEvent` nennt Version, Operation,
 betroffene Pfade und Trunkierung. Der Renderer verwendet Pfade nur bei einer
 lueckenlosen Version; sonst folgt der vollstaendige Dokumentabgleich.
 
-Bekannte Grenzen: Der Watcher scannt alle zwei Sekunden das Inventar, der
-Renderer fragt `/state` alle 2,5 Sekunden ab. Umbenennen und Verschieben bauen
-den Graph vollstaendig neu auf; `graph-index.json` wird je Save komplett
-geschrieben. `explorer_files` durchsucht den Ordner statt den Index.
+Der Watcher liest alle zwei Sekunden Zeit und Größe aus dem Verzeichnislisting,
+ohne Dateien zu öffnen, und bestätigt nur scheinbare Änderungen an der Datei.
+Fragt 30 Sekunden kein Client `/state` ab (verstecktes Fenster), prüft er nur
+noch alle zehn Sekunden; der Renderer pausiert seine Abfrage, solange das Fenster
+verborgen ist. Der eingelesene Graph bleibt im Speicher, solange
+`graph-index.json` unverändert ist. Ein Save ohne Änderung an ID, Titel, Tags
+oder Verweisen fasst den Graph nicht an; Umbenennen und Verschieben
+aktualisieren nur die betroffenen Dateien (ab neun umgeschriebenen Notizen
+Vollaufbau). Der Erstaufbau liest Quelldateien stapelweise parallel.
+`scripts/benchmark-notebase.py` misst Öffnen, Speichern und Umbenennen auf einem
+synthetischen Bestand.
+
+Bekannte Grenzen: Ein Save mit geänderten Tags oder Verweisen löst alle Verweise
+neu auf und schreibt `graph-index.json` vollständig. Link-Rewrite beim
+Umbenennen liest jede Notiz.
 
 ## Frontend
 
