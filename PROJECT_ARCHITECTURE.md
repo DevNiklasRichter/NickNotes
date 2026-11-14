@@ -250,8 +250,7 @@ Regeln, die Aenderungen einhalten muessen:
   [UI-Styleguide](doc/ui-styleguide.md). Es gibt genau zwei Themes (hell, dunkel);
   Farben stehen nur in `index.css`, Buttons, Eingaben und Auswahlfelder sind dort
   einmal definiert. `layout/WorkbenchShell.css` besitzt das
-  Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen. Geplante
-  Vereinheitlichung: [UI-Modernisierung](doc/ui-modernization-plan-2026-11-12.md).
+  Shell-Raster; keine Reparaturregeln am Ende von `App.css` ergaenzen.
 
 `npm run ux:baseline` erfasst die echte Entwicklungsoberflaeche mit eigenem
 Profil und synthetischer NoteBase unter `.tmp/` (Screenshots, Layoutmesswerte,
@@ -259,25 +258,7 @@ Bediennachweise). Schalter wie `--menus`, `--settings-dialog` oder `--properties
 pruefen einzelne Bereiche. Das ist eine UX-Baseline, keine Installerabnahme oder
 vollstaendige Accessibilityfreigabe.
 
-Bedienung und Nachweise einzelner Bereiche:
-[Tasten und Menues](doc/keyboard-and-menus.md),
-[Kontextmenues](doc/context-menus-2026-11-10.md),
-[Tagmenues](doc/tag-menus-2026-11-10.md),
-[Graphmenues](doc/graph-menus-2026-11-10.md),
-[Editormenues](doc/editor-menus-2026-11-10.md),
-[Sortierung und NoteBase-Menues](doc/sidebar-menus-2026-11-10.md),
-[Tagvorschlaege](doc/tag-suggestions-2026-11-10.md),
-[NoteBase-Erstellung](doc/create-notebase-dialog-2026-11-10.md),
-[Tag-Matching](doc/tag-matching-dialog-2026-11-10.md),
-[Einstellungen](doc/settings-dialog-2026-11-11.md),
-[Mehrfachfilter](doc/multiselect-filters-2026-11-12.md),
-[Editor-Eigenschaften](doc/editor-properties-2026-11-12.md),
-[Tooltips](doc/tooltips-2026-11-13.md),
-[Suche und App-Befehle](doc/search-commands-2026-11-13.md),
-[Navigation und Schreibraum](doc/navigation-writing-2026-11-13.md),
-[Restmodernisierung](doc/remaining-modernization-2026-11-13.md),
-[UX-Baseline](doc/ux-baseline-2026-11-10.md),
-[Gestaltungsgrundlage](doc/ui-foundations-2026-11-10.md).
+Bedienung: [Tasten und Menues](doc/keyboard-and-menus.md).
 
 ## Start und Desktop
 
@@ -333,9 +314,7 @@ Release-Text der angebotenen Version vor dem Download.
 - macOS-/Linux-Entwicklung ist zurueckgestellt.
 
 Details: [Windows-Auslieferung](doc/windows-release.md),
-[GitHub-Pipeline](doc/github-pipeline.md),
-[Releasepruefung](doc/release-candidate-2026-11-08.md),
-[Implementierungsplan](doc/implementation-plan.md).
+[GitHub-Pipeline](doc/github-pipeline.md).
 
 Persoenliche NoteBases, `.tmp`, `.venv`, `node_modules`, `dist`, Profile und
 generierte Projektionen gehoeren nicht ins Repository. Tests verwenden nur
