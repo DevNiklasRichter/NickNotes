@@ -97,8 +97,11 @@ Datei-, Frontmatter-, Tiefe- und Aliaslimits begrenzen die Verarbeitung. Stabile
 Manuelle `tags`/`related` und aus dem Body abgeleitete `tags_auto`/`related_auto`
 werden gemeinsam projiziert. Task-Typen gelten unabhaengig vom Ordner.
 
-To-dos erhalten beim Bearbeiten stabile Blockreferenzen und Zeitfelder direkt
-im Markdown (`<!-- nn:todo created=... completed=... --> ^nn-todo_...`).
+To-dos erhalten beim Bearbeiten und bei der Schnellerfassung im Fokus dieselben
+stabilen Blockreferenzen und Zeitfelder im Markdown
+(`<!-- nn:todo created=... --> ^nn-todo_...`). `completed=...` wird nur mit einem
+Erledigungszeitpunkt geschrieben. Bestehende Marker mit leerem `completed=`
+bleiben lesbar.
 Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
 einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
 im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.

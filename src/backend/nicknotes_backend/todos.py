@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime
-import uuid
 from dataclasses import dataclass
 
 
@@ -11,7 +10,7 @@ TODO_LINE_PATTERN = re.compile(r"^(\s*[-*+]\s+\[([ xX])\]\s+)(.*)$")
 from .task_domain import normalize_tag_id
 FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 PROMOTION_MARKER_PATTERN = re.compile(r"\s*<!--\s*nn:todo:promoted:([A-Za-z0-9][A-Za-z0-9_-]{1,120})\s*-->\s*$")
-HISTORY_PATTERN = re.compile(r'\s*<!-- nn:todo created=([^ ]*) completed=([^ ]*) -->')
+HISTORY_PATTERN = re.compile(r'\s*<!-- nn:todo created=([^ ]*)(?: completed=([^ ]*))? -->')
 BLOCK_REF_PATTERN = re.compile(r"\s+\^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\s*$")
 INLINE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}")
 WIKILINK_PATTERN = re.compile(r"\[\[([^[\]\n]+)\]\]")
@@ -79,6 +78,20 @@ def _split_block_ref(value: str) -> tuple[str, str | None]:
     if not match:
         return value, None
     return value[: match.start()].rstrip(), match.group(1)
+
+
+def format_todo_tail(
+    text: str,
+    block_ref: str,
+    created_at: str,
+    completed_at: str | None = None,
+    promoted_task_id: str | None = None,
+) -> str:
+    completion = f" completed={completed_at}" if completed_at else ""
+    tail = f"{text} <!-- nn:todo created={created_at}{completion} --> ^{block_ref}"
+    if promoted_task_id:
+        tail += f" <!-- nn:todo:promoted:{promoted_task_id} -->"
+    return tail
 
 
 def _extract_tag_keys(text: str) -> list[str]:
@@ -251,11 +264,8 @@ def toggle_todo_checkbox(
     next_marker = "[x]" if next_checked else "[ ]"
     next_prefix = re.sub(r"\[[ xX]\]", next_marker, target.prefix, count=1)
     block_ref = target.block_ref or f'nn-{target.id}'
-    created = target.created_at
-    completed = datetime.now().astimezone().isoformat(timespec='seconds') if next_checked else ''
-    tail = f'{target.raw_text} <!-- nn:todo created={created} completed={completed} --> ^{block_ref}'
-    if target.promoted_task_id:
-        tail += f' <!-- nn:todo:promoted:{target.promoted_task_id} -->'
+    completed = datetime.now().astimezone().isoformat(timespec='seconds') if next_checked else None
+    tail = format_todo_tail(target.raw_text, block_ref, target.created_at, completed, target.promoted_task_id)
     lines[target.line_index] = f"{next_prefix}{tail}"
 
     next_body = "\n".join(lines)
@@ -294,7 +304,7 @@ def mark_todo_promoted(
         )
 
     block_ref=target.block_ref or f'nn-{target.id}'
-    updated_tail = f"{target.raw_text} <!-- nn:todo created={target.created_at} completed={target.completed_at or ''} --> ^{block_ref} <!-- nn:todo:promoted:{task_id} -->"
+    updated_tail = format_todo_tail(target.raw_text, block_ref, target.created_at, target.completed_at, task_id)
     lines[target.line_index] = f"{target.prefix}{updated_tail}"
 
     next_body = "\n".join(lines)
@@ -326,9 +336,7 @@ def synchronize_todo_history(previous_body: str, body: str, previous_anchor: str
         completed=item.completed_at if item.checked else None
         if item.checked and not completed:
             completed=(old.completed_at if old and old.checked else now)
-        tail=f"{item.raw_text} <!-- nn:todo created={created} completed={completed or ''} --> ^{stable}"
         promoted=item.promoted_task_id or (old.promoted_task_id if old else None)
-        if promoted:
-            tail+=f' <!-- nn:todo:promoted:{promoted} -->'
+        tail = format_todo_tail(item.raw_text, stable, created, completed, promoted)
         lines[item.line_index]=item.prefix+tail
     return '\n'.join(lines)+('\n' if body.endswith('\n') else '')

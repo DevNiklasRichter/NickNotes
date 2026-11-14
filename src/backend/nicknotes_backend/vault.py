@@ -27,7 +27,7 @@ from .task_domain import (
     slugify,
     task_status_folder_token as _task_status_folder_token,
 )
-from .todos import mark_todo_promoted, toggle_todo_checkbox
+from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
     TASK_ESTIMATE_MINUTES_MAX,
@@ -2553,7 +2553,8 @@ class VaultManager:
         meta["tags"] = _ensure_string_list(meta.get("tags", []))
         meta["updated_at"] = now_iso
 
-        todo_line = f"- [ ] {clean_text} <!-- nn:todo created={now_iso} completed= --> ^todo-{uuid.uuid4().hex[:16]}"
+        block_ref = f"nn-todo_{uuid.uuid4().hex[:16]}"
+        todo_line = "- [ ] " + format_todo_tail(clean_text, block_ref, now_iso)
         if body.strip():
             next_body = body.rstrip() + "\n" + todo_line + "\n"
         else:

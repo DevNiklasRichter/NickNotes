@@ -66,7 +66,7 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertEqual(unchanged['content'],actual['content'])
         todo = self.call('add_todo',{'path':data['path'],'text':'Nachfassen','expected_revision':actual['revision'],'operation_id':'todo-0001'},self.write)
         self.assertFalse(todo.get('isError',False),todo)
-        self.assertRegex(todo['structuredContent']['content'], r'- \[ \] Nachfassen <!-- nn:todo created=\S+ completed= --> \^nn-todo_[0-9a-f]{16}\n')
+        self.assertRegex(todo['structuredContent']['content'], r'- \[ \] Nachfassen <!-- nn:todo created=\S+ --> \^nn-todo_[0-9a-f]{16}\n')
         listed = self.call('list_work_items',{'kind':'todos'},self.write)['structuredContent']['items']
         # The UI's stable block reference format gives the todo its identity.
         self.assertEqual([item['id'] for item in listed], ['todo_'+item['block_ref'][len('nn-todo_'):] for item in listed])
