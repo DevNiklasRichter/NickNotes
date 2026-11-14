@@ -83,39 +83,6 @@ def _dedupe_sorted(values: list[str]) -> list[str]:
     return sorted(set(values), key=lambda item: item.lower())
 
 
-THEME_COLOR_TOKENS = {
-    "text",
-    "muted",
-    "surface",
-    "editorNoteBg",
-    "surfaceStrong",
-    "surfaceContrast",
-    "line",
-    "lineStrong",
-    "accent",
-    "accentStrong",
-    "accentSoft",
-    "codeBg",
-    "tableRow",
-    "bgLayer1",
-    "bgLayer2",
-    "bgLayer3",
-    "okBg",
-    "okBorder",
-    "okText",
-    "errorBg",
-    "errorBorder",
-    "errorText",
-    "success",
-    "warning",
-    "danger",
-    "info",
-    "neutral",
-    "highlight",
-    "graphNote",
-    "graphTask",
-    "graphTag",
-}
 TASK_STATUSES = ("new_topic", "open", "in_progress", "on_hold", "done")
 TASK_PRIORITIES = ("low", "medium", "high")
 TASK_LINK_NOTE_TYPE = "task_link"
@@ -144,20 +111,6 @@ def _normalize_tag_color(value: str) -> str:
         return clean
     return TAG_GROUP_DEFAULT_COLOR
 
-
-def _normalize_css_color(value: Any) -> str:
-    clean = str(value or "").strip()
-    if re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", clean):
-        return clean.lower()
-    if re.fullmatch(r"rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*(0|1|0?\.\d+))?\s*\)", clean, flags=re.IGNORECASE):
-        return clean
-    return ""
-
-
-def _normalize_color_profile_id(value: Any) -> str:
-    clean = str(value or "").strip().lower()
-    clean = re.sub(r"[^a-z0-9_-]+", "-", clean).strip("-")
-    return clean[:64]
 
 def _tag_ref_for_suggestion(tag: TagSuggestion) -> tuple[str, str, str]:
     group_slug = slugify(str(tag.category))
@@ -2125,52 +2078,11 @@ class VaultManager:
 
     def _normalize_ui_app_settings(self, app_settings: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(app_settings)
-
-        raw_profiles = normalized.get("themes")
-        if not isinstance(raw_profiles, list):
-            raw_profiles = normalized.get("colorProfiles")
-        clean_profiles: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        if isinstance(raw_profiles, list):
-            for raw_profile in raw_profiles:
-                if not isinstance(raw_profile, dict):
-                    continue
-                profile_id = _normalize_color_profile_id(raw_profile.get("id"))
-                if not profile_id or profile_id in {"light", "dark"} or profile_id in seen_ids:
-                    continue
-                seen_ids.add(profile_id)
-                name = _normalize_label(str(raw_profile.get("name", "")))[:80] or "Eigenes Profil"
-                base_theme = str(raw_profile.get("baseTheme", "")).strip().lower()
-                if base_theme not in {"light", "dark"}:
-                    base_theme = "light"
-                raw_colors = raw_profile.get("colors")
-                clean_colors: dict[str, str] = {}
-                if isinstance(raw_colors, dict):
-                    for token, raw_color in raw_colors.items():
-                        if str(token) not in THEME_COLOR_TOKENS:
-                            continue
-                        color = _normalize_css_color(raw_color)
-                        if color:
-                            clean_colors[str(token)] = color
-                if clean_colors:
-                    clean_profiles.append(
-                        {
-                            "id": profile_id,
-                            "name": name,
-                            "baseTheme": base_theme,
-                            "colors": clean_colors,
-                        }
-                    )
-        normalized.pop("colorProfiles", None)
-        normalized["themes"] = clean_profiles
-
-        active_profile_id = _normalize_color_profile_id(normalized.get("activeThemeId") or normalized.get("activeColorProfileId"))
-        valid_profile_ids = {"light", "dark", *seen_ids}
-        if active_profile_id not in valid_profile_ids:
-            theme = str(normalized.get("theme", "")).strip().lower()
-            active_profile_id = theme if theme in {"light", "dark"} else "light"
-        normalized.pop("activeColorProfileId", None)
-        normalized["activeThemeId"] = active_profile_id
+        # Only the two built-in themes exist; settings written by the former theme editor are dropped.
+        for retired in ("themes", "colorProfiles", "activeThemeId", "activeColorProfileId"):
+            normalized.pop(retired, None)
+        if normalized.get("theme") not in {"light", "dark"}:
+            normalized.pop("theme", None)
         return normalized
 
     def update_ui_settings(

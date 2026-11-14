@@ -50,8 +50,8 @@ import { useTagMatchWorkflowState, type TagMatchCandidate } from './app/tagMatch
 import {useMutationRefresh} from './app/useMutationRefresh';
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
-import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, DEFAULT_LIGHT_COLOR_PROFILE, DEFAULT_DARK_COLOR_PROFILE, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, applyColorProfileToDocument, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areColorProfilesEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
-import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus, ColorProfile } from './app/AppShared';
+import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
+import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus } from './app/AppShared';
 function resolveGraphNodePath(path: string, vaultPath: string): string {
     const cleanPath = normalizeLabel(path);
     if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
@@ -91,11 +91,6 @@ function App() {
     const capturePreviewLastTextRef = useRef('');
     const [backendUrl, setBackendUrl] = useState(window.nicknotes?.getBackendUrl?'':DEFAULT_BACKEND_URL);
     const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme);
-    const [activeColorProfileId, setActiveColorProfileId] = useState<string>(getPreferredTheme());
-    const [colorProfiles, setColorProfiles] = useState<ColorProfile[]>([
-        { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
-        { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } }
-    ]);
     const [vaultPath, setVaultPath] = useState(getStoredLastNoteBasePath);
     const [recentNoteBases, setRecentNoteBases] = useState<RecentNoteBase[]>(getStoredRecentNoteBases);
     const [vaultLoaded, setVaultLoaded] = useState(false);
@@ -139,11 +134,6 @@ function App() {
     const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS });
     const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS });
     const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme);
-    const [savedActiveColorProfileId, setSavedActiveColorProfileId] = useState<string>(getPreferredTheme());
-    const [savedColorProfiles, setSavedColorProfiles] = useState<ColorProfile[]>([
-        { ...DEFAULT_LIGHT_COLOR_PROFILE, colors: { ...DEFAULT_LIGHT_COLOR_PROFILE.colors } },
-        { ...DEFAULT_DARK_COLOR_PROFILE, colors: { ...DEFAULT_DARK_COLOR_PROFILE.colors } }
-    ]);
     const [savedDisplayName, setSavedDisplayName] = useState(DEFAULT_DISPLAY_NAME);
     const [savedSidebarOpen, setSavedSidebarOpen] = useState(true);
     const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS });
@@ -324,19 +314,13 @@ function App() {
     }, []);
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
-        const activeProfile = colorProfiles.find((profile) => profile.id === activeColorProfileId) ?? colorProfiles.find((profile) => profile.id === theme);
-        if (activeProfile) {
-            applyColorProfileToDocument(activeProfile);
-        }
         if (window.nicknotes?.setWindowTheme) {
             void window.nicknotes.setWindowTheme(theme).catch(() => {
                 // Best effort bridge for desktop titlebar.
             });
         }
-    }, [activeColorProfileId, colorProfiles, theme]);
+    }, [theme]);
     const settingsDirty = useMemo(() => theme !== savedTheme ||
-        activeColorProfileId !== savedActiveColorProfileId ||
-        !areColorProfilesEqual(colorProfiles, savedColorProfiles) ||
         displayName !== savedDisplayName ||
         sidebarOpen !== savedSidebarOpen ||
         !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
@@ -345,8 +329,6 @@ function App() {
         displayName,
         explorerOptions,
         savedDisplayName,
-        savedActiveColorProfileId,
-        savedColorProfiles,
         savedExplorerOptions,
         savedSidebarOpen,
         savedStatusBarPrefs,
@@ -355,9 +337,7 @@ function App() {
         sidebarOpen,
         statusBarPrefs,
         taskFeatureSettings,
-        theme,
-        activeColorProfileId,
-        colorProfiles
+        theme
     ]);
     useLayoutEffect(() => {
         settingsDirtyRef.current = settingsDirty;
@@ -529,8 +509,6 @@ function App() {
         getBackendUrl: () => backendUrl,
         snapshot: {
             getTheme: () => theme,
-            getActiveColorProfileId: () => activeColorProfileId,
-            getColorProfiles: () => colorProfiles,
             getDisplayName: () => displayName,
             getVaultPath: () => vaultPath,
             isSidebarOpen: () => sidebarOpen,
@@ -551,16 +529,12 @@ function App() {
         },
         writer: {
             setTheme,
-            setActiveColorProfileId,
-            setColorProfiles,
             setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedActiveColorProfileId,
-            setSavedColorProfiles,
             setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
@@ -680,16 +654,12 @@ function App() {
     const appSettingsService = new AppSettingsService({
         snapshot: {
             getTheme: () => theme,
-            getActiveColorProfileId: () => activeColorProfileId,
-            getColorProfiles: () => colorProfiles,
             getDisplayName: () => displayName,
             isSidebarOpen: () => sidebarOpen,
             getStatusBarPrefs: () => statusBarPrefs,
             getTaskFeatureSettings: () => taskFeatureSettings,
             getExplorerOptions: () => explorerOptions,
             getSavedTheme: () => savedTheme,
-            getSavedActiveColorProfileId: () => savedActiveColorProfileId,
-            getSavedColorProfiles: () => savedColorProfiles,
             getSavedDisplayName: () => savedDisplayName,
             getSavedSidebarOpen: () => savedSidebarOpen,
             getSavedStatusBarPrefs: () => savedStatusBarPrefs,
@@ -698,16 +668,12 @@ function App() {
         },
         writer: {
             setTheme,
-            setActiveColorProfileId,
-            setColorProfiles,
             setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedActiveColorProfileId,
-            setSavedColorProfiles,
             setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
@@ -747,8 +713,6 @@ function App() {
     const discardSettings = appSettingsService.discardSettings;
     const requestSaveSettings = () => {void saveSettings();};
     const setSettingsDisplayName = appSettingsService.setDisplayName;
-    const setSettingsColorProfiles = appSettingsService.setColorProfiles;
-    const handleActiveColorProfileChange = appSettingsService.handleActiveColorProfileChange;
     const openSettingsDialog = appSettingsService.openSettingsDialog;
     const closeSettingsDialog = () => {
         commitFocusedSettingsField();
@@ -2464,7 +2428,7 @@ function App() {
       onDisplayNameChange={setCreateNoteBaseDisplayName} onNameChange={setCreateNoteBaseName}
       onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
       onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
-    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} activeColorProfileId={activeColorProfileId} colorProfiles={colorProfiles} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onActiveColorProfileChange={handleActiveColorProfileChange} onColorProfilesChange={setSettingsColorProfiles} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
+    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onThemeChange={appSettingsService.setThemeMode} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
     const tagMatchWorkflowModal = tagMatchWorkflow.open ? <TagMatchDialog
       loading={tagMatchWorkflow.loading} applying={tagMatchWorkflow.applying}
       error={tagMatchWorkflow.error} status={tagMatchWorkflow.status} needsRescan={tagMatchWorkflow.needsRescan}

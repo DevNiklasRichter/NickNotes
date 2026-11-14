@@ -216,23 +216,6 @@ async function verifyFoundations() {
   assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
   report.checks.resizeAndSidebarPreserveDraft = true
 
-  await page.locator('.activity-rail').getByRole('button',{name:'Einstellungen',exact:true}).click()
-  await page.getByRole('button',{name:'Darstellung',exact:true}).click()
-  await page.getByRole('button',{name:'Neues Theme',exact:true}).click()
-  for (const [label,value] of [['Text','#dcece2'],['Editor-Hintergrund','#1b2721']]) {
-    const field = page.locator('.theme-token-row').filter({has:page.getByText(label,{exact:true})}).locator('input:not([type="color"])')
-    await field.fill(value); await field.press('Tab')
-  }
-  const save = page.getByRole('dialog').getByRole('button',{name:'Speichern',exact:true})
-  await save.click(); await expect(save).toBeDisabled()
-  await page.getByRole('button',{name:'Einstellungen schliessen'}).click()
-  await capture('note-custom-profile','Custom profile with independent text/editor colours')
-  const stored = JSON.stringify(await request('/ui-settings'))
-  assert.ok(stored.includes('#dcece2') && stored.includes('#1b2721'))
-  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
-  await expect.poll(()=>page.evaluate(()=>document.documentElement.style.getPropertyValue('--text'))).toBe('#dcece2')
-  await expect.poll(()=>page.evaluate(()=>document.documentElement.style.getPropertyValue('--editor-note-bg'))).toBe('#1b2721')
-  report.checks.customProfileSurvivesReload = true
   await openNote('Arbeitsnotiz')
   await theme('dark')
 }
@@ -1418,7 +1401,7 @@ async function verifySettingsDialog() {
   await open()
   if(await save().isEnabled()){await save().click();await expect(close()).toBeEnabled()}
   const originalName=await name().inputValue()
-  const originalTheme=saved().activeThemeId
+  const originalTheme=saved().theme
   await capture('settings-dialog-general-dark','Shared focus lifecycle and accessible setting fields in the existing settings dialog')
   await section('Allgemein').focus();await page.keyboard.press('End')
   await expect(section('Tasks')).toBeFocused();await expect(section('Tasks')).toHaveAttribute('aria-current','page')
@@ -1516,20 +1499,15 @@ async function verifySettingsDialog() {
     })
   }
   report.checks.settingsDialogPickerWaitBlocksDismissal=true
-  await section('Darstellung').click();await dialog.getByRole('button',{name:'Neues Theme',exact:true}).click()
-  const customId=await dialog.getByRole('combobox',{name:'Theme',exact:true}).inputValue()
-  const profileName=dialog.getByLabel('Theme-Name',{exact:true})
-  await profileName.fill('Tastatur Theme');await page.keyboard.press('Control+s')
+  const scheme=dialog.getByLabel('Farbschema',{exact:true}),otherTheme=originalTheme==='dark'?'light':'dark'
+  await section('Darstellung').click();await scheme.selectOption(otherTheme);await page.keyboard.press('Control+s')
   await expect(close()).toBeEnabled();await expect(save()).toBeDisabled()
-  assert.equal(saved().themes.find(profile=>profile.id===saved().activeThemeId).name,'Tastatur Theme')
-  const textColor=dialog.getByLabel('Text als Farbwert',{exact:true})
-  await textColor.fill('#dcece2');await page.keyboard.press('Control+s')
-  await expect(close()).toBeEnabled();await expect(save()).toBeDisabled()
-  assert.equal(saved().themes.find(profile=>profile.id===saved().activeThemeId).colors.text,'#dcece2')
-  await capture('settings-dialog-theme-keyboard-dark','Ctrl+S commits the still-focused theme name and colour through existing blur handlers')
+  assert.equal(saved().theme,otherTheme);assert.ok(!('themes' in saved()),'Retired theme profiles must not be written')
+  await capture('settings-dialog-theme-keyboard-dark','Ctrl+S saves the selected colour scheme; only Hell/Dunkel are offered')
   await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
   await page.reload();await expect(trigger).toBeVisible();await open();await section('Darstellung').click()
-  await expect(profileName).toHaveValue('Tastatur Theme');await expect(textColor).toHaveValue('#dcece2')
+  await expect(scheme).toHaveValue(otherTheme);await expect(page.locator('html')).toHaveAttribute('data-theme',otherTheme)
+  await scheme.selectOption(originalTheme);await save().click();await expect(save()).toBeDisabled()
   report.checks.settingsDialogThemeDraftShortcutAndReload=true
 
   const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
@@ -1540,18 +1518,13 @@ async function verifySettingsDialog() {
       assert.ok(Math.abs(view.width-width/1.5)<2)
       assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
       await section('Allgemein').focus();await page.keyboard.press('Shift+Tab')
-      const focused=page.locator(':focus');await expect(focused).toHaveAttribute('aria-label',/als Farbwert$/);await expect(focused).toBeInViewport()
+      const focused=page.locator(':focus');await expect(focused).toHaveAttribute('id','settings-theme');await expect(focused).toBeInViewport()
       await section('Allgemein').click();await name().fill('Viewport-Entwurf')
       await section('Allgemein').focus();await page.keyboard.press('Shift+Tab');await expect(save()).toBeFocused();await expect(save()).toBeInViewport()
       await capture(`settings-dialog-${label}-dark`,'Settings remain within actual '+label+' viewport; final enabled action reachable by keyboard')
       await discard().click();await expect(section('Allgemein')).toBeFocused();await expect(section('Allgemein')).toBeInViewport();await section('Darstellung').click()
     }
   } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
-  await dialog.getByRole('combobox',{name:'Theme',exact:true}).selectOption(customId)
-  // Delete only the test profile by its active custom identity, then restore the original theme.
-  await dialog.getByRole('button',{name:'Theme loeschen',exact:true}).click()
-  await dialog.getByRole('combobox',{name:'Theme',exact:true}).selectOption(originalTheme)
-  await save().click();await expect(close()).toBeEnabled()
   await page.keyboard.press('Escape');await theme('light');await open()
   await capture('settings-dialog-light','General settings, live save status and area navigation in the light theme')
   await page.keyboard.press('Escape');await theme('dark')

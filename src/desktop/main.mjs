@@ -177,9 +177,10 @@ function validateExternalUrl(rawUrl) {
 
 function applyWindowTheme(win, theme = 'dark') {
   const isDark = theme === 'dark'
-  const backgroundColor = isDark ? '#1f252f' : '#eef1f5'
-  const titleBarColor = isDark ? '#1f252f' : '#eceef2'
-  const titleBarSymbolColor = isDark ? '#a7afbd' : '#6a727f'
+  // Mirrors --surface, --bg-layer-1 and --muted in src/frontend/src/index.css.
+  const backgroundColor = isDark ? '#1e2023' : '#f8f8f9'
+  const titleBarColor = isDark ? '#191b1e' : '#eeeef0'
+  const titleBarSymbolColor = isDark ? '#a3a9b3' : '#5f6672'
   nativeTheme.themeSource = isDark ? 'dark' : 'light'
 
   win.setBackgroundColor(backgroundColor)
@@ -251,11 +252,11 @@ function createWindow() {
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#eceef2',
-      symbolColor: '#6a727f',
+      color: startupTheme==='dark'?'#191b1e':'#eeeef0',
+      symbolColor: startupTheme==='dark'?'#a3a9b3':'#5f6672',
       height: 34,
     },
-    backgroundColor: startupTheme==='dark'?'#1f252f':'#f3f4f6',
+    backgroundColor: startupTheme==='dark'?'#1e2023':'#f8f8f9',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, sandbox: true, nodeIntegration: false,

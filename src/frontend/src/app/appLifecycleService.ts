@@ -3,9 +3,9 @@ import type { NoteTab } from './AppShared';
 import type { ExplorerOptions, ExplorerViewState } from '../explorer/types';
 import type { TagGroupDefinition } from '../tags/tagTypes';
 import type { WorkspaceAction } from '../workspace/workspaceState';
-import type { BackendState, ColorProfile, RecentNoteBase, StatusBarPrefs, TaskFeatureSettings, ThemeMode, UiSettingsPayload, VaultCounts } from './AppShared';
+import type { BackendState, RecentNoteBase, StatusBarPrefs, TaskFeatureSettings, ThemeMode, UiSettingsPayload, VaultCounts } from './AppShared';
 import type { TagActionDialogAction, TagActionDialogResult, TagFormValues, TagGroupFormValues } from '../tags/TagActionDialogModal';
-import { apiRequest, clearStoredLastNoteBasePath, getPreferredTheme, getPathTail, getStoredLastNoteBasePath, getStoredRecentNoteBases, normalizeLabel, removeStoredRecentNoteBasePath, storeRecentNoteBasePath, storeLastNoteBasePath, toActiveColorProfileId, toBoolean, toBoundedNumber, toColorProfilesFromSettings, toExpandedTagGroups, toExplorerOptionsFromSettings, toExplorerViewStateFromSettings, toStorageTagGroups, toStatusBarPrefsFromSettings, toTaskFeatureSettingsFromSettings, toThemeMode, DEFAULT_EXPLORER_VIEW_STATE } from './AppShared';
+import { apiRequest, clearStoredLastNoteBasePath, getPreferredTheme, getPathTail, getStoredLastNoteBasePath, getStoredRecentNoteBases, normalizeLabel, removeStoredRecentNoteBasePath, storeRecentNoteBasePath, storeLastNoteBasePath, toBoolean, toBoundedNumber, toExpandedTagGroups, toExplorerOptionsFromSettings, toExplorerViewStateFromSettings, toStorageTagGroups, toStatusBarPrefsFromSettings, toTaskFeatureSettingsFromSettings, toThemeMode, DEFAULT_EXPLORER_VIEW_STATE } from './AppShared';
 type NoteBaseActionDialogConfig = {
     kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
     title: string;
@@ -37,8 +37,6 @@ export type NoteBaseOpenStatus = {
 };
 type UiSettingsSnapshot = {
     getTheme: () => ThemeMode;
-    getActiveColorProfileId: () => string;
-    getColorProfiles: () => ColorProfile[];
     getDisplayName: () => string;
     getVaultPath: () => string;
     isSidebarOpen: () => boolean;
@@ -77,16 +75,12 @@ function toLocalDirectoryFileUrl(pathValue: string): string {
 }
 type AppLifecycleWriter = {
     setTheme: (theme: ThemeMode) => void;
-    setActiveColorProfileId: (colorProfileId: string) => void;
-    setColorProfiles: (profiles: ColorProfile[]) => void;
     setDisplayName: (value: string) => void;
     setSidebarOpen: (open: boolean) => void;
     setStatusBarPrefs: (prefs: StatusBarPrefs) => void;
     setTaskFeatureSettings: (settings: TaskFeatureSettings) => void;
     setExplorerOptions: (options: ExplorerOptions) => void;
     setSavedTheme: (theme: ThemeMode) => void;
-    setSavedActiveColorProfileId: (colorProfileId: string) => void;
-    setSavedColorProfiles: (profiles: ColorProfile[]) => void;
     setSavedDisplayName: (value: string) => void;
     setSavedSidebarOpen: (open: boolean) => void;
     setSavedStatusBarPrefs: (prefs: StatusBarPrefs) => void;
@@ -206,8 +200,6 @@ export class AppLifecycleService {
     };
     buildFullAppUiSettings = (): Record<string, unknown> => ({
         theme: this.snapshot.getTheme(),
-        activeThemeId: this.snapshot.getActiveColorProfileId(),
-        themes: this.snapshot.getColorProfiles().filter((profile) => !profile.builtin),
         displayName: this.snapshot.getDisplayName(),
         sidebarOpen: this.snapshot.isSidebarOpen(),
         statusBarPrefs: this.snapshot.getStatusBarPrefs(),
@@ -233,10 +225,6 @@ export class AppLifecycleService {
     applyUiSettings = (settings: UiSettingsPayload) => {
         const appSettings = settings.app ?? {};
         const nextTheme = toThemeMode(appSettings.theme, getPreferredTheme());
-        const nextColorProfiles = toColorProfilesFromSettings(appSettings.themes ?? appSettings.colorProfiles);
-        const nextActiveColorProfileId = toActiveColorProfileId(appSettings.activeThemeId ?? appSettings.activeColorProfileId, nextColorProfiles, nextTheme);
-        const nextActiveColorProfile = nextColorProfiles.find((profile) => profile.id === nextActiveColorProfileId);
-        const nextEffectiveTheme = toThemeMode(nextActiveColorProfile?.baseTheme, nextTheme);
         const nextDisplayName = normalizeLabel(typeof appSettings.displayName === 'string' ? appSettings.displayName : '') || 'Mein Wissen';
         const nextSidebarOpen = toBoolean(appSettings.sidebarOpen, true);
         const nextStatusBarPrefs = toStatusBarPrefsFromSettings(appSettings.statusBarPrefs);
@@ -249,17 +237,13 @@ export class AppLifecycleService {
         const nextExpandedGroups = toExpandedTagGroups(appSettings.tagExpandedGroups);
         const nextWorkspaceLayoutMode = appSettings.workspaceLayoutMode === 'split' ? 'split' : 'single';
         const nextWorkspaceSplitRatio = toBoundedNumber(appSettings.workspaceSplitRatio, 0.5, 0.15, 0.85);
-        this.writer.setTheme(nextEffectiveTheme);
-        this.writer.setActiveColorProfileId(nextActiveColorProfileId);
-        this.writer.setColorProfiles(nextColorProfiles);
+        this.writer.setTheme(nextTheme);
         this.writer.setDisplayName(nextDisplayName);
         this.writer.setSidebarOpen(nextSidebarOpen);
         this.writer.setStatusBarPrefs(nextStatusBarPrefs);
         this.writer.setTaskFeatureSettings(nextTaskFeatureSettings);
         this.writer.setExplorerOptions(nextExplorerOptions);
-        this.writer.setSavedTheme(nextEffectiveTheme);
-        this.writer.setSavedActiveColorProfileId(nextActiveColorProfileId);
-        this.writer.setSavedColorProfiles(nextColorProfiles.map((profile) => ({ ...profile, colors: { ...profile.colors } })));
+        this.writer.setSavedTheme(nextTheme);
         this.writer.setSavedDisplayName(nextDisplayName);
         this.writer.setSavedSidebarOpen(nextSidebarOpen);
         this.writer.setSavedStatusBarPrefs(nextStatusBarPrefs);

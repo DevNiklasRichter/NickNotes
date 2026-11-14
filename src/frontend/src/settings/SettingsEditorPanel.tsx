@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import {createPortal} from 'react-dom';
 import {trapDialogTab, useDialogFocus} from '../ui/useDialogFocus';
 import './SettingsEditorPanel.css';
-import { DEFAULT_DARK_COLOR_PROFILE, DEFAULT_LIGHT_COLOR_PROFILE, THEME_COLOR_TOKEN_GROUPS, THEME_COLOR_TOKEN_LABELS, apiRequest, normalizeCssColor, normalizeLabel, type ColorProfile, type NoteGroup, type ThemeColorToken, type VaultCounts } from '../app/AppShared';
+import { apiRequest, type NoteGroup, type VaultCounts } from '../app/AppShared';
 import type { ExplorerOptions } from '../explorer/types';
 import { LucideNamedIcon } from '../icons/lucideCatalog';
 type ThemeMode = 'light' | 'dark';
@@ -60,8 +60,6 @@ type OneNoteImportStatus = {
 type SettingsEditorPanelProps = {
     displayName: string;
     theme: ThemeMode;
-    activeColorProfileId: string;
-    colorProfiles: ColorProfile[];
     backendUrl: string;
     vaultLoaded: boolean;
     sidebarOpen: boolean;
@@ -78,8 +76,7 @@ type SettingsEditorPanelProps = {
     setStatusBarPrefs: Dispatch<SetStateAction<StatusBarPrefs>>;
     setTaskFeatureSettings: Dispatch<SetStateAction<TaskFeatureSettings>>;
     onDisplayNameChange: (nextRawValue: string) => void;
-    onActiveColorProfileChange: (profileId: string) => void;
-    onColorProfilesChange: Dispatch<SetStateAction<ColorProfile[]>>;
+    onThemeChange: (theme: ThemeMode) => void;
     onSave: () => void;
     onDiscard: () => void;
     onOneNoteImportComplete: (response: OneNoteImportResponse) => void;
@@ -143,7 +140,7 @@ const SETTINGS_SECTIONS: Array<{
         icon: 'ListChecks',
     }
 ];
-export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, colorProfiles, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, saving, saveError, suspended, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onDisplayNameChange, onActiveColorProfileChange, onColorProfilesChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
+export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, saving, saveError, suspended, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onDisplayNameChange, onThemeChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
     const [activeSectionId, setActiveSectionId] = useState<SettingsSectionId>('general');
     const [oneNoteSourcePaths, setOneNoteSourcePaths] = useState<string[]>([]);
     const [oneNoteTargetFolder, setOneNoteTargetFolder] = useState('');
@@ -164,8 +161,6 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
     const [oneNoteMessage, setOneNoteMessage] = useState('');
     const [oneNoteError, setOneNoteError] = useState('');
     const [oneNoteImportStatus, setOneNoteImportStatus] = useState<OneNoteImportStatus | null>(null);
-    const [themeColorDrafts, setThemeColorDrafts] = useState<Record<string, Record<string, string>>>({});
-    const [themeNameDrafts, setThemeNameDrafts] = useState<Record<string, string>>({});
     const formatOneNoteImportError = (caught: unknown): string => {
         if (caught instanceof Error) {
             const text = caught.message || 'Unbekannter Fehler.';
@@ -343,99 +338,6 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
         ? Math.max(0, Math.min(100, Math.round((oneNoteImportStatus.processed / oneNoteImportStatus.total) * 100)))
         : 0;
     const activeSection = useMemo(() => SETTINGS_SECTIONS.find((section) => section.id === activeSectionId) ?? SETTINGS_SECTIONS[0], [activeSectionId]);
-    const selectedColorProfile = colorProfiles.find((profile) => profile.id === activeColorProfileId) ?? colorProfiles.find((profile) => profile.id === theme);
-    const selectedThemeEditable = Boolean(selectedColorProfile && !selectedColorProfile.builtin);
-    useEffect(() => {
-        setThemeColorDrafts(() => {
-            const next: Record<string, Record<string, string>> = {};
-            for (const profile of colorProfiles) {
-                next[profile.id] = { ...profile.colors };
-            }
-            return next;
-        });
-        setThemeNameDrafts(() => {
-            const next: Record<string, string> = {};
-            for (const profile of colorProfiles) {
-                next[profile.id] = profile.name;
-            }
-            return next;
-        });
-    }, [colorProfiles]);
-    const createCustomColorProfile = () => {
-        const source = selectedColorProfile ?? (theme === 'dark' ? DEFAULT_DARK_COLOR_PROFILE : DEFAULT_LIGHT_COLOR_PROFILE);
-        const existingIds = new Set(colorProfiles.map((profile) => profile.id));
-        let counter = 1;
-        let id = `custom-${counter}`;
-        while (existingIds.has(id)) {
-            counter += 1;
-            id = `custom-${counter}`;
-        }
-        const existingNames = new Set(colorProfiles.map((profile) => profile.name.trim().toLowerCase()));
-        let nameCounter = 1;
-        let profileName = 'New Theme';
-        while (existingNames.has(profileName.toLowerCase())) {
-            nameCounter += 1;
-            profileName = `New Theme ${nameCounter}`;
-        }
-        const nextProfile: ColorProfile = {
-            id,
-            name: profileName,
-            baseTheme: source.baseTheme,
-            colors: { ...source.colors },
-        };
-        onColorProfilesChange((prev) => [...prev, nextProfile]);
-        onActiveColorProfileChange(nextProfile.id);
-    };
-    const updateCustomColorProfile = (profileId: string, updater: (profile: ColorProfile) => ColorProfile) => {
-        onColorProfilesChange((prev) => prev.map((profile) => {
-            if (profile.id !== profileId || profile.builtin) {
-                return profile;
-            }
-            return updater(profile);
-        }));
-    };
-    const removeCustomColorProfile = (profileId: string) => {
-        const profile = colorProfiles.find((entry) => entry.id === profileId);
-        if (!profile || profile.builtin) {
-            return;
-        }
-        onColorProfilesChange((prev) => prev.filter((entry) => entry.id !== profileId));
-        onActiveColorProfileChange(profile.baseTheme);
-    };
-    const commitThemeColor = (profileId: string, token: ThemeColorToken, rawValue: string) => {
-        const currentProfile = colorProfiles.find((profile) => profile.id === profileId);
-        if (!currentProfile || currentProfile.builtin) {
-            return;
-        }
-        const currentValue = currentProfile.colors[token];
-        const nextColor = normalizeCssColor(rawValue, currentValue);
-        setThemeColorDrafts((prev) => ({
-            ...prev,
-            [profileId]: {
-                ...(prev[profileId] ?? {}),
-                [token]: nextColor,
-            },
-        }));
-        if (nextColor === currentValue) {
-            return;
-        }
-        updateCustomColorProfile(profileId, (profile) => ({
-            ...profile,
-            colors: { ...profile.colors, [token]: nextColor },
-        }));
-    };
-    const commitThemeName = (profileId: string, rawValue: string) => {
-        const currentProfile = colorProfiles.find((profile) => profile.id === profileId);
-        if (!currentProfile || currentProfile.builtin) {
-            return;
-        }
-        const nextName = normalizeLabel(rawValue) || 'New Theme';
-        setThemeNameDrafts((prev) => ({ ...prev, [profileId]: nextName }));
-        if (nextName === currentProfile.name) {
-            return;
-        }
-        updateCustomColorProfile(profileId, (profile) => ({ ...profile, name: nextName }));
-    };
     return createPortal(<div className={`modal-overlay settings-overlay${suspended ? ' is-suspended' : ''}`} role="presentation" inert={suspended || undefined} aria-hidden={suspended || undefined} onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
                 event.preventDefault();
@@ -500,85 +402,14 @@ export function SettingsEditorPanel({ displayName, theme, activeColorProfileId, 
             {activeSectionId === 'appearance' ? (<section className="settings-block">
                 <div className="settings-row">
                   <div>
-                    <h4>Theme</h4>
-                    <p className="muted-copy">Farben fuer die gesamte App.</p>
+                    <label htmlFor="settings-theme">Farbschema</label>
+                    <p className="muted-copy">Gilt für die gesamte App.</p>
                   </div>
-                  <select aria-label="Theme" value={selectedColorProfile?.id ?? theme} onChange={(event) => onActiveColorProfileChange(event.target.value)}>
-                    {colorProfiles.map((profile) => (<option key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </option>))}
+                  <select id="settings-theme" value={theme} onChange={(event) => onThemeChange(event.target.value === 'dark' ? 'dark' : 'light')}>
+                    <option value="light">Hell</option>
+                    <option value="dark">Dunkel</option>
                   </select>
                 </div>
-                <div className="theme-profile-actions">
-                  <button type="button" onClick={createCustomColorProfile}>
-                    Neues Theme
-                  </button>
-                  {selectedThemeEditable && selectedColorProfile ? (<button type="button" className="danger" onClick={() => removeCustomColorProfile(selectedColorProfile.id)}>
-                      Theme loeschen
-                    </button>) : null}
-                </div>
-                {selectedColorProfile ? (<div className="theme-profile-editor">
-                    <div className="settings-row">
-                      <div>
-                        <label htmlFor="settings-color-profile-name">Theme-Name</label>
-                        <p className="muted-copy">Light Mode und Dark Mode sind feste Standard-Themes.</p>
-                      </div>
-                      <input id="settings-color-profile-name" value={themeNameDrafts[selectedColorProfile.id] ?? selectedColorProfile.name} disabled={!selectedThemeEditable} onChange={(event) => {
-                    const nextName = event.target.value;
-                    setThemeNameDrafts((prev) => ({ ...prev, [selectedColorProfile.id]: nextName }));
-                }} onBlur={(event) => {
-                    commitThemeName(selectedColorProfile.id, event.currentTarget.value);
-                }} onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                        event.preventDefault();
-                        commitThemeName(selectedColorProfile.id, event.currentTarget.value);
-                        event.currentTarget.blur();
-                    }
-                }}/>
-                    </div>
-                    {THEME_COLOR_TOKEN_GROUPS.map((group) => (<section key={group.title} className="theme-token-group">
-                        <h4>{group.title}</h4>
-                        <div className="theme-token-grid">
-                          {group.tokens.map((token: ThemeColorToken) => {
-                        const value = themeColorDrafts[selectedColorProfile.id]?.[token] ?? selectedColorProfile.colors[token];
-                        const colorInputValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000';
-                        return (<label key={token} className="theme-token-row">
-                                <span>{THEME_COLOR_TOKEN_LABELS[token]}</span>
-                                <input type="color" aria-label={`${THEME_COLOR_TOKEN_LABELS[token]} als Farbauswahl`} value={colorInputValue} disabled={!selectedThemeEditable} onChange={(event) => {
-                                const nextColor = event.target.value;
-                                setThemeColorDrafts((prev) => ({
-                                    ...prev,
-                                    [selectedColorProfile.id]: {
-                                        ...(prev[selectedColorProfile.id] ?? {}),
-                                        [token]: nextColor,
-                                    },
-                                }));
-                            }} onBlur={(event) => {
-                                commitThemeColor(selectedColorProfile.id, token, event.currentTarget.value);
-                            }}/>
-                                <input aria-label={`${THEME_COLOR_TOKEN_LABELS[token]} als Farbwert`} value={value} disabled={!selectedThemeEditable} onChange={(event) => {
-                                const nextColor = event.target.value;
-                                setThemeColorDrafts((prev) => ({
-                                    ...prev,
-                                    [selectedColorProfile.id]: {
-                                        ...(prev[selectedColorProfile.id] ?? {}),
-                                        [token]: nextColor,
-                                    },
-                                }));
-                            }} onBlur={(event) => {
-                                commitThemeColor(selectedColorProfile.id, token, event.currentTarget.value);
-                            }} onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                    event.preventDefault();
-                                    commitThemeColor(selectedColorProfile.id, token, event.currentTarget.value);
-                                    event.currentTarget.blur();
-                                }
-                            }}/>
-                              </label>);
-                    })}
-                        </div>
-                      </section>))}
-                  </div>) : null}
               </section>) : null}
 
 

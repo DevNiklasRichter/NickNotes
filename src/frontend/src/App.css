@@ -3906,16 +3906,6 @@
   color: var(--error-text);
 }
 
-.theme-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.theme-actions .active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .empty-copy {
   margin: 0;
   color: var(--muted);
