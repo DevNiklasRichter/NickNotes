@@ -388,6 +388,8 @@ function App() {
     }, [tabsById, workspaceState]);
     const activePaneId = workspaceState.lastFocusedPane;
     const activeTab = paneActiveTabs[activePaneId] ?? null;
+    // With the graph in one pane, the note in the other pane is the one it centres on.
+    const graphNotePath = [activeTab, paneActiveTabs[activePaneId==='left'?'right':'left']].find(tab => tab?.kind === 'note')?.path ?? '';
     const openTagActionDialog = useCallback((config: {
         kind: 'input' | 'choice' | 'group-form' | 'tag-form' | 'color-form';
         title: string;
@@ -2660,7 +2662,7 @@ function App() {
       {windowTitlebar}
       {commandDialogs}
       <div className="window-content">
-        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
+        <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} activeNotePath={graphNotePath} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
         <div className={`workbench-shell${writingMode?' is-writing':''}`} style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
       <ActivityRail sidebarView={sidebarView} noteBaseName={noteBaseName} onOpenSidebarView={view=>{
           if(['todos','tasks','focus','review','graph'].includes(view))void executeCommand(view);
