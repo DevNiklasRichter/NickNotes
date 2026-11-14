@@ -54,7 +54,7 @@ export class ExplorerMutationService {
     const effectiveParentKey = parentGroupKey && this.context.getNoteGroupsByKey().has(parentGroupKey) ? parentGroupKey : ''
     const targetGroup = this.context.getNoteGroupsByKey().get(effectiveParentKey)
     if (targetGroup?.canCreateGroups === false) {
-      this.writer.setMessage('In diesem Ordner koennen keine neuen Unterordner angelegt werden.')
+      this.writer.setMessage('In diesem Ordner können keine neuen Unterordner angelegt werden.')
       return
     }
 
@@ -92,7 +92,7 @@ export class ExplorerMutationService {
     const effectiveGroupKey = groupKey && this.context.getNoteGroupsByKey().has(groupKey) ? groupKey : ''
     const targetGroup = this.context.getNoteGroupsByKey().get(effectiveGroupKey)
     if (targetGroup?.canCreateNotes === false) {
-      this.writer.setMessage('In diesem Ordner koennen keine neuen Notizen angelegt werden.')
+      this.writer.setMessage('In diesem Ordner können keine neuen Notizen angelegt werden.')
       return
     }
 
@@ -137,7 +137,7 @@ export class ExplorerMutationService {
     const effectiveGroupKey = groupKey && this.context.getNoteGroupsByKey().has(groupKey) ? groupKey : ''
     const targetGroup = this.context.getNoteGroupsByKey().get(effectiveGroupKey)
     if (targetGroup?.canCreateNotes === false) {
-      this.writer.setMessage('In diesem Ordner koennen keine neuen Tasks angelegt werden.')
+      this.writer.setMessage('In diesem Ordner können keine neuen Tasks angelegt werden.')
       return
     }
 
@@ -297,7 +297,7 @@ export class ExplorerMutationService {
           return normalizedTabPath !== normalizedGroupPath && !normalizedTabPath.startsWith(`${normalizedGroupPath}/`)
         })
       )
-      this.writer.setMessage(`Ordner geloescht: ${group.label}`)
+      this.writer.setMessage(`Ordner gelöscht: ${group.label}`)
       await this.context.emitMutation?.({
         kind: 'note-group-mutated',
         refresh: {
@@ -518,7 +518,7 @@ export class ExplorerMutationService {
       )
       this.writer.setCounts(response.counts)
       this.writer.setOpenTabs((tabs) => tabs.filter((tab) => tab.path !== path))
-      this.writer.setMessage(`Datei geloescht: ${toNoteDisplayName(path)}`)
+      this.writer.setMessage(`Datei gelöscht: ${toNoteDisplayName(path)}`)
       await this.context.emitMutation?.({
         kind: 'note-deleted',
         refresh: {

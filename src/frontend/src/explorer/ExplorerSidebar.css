@@ -3,11 +3,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--explorer-shell-gap);
-  padding: var(--explorer-shell-pad);
   position: relative;
-  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
-  border-left: 1px solid rgba(255, 255, 255, 0.02);
   overflow: visible;
 }
 .explorer-shell:focus,
@@ -43,9 +39,7 @@
 
 .explorer-toolbar h3 {
   margin: 0;
-  font-size: var(--font-section);
   font-weight: 650;
-  letter-spacing: 0.01em;
   color: var(--text);
   text-align: center;
   flex: 1;
@@ -99,7 +93,7 @@
   color: #fff;
   background: #94a3b8;
   cursor: pointer;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   z-index: 2;
 }
 
@@ -116,30 +110,13 @@
   display: inline-flex;
 }
 
-.explorer-shell .icon-button.compact {
-  border-color: var(--line);
-  background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
-  color: var(--muted);
-  box-shadow: none;
-}
-
-.explorer-shell .icon-button.compact:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: none;
-}
-
-.explorer-shell .icon-button.compact.active {
-  border-color: var(--accent);
+.explorer-shell .icon-button.active {
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface-contrast) 42%);
+  background: var(--accent-soft);
 }
 
 .explorer-search-input {
-  border-radius: var(--radius-xl);
   font-size: var(--font-ui);
-  padding: 0.38rem var(--explorer-shell-gap);
   background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
 }
@@ -151,18 +128,14 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
   padding-right: 0.12rem;
 }
 
 .explorer-row {
-  min-height: var(--explorer-row-height);
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.1rem;
   padding: 0.1rem 0.24rem 0.1rem 0.04rem;
   color: var(--text);
   user-select: none;
@@ -174,12 +147,10 @@
 
 .explorer-row:hover {
   border-color: var(--line);
-  background: rgba(255, 255, 255, 0.04);
 }
 
 .explorer-row.selected {
   border-color: transparent;
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .explorer-row.drop-target {
@@ -191,7 +162,7 @@
   width: 1rem;
   height: 1rem;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
   padding: 0;
   background: transparent;
   color: var(--muted);
@@ -225,7 +196,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-ui);
 }
 
 .explorer-width-handle {
@@ -255,10 +225,8 @@
 
 /* Codex-inspired refresh */
 .explorer-shell {
-  gap: var(--explorer-toolbar-gap);
-  padding: var(--layout-sidebar-inner-pad);
-  background: transparent;
-  border-left: none;
+  gap: 0.2rem;
+  padding: 0.34rem;
 }
 
 .explorer-toolbar h3 {
@@ -267,7 +235,7 @@
 }
 
 .explorer-search-input {
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-control);
   padding: 0.38rem 0.55rem;
 }
 
@@ -368,7 +336,7 @@
 .row-folder-menu {
   width: var(--layout-row-inline-action-size);
   height: var(--layout-row-inline-action-size);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-menu);
   border: 1px solid transparent;
   padding: 0;
   font-size: var(--font-caption);
@@ -406,7 +374,7 @@
 
 .explorer-row {
   min-height: var(--explorer-row-height);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-control);
   gap: 0.1rem;
 }
 
@@ -457,7 +425,7 @@
   color: color-mix(in srgb, var(--tag-accent) 76%, var(--text));
   font-weight: 620;
   border: 1px solid color-mix(in srgb, var(--tag-accent) 34%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--tag-accent) 14%, transparent);
   padding: 0.02rem 0.42rem;
   text-shadow: none;
@@ -504,7 +472,7 @@
   width: min(760px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-dialog);
   background: var(--surface);
   box-shadow: var(--shadow);
   padding: 0.7rem;
@@ -533,7 +501,7 @@
 }
 
 .explorer-icon-picker-search input {
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   font-size: var(--font-label);
   padding: 0.35rem 0.5rem;
 }
@@ -555,7 +523,7 @@
 
 .explorer-icon-option {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--surface-contrast) 86%, transparent);
   color: var(--text);
   display: grid;
@@ -601,7 +569,7 @@
 .explorer-action-dialog {
   width: min(420px, calc(100vw - 2rem));
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-dialog);
   background: var(--surface);
   box-shadow: var(--shadow);
   display: grid;
@@ -622,7 +590,7 @@
 }
 
 .explorer-action-dialog input {
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   font-size: var(--font-label);
   padding: 0.4rem 0.52rem;
 }

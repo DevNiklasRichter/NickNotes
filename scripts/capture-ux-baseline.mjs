@@ -186,7 +186,7 @@ async function theme(mode) {
   await expect(page.locator('html')).toHaveAttribute('data-theme', mode)
   const save = page.getByRole('dialog').getByRole('button', {name: 'Speichern', exact: true})
   if (await save.isEnabled()) {await save.click(); await expect(save).toBeDisabled()}
-  await page.getByRole('button', {name: 'Einstellungen schliessen'}).click()
+  await page.getByRole('button', {name: 'Einstellungen schließen'}).click()
 }
 
 async function createNote(title, body, noteType = 'note') {
@@ -231,7 +231,7 @@ async function verifyMenus() {
   await page.keyboard.press('ArrowUp'); await expect(tabMenu.getByRole('menuitem').last()).toBeFocused()
   await page.keyboard.press('Home'); await expect(tabMenu.getByRole('menuitem').first()).toBeFocused()
   await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown')
-  const disabled = tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schliessen',exact:true})
+  const disabled = tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schließen',exact:true})
   await expect(disabled).toHaveAttribute('aria-disabled','true')
   await expect(disabled).toBeFocused()
   await page.keyboard.press('Enter'); await expect(tabMenu).toBeVisible()
@@ -283,7 +283,7 @@ async function verifyMenus() {
   await page.keyboard.press('Shift+F10'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
   const confirm = page.locator('.explorer-action-dialog')
   await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
-  await page.keyboard.press('Tab'); await expect(confirm.getByRole('button',{name:'Loeschen',exact:true})).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(confirm.getByRole('button',{name:'Löschen',exact:true})).toBeFocused()
   await page.keyboard.press('Shift+Tab'); await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
   await capture('menu-delete-confirm-dark','Existing delete confirmation receives focus; Escape cancels without deleting the Markdown file')
   await page.keyboard.press('Enter'); await expect(confirm).toHaveCount(0); await expect(row).toBeFocused()
@@ -321,7 +321,7 @@ async function verifyMenus() {
   await tab.focus(); await page.keyboard.press('Shift+F10')
   await capture('menu-narrow-zoom-dark','Long labels wrap inside a 240-CSS-pixel viewport at 150% zoom')
   assert.equal(await tabMenu.evaluate(menu=>menu.scrollWidth>menu.clientWidth),false)
-  assert.ok(await tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schliessen',exact:true}).evaluate(item=>item.getBoundingClientRect().height>32),'Long label should wrap')
+  assert.ok(await tabMenu.getByRole('menuitem',{name:'Alle anderen Registerkarten schließen',exact:true}).evaluate(item=>item.getBoundingClientRect().height>32),'Long label should wrap')
   await page.keyboard.press('End'); await expect(tabMenu.getByRole('menuitem').last()).toBeFocused()
   await windowSize(360,240,1.5)
   await expect.poll(()=>tabMenu.evaluate(menu=>menu.scrollHeight>menu.clientHeight)).toBe(true)
@@ -464,7 +464,7 @@ async function verifyGraph() {
   await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
   await page.locator('.activity-rail').getByRole('button',{name:'Wissensgraph',exact:true}).click()
   await expect.poll(async()=>Number.parseInt(await page.locator('.graph-sidebar-metrics span').first().innerText())).toBeGreaterThan(0)
-  await page.getByRole('button',{name:'Graph oeffnen',exact:true}).click()
+  await page.getByRole('button',{name:'Graph öffnen',exact:true}).click()
   await page.locator('.graph-sidebar-search-input').fill('UX-Graph')
   const canvas = page.getByRole('group',{name:'Wissensgraph',exact:true})
   const menu = page.getByRole('menu',{name:/^Knotenaktionen:/})
@@ -499,7 +499,7 @@ async function verifyGraph() {
   const alpha=snapshot.nodes.find(node=>node.label==='UX-Graph Alpha')
   await canvas.click({button:'right',position:alpha.point})
   await expect(menu).toHaveAttribute('aria-label','Knotenaktionen: UX-Graph Alpha')
-  await expect(menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true})).not.toHaveAttribute('aria-disabled','true')
+  await expect(menu.getByRole('menuitem',{name:'Im Editor öffnen',exact:true})).not.toHaveAttribute('aria-disabled','true')
   const bounds=await canvas.boundingBox(), menuBounds=await menu.boundingBox()
   const pointerViewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
   const expectedX=Math.max(8,Math.min(bounds.x+alpha.point.x,pointerViewport.width-menuBounds.width-8))
@@ -534,7 +534,7 @@ async function verifyGraph() {
   for(let i=0;i<tagIndex;i++)await page.keyboard.press('ArrowRight')
   await page.keyboard.press('Shift+F10')
   const reveal=menu.getByRole('menuitem',{name:'Im Explorer anzeigen',exact:true})
-  const open=menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true})
+  const open=menu.getByRole('menuitem',{name:'Im Editor öffnen',exact:true})
   await expect(reveal).toHaveAttribute('aria-disabled','true'); await expect(open).toHaveAttribute('aria-disabled','true')
   await open.focus(); await page.keyboard.press('Enter'); await expect(menu).toBeVisible()
   await page.keyboard.press('Space'); await expect(menu).toBeVisible()
@@ -586,7 +586,7 @@ async function verifyGraph() {
   await canvas.focus(); await page.keyboard.press('Home')
   for(let i=0;i<alphaIndex;i++)await page.keyboard.press('ArrowRight')
   await page.keyboard.press('Shift+F10')
-  await menu.getByRole('menuitem',{name:'Im Editor oeffnen',exact:true}).click()
+  await menu.getByRole('menuitem',{name:'Im Editor öffnen',exact:true}).click()
   await expect(page.locator('.note-title-input').first()).toHaveValue('UX-Graph Alpha')
   await page.locator('.tab-open').filter({hasText:'Graph'}).first().click()
   await expect(canvas).toBeVisible(); await canvas.focus(); await page.keyboard.press('Home')
@@ -643,9 +643,9 @@ async function verifyEditorMenus() {
 
   const table=editor.locator('.cm-md-table-widget').first()
   await table.locator('.cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
-  await expect(tableMenu.getByRole('menuitem',{name:'Zeile loeschen',exact:true})).toHaveAttribute('aria-disabled','true')
+  await expect(tableMenu.getByRole('menuitem',{name:'Zeile löschen',exact:true})).toHaveAttribute('aria-disabled','true')
   const beforeHeader=await read()
-  await tableMenu.getByRole('menuitem',{name:'Zeile loeschen',exact:true}).focus(); await page.keyboard.press('Enter')
+  await tableMenu.getByRole('menuitem',{name:'Zeile löschen',exact:true}).focus(); await page.keyboard.press('Enter')
   await expect(tableMenu).toBeVisible(); assert.deepEqual(await read(),beforeHeader)
   await page.keyboard.press('Escape')
   await table.locator('tbody .cm-md-table-cell-value').first().click()
@@ -675,16 +675,16 @@ async function verifyEditorMenus() {
   report.checks.editorTableOutsideDismissPreservesDraft=true
 
   await table.locator('tbody .cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
-  await tableMenu.getByRole('menuitem',{name:'Zeile darunter einfuegen',exact:true}).click()
+  await tableMenu.getByRole('menuitem',{name:'Zeile darunter einfügen',exact:true}).click()
   await expect(table.locator('tbody tr')).toHaveCount(3); await expect(editor).toBeFocused()
   await page.keyboard.press('Control+z'); await expect(table.locator('tbody tr')).toHaveCount(2)
   assert.ok((await read()).doc.includes('Zellentext bleibt erhalten'))
   await page.keyboard.press('Control+y'); await expect(table.locator('tbody tr')).toHaveCount(3)
   await table.locator('tbody .cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
-  await tableMenu.getByRole('menuitem',{name:'Spalte loeschen',exact:true}).click()
+  await tableMenu.getByRole('menuitem',{name:'Spalte löschen',exact:true}).click()
   await expect(table.locator('thead th')).toHaveCount(1)
   await table.locator('.cm-md-table-cell-value').first().focus(); await page.keyboard.press('Shift+F10')
-  await expect(tableMenu.getByRole('menuitem',{name:'Spalte loeschen',exact:true})).toHaveAttribute('aria-disabled','true')
+  await expect(tableMenu.getByRole('menuitem',{name:'Spalte löschen',exact:true})).toHaveAttribute('aria-disabled','true')
   await page.keyboard.press('Escape'); await editor.focus(); await page.keyboard.press('Control+z')
   await expect(table.locator('thead th')).toHaveCount(2); await expect(table.locator('tbody tr')).toHaveCount(3)
   await page.keyboard.press('Control+z'); await expect(table.locator('tbody tr')).toHaveCount(2)
@@ -816,7 +816,7 @@ async function verifySidebarMenus() {
   await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(activeButton).toBeFocused()
   const deletes=report.requests.filter(req=>req.endpoint==='/notebase/delete').length
   await page.keyboard.press('ArrowDown'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
-  await expect(dialog.getByRole('heading',{name:'NoteBase loeschen',exact:true})).toBeVisible()
+  await expect(dialog.getByRole('heading',{name:'NoteBase löschen',exact:true})).toBeVisible()
   await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
   await capture('notebase-delete-cancel-dark','Destructive NoteBase action still starts on cancel in the existing confirmation dialog')
   await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0); await expect(activeButton).toBeFocused()
@@ -831,7 +831,7 @@ async function verifySidebarMenus() {
   await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(recentButton).toBeFocused()
   const switches=report.requests.filter(req=>req.endpoint==='/notebase/open/start').length
   await recentButton.click(); await recentMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
-  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Aenderungen',exact:true})).toBeVisible()
+  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Änderungen',exact:true})).toBeVisible()
   await expect(dialog.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
   await page.keyboard.press('Enter'); await expect(dialog).toHaveCount(0); await expect(recentButton).toBeFocused()
   assert.equal(report.requests.filter(req=>req.endpoint==='/notebase/open/start').length,switches)
@@ -841,7 +841,7 @@ async function verifySidebarMenus() {
 
   await recentButton.click(); await recentMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
   // Sort preferences are pending UI settings even after saving the note itself.
-  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Aenderungen',exact:true})).toBeVisible()
+  await expect(dialog.getByRole('heading',{name:'Ungespeicherte Änderungen',exact:true})).toBeVisible()
   await dialog.getByRole('button',{name:'Speichern',exact:true}).click()
   await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-Zweite-NoteBase')
   await activeButton.click(); await activeMenu.getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
@@ -1048,7 +1048,7 @@ async function verifyCreateDialog() {
   await page.locator('.activity-rail').getByRole('button',{name:'NoteBase',exact:true}).click()
   const trigger=page.locator('.notebase-sidebar-toolbar').getByRole('button',{name:'NoteBase erstellen',exact:true})
   const dialog=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
-  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Aenderungen',exact:true})
+  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Änderungen',exact:true})
   const posts=()=>report.requests.filter(req=>req.endpoint==='/notebase/create'&&req.method==='POST').length
   const before=posts()
   await trigger.click(); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
@@ -1186,7 +1186,7 @@ async function verifyTagMatching() {
   await create.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Tag-Matching')
   await create.getByLabel('Speicherort',{exact:true}).fill(scratch)
   await create.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
-  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Aenderungen',exact:true})
+  const confirm=page.getByRole('dialog',{name:'Ungespeicherte Änderungen',exact:true})
   await expect.poll(async()=>await confirm.count()||+(await create.count()===0)).toBe(1)
   if(await confirm.count())await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
   await expect(create).toHaveCount(0)
@@ -1393,7 +1393,7 @@ async function verifySettingsDialog() {
   const name=()=>dialog.getByLabel('Anrede',{exact:true})
   const save=()=>dialog.getByRole('button',{name:'Speichern',exact:true})
   const discard=()=>dialog.getByRole('button',{name:'Verwerfen',exact:true})
-  const close=()=>dialog.getByRole('button',{name:'Einstellungen schliessen',exact:true})
+  const close=()=>dialog.getByRole('button',{name:'Einstellungen schließen',exact:true})
   const fullSave=route=>route.request().method()==='POST'&&Object.hasOwn(route.request().postDataJSON()?.app??{},'displayName')
   const settingsFile=path.join(vaultPath,'.system','ui_settings.json')
   const saved=()=>JSON.parse(fs.readFileSync(settingsFile,'utf8')).app
@@ -1482,7 +1482,7 @@ async function verifySettingsDialog() {
     dialog.showOpenDialog=()=>{globalThis.__settingsPickerCalls++;return new Promise(resolve=>{globalThis.__settingsPickerFinish=resolve})}
   })
   try {
-    const picker=dialog.getByRole('button',{name:'Dateien waehlen',exact:true})
+    const picker=dialog.getByRole('button',{name:'Dateien wählen',exact:true})
     await picker.focus();await page.keyboard.press('Enter');await expect(dialog).toHaveAttribute('aria-busy','true')
     await expect(close()).toBeDisabled();await page.keyboard.press('Escape');await page.mouse.click(4,45)
     await expect(dialog).toBeVisible();await expect(confirm).toHaveCount(0)
@@ -1559,7 +1559,7 @@ async function verifyFilters() {
   const opened=page.locator('.nn-filter-popover:popover-open')
   const taskLabel='Tasks: Status',taskPopup=popup(taskLabel),taskTrigger=trigger(taskLabel)
   const taskShell=page.locator('.todo-explorer-shell')
-  const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
+  const resetTasks=async()=>{await taskShell.getByRole('button',{name:'Alle Filter zurücksetzen',exact:true}).click();await taskShell.getByLabel('Tasks durchsuchen',{exact:true}).fill('Filtertask')}
   const titles=()=>page.locator('.task-canvas .task-title-with-tags').allTextContents().then(items=>items.map(text=>text.trim()).sort())
   await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click()
   await taskShell.locator('.todo-open-dashboard-button').click();await resetTasks()
@@ -1567,17 +1567,17 @@ async function verifyFilters() {
   await taskTrigger.focus();await page.keyboard.press('Enter')
   const search=taskPopup.getByRole('searchbox',{name:taskLabel+' durchsuchen',exact:true})
   await expect(search).toBeFocused();await expect(taskTrigger).toHaveAttribute('aria-expanded','true')
-  await search.fill('open');await page.keyboard.press('ArrowDown');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).toBeFocused()
+  await search.fill('offen');await page.keyboard.press('ArrowDown');await expect(taskPopup.getByRole('checkbox',{name:'Offen',exact:true})).toBeFocused()
   await page.keyboard.press('Space');await expect(taskPopup).toBeVisible();await expect.poll(titles).toEqual(['Filtertask Offen'])
-  await page.keyboard.press('Enter');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).not.toBeChecked()
+  await page.keyboard.press('Enter');await expect(taskPopup.getByRole('checkbox',{name:'Offen',exact:true})).not.toBeChecked()
   await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen','Filtertask Wartet'])
-  await page.keyboard.press('Space');await search.fill('done');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter')
-  await expect(taskPopup.getByRole('checkbox',{name:'Done',exact:true})).toBeChecked()
+  await page.keyboard.press('Space');await search.fill('erledigt');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter')
+  await expect(taskPopup.getByRole('checkbox',{name:'Erledigt',exact:true})).toBeChecked()
   await expect.poll(titles).toEqual(['Filtertask Erledigt','Filtertask Offen'])
   await capture('filter-task-multiple-dark','Native checkbox selection stays open for keyboard and pointer; dashboard reflects both selected statuses')
   await page.keyboard.press('Control+n');await page.keyboard.press('Control+s');assert.equal(writes(),before)
   await page.keyboard.press('Escape');await expect(taskPopup).toHaveCount(0);await expect(taskTrigger).toBeFocused()
-  await taskTrigger.click();await expect(search).toHaveValue('');await expect(taskPopup.getByRole('checkbox',{name:'Open',exact:true})).toBeChecked()
+  await taskTrigger.click();await expect(search).toHaveValue('');await expect(taskPopup.getByRole('checkbox',{name:'Offen',exact:true})).toBeChecked()
   await search.fill('keine passende suchoption');await expect(taskPopup.getByText('Keine passenden Optionen.',{exact:true})).toBeVisible()
   await capture('filter-search-empty-dark','Search has its own empty state without clearing the selected filter values')
   await taskPopup.getByRole('button',{name:'Suche leeren',exact:true}).focus();await page.keyboard.press('Enter');await expect(search).toHaveValue('');await expect(search).toBeFocused()
@@ -1585,7 +1585,7 @@ async function verifyFilters() {
   const priorityTrigger=trigger('Tasks: Priorität'),priorityPopup=popup('Tasks: Priorität')
   await expect(taskPopup).toHaveCount(0);await expect(priorityTrigger).toBeFocused()
   await page.keyboard.press('ArrowUp');await expect(priorityPopup.getByRole('checkbox').last()).toBeFocused()
-  await page.keyboard.press('Space');await expect(priorityPopup.getByRole('checkbox',{name:'High',exact:true})).toBeChecked();await expect.poll(titles).toEqual(['Filtertask Offen'])
+  await page.keyboard.press('Space');await expect(priorityPopup.getByRole('checkbox',{name:'Hoch',exact:true})).toBeChecked();await expect.poll(titles).toEqual(['Filtertask Offen'])
   await page.keyboard.press('Home');await expect(priorityPopup.getByRole('checkbox').first()).toBeFocused()
   await page.keyboard.press('End');await expect(priorityPopup.getByRole('checkbox').last()).toBeFocused()
   await page.keyboard.press('Escape');await expect(priorityTrigger).toBeFocused();await resetTasks()
@@ -1621,16 +1621,16 @@ async function verifyFilters() {
   await expect(opened).toHaveCount(0)
   const todoShell=page.locator('.todo-explorer-shell')
   await todoShell.locator('.todo-open-dashboard-button').click()
-  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click();await todoShell.getByLabel('Todos durchsuchen',{exact:true}).fill('Filtertodo')
+  await todoShell.getByRole('button',{name:'Alle Filter zurücksetzen',exact:true}).click();await todoShell.getByLabel('Todos durchsuchen',{exact:true}).fill('Filtertodo')
   await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
   const todoLabel='To-dos: Status',todoPopup=popup(todoLabel),todoTrigger=trigger(todoLabel)
-  await todoTrigger.click();await todoPopup.getByRole('checkbox',{name:'Done',exact:true}).check()
+  await todoTrigger.click();await todoPopup.getByRole('checkbox',{name:'Erledigt',exact:true}).check()
   await expect(page.locator('.todo-canvas-line')).toHaveCount(1);await expect(page.locator('.todo-canvas-line-text')).toContainText('Filtertodo fertig')
-  await todoPopup.getByRole('checkbox',{name:'Open',exact:true}).focus();await page.keyboard.press('Enter')
+  await todoPopup.getByRole('checkbox',{name:'Offen',exact:true}).focus();await page.keyboard.press('Enter')
   await expect(page.locator('.todo-canvas-line')).toHaveCount(2)
   await capture('filter-todo-multiple-dark','The same component filters checkbox to-dos with matching pointer and keyboard behavior')
   await page.keyboard.press('Escape');await expect(todoTrigger).toBeFocused()
-  await todoShell.getByRole('button',{name:'Alle Filter zuruecksetzen',exact:true}).click()
+  await todoShell.getByRole('button',{name:'Alle Filter zurücksetzen',exact:true}).click()
   for(const [file,content] of snapshots)assert.equal(fs.readFileSync(file,'utf8'),content)
   assert.equal(writes(),before)
   report.checks.filtersDoNotWriteMarkdownOrLoseEditorDraft=true
@@ -1855,7 +1855,7 @@ async function verifyWritingMode() {
   const rail=page.locator('.activity-rail'),shell=page.locator('.workbench-shell')
   await expect(rail.getByRole('group',{name:'Aufgaben',exact:true}).getByRole('button')).toHaveCount(3)
   await expect(rail.getByText('In Notizen',{exact:true})).toBeVisible();await expect(rail.getByText('Eigene Dateien',{exact:true})).toBeVisible()
-  for(const [name,selector]of[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Wissensgraph','.graph-editor-canvas-shell'],['Review','.review-canvas']]){
+  for(const [name,selector]of[['To-dos','.todo-canvas'],['Tasks','.task-canvas'],['Fokus','.focus-canvas'],['Wissensgraph','.graph-editor-canvas-shell'],['Rückblick','.review-canvas']]){
     await rail.getByRole('button',{name,exact:true}).click();await expect(page.locator(selector)).toBeVisible()
   }
   await rail.getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
@@ -1913,7 +1913,7 @@ async function verifyWritingMode() {
   await right.click();await page.keyboard.press('Control+End');await page.keyboard.type('\nRechter Entwurf im Schreibmodus.')
   await page.keyboard.press('F9');await expect(shell).toHaveClass(/is-writing/);await expect(page.locator('.editor-workspace-split')).toBeVisible()
   await capture('writing-split-dark','Both existing editor groups and their documents remain available in writing mode')
-  await page.keyboard.press('Control+w');const confirm=page.getByRole('dialog',{name:/^Ungespeicherte Aenderungen in/})
+  await page.keyboard.press('Control+w');const confirm=page.getByRole('dialog',{name:/^Ungespeicherte Änderungen in/})
   await expect(confirm).toBeVisible();await confirm.getByRole('button',{name:'Abbrechen',exact:true}).click()
   await expect(shell).toHaveClass(/is-writing/);await expect(right).toContainText('Rechter Entwurf im Schreibmodus.')
   const saveRight=page.waitForResponse(res=>res.url().endsWith('/notes/save')&&res.request().method()==='POST')
@@ -1940,7 +1940,7 @@ async function verifyWritingMode() {
   await capture('writing-restart-light','Reload returns to normal navigation and restores the profile capture draft; writing mode is intentionally temporary')
   report.checks.writingResponsiveAndReload=true
 
-  await page.keyboard.press('F9');await page.keyboard.press('Control+Shift+w');await expect(page.getByText('Keine Notiz geoeffnet',{exact:true})).toBeVisible()
+  await page.keyboard.press('F9');await page.keyboard.press('Control+Shift+w');await expect(page.getByText('Keine Notiz geöffnet',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'Schreibmodus beenden',exact:true}).click();await expect(shell).not.toHaveClass(/is-writing/)
   await openNote('Arbeitsnotiz');await expect(editor).toContainText(bodyMarker);report.checks.writingEmptyWorkspaceHasVisibleExit=true
 
@@ -2157,8 +2157,8 @@ async function verifyTooltips() {
   report.checks.tooltipDoesNotDismissOrEscapeAutoPopover=true
 
   await rail.getByRole('button',{name:'Einstellungen',exact:true}).click()
-  const close=page.getByRole('button',{name:'Einstellungen schliessen',exact:true})
-  await close.hover();await expect(tip).toContainText('Einstellungen schliessen');await bounds()
+  const close=page.getByRole('button',{name:'Einstellungen schließen',exact:true})
+  await close.hover();await expect(tip).toContainText('Einstellungen schließen');await bounds()
   await capture('tooltip-settings-dark','Hint above the active settings dialog; no focus or action in the hint')
   // Synthetic event probes scope eligibility without clicking through the modal.
   await notes.dispatchEvent('pointerover',{pointerType:'mouse'});await page.waitForTimeout(600);await noTip()
@@ -2391,7 +2391,7 @@ try {
     const settingsSave = page.getByRole('dialog').getByRole('button', {name: 'Speichern', exact: true})
     await settingsSave.click(); await expect(settingsSave).toBeDisabled()
     await capture('settings-light', 'Appearance settings, light, 1280×800')
-    await page.getByRole('button', {name: 'Einstellungen schliessen'}).click()
+    await page.getByRole('button', {name: 'Einstellungen schließen'}).click()
 
     await openNote('Arbeitsnotiz')
     await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\nUngespeicherter lokaler Entwurf.')
@@ -2413,7 +2413,7 @@ try {
       entries: [{path: path.relative(vaultPath, notePath), backup: '0.bak'}],
     }))
     await page.locator('.activity-rail').getByRole('button', {name: 'Einstellungen', exact: true}).click()
-    await expect(page.getByRole('heading', {name: 'Unterbrochene Aenderungen pruefen'})).toBeVisible()
+    await expect(page.getByRole('heading', {name: 'Unterbrochene Änderungen prüfen'})).toBeVisible()
     if(settingsDialog) {
       const summary=page.locator('.settings-modal summary').first()
       await summary.focus();await page.keyboard.press('Tab')
@@ -2424,7 +2424,7 @@ try {
     }
     await capture('recovery-light', 'Real recovery UI with a deliberately staged local journal; no crash simulated')
 
-    await page.getByRole('button', {name: 'Einstellungen schliessen'}).click()
+    await page.getByRole('button', {name: 'Einstellungen schließen'}).click()
     await captureTabMenuEdges()
   }
 

@@ -11,13 +11,13 @@ export function RecoveryPanel({backendUrl}: {backendUrl:string}) {
    return ()=>controller.abort()
  },[backendUrl])
  async function resolve(item:Recovery,action:'restore'|'keep') {
-   if(!window.confirm(action==='restore' ? 'Den Stand vor dieser unterbrochenen Aenderung wiederherstellen? Der aktuelle Stand wird vorher gesichert.' : 'Den aktuellen Dateistand beibehalten und die unterbrochene Aenderung abschliessen?'))return
+   if(!window.confirm(action==='restore' ? 'Den Stand vor dieser unterbrochenen Änderung wiederherstellen? Der aktuelle Stand wird vorher gesichert.' : 'Den aktuellen Dateistand beibehalten und die unterbrochene Änderung abschließen?'))return
    setBusy(true)
    try {
      await apiRequest(backendUrl,`/recovery/${item.id}`,{method:'POST',body:JSON.stringify({action})})
-     setItems(previous=>previous.filter(value=>value.id!==item.id));setMessage('Aenderung aufgeloest. Die Sicherheitskopien bleiben erhalten.')
+     setItems(previous=>previous.filter(value=>value.id!==item.id));setMessage('Änderung aufgelöst. Die Sicherheitskopien bleiben erhalten.')
    } catch(error){setMessage(String(error))} finally {setBusy(false)}
  }
  if(!items.length&&!message)return null
- return <section className="settings-block"><h4>Unterbrochene Aenderungen pruefen</h4><p>Neue Schreibvorgaenge warten, bis du den Dateistand geprueft hast. Die aufgelisteten Dateien und Sicherheitskopien bleiben lokal.</p>{items.map(item=><div key={item.id}><strong>{item.operation}</strong><details><summary>{item.paths.length} betroffene Dateien</summary><ul>{item.paths.slice(0,100).map(path=><li key={path}>{path}</li>)}</ul><p>Journal: {item.manifest}</p></details><button type="button" disabled={busy} onClick={()=>void resolve(item,'restore')}>Vorherigen Stand wiederherstellen</button><button type="button" disabled={busy} onClick={()=>void resolve(item,'keep')}>Aktuellen Stand beibehalten</button></div>)}{message&&<p role="status">{message}</p>}</section>
+ return <section className="settings-block"><h4>Unterbrochene Änderungen prüfen</h4><p>Neue Schreibvorgänge warten, bis du den Dateistand geprüft hast. Die aufgelisteten Dateien und Sicherheitskopien bleiben lokal.</p>{items.map(item=><div key={item.id}><strong>{item.operation}</strong><details><summary>{item.paths.length} betroffene Dateien</summary><ul>{item.paths.slice(0,100).map(path=><li key={path}>{path}</li>)}</ul><p>Journal: {item.manifest}</p></details><button type="button" disabled={busy} onClick={()=>void resolve(item,'restore')}>Vorherigen Stand wiederherstellen</button><button type="button" disabled={busy} onClick={()=>void resolve(item,'keep')}>Aktuellen Stand beibehalten</button></div>)}{message&&<p role="status">{message}</p>}</section>
 }

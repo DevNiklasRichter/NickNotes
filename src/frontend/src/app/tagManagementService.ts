@@ -76,7 +76,7 @@ export class TagManagementService {
 
     const nextGroupId = normalizeTagId(form.id)
     if (!nextGroupId) {
-      this.writer.setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Gruppen-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
@@ -123,7 +123,7 @@ export class TagManagementService {
     const requestedGroup = preferredGroup ? this.resolveTagGroupById(preferredGroup) : null
     const group = requestedGroup || firstGroup
     if (!group) {
-      this.writer.setMessage('Keine gueltige Tag-Gruppe gefunden.')
+      this.writer.setMessage('Keine gültige Tag-Gruppe gefunden.')
       return
     }
 
@@ -141,7 +141,7 @@ export class TagManagementService {
 
     const tagId = normalizeTagId(form.id)
     if (!tagId) {
-      this.writer.setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Tag-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
@@ -163,7 +163,7 @@ export class TagManagementService {
       })
       this.writer.setCustomTagGroups(toStorageTagGroups(response.groups))
       this.writer.setFolderOpen?.(`tag-group-${group.id}`)
-      this.writer.setMessage(`Tag hinzugefuegt: ${group.displayName} / ${form.displayName || tagId}`)
+      this.writer.setMessage(`Tag hinzugefügt: ${group.displayName} / ${form.displayName || tagId}`)
       void this.context.emitMutation?.({
         kind: 'tag-mutated',
         refresh: {
@@ -195,8 +195,8 @@ export class TagManagementService {
     const firstGroup = mergedTagGroups[0]
     const form = await this.context.openTagFormDialog({
       title: 'Neuen Tag aus Auswahl erstellen',
-      message: 'Waehle die Tag-Gruppe und pruefe ID sowie Anzeigename.',
-      confirmLabel: 'Anlegen und einfuegen',
+      message: 'Wähle die Tag-Gruppe und prüfe ID sowie Anzeigename.',
+      confirmLabel: 'Anlegen und einfügen',
       initialValues: {
         groupId: firstGroup.id,
         id: normalizeTagId(displayName),
@@ -215,13 +215,13 @@ export class TagManagementService {
 
     const tagId = normalizeTagId(form.id)
     if (!tagId) {
-      this.writer.setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Tag-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
     const tagDisplayName = normalizeLabel(form.displayName) || displayName
     if (!groupId) {
-      this.writer.setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Gruppen-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
@@ -240,7 +240,7 @@ export class TagManagementService {
       const duplicateTag = existingGroup?.tags.find((entry) => entry.id.toLowerCase() === tagId.toLowerCase())
     if (duplicateTag && existingGroup) {
       const inserted = replaceSelection(tagSyntax)
-      this.writer.setMessage(inserted ? `Bestehenden Tag eingefuegt: ${existingGroup.displayName} / ${duplicateTag.displayName}` : 'Die Auswahl wurde inzwischen geändert. Der bestehende Tag wurde nicht eingefügt.')
+      this.writer.setMessage(inserted ? `Bestehenden Tag eingefügt: ${existingGroup.displayName} / ${duplicateTag.displayName}` : 'Die Auswahl wurde inzwischen geändert. Der bestehende Tag wurde nicht eingefügt.')
       return
     }
 
@@ -276,7 +276,7 @@ export class TagManagementService {
       this.writer.setCustomTagGroups(normalizedGroups)
       this.writer.setFolderOpen?.(`tag-group-${groupId}`)
       const inserted = replaceSelection(tagSyntax)
-      this.writer.setMessage(inserted ? `Tag angelegt und eingefuegt: ${groupDisplayName} / ${tagDisplayName}` : `Tag angelegt: ${groupDisplayName} / ${tagDisplayName}. Die Auswahl wurde inzwischen geändert und nicht ersetzt.`)
+      this.writer.setMessage(inserted ? `Tag angelegt und eingefügt: ${groupDisplayName} / ${tagDisplayName}` : `Tag angelegt: ${groupDisplayName} / ${tagDisplayName}. Die Auswahl wurde inzwischen geändert und nicht ersetzt.`)
       void this.context.emitMutation?.({
         kind: 'tag-mutated',
         refresh: {
@@ -312,7 +312,7 @@ export class TagManagementService {
 
     const newGroupId = normalizeTagId(form.id)
     if (!newGroupId) {
-      this.writer.setMessage('Die Gruppen-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Gruppen-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
@@ -338,7 +338,7 @@ export class TagManagementService {
         `Sollen bestehende Notiz-Tags von "${group.id}:*" automatisch auf "${newGroupId}:*" umgestellt werden?`,
         [
           { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+          { id: 'keep', label: 'Nein, nur Verwaltung ändern' },
         ]
       )
       if (!applyChoice) {
@@ -394,7 +394,7 @@ export class TagManagementService {
     }
 
     const form = await this.context.openTagGroupFormDialog({
-      title: `Farbe fuer "${group.displayName}"`,
+      title: `Farbe für "${group.displayName}"`,
       confirmLabel: 'Speichern',
       initialValues: {
         id: group.id,
@@ -448,11 +448,11 @@ export class TagManagementService {
     const group = this.resolveTagGroupById(groupName)
     const groupLabel = group ? `${group.displayName} (${group.id})` : groupName
     const option = await this.context.askTagChoice(
-      `Tag-Gruppe "${groupLabel}" loeschen`,
+      `Tag-Gruppe "${groupLabel}" löschen`,
       'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
       [
         { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
-        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
+        { id: 'keep', label: 'Nur aus Tag-Verwaltung löschen' },
       ]
     )
     if (!option) {
@@ -473,7 +473,7 @@ export class TagManagementService {
       this.writer.setCustomTagGroups(toStorageTagGroups(response.groups))
       this.writer.setCounts(response.counts)
       if (removeFromNotes) {
-        this.writer.setMessage(`Tag-Gruppe geloescht und Tags aus ${response.notesUpdated} Notizen entfernt.`)
+        this.writer.setMessage(`Tag-Gruppe gelöscht und Tags aus ${response.notesUpdated} Notizen entfernt.`)
       } else {
         this.writer.setMessage('Tag-Gruppe aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.')
       }
@@ -519,7 +519,7 @@ export class TagManagementService {
 
     const newTagId = normalizeTagId(form.id)
     if (!newTagId) {
-      this.writer.setMessage('Die Tag-ID ist ungueltig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
+      this.writer.setMessage('Die Tag-ID ist ungültig. Erlaubt sind Buchstaben, Zahlen und Bindestriche.')
       return
     }
 
@@ -545,7 +545,7 @@ export class TagManagementService {
         `Soll "${group.id}:${tag.id}" in allen Notizen automatisch in "${group.id}:${newTagId}" umbenannt werden?`,
         [
           { id: 'apply', label: 'Ja, in Notizen aktualisieren', tone: 'primary' },
-          { id: 'keep', label: 'Nein, nur Verwaltung aendern' },
+          { id: 'keep', label: 'Nein, nur Verwaltung ändern' },
         ]
       )
       if (!applyChoice) {
@@ -597,11 +597,11 @@ export class TagManagementService {
     const tag = group?.tags.find((entry) => entry.id.toLowerCase() === tagName.toLowerCase()) ?? null
     const tagLabel = tag && group ? `${group.displayName} / ${tag.displayName}` : `${groupName}:${tagName}`
     const option = await this.context.askTagChoice(
-      `Tag "${tagLabel}" loeschen`,
+      `Tag "${tagLabel}" löschen`,
       'Wie sollen vorhandene Tag-Verwendungen in Notizen behandelt werden?',
       [
         { id: 'remove', label: 'Auch aus Notizen entfernen', tone: 'danger' },
-        { id: 'keep', label: 'Nur aus Tag-Verwaltung loeschen' },
+        { id: 'keep', label: 'Nur aus Tag-Verwaltung löschen' },
       ]
     )
     if (!option) {
@@ -622,7 +622,7 @@ export class TagManagementService {
       this.writer.setCustomTagGroups(toStorageTagGroups(response.groups))
       this.writer.setCounts(response.counts)
       if (removeFromNotes) {
-        this.writer.setMessage(`Tag geloescht und aus ${response.notesUpdated} Notizen entfernt.`)
+        this.writer.setMessage(`Tag gelöscht und aus ${response.notesUpdated} Notizen entfernt.`)
       } else {
         this.writer.setMessage('Tag aus der Tag-Verwaltung entfernt. Historische Notiz-Tags wurden beibehalten.')
       }

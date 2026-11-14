@@ -198,7 +198,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
           <span className="review-metric-subtext">Aktualisiert: {safeData.kpis.notes_updated_period}</span>
         </article>
         <article className="review-metric-card">
-          <span className="review-metric-label">Ueberfaellige Tasks</span>
+          <span className="review-metric-label">Überfällige Tasks</span>
           <strong>{safeData.kpis.overdue_open_tasks}</strong>
           <span className="review-metric-subtext">Im aktuellen Backlog</span>
         </article>
@@ -346,7 +346,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
             ))}
           </ul>
         ) : (
-          <p>Keine kritischen Ueberlastungssignale fuer den gewaehlten Zeitraum erkannt.</p>
+          <p>Keine kritischen Überlastungssignale für den gewählten Zeitraum erkannt.</p>
         )}
       </div>
 
@@ -357,7 +357,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
             <span>{safeData.top_notes.length}</span>
           </header>
           {safeData.top_notes.length === 0 ? (
-            <p className="empty-copy">Keine Aktivitaet im gewaehlten Zeitraum.</p>
+            <p className="empty-copy">Keine Aktivität im gewählten Zeitraum.</p>
           ) : (
             <ul className="review-top-note-list">
               {safeData.top_notes.map((entry) => {
@@ -373,7 +373,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     </div>
                     <button
                       className="icon-button compact muted"
-                      aria-label="Notiz oeffnen" data-tooltip="Notiz oeffnen"
+                      aria-label="Notiz öffnen" data-tooltip="Notiz öffnen"
                       onClick={() => {
                         onOpenNotePath(entry.path, entry.title, normalizedType === 'task' ? 'task' : 'note')
                       }}
@@ -393,7 +393,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
             <span>{safeData.top_tasks.length}</span>
           </header>
           {safeData.top_tasks.length === 0 ? (
-            <p className="empty-copy">Keine Task-Aktivitaet im gewaehlten Zeitraum.</p>
+            <p className="empty-copy">Keine Task-Aktivitaet im gewählten Zeitraum.</p>
           ) : (
             <ul className="review-top-note-list">
               {safeData.top_tasks.map((entry) => (
@@ -407,7 +407,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                   </div>
                   <button
                     className="icon-button compact muted"
-                    aria-label="Task oeffnen" data-tooltip="Task oeffnen"
+                    aria-label="Task öffnen" data-tooltip="Task öffnen"
                     onClick={() => {
                       onOpenNotePath(entry.path, entry.title, 'task')
                     }}
@@ -426,7 +426,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
             <span>{safeData.completed_items.length}</span>
           </header>
           {safeData.completed_items.length === 0 ? (
-            <p className="empty-copy">Keine erledigten Items im gewaehlten Zeitraum.</p>
+            <p className="empty-copy">Keine erledigten Items im gewählten Zeitraum.</p>
           ) : (
             <ul className="review-top-note-list">
               {safeData.completed_items.map((entry, index) => {
@@ -441,7 +441,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
                     </div>
                     <button
                       className="icon-button compact muted"
-                      aria-label="Eintrag oeffnen" data-tooltip="Eintrag oeffnen"
+                      aria-label="Eintrag öffnen" data-tooltip="Eintrag öffnen"
                       onClick={() => {
                         const noteType = entry.kind === 'task' || normalizedType === 'task' ? 'task' : 'note'
                         onOpenNotePath(entry.path, entry.title, noteType)

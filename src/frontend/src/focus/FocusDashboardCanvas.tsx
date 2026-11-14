@@ -54,7 +54,7 @@ type ModeOption = {
 }
 
 const SCOPE_OPTIONS: ScopeOption[] = [
-  { value: 'overdue', label: 'Ueberfaellig' },
+  { value: 'overdue', label: 'Überfällig' },
   { value: 'today', label: 'Heute' },
   { value: 'tomorrow', label: 'Morgen' },
   { value: 'week', label: 'Woche' },
@@ -72,7 +72,7 @@ const MODE_OPTIONS: ModeOption[] = [
 function focusItemMetaLabel(item: FocusPrimaryItem): string {
   if (item.kind === 'task') {
     const dueLabel = toDotDateLabel(item.dueDate)
-    return `Faellig: ${dueLabel} | Update: ${item.updatedAt.slice(0, 10)}`
+    return `Fällig: ${dueLabel} | Update: ${item.updatedAt.slice(0, 10)}`
   }
   return `Todo | Update: ${item.updatedAt.slice(0, 10)}`
 }
@@ -144,7 +144,7 @@ function toCapacityLabel(status: FocusCapacityStatus): string {
   if (status === 'heavy') {
     return 'Voll'
   }
-  return 'Ueberladen'
+  return 'Überladen'
 }
 
 function toSuggestionActionDisabled(entry: FocusMitSuggestion, mitBusyKey: string): boolean {
@@ -227,7 +227,7 @@ function FocusItemCard({
         <p>{focusItemMetaLabel(item)}</p>
         {showAdvancedTaskSignals && item.waitingFor ? <p className="focus-item-secondary">Warten auf: {truncateText(item.waitingFor, 56)}</p> : null}
         {showAdvancedTaskSignals && item.blockedReason ? <p className="focus-item-secondary">Blocker: {truncateText(item.blockedReason, 56)}</p> : null}
-        {showAdvancedTaskSignals && item.nextActionHint ? <p className="focus-item-secondary">Naechster Schritt: {truncateText(item.nextActionHint, 72)}</p> : null}
+        {showAdvancedTaskSignals && item.nextActionHint ? <p className="focus-item-secondary">Nächster Schritt: {truncateText(item.nextActionHint, 72)}</p> : null}
         {item.contextBadgeCount > 0 ? (
           <div className="focus-context-badge-row">
             <span className="focus-context-badge-chip">Kontext {item.contextBadgeCount}</span>
@@ -255,7 +255,7 @@ function FocusItemCard({
           onClick={() => {
             onOpenOrigin(item)
           }}
-          aria-label={canOpen ? 'Ursprung oeffnen' : 'Kein Ursprungspfad vorhanden'} data-tooltip={canOpen ? 'Ursprung oeffnen' : 'Kein Ursprungspfad vorhanden'}
+          aria-label={canOpen ? 'Ursprung öffnen' : 'Kein Ursprungspfad vorhanden'} data-tooltip={canOpen ? 'Ursprung öffnen' : 'Kein Ursprungspfad vorhanden'}
         >
           <LucideNamedIcon name="ArrowUpRight" size={14} />
         </button>
@@ -387,9 +387,9 @@ export function FocusDashboardCanvas({
     try {
       await onQuickCaptureTodo(clean)
       setCaptureValue('')
-      setCaptureSuccess('Todo fuer heute gespeichert.')
+      setCaptureSuccess('Todo für heute gespeichert.')
     } catch (error) {
-      setCaptureError(toErrorMessage(error, 'Quick Capture konnte nicht gespeichert werden.'))
+      setCaptureError(toErrorMessage(error, 'Schnellerfassung konnte nicht gespeichert werden.'))
     } finally {
       setCaptureBusy(false)
     }
@@ -419,14 +419,14 @@ export function FocusDashboardCanvas({
     if (showTaskTimeManagement && data.planningHints.focusWithoutEstimateCount > 0) {
       entries.push({
         key: 'focus_without_estimate',
-        label: 'Fokus ohne Schaetzung',
+        label: 'Fokus ohne Schätzung',
         count: data.planningHints.focusWithoutEstimateCount,
       })
     }
     if (showTaskTimeManagement && data.planningHints.mitWithoutEstimateCount > 0) {
       entries.push({
         key: 'mit_without_estimate',
-        label: 'MIT ohne Schaetzung',
+        label: 'MIT ohne Schätzung',
         count: data.planningHints.mitWithoutEstimateCount,
       })
     }
@@ -498,18 +498,18 @@ export function FocusDashboardCanvas({
         {showTaskTimeManagement ? (
           <div className={`focus-capacity-strip focus-capacity-${data.capacityStatus}`}>
             <strong>
-              Kapazitaet: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
+              Kapazität: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
             </strong>
             <span>{data.capacityMessage}</span>
             <span>
-              MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schaetzung {data.withoutEstimateCount}
+              MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schätzung {data.withoutEstimateCount}
             </span>
           </div>
         ) : null}
 
         <div className="focus-capture-inline">
           <label className="focus-capture-label" htmlFor="focus-quick-capture">
-            Quick Capture
+            Schnellerfassung
           </label>
           <input
             id="focus-quick-capture"
@@ -519,7 +519,7 @@ export function FocusDashboardCanvas({
               setCaptureValue(event.target.value)
             }}
             onKeyDown={onCaptureKeyDown}
-            placeholder="Neues Todo fuer heute..."
+            placeholder="Neues Todo für heute..."
             disabled={captureBusy}
           />
           <button className="focus-capture-submit" onClick={() => void submitQuickCapture()} disabled={captureBusy || !captureValue.trim()}>
@@ -536,11 +536,11 @@ export function FocusDashboardCanvas({
           <strong>{data.openTaskCount}</strong>
         </article>
         <article className="focus-metric-card">
-          <span className="focus-metric-label">In Progress</span>
+          <span className="focus-metric-label">In Arbeit</span>
           <strong>{data.inProgressTaskCount}</strong>
         </article>
         <article className="focus-metric-card">
-          <span className="focus-metric-label">Heute faellig</span>
+          <span className="focus-metric-label">Heute fällig</span>
           <strong>{data.dueTodayTaskCount}</strong>
         </article>
         <article className="focus-metric-card">
@@ -580,7 +580,7 @@ export function FocusDashboardCanvas({
         ) : null}
         {showTaskTimeManagement ? (
           <article className="focus-metric-card">
-            <span className="focus-metric-label">Ohne Schaetzung</span>
+            <span className="focus-metric-label">Ohne Schätzung</span>
             <strong>{data.withoutEstimateCount}</strong>
           </article>
         ) : null}
@@ -601,7 +601,7 @@ export function FocusDashboardCanvas({
               <span>{data.mitItems.length}</span>
             </header>
             {mitError ? <p className="focus-inline-error">{mitError}</p> : null}
-            {data.mitItems.length === 0 ? <p className="empty-copy">Noch keine MITs fuer heute gesetzt.</p> : null}
+            {data.mitItems.length === 0 ? <p className="empty-copy">Noch keine MITs für heute gesetzt.</p> : null}
             <div className="focus-primary-list">
               {data.mitItems.map((item) => (
                 <FocusItemCard
@@ -646,12 +646,12 @@ export function FocusDashboardCanvas({
                       <button
                         className="focus-card-action-button"
                         disabled={toSuggestionActionDisabled(entry, mitBusyKey)}
-                        data-tooltip={entry.item.canAddToMit ? 'Als MIT uebernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
+                        data-tooltip={entry.item.canAddToMit ? 'Als MIT übernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
                         onClick={() => {
                           void toggleMit(entry.item)
                         }}
                       >
-                        Uebernehmen
+                        Übernehmen
                       </button>
                     </li>
                   ))}
@@ -663,7 +663,7 @@ export function FocusDashboardCanvas({
           {data.overdueItems.length > 0 ? (
             <section className="focus-panel focus-panel-overdue">
               <header className="focus-panel-header">
-                <h3>Ueberfaellig</h3>
+                <h3>Überfällig</h3>
                 <span>{data.overdueItems.length}</span>
               </header>
               <div className="focus-primary-list">
@@ -693,7 +693,7 @@ export function FocusDashboardCanvas({
               <h3>Heute im Fokus</h3>
               <span>{data.focusItems.length}</span>
             </header>
-            {data.focusItems.length === 0 ? <p className="empty-copy">Keine Fokuspunkte fuer den aktuellen Filter.</p> : null}
+            {data.focusItems.length === 0 ? <p className="empty-copy">Keine Fokuspunkte für den aktuellen Filter.</p> : null}
             <div className="focus-primary-list">
               {data.focusItems.map((item) => (
                 <FocusItemCard
@@ -745,7 +745,7 @@ export function FocusDashboardCanvas({
           {showAdvancedTaskSignals ? (
             <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
               <header className="focus-panel-header">
-                <h3>Naechste sinnvolle Schritte</h3>
+                <h3>Nächste sinnvolle Schritte</h3>
                 <span>{data.nextActionItems.length}</span>
               </header>
               {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
@@ -776,7 +776,7 @@ export function FocusDashboardCanvas({
                         openItemOrigin(item)
                       }}
                       disabled={!item.path}
-                      aria-label="Ursprung oeffnen" data-tooltip="Ursprung oeffnen"
+                      aria-label="Ursprung öffnen" data-tooltip="Ursprung öffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -792,7 +792,7 @@ export function FocusDashboardCanvas({
               <h3>Kontext</h3>
               <span>{contextHits.length}</span>
             </header>
-            {!selectedItem ? <p className="empty-copy">Waehle links einen Fokuspunkt aus.</p> : null}
+            {!selectedItem ? <p className="empty-copy">Wähle links einen Fokuspunkt aus.</p> : null}
             {selectedItem ? (
               <p className="focus-context-subtitle">
                 Aktiv: {selectedItem.kind === 'task' ? 'Task' : 'Todo'} | {selectedItem.title}
@@ -815,7 +815,7 @@ export function FocusDashboardCanvas({
                       const noteType = note.noteType.trim().toLowerCase() === 'task' ? 'task' : 'note'
                       onOpenNotePath(note.path, note.title, noteType)
                     }}
-                    aria-label={`Notiz oeffnen (${note.path})`} data-tooltip={`Notiz oeffnen (${note.path})`}
+                    aria-label={`Notiz öffnen (${note.path})`} data-tooltip={`Notiz öffnen (${note.path})`}
                   >
                     <LucideNamedIcon name="ArrowUpRight" size={14} />
                   </button>
@@ -845,7 +845,7 @@ export function FocusDashboardCanvas({
                       onClick={() => {
                         onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
                       }}
-                      aria-label="Daily oeffnen" data-tooltip="Daily oeffnen"
+                      aria-label="Daily öffnen" data-tooltip="Daily öffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -891,7 +891,7 @@ export function FocusDashboardCanvas({
                         openItemOrigin(item)
                       }}
                       disabled={!item.path}
-                      aria-label="Ursprung oeffnen" data-tooltip="Ursprung oeffnen"
+                      aria-label="Ursprung öffnen" data-tooltip="Ursprung öffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -947,7 +947,7 @@ export function FocusDashboardCanvas({
                       onClick={() => {
                         onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
                       }}
-                      aria-label="Daily oeffnen" data-tooltip="Daily oeffnen"
+                      aria-label="Daily öffnen" data-tooltip="Daily öffnen"
                     >
                       <LucideNamedIcon name="ArrowUpRight" size={14} />
                     </button>
@@ -977,7 +977,7 @@ export function FocusDashboardCanvas({
                       const noteType = note.note_type.trim().toLowerCase() === 'task' ? 'task' : 'note'
                       onOpenNotePath(note.path, note.title, noteType)
                     }}
-                    aria-label="Notiz oeffnen" data-tooltip="Notiz oeffnen"
+                    aria-label="Notiz öffnen" data-tooltip="Notiz öffnen"
                   >
                     <LucideNamedIcon name="ArrowUpRight" size={14} />
                   </button>

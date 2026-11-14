@@ -1275,11 +1275,11 @@ class VaultIndexer:
             INDEXER_REVIEW_BACKLOG_DELTA_WARNING_MIN,
             int(new_work_period * INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_FACTOR) + INDEXER_REVIEW_BACKLOG_DELTA_NEW_WORK_OFFSET,
         ):
-            risk_reasons.append("Backlog steigt im gewaehlten Zeitraum.")
+            risk_reasons.append("Backlog steigt im gewählten Zeitraum.")
         if completion_ratio < INDEXER_REVIEW_COMPLETION_RATIO_WARNING and new_work_period >= INDEXER_REVIEW_MIN_NEW_WORK_FOR_RATIO:
             risk_reasons.append("Erledigungsquote liegt unter 75%.")
         if overdue_open_tasks >= INDEXER_REVIEW_OVERDUE_WARNING:
-            risk_reasons.append("Viele offene ueberfaellige Tasks.")
+            risk_reasons.append("Viele offene überfällige Tasks.")
         if open_total_now >= INDEXER_REVIEW_NEW_WORK_WARNING_MIN:
             risk_reasons.append("Hoher aktueller Gesamt-Backlog.")
 

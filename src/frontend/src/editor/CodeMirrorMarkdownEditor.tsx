@@ -776,7 +776,7 @@ export function CodeMirrorMarkdownEditor({
       const tagRootItem: PaletteItem = {
         kind: 'tag-root',
         title: 'Tag',
-        description: 'Fuegt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
+        description: 'Fügt ein hierarchisches Tag ({tag:gruppe/tag}) ein.',
       }
       const rootItems =
         slashQuery && 'link'.startsWith(slashQuery)
@@ -2037,7 +2037,7 @@ export function CodeMirrorMarkdownEditor({
         >
           {paletteState.mode === 'table-size' ? (
             <div className="editor-table-size-panel">
-              <div className="editor-command-slash-meta">Tabelle einfuegen</div>
+              <div className="editor-command-slash-meta">Tabelle einfügen</div>
               <div className="editor-table-size-fields">
                 <label>
                   Zeilen
@@ -2093,7 +2093,7 @@ export function CodeMirrorMarkdownEditor({
                     view.focus()
                   }}
                 >
-                  Einfuegen
+                  Einfügen
                 </button>
                 <button
                   type="button"
@@ -2178,7 +2178,7 @@ export function CodeMirrorMarkdownEditor({
                     : item.kind === 'link-root'
                       ? item.description
                       : item.kind === 'link-folder'
-                        ? `${item.count} Eintraege`
+                        ? `${item.count} Einträge`
                         : item.kind === 'note-link'
                           ? `${item.target.noteType === 'task' ? 'Task' : 'Notiz'} - [[${item.target.target}]]`
                           : item.kind === 'tag-group'
@@ -2223,12 +2223,12 @@ export function CodeMirrorMarkdownEditor({
           {paletteState.mode !== 'table-size' ? (
             <div className="editor-command-footnote">
             {paletteState.mode === 'slash'
-              ? 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'
+              ? 'Pfeiltasten wählen - Enter ausführen - Esc schließen'
               : paletteState.mode === 'link-browse'
-                ? 'Pfeiltasten waehlen - Enter oeffnen/einfuegen - Esc zurueck'
+                ? 'Pfeiltasten wählen - Enter öffnen/einfuegen - Esc zurück'
               : paletteState.mode === 'tag-item'
-                ? 'Pfeiltasten waehlen - Enter einfuegen - Esc zurueck'
-                : 'Pfeiltasten waehlen - Enter ausfuehren - Esc schliessen'}
+                ? 'Pfeiltasten wählen - Enter einfügen - Esc zurück'
+                : 'Pfeiltasten wählen - Enter ausführen - Esc schließen'}
             </div>
           ) : null}
         </div>

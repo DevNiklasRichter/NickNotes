@@ -100,7 +100,7 @@ export function runPhaseFFocusModelAssertions(): void {
     }),
     makeTask({
       id: 'tk_waiting',
-      title: 'Wartet auf Rueckmeldung',
+      title: 'Wartet auf Rückmeldung',
       status: 'open',
       priority: 'medium',
       due_date: todayIso,
@@ -115,11 +115,11 @@ export function runPhaseFFocusModelAssertions(): void {
       priority: 'medium',
       due_date: todayIso,
       estimate_minutes: 15,
-      next_action_hint: 'Kurz pruefen',
+      next_action_hint: 'Kurz prüfen',
     }),
     makeTask({
       id: 'tk_big',
-      title: 'Grosses Thema ohne Schritt',
+      title: 'Großes Thema ohne Schritt',
       status: 'open',
       priority: 'medium',
       due_date: '2026-04-21',

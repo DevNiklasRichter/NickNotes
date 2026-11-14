@@ -93,28 +93,28 @@ const SETTINGS_SECTIONS: Array<{
         id: 'general',
         title: 'Allgemein',
         eyebrow: 'Basis',
-        description: 'Persoenliche Anzeige und Grundverhalten.',
+        description: 'Persönliche Anzeige und Grundverhalten.',
         icon: 'User',
     },
     {
         id: 'appearance',
         title: 'Darstellung',
-        eyebrow: 'Oberflaeche',
+        eyebrow: 'Oberfläche',
         description: 'Theme und visuelle Arbeitsweise.',
         icon: 'Palette',
     },
-    {id: 'agents', title: 'Agent-Verbindungen', eyebrow: 'MCP', description: 'Externe Agenten gezielt fuer diese NoteBase freigeben.', icon: 'Plug'},
+    {id: 'agents', title: 'Agent-Verbindungen', eyebrow: 'MCP', description: 'Externe Agenten gezielt für diese NoteBase freigeben.', icon: 'Plug'},
     {
         id: 'imports',
         title: 'Import',
         eyebrow: 'Quellen',
-        description: 'Inhalte aus anderen Systemen uebernehmen.',
+        description: 'Inhalte aus anderen Systemen übernehmen.',
         icon: 'Download',
     },
     {
         id: 'layout',
         title: 'Layout',
-        eyebrow: 'Arbeitsflaeche',
+        eyebrow: 'Arbeitsfläche',
         description: 'Sichtbarkeit und Aufbau der Hauptbereiche.',
         icon: 'PanelLeft',
     },
@@ -136,7 +136,7 @@ const SETTINGS_SECTIONS: Array<{
         id: 'tasks',
         title: 'Tasks',
         eyebrow: 'Arbeitsmodus',
-        description: 'Aufgabenfunktionen fuer deinen Workflow.',
+        description: 'Aufgabenfunktionen für deinen Workflow.',
         icon: 'ListChecks',
     }
 ];
@@ -241,7 +241,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
     const previewOneNoteImport = async () => {
         if (saving || oneNotePendingRef.current) return;
         if (!oneNoteSourcePaths.length) {
-            setOneNoteError('Bitte mindestens eine .onepkg-Datei auswaehlen.');
+            setOneNoteError('Bitte mindestens eine .onepkg-Datei auswählen.');
             return;
         }
         setImportPending('preview');
@@ -255,10 +255,10 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             });
             setOneNotePreview(response);
             if (response.pages === 0 && oneNoteSourcePaths.some((path) => path.toLowerCase().endsWith('.onepkg'))) {
-                setOneNoteMessage('.onepkg erkannt. Die Seiten werden erst beim Import ueber OneNote Desktop ermittelt.');
+                setOneNoteMessage('.onepkg erkannt. Die Seiten werden erst beim Import über OneNote Desktop ermittelt.');
             }
             else {
-                setOneNoteMessage(`${response.pages} Seiten fuer den Import gefunden.`);
+                setOneNoteMessage(`${response.pages} Seiten für den Import gefunden.`);
             }
         }
         catch (caught) {
@@ -271,12 +271,12 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
     const startOneNoteImport = async () => {
         if (saving || oneNotePendingRef.current) return;
         if (!oneNoteSourcePaths.length) {
-            setOneNoteError('Bitte mindestens eine .onepkg-Datei auswaehlen.');
+            setOneNoteError('Bitte mindestens eine .onepkg-Datei auswählen.');
             return;
         }
         const hasOnePkgSource = oneNoteSourcePaths.some((path) => path.toLowerCase().endsWith('.onepkg'));
         if (hasOnePkgSource) {
-            const confirmed = window.confirm('Der Import von .onepkg-Dateien benoetigt OneNote Desktop. OneNote kann waehrend des Imports sichtbar geoeffnet werden. Import fortsetzen?');
+            const confirmed = window.confirm('Der Import von .onepkg-Dateien benötigt OneNote Desktop. OneNote kann während des Imports sichtbar geöffnet werden. Import fortsetzen?');
             if (!confirmed) {
                 return;
             }
@@ -293,7 +293,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             result: null,
         });
         setOneNoteError('');
-        setOneNoteMessage('Import laeuft ...');
+        setOneNoteMessage('Import läuft ...');
         try {
             const response = await apiRequest<OneNoteImportResponse>(backendUrl, '/imports/onenote/start', {
                 method: 'POST',
@@ -381,7 +381,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
               <h3>{activeSection.title}</h3>
               <p>{activeSection.description}</p>
             </div>
-            <button type="button" className="icon-button compact muted" onClick={close} data-tooltip="Einstellungen schliessen" aria-label="Einstellungen schliessen">
+            <button type="button" className="icon-button compact muted" onClick={close} data-tooltip="Einstellungen schließen" aria-label="Einstellungen schließen">
               <LucideNamedIcon name="X" size={16}/>
             </button>
           </header>
@@ -393,7 +393,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 <div className="settings-row">
                   <div>
                     <label htmlFor="settings-display-name">Anrede</label>
-                    <p className="muted-copy">Name, mit dem NickNotes dich in der Oberflaeche anspricht.</p>
+                    <p className="muted-copy">Name, mit dem NickNotes dich in der Oberfläche anspricht.</p>
                   </div>
                   <input id="settings-display-name" value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} placeholder="Dein Name"/>
                 </div>
@@ -419,15 +419,15 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
           <div className="import-tool-header">
             <div>
               <strong>OneNote importieren</strong>
-              <p className="muted-copy">Eine oder mehrere .onepkg-Dateien waehlen und ueber OneNote Desktop importieren.</p>
+              <p className="muted-copy">Eine oder mehrere .onepkg-Dateien wählen und über OneNote Desktop importieren.</p>
             </div>
             <button onClick={() => void chooseOneNoteSources()} disabled={!vaultLoaded || oneNotePending}>
-              Dateien waehlen
+              Dateien wählen
             </button>
           </div>
 
           <label htmlFor="settings-onenote-target">Zielordner in der NoteBase</label>
-          <input id="settings-onenote-target" value={oneNoteTargetFolder} onChange={(event) => setOneNoteTargetFolder(event.target.value)} placeholder="Leer lassen fuer oberste Ebene" disabled={!vaultLoaded || oneNotePending}/>
+          <input id="settings-onenote-target" value={oneNoteTargetFolder} onChange={(event) => setOneNoteTargetFolder(event.target.value)} placeholder="Leer lassen für oberste Ebene" disabled={!vaultLoaded || oneNotePending}/>
 
           {oneNoteSourcePaths.length ? (<div className="import-source-list">
               {oneNoteSourcePaths.map((path) => (<div key={path} className="import-source-row">
@@ -442,8 +442,8 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             </div>) : null}
 
           {oneNoteHasPackageSource ? (<p className="import-info-note">
-              .onepkg-Import benoetigt OneNote Desktop. NickNotes laesst OneNote die Paketdatei temporaer oeffnen
-              und uebernimmt danach die Seiten in deine NoteBase.
+              .onepkg-Import benötigt OneNote Desktop. NickNotes lässt OneNote die Paketdatei temporär öffnen
+              und übernimmt danach die Seiten in deine NoteBase.
             </p>) : null}
 
           <div className="import-actions">
@@ -457,7 +457,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
 
           {oneNotePreview ? (<div className="import-preview-box">
               <div className="import-preview-stats">
-                <span>{oneNotePreview.notebooks} Notizbuecher</span>
+                <span>{oneNotePreview.notebooks} Notizbücher</span>
                 <span>Seiten werden beim Import ermittelt</span>
               </div>
               {oneNotePreview.warnings.length ? (<ul className="import-warning-list">
@@ -476,7 +476,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
 
           {oneNoteImportStatus ? (<div className="launch-progress">
               <div className="launch-progress-header">
-                <span>{oneNoteImportStatus.phase || 'Import laeuft ...'}</span>
+                <span>{oneNoteImportStatus.phase || 'Import läuft ...'}</span>
                 <strong>{oneNoteImportStatus.total > 0 ? `${oneNoteProgressPercent}%` : '...'}</strong>
               </div>
               <div className={`launch-progress-track ${oneNoteImportStatus.total > 0 ? '' : 'indeterminate'}`}>
@@ -523,14 +523,14 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 <label className="settings-toggle-row" htmlFor="settings-explorer-show-icons">
                   <span>
                     <strong>Dateisymbole anzeigen</strong>
-                    <small>Icons fuer Dateitypen und Ordner sichtbar machen.</small>
+                    <small>Icons für Dateitypen und Ordner sichtbar machen.</small>
                   </span>
                   <input id="settings-explorer-show-icons" type="checkbox" checked={explorerOptions.showIcons} onChange={(event) => setExplorerOptions((prev) => ({ ...prev, showIcons: event.target.checked }))}/>
                 </label>
                 <label className="settings-toggle-row" htmlFor="settings-explorer-compact">
                   <span>
                     <strong>Kompakte Zeilen</strong>
-                    <small>Mehr Eintraege auf gleicher Flaeche anzeigen.</small>
+                    <small>Mehr Einträge auf gleicher Fläche anzeigen.</small>
                   </span>
                   <input id="settings-explorer-compact" type="checkbox" checked={explorerOptions.compactMode} onChange={(event) => setExplorerOptions((prev) => ({ ...prev, compactMode: event.target.checked }))}/>
                 </label>
@@ -553,8 +553,8 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 </label>
                 <label className="settings-toggle-row" htmlFor="settings-status-due-today">
                   <span>
-                    <strong>Heute faellige Tasks anzeigen</strong>
-                    <small>Faellige Arbeit fuer den heutigen Tag hervorheben.</small>
+                    <strong>Heute fällige Tasks anzeigen</strong>
+                    <small>Fällige Arbeit für den heutigen Tag hervorheben.</small>
                   </span>
                   <input id="settings-status-due-today" type="checkbox" checked={statusBarPrefs.showDueToday} onChange={(event) => setStatusBarPrefs((prev) => ({ ...prev, showDueToday: event.target.checked }))}/>
                 </label>
@@ -568,7 +568,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 <label className="settings-toggle-row" htmlFor="settings-status-message">
                   <span>
                     <strong>Statusmeldung anzeigen</strong>
-                    <small>Rueckmeldungen wie Speichern oder Import unten anzeigen.</small>
+                    <small>Rückmeldungen wie Speichern oder Import unten anzeigen.</small>
                   </span>
                   <input id="settings-status-message" type="checkbox" checked={statusBarPrefs.showStateMessage} onChange={(event) => setStatusBarPrefs((prev) => ({ ...prev, showStateMessage: event.target.checked }))}/>
                 </label>
@@ -585,7 +585,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 <label className="settings-toggle-row" htmlFor="settings-task-time-management">
                   <span>
                     <strong>Zeitmanagement bei Tasks</strong>
-                    <small>Aufwandsschaetzungen fuer Aufgaben aktivieren.</small>
+                    <small>Aufwandsschätzungen für Aufgaben aktivieren.</small>
                   </span>
                   <input id="settings-task-time-management" type="checkbox" checked={taskFeatureSettings.taskTimeManagement} onChange={(event) => setTaskFeatureSettings((prev) => ({ ...prev, taskTimeManagement: event.target.checked }))}/>
                 </label>

@@ -131,7 +131,7 @@ function validateLocalDirectoryPath(rawPath) {
     return { allowed: false, code: 'empty_path', message: 'Pfad fehlt.' }
   }
   if (!path.isAbsolute(cleanPath)) {
-    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade koennen geoeffnet werden.' }
+    return { allowed: false, code: 'relative_path', message: 'Nur absolute Pfade können geöffnet werden.' }
   }
   try {
     const resolvedPath = path.resolve(cleanPath)
@@ -418,7 +418,7 @@ app.whenReady().then(async () => {
       }
       return { ok: true, code: 'ok', message: '' }
     } catch {
-      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geoeffnet werden.' }
+      return { ok: false, code: 'launch_failed', message: 'Windows Explorer konnte nicht geöffnet werden.' }
     }
   })
 

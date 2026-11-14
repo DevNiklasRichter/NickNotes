@@ -6,7 +6,7 @@ type AppOperatorNotification = Pick<OperatorNotification, 'id' | 'message' | 'se
 }
 
 const OPERATOR_NOTIFICATION_AUTO_CLEAR_MS: Record<OperatorNotification['severity'], number | null> = {
-  info: 7000,
+  info: 4000,
   warn: 9000,
   error: null,
   critical: null,

@@ -22,7 +22,7 @@ export function useExternalChanges({backendUrl, vaultLoaded, tabs, setTabs, setC
   const receive = useEffectEvent(async (state: BackendStateResponse,previous:number,signal:AbortSignal) => {
     const epoch=connectionEpoch()
     if (state.counts) setCounts(state.counts)
-    if (state.pendingRecovery.length) warn('Eine unterbrochene Aenderung benoetigt eine Pruefung. Details und Wiederherstellung stehen in den Einstellungen.')
+    if (state.pendingRecovery.length) warn('Eine unterbrochene Änderung benötigt eine Prüfung. Details und Wiederherstellung stehen in den Einstellungen.')
     // The last event is sufficient only for an unbroken version sequence.
     const paths=changedDocumentPaths(state,previous)
     const affected=tabs.current.filter(tab=>tab.kind==='note'&&!tab.loading&&(!paths||paths.has(normalizeFilePathKey(tab.path))))

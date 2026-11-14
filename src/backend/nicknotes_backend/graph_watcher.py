@@ -68,7 +68,7 @@ def graph_watcher_loop(runtime, vault, indexer, stop_event, baseline=None):
             finally:
                 runtime.operation_lock.release()
         except Exception:
-            runtime.graph_status.last_error = 'Eine externe Aenderung konnte nicht indexiert werden. Bitte Markdown und Dateizugriff pruefen.'
+            runtime.graph_status.last_error = 'Eine externe Änderung konnte nicht indexiert werden. Bitte Markdown und Dateizugriff prüfen.'
             for path in pending:
                 pending[path] = time.monotonic()+10
             logging.getLogger(__name__).exception('External change projection failed')

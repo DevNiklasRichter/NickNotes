@@ -189,7 +189,7 @@ export function NotePropertiesPanel({
               event.currentTarget.blur()
             }
           }}
-          placeholder="Untitled"
+          placeholder="Unbenannt"
         />
       </div>
       <details ref={detailsRef} className="note-properties-details">
@@ -291,7 +291,7 @@ export function NotePropertiesPanel({
                   onClick={() => {
                     onRemoveDueDate()
                   }}
-                  aria-label="Fälligkeitsdatum entfernen" data-tooltip="Faelligkeitsdatum entfernen"
+                  aria-label="Fälligkeitsdatum entfernen" data-tooltip="Fälligkeitsdatum entfernen"
                 >
                   x
                 </button>
@@ -329,7 +329,7 @@ export function NotePropertiesPanel({
                           setEstimateDraft('')
                           onEstimateMinutesChange('')
                         }}
-                        aria-label="Schätzung entfernen" data-tooltip="Schaetzung entfernen"
+                        aria-label="Schätzung entfernen" data-tooltip="Schätzung entfernen"
                       >
                         x
                       </button>
@@ -394,7 +394,7 @@ export function NotePropertiesPanel({
                         if (event.currentTarget.value !== (document.frontmatter.waiting_for)) onWaitingForChange(event.currentTarget.value)
                       }}
                       onKeyDown={event => onTaskInputKeyDown(event, document.frontmatter.waiting_for, setWaitingForDraft)}
-                    placeholder="z. B. Rueckmeldung Team"
+                    placeholder="z. B. Rückmeldung Team"
                   />
                 </div>
 
@@ -465,7 +465,7 @@ export function NotePropertiesPanel({
                         if (event.currentTarget.value !== (document.frontmatter.next_action_hint)) onNextActionHintChange(event.currentTarget.value)
                       }}
                       onKeyDown={event => onTaskInputKeyDown(event, document.frontmatter.next_action_hint, setNextActionHintDraft)}
-                    placeholder="Naechster konkreter Schritt"
+                    placeholder="Nächster konkreter Schritt"
                   />
                 </div>
               </>
@@ -490,7 +490,7 @@ export function NotePropertiesPanel({
                   onClick={() => {
                     onOpenTagOverview?.(item)
                   }}
-                  data-tooltip={`Tag-Overview oeffnen (${item})`}
+                  data-tooltip={`Tag-Overview öffnen (${item})`}
                 >
                   {visual.label}
                 </button>

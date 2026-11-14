@@ -11,7 +11,7 @@
   gap: var(--space-1);
   padding: var(--space-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-menu);
   background: var(--surface-contrast);
   color: var(--text);
   box-shadow: var(--shadow);
@@ -28,7 +28,7 @@
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-menu);
   background: transparent;
   color: var(--text);
   font: inherit;

@@ -18,6 +18,7 @@ import {
   TASK_PRIORITY_COLORS,
   normalizeRelatedCandidate,
   normalizeTagCandidate,
+  type NoteTab,
   type RecentNoteBase,
   type TaskDashboardFilters,
   type FocusDashboardFilters,
@@ -60,6 +61,7 @@ type WorkbenchSidebarContentProps = {
   onRefreshFocusData: () => void
   onOpenTodoDashboard: () => void
   onOpenTaskDashboard: () => void
+  activeTabKind: NoteTab['kind'] | null
   onOpenFocusDashboard: () => void
   onOpenReviewDashboard: () => void
   onOpenGraphDashboard: () => void
@@ -152,6 +154,7 @@ export function WorkbenchSidebarContent({
   onRefreshFocusData,
   onOpenTodoDashboard,
   onOpenTaskDashboard,
+  activeTabKind,
   onOpenFocusDashboard,
   onOpenReviewDashboard,
   onOpenGraphDashboard,
@@ -259,16 +262,16 @@ export function WorkbenchSidebarContent({
 
   const statusOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
-      { value: 'open', label: 'Open' },
-      { value: 'done', label: 'Done' },
+      { value: 'open', label: 'Offen' },
+      { value: 'done', label: 'Erledigt' },
     ],
     []
   )
 
   const promotionOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
-      { value: 'promoted', label: 'Promoted' },
-      { value: 'unpromoted', label: 'Unpromoted' },
+      { value: 'promoted', label: 'Als Task übernommen' },
+      { value: 'unpromoted', label: 'Nicht übernommen' },
     ],
     []
   )
@@ -295,11 +298,11 @@ export function WorkbenchSidebarContent({
 
   const taskDueOptions = useMemo<MultiSelectPickerOption[]>(
     () => [
-      { value: 'overdue', label: 'Ueberfaellig' },
+      { value: 'overdue', label: 'Überfällig' },
       { value: 'tomorrow', label: 'Morgen' },
       { value: 'this_week', label: 'Diese Woche' },
-      { value: 'later', label: 'Spaeter' },
-      { value: 'none', label: 'Ohne Faelligkeit' },
+      { value: 'later', label: 'Später' },
+      { value: 'none', label: 'Ohne Fälligkeit' },
     ],
     []
   )
@@ -565,7 +568,7 @@ export function WorkbenchSidebarContent({
     setFocusFilter({ sections: Array.from(selected) })
   }
 
-  const focusSectionSummary = focusFilters.sections.length === 0 ? 'Alle Bereiche' : `${focusFilters.sections.length} ausgewaehlt`
+  const focusSectionSummary = focusFilters.sections.length === 0 ? 'Alle Bereiche' : `${focusFilters.sections.length} ausgewählt`
 
   const resetFocusFilters = () => {
     onFocusFiltersChange({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
@@ -647,7 +650,7 @@ export function WorkbenchSidebarContent({
           </section>
 
           <section className="notebase-section recent-notebases">
-            <p className="muted-label">Zuletzt geoeffnet</p>
+            <p className="muted-label">Zuletzt geöffnet</p>
             {recentNoteBasesForList.length > 0 ? (
               <div className="notebase-list recent-notebase-list">
                 {recentNoteBasesForList.map((recent) => (
@@ -726,9 +729,11 @@ export function WorkbenchSidebarContent({
           </div>
         </header>
 
-        <button className="todo-open-dashboard-button" onClick={onOpenTodoDashboard} disabled={!vaultLoaded}>
-          Dashboard oeffnen
-        </button>
+        {activeTabKind === 'todo_dashboard' ? null : (
+          <button className="todo-open-dashboard-button" onClick={onOpenTodoDashboard} disabled={!vaultLoaded}>
+            Ansicht öffnen
+          </button>
+        )}
 
         <section className="todo-sidebar-section">
           <div className="todo-section-header">
@@ -736,8 +741,8 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetTodoFilters}
-              data-tooltip="Alle Filter zuruecksetzen"
-              aria-label="Alle Filter zuruecksetzen"
+              data-tooltip="Alle Filter zurücksetzen"
+              aria-label="Alle Filter zurücksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
             </button>
@@ -869,9 +874,11 @@ export function WorkbenchSidebarContent({
           </div>
         </header>
 
-        <button className="todo-open-dashboard-button" onClick={onOpenTaskDashboard} disabled={!vaultLoaded}>
-          Dashboard oeffnen
-        </button>
+        {activeTabKind === 'task_dashboard' ? null : (
+          <button className="todo-open-dashboard-button" onClick={onOpenTaskDashboard} disabled={!vaultLoaded}>
+            Ansicht öffnen
+          </button>
+        )}
 
         <section className="todo-sidebar-section">
           <div className="todo-section-header">
@@ -879,8 +886,8 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetTaskFilters}
-              data-tooltip="Alle Filter zuruecksetzen"
-              aria-label="Alle Filter zuruecksetzen"
+              data-tooltip="Alle Filter zurücksetzen"
+              aria-label="Alle Filter zurücksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
             </button>
@@ -895,14 +902,14 @@ export function WorkbenchSidebarContent({
             </div>
 
             <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Prioritaet</span>
+              <span className="todo-filter-row-label">Priorität</span>
               {renderTaskMultiSelect('priority', taskFilters.priorities, taskPriorityOptions, 'Alle', (value) =>
                 toggleTaskMultiSelection('priorities', value)
               )}
             </div>
 
             <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Faelligkeit</span>
+              <span className="todo-filter-row-label">Fälligkeit</span>
               {renderTaskMultiSelect('due', taskFilters.dueBuckets, taskDueOptions, 'Alle', (value) =>
                 toggleTaskMultiSelection('dueBuckets', value)
               )}
@@ -936,7 +943,7 @@ export function WorkbenchSidebarContent({
             </div>
 
             <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Related</span>
+              <span className="todo-filter-row-label">Verknüpft</span>
               {renderTaskMultiSelect('related', taskFilters.related, taskRelatedOptions, 'Alle', (value) =>
                 toggleTaskMultiSelection('related', value)
               )}
@@ -949,15 +956,15 @@ export function WorkbenchSidebarContent({
           <h4>Gruppierung</h4>
           <div className="todo-filter-rows">
             <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Sortierung</span>
+              <span className="todo-filter-row-label">Gruppieren nach</span>
               <label className="todo-grouping-select">
                 <select
                   value={taskFilters.grouping}
                   onChange={(event) => setTaskFilter({ grouping: event.target.value as TaskDashboardFilters['grouping'] })}
                 >
                   <option value="status">Status</option>
-                  <option value="priority">Prioritaet</option>
-                  <option value="due_date">Faelligkeit</option>
+                  <option value="priority">Priorität</option>
+                  <option value="due_date">Fälligkeit</option>
                 </select>
               </label>
             </div>
@@ -969,7 +976,7 @@ export function WorkbenchSidebarContent({
                   value={taskFilters.layout}
                   onChange={(event) => setTaskFilter({ layout: event.target.value as TaskDashboardFilters['layout'] })}
                 >
-                  <option value="board">Board</option>
+                  <option value="board">Spalten</option>
                   <option value="list">Liste</option>
                 </select>
               </label>
@@ -992,7 +999,7 @@ export function WorkbenchSidebarContent({
                 </button>
               </div>
             </div>
-            <h3>Focus</h3>
+            <h3>Fokus</h3>
             <div className="explorer-toolbar-right">
               <button
                 className="icon-button compact"
@@ -1037,9 +1044,11 @@ export function WorkbenchSidebarContent({
           </div>
         </header>
 
-        <button className="todo-open-dashboard-button" onClick={onOpenFocusDashboard} disabled={!vaultLoaded}>
-          Dashboard oeffnen
-        </button>
+        {activeTabKind === 'focus_dashboard' ? null : (
+          <button className="todo-open-dashboard-button" onClick={onOpenFocusDashboard} disabled={!vaultLoaded}>
+            Ansicht öffnen
+          </button>
+        )}
 
         <section className="todo-sidebar-section">
           <div className="todo-section-header">
@@ -1047,8 +1056,8 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetFocusFilters}
-              data-tooltip="Focus-Filter zuruecksetzen"
-              aria-label="Focus-Filter zuruecksetzen"
+              data-tooltip="Focus-Filter zurücksetzen"
+              aria-label="Focus-Filter zurücksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
             </button>
@@ -1097,7 +1106,7 @@ export function WorkbenchSidebarContent({
               <span className="todo-filter-row-label">Zeitraum</span>
               <label className="todo-grouping-select">
                 <select value={focusFilters.scope} onChange={(event) => setFocusFilter({ scope: event.target.value as FocusDashboardFilters['scope'] })}>
-                  <option value="overdue">Ueberfaellig</option>
+                  <option value="overdue">Überfällig</option>
                   <option value="today">Heute</option>
                   <option value="tomorrow">Morgen</option>
                   <option value="week">Woche</option>
@@ -1137,7 +1146,7 @@ export function WorkbenchSidebarContent({
       <div className="explorer-shell todo-explorer-shell">
         <header className="explorer-toolbar todo-sidebar-toolbar">
           <div className="explorer-toolbar-top">
-            <h3>Review</h3>
+            <h3>Rückblick</h3>
             <div className="explorer-toolbar-right">
               <button
                 className="icon-button compact"
@@ -1146,7 +1155,7 @@ export function WorkbenchSidebarContent({
                   onRefreshReview()
                 }}
                 disabled={!vaultLoaded}
-                aria-label="Review aktualisieren" data-tooltip="Review aktualisieren"
+                aria-label="Rückblick aktualisieren" data-tooltip="Rückblick aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -1154,9 +1163,11 @@ export function WorkbenchSidebarContent({
           </div>
         </header>
 
-        <button className="todo-open-dashboard-button" onClick={onOpenReviewDashboard} disabled={!vaultLoaded}>
-          Dashboard oeffnen
-        </button>
+        {activeTabKind === 'review_dashboard' ? null : (
+          <button className="todo-open-dashboard-button" onClick={onOpenReviewDashboard} disabled={!vaultLoaded}>
+            Ansicht öffnen
+          </button>
+        )}
 
         <section className="todo-sidebar-section">
           <div className="todo-section-header">
@@ -1164,8 +1175,8 @@ export function WorkbenchSidebarContent({
             <button
               className="icon-button compact muted todo-section-reset-button"
               onClick={resetReviewFilters}
-              data-tooltip="Review-Filter zuruecksetzen"
-              aria-label="Review-Filter zuruecksetzen"
+              data-tooltip="Rückblick-Filter zurücksetzen"
+              aria-label="Rückblick-Filter zurücksetzen"
             >
               <LucideNamedIcon name="FilterX" size={13} />
             </button>

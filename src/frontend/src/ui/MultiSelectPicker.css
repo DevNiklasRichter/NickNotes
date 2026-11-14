@@ -1,12 +1,14 @@
 .nn-multiselect {min-width: 0;}
-.nn-multiselect-trigger {width: 100%; min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-strong); color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2);}
+/* Looks like a native select: same surface, border and chevron size. */
+.nn-multiselect-trigger {width: 100%; min-height: 30px; border: 1px solid var(--line); background: var(--surface-contrast); display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); padding: var(--space-1) var(--space-2);}
 .nn-multiselect-trigger span {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;}
+.nn-multiselect-trigger:hover:not(:disabled) {border-color: var(--line-strong); background: var(--surface-contrast);}
 .nn-multiselect.is-open .nn-multiselect-trigger {border-color: var(--accent);}
-.nn-multiselect-trigger.nn-picker-token-trigger {width: auto; min-width: 28px; min-height: 26px; justify-content: center; border-radius: 999px;}
+.nn-multiselect-trigger.nn-picker-token-trigger {width: auto; min-width: 28px; min-height: 26px; justify-content: center; border-radius: var(--radius-pill);}
 .nn-picker-add-value {white-space: normal; overflow-wrap: anywhere; text-align: left;}
 .nn-picker-error {color: var(--error-text); font-size: var(--font-label); margin: 0;}
 .nn-picker-hint {font-size: var(--font-label); color: var(--muted); margin: 0;}
-.nn-filter-popover {position: fixed; inset: auto; margin: 0; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: min(400px, calc(100vh - 16px)); border: 1px solid var(--line); border-radius: var(--radius-xl); padding: var(--space-2); background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: auto; font: inherit;}
+.nn-filter-popover {position: fixed; inset: auto; margin: 0; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: min(400px, calc(100vh - 16px)); border: 1px solid var(--line); border-radius: var(--radius-menu); padding: var(--space-2); background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: auto; font: inherit;}
 .nn-filter-popover:popover-open {display: flex; flex-direction: column; gap: var(--space-2);}
 .nn-filter-popover > * {flex-shrink: 0;}
 .nn-filter-popover header, .nn-filter-popover footer {display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);}
@@ -16,7 +18,7 @@
 .nn-filter-search input::-webkit-search-cancel-button {appearance: none;}
 .nn-filter-options {display: grid; gap: 2px; min-height: 0; flex: 1 1 auto; overflow: auto;}
 .nn-filter-options p {font-size: var(--font-label); color: var(--muted); padding: var(--space-2); margin: 0;}
-.nn-filter-option {display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-md); font-size: var(--font-label); overflow-wrap: anywhere;}
+.nn-filter-option {display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-control); font-size: var(--font-label); overflow-wrap: anywhere;}
 .nn-filter-option:hover, .nn-filter-option:focus-within {background: var(--accent-soft);}
 .nn-filter-option input {width: 14px; height: 14px; margin: 0; flex: 0 0 auto; accent-color: var(--accent-strong);}
 .nn-filter-color {width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--filter-color); border: 1px solid var(--line);}

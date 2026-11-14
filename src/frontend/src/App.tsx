@@ -1031,7 +1031,7 @@ function App() {
                 id: nextTabId,
                 kind: 'todo_dashboard',
                 path: TODO_DASHBOARD_TAB_PATH,
-                title: 'Todo Dashboard',
+                title: 'To-dos',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1069,7 +1069,7 @@ function App() {
                 id: nextTabId,
                 kind: 'task_dashboard',
                 path: TASK_DASHBOARD_TAB_PATH,
-                title: 'Task Dashboard',
+                title: 'Tasks',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1107,7 +1107,7 @@ function App() {
                 id: nextTabId,
                 kind: 'focus_dashboard',
                 path: FOCUS_DASHBOARD_TAB_PATH,
-                title: 'Focus Dashboard',
+                title: 'Fokus',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1145,7 +1145,7 @@ function App() {
                 id: nextTabId,
                 kind: 'review_dashboard',
                 path: REVIEW_DASHBOARD_TAB_PATH,
-                title: 'Review Dashboard',
+                title: 'Rückblick',
                 content: '',
                 loading: false,
                 dirty: false,
@@ -1225,7 +1225,7 @@ function App() {
                 counts: VaultCounts;
             }>(backendUrl, `/daily/open-today?date=${encodeURIComponent(todayIso)}`, { method: 'POST' });
             setCounts(response.counts);
-            setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geoeffnet: ${response.date}`);
+            setMessage(response.created ? `Daily Note erstellt: ${response.date}` : `Daily Note geöffnet: ${response.date}`);
             setError('');
             await emitMutationEvent({
                 kind: response.created ? 'note-created' : 'note-saved',
@@ -1287,7 +1287,7 @@ function App() {
             }),
         });
         setCounts(response.counts);
-        setMessage(`Todo fuer heute erfasst: ${response.todoText}`);
+        setMessage(`Todo für heute erfasst: ${response.todoText}`);
         await emitMutationEvent({
             kind: 'focus-updated',
             refresh: {
@@ -1328,7 +1328,7 @@ function App() {
             }>(backendUrl, `/todos/${encodeURIComponent(todoId)}/promote`, {
                 method: 'POST',
             });
-            const verb = response.created === false ? 'bereits verknuepft' : 'zu Task promoted';
+            const verb = response.created === false ? 'bereits verknüpft' : 'zu Task promoted';
             setMessage(`Todo ${verb}: ${response.taskId}`);
             await emitMutationEvent({
                 kind: 'todo-updated',
@@ -1382,7 +1382,7 @@ function App() {
         if (tab.kind !== 'note' || !tab.dirty) {
             return true;
         }
-        const decision = await askTagChoice(`Ungespeicherte Aenderungen in "${tab.title}"`, 'Was soll passieren?', [
+        const decision = await askTagChoice(`Ungespeicherte Änderungen in "${tab.title}"`, 'Was soll passieren?', [
             { id: 'save', label: 'Speichern', tone: 'primary' },
             { id: 'discard', label: 'Verwerfen', tone: 'danger' }
         ]);
@@ -1687,7 +1687,7 @@ function App() {
             return true;
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-            setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gueltiges ISO-Datum eingeben.');
+            setTaskFieldErrorByPath(tabPath, 'follow_up_date', 'Bitte ein gültiges ISO-Datum eingeben.');
             return false;
         }
         setTaskFieldErrorByPath(tabPath, 'follow_up_date', '');
@@ -1921,7 +1921,7 @@ function App() {
         if (!settingsDirtyRef.current && dirtyTabs.length === 0) {
             return true;
         }
-        const decision = await askTagChoice('Ungespeicherte Aenderungen', 'Vor dem Wechsel der NoteBase speichern?', [
+        const decision = await askTagChoice('Ungespeicherte Änderungen', 'Vor dem Wechsel der NoteBase speichern?', [
             { id: 'save', label: 'Speichern', tone: 'primary' },
             { id: 'discard', label: 'Nicht speichern', tone: 'danger' }
         ]);
@@ -2578,7 +2578,7 @@ function App() {
             else if(spec.id==='switchPane')disabledReason='Zuerst den Editor teilen.';
             else if(spec.id==='writingMode')disabledReason='Zuerst den Editor öffnen.';
             else if(['closeTab','closeOthers','closeAll','nextTab','previousTab'].includes(spec.id))disabledReason='Keine Ansicht geöffnet.';
-            else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Quick Capture öffnen.';
+            else if(['find','format'].includes(spec.id))disabledReason='Eine Notiz oder Schnellerfassung öffnen.';
             else if(activeTab?.loading)disabledReason='Die Notiz wird noch geladen.';
             else if(activeTab?.readOnly)disabledReason='Diese Notiz ist schreibgeschützt.';
             else disabledReason='Eine bearbeitbare Notiz öffnen.';
@@ -2617,28 +2617,24 @@ function App() {
         <div className="window-content">
           <div className="launch-shell">
             <div className="launch-card">
-              <h1>Hallo {displayName}</h1>
-              <p>Waehle eine NoteBase aus und wir laden sie direkt automatisch.</p>
-
-              <label htmlFor="launch-display-name" className="field-label">
-                Anrede
-              </label>
-              <input id="launch-display-name" value={displayName} onChange={(event) => setSettingsDisplayName(event.target.value)} placeholder={`z. B. ${DEFAULT_DISPLAY_NAME}`}/>
+              <h1>Willkommen bei NickNotes</h1>
+              <p>Öffne eine vorhandene NoteBase oder lege eine neue an.</p>
 
               <div className="launch-actions">
-                <button onClick={() => void pickAndOpenVault()} disabled={noteBaseOpenStatus?.active}>
-                  NoteBase laden
+                <button className="primary" onClick={() => void pickAndOpenVault()} disabled={noteBaseOpenStatus?.active}>
+                  NoteBase öffnen
                 </button>
                 <button onClick={() => void createVault()} disabled={noteBaseOpenStatus?.active}>
                   NoteBase erstellen
                 </button>
-                <button onClick={toggleThemeMode}>
-                  {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+                <button className="launch-theme-toggle" onClick={toggleThemeMode} aria-pressed={theme === 'dark'}>
+                  <LucideNamedIcon name={theme === 'dark' ? 'Moon' : 'Sun'} size={14}/>
+                  {theme === 'dark' ? 'Dunkel' : 'Hell'}
                 </button>
               </div>
               <label htmlFor="launch-capture-draft" className="field-label">Schnellerfassungsentwurf</label>
               <textarea id="launch-capture-draft" data-launch-capture value={captureText} onChange={event=>setCaptureText(event.target.value)} rows={7} placeholder="Gedanken festhalten, während die NoteBase geladen wird …"/>
-              <small>Der Entwurf bleibt lokal erhalten. Nach dem Laden einer NoteBase kannst du ihn über Quick Capture absenden.</small>
+              <small>Der Entwurf bleibt lokal erhalten. Nach dem Laden einer NoteBase kannst du ihn über Schnellerfassung absenden.</small>
 
               {noteBaseOpenStatus?.active || noteBaseOpenStatus?.done ? (<div className="launch-progress" role="status" aria-live="polite">
                   <div className="launch-progress-header">
@@ -2672,7 +2668,7 @@ function App() {
       }} onOpenSettings={openSettingsDialog}/>
 
       {sidebarOpen ? (<aside className="left-sidebar">
-          <WorkbenchSidebarContent sidebarView={sidebarView} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
+          <WorkbenchSidebarContent sidebarView={sidebarView} activeTabKind={activeTab?.kind ?? null} noteBaseName={noteBaseName} vaultLoaded={vaultLoaded} recentNoteBases={recentNoteBases} explorerWidth={explorerWidth} onExplorerWidthChange={setExplorerWidth} onRenameNoteBase={() => {
                 void renameNoteBase();
             }} onDeleteNoteBase={() => {
                 void deleteNoteBase();
@@ -2755,13 +2751,13 @@ function App() {
           {showCaptureInline ? (<div className={`capture-resize-handle ${captureResizing ? 'active' : ''}`} onPointerDown={(event) => {
                 event.preventDefault();
                 setCaptureResizing(true);
-            }} data-tooltip="Quick Capture Hoehe anpassen"/>) : null}
+            }} data-tooltip="Schnellerfassung Höhe anpassen"/>) : null}
 
           {showCaptureInline ? (<section className="workspace-panel capture-workspace-panel">
               <div className="panel-header-row">
-                <h3>Quick Capture</h3>
+                <h3>Schnellerfassung</h3>
                 <div className="panel-inline-actions">
-                  <button className="icon-button compact muted" onClick={closeCapturePanel} aria-label={commandTitle('capture','Quick Capture schließen')} data-tooltip={commandTitle('capture','Quick Capture schließen')}>
+                  <button className="icon-button compact muted" onClick={closeCapturePanel} aria-label={commandTitle('capture','Schnellerfassung schließen')} data-tooltip={commandTitle('capture','Schnellerfassung schließen')}>
                     <LucideNamedIcon name="X" size={14}/>
                   </button>
                 </div>
@@ -2785,7 +2781,7 @@ function App() {
         </div>
         {!showCaptureInline ? (<div className="bottom-dock">
             <button className="dock-tab" onClick={openCaptureFromDock} data-tooltip={commandTitle('capture')}>
-              Quick Capture
+              Schnellerfassung
             </button>
           </div>) : null}
       </section>
@@ -2799,17 +2795,17 @@ function App() {
           <ContextMenuItem onClick={() => {
                 void closeEditorTab(tabContextTarget.id);
             }}>
-            Registerkarte schliessen
+            Registerkarte schließen
           </ContextMenuItem>
           <ContextMenuItem onClick={() => {
                 void closeOtherEditorTabs(tabContextTarget.id);
             }} disabled={openTabs.length <= 1}>
-            Alle anderen Registerkarten schliessen
+            Alle anderen Registerkarten schließen
           </ContextMenuItem>
           <ContextMenuItem onClick={() => {
                 void closeAllEditorTabs();
             }} disabled={openTabs.length === 0}>
-            Alle Registerkarten schliessen
+            Alle Registerkarten schließen
           </ContextMenuItem>
         </ContextMenu>) : null}
 

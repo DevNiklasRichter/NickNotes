@@ -38,14 +38,14 @@ function buildTagLookup(tagGroups: TagGroupDefinition[]): Map<string, TagVisual>
 function dueLabel(task: TaskRow): string {
   const dueIso = toTaskDueIso(task.due_date)
   if (!dueIso) {
-    return '-'
+    return ''
   }
   if (dueIso === '[]' || dueIso.toLowerCase() === 'null') {
-    return '-'
+    return ''
   }
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueIso)
   if (!match) {
-    return '-'
+    return ''
   }
   return `${match[3]}.${match[2]}.${match[1]}`
 }
@@ -176,14 +176,12 @@ export function TaskDashboardCanvas({
   return (
     <div className="task-canvas">
       <div className="task-canvas-header">
-        <h2>Task Dashboard</h2>
-        <p>
-          Treffer: {visibleTasks.length} | Gruppierung: {filters.grouping} | Darstellung: {filters.layout}
-        </p>
+        <h2>Tasks</h2>
+        <p>{visibleTasks.length === 1 ? '1 Task' : `${visibleTasks.length} Tasks`}</p>
       </div>
 
       <div className="task-canvas-body">
-        {visibleTasks.length === 0 ? <p className="empty-copy">Keine Tasks fuer den aktuellen Filter.</p> : null}
+        {visibleTasks.length === 0 ? <p className="empty-copy">Keine Tasks für den aktuellen Filter.</p> : null}
         {filters.layout === 'list' ? (
           <div className="task-canvas-list">
             {groups.map((group) => {
@@ -191,27 +189,27 @@ export function TaskDashboardCanvas({
               return (
                 <section key={group.key} className="task-list-section">
                   <h3>{group.heading}</h3>
-                  {sortedItems.length === 0 ? <p className="empty-copy">Keine Eintraege</p> : null}
+                  {sortedItems.length === 0 ? <p className="empty-copy">Keine Einträge</p> : null}
                   <div className="task-list-table-head">
                     <span className="task-list-head-title" />
                     <span className="task-list-head-title task-list-head-centered">Status</span>
                     <button className="task-list-head-sort" onClick={() => toggleListSort('priority')}>
-                      Prioritaet
+                      Priorität
                       <LucideNamedIcon name={sortIconName(filters, 'priority')} size={12} />
                     </button>
                     <button className="task-list-head-sort" onClick={() => toggleListSort('due_date')}>
-                      Faelligkeit
+                      Fälligkeit
                       <LucideNamedIcon name={sortIconName(filters, 'due_date')} size={12} />
                     </button>
-                    <span className="task-list-head-title task-list-head-centered">Update</span>
+                    <span className="task-list-head-title task-list-head-centered">Geändert</span>
                     <span className="task-list-head-title">Tags</span>
-                    <span className="task-list-head-title">Related</span>
+                    <span className="task-list-head-title">Verknüpft</span>
                     <span className="task-list-head-open" />
                     {filters.listSortBy !== 'default' ? (
                       <button
                         className="icon-button compact muted task-list-sort-reset"
                         onClick={clearListSort}
-                        aria-label="Sortierung zuruecksetzen" data-tooltip="Sortierung zuruecksetzen"
+                        aria-label="Sortierung zurücksetzen" data-tooltip="Sortierung zurücksetzen"
                       >
                         <LucideNamedIcon name="FilterX" size={12} />
                       </button>
@@ -240,10 +238,10 @@ export function TaskDashboardCanvas({
                           <div className="task-table-cell task-table-cell-due">{dueLabel(task)}</div>
                           <div className="task-table-cell task-table-cell-updated">{toGermanTimestamp(task.updated_at)}</div>
                           <div className="task-table-cell task-table-cell-tags">
-                            <span className="task-property-values">{properties.tags.length > 0 ? properties.tags.join(', ') : '-'}</span>
+                            <span className="task-property-values">{properties.tags.join(', ')}</span>
                           </div>
                           <div className="task-table-cell task-table-cell-related">
-                            <span className="task-property-values">{properties.related.length > 0 ? properties.related.join(', ') : '-'}</span>
+                            <span className="task-property-values">{properties.related.join(', ')}</span>
                           </div>
                           <div className="task-table-cell task-table-cell-open">
                             <button
@@ -255,7 +253,7 @@ export function TaskDashboardCanvas({
                                 onOpenTaskPath(task.path, task.title)
                               }}
                               disabled={!canOpen}
-                              aria-label={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'} data-tooltip={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
+                              aria-label={canOpen ? `Task öffnen (${task.id})` : 'Task kann nicht geöffnet werden'} data-tooltip={canOpen ? `Task öffnen (${task.id})` : 'Task kann nicht geöffnet werden'}
                             >
                               <LucideNamedIcon name="ArrowUpRight" size={14} />
                             </button>
@@ -277,7 +275,7 @@ export function TaskDashboardCanvas({
                   <span>{group.items.length}</span>
                 </header>
                 <div className="task-board-list">
-                  {group.items.length === 0 ? <p className="empty-copy">Keine Eintraege</p> : null}
+                  {group.items.length === 0 ? <p className="empty-copy">Keine Einträge</p> : null}
                   {group.items.map((task) => {
                     const canOpen = Boolean(task.path)
                     const properties = toTaskPropertyTokens(task, tagLookup)
@@ -293,22 +291,18 @@ export function TaskDashboardCanvas({
                             </span>
                           </div>
                         </header>
-                        <div className="task-board-properties">
+                        {properties.tags.length > 0 ? (
                           <p className="task-board-property-line">
-                            <span className="task-property-key">Tags:</span>{' '}
-                            <span className="task-property-values">
-                              {properties.tags.length > 0 ? properties.tags.join(', ') : '-'}
-                            </span>
+                            <span className="task-property-key">Tags</span> {properties.tags.join(', ')}
                           </p>
+                        ) : null}
+                        {properties.related.length > 0 ? (
                           <p className="task-board-property-line">
-                            <span className="task-property-key">Related:</span>{' '}
-                            <span className="task-property-values">
-                              {properties.related.length > 0 ? properties.related.join(', ') : '-'}
-                            </span>
+                            <span className="task-property-key">Verknüpft</span> {properties.related.join(', ')}
                           </p>
-                        </div>
-                        <p>Faellig: {dueLabel(task)}</p>
-                        <p className="muted-copy">Update: {toGermanTimestamp(task.updated_at)}</p>
+                        ) : null}
+                        {dueLabel(task) ? <p>Fällig {dueLabel(task)}</p> : null}
+                        <p className="muted-copy">Geändert {toGermanTimestamp(task.updated_at)}</p>
                         <div className="task-board-card-actions">
                           <button
                             className="icon-button compact muted"
@@ -319,7 +313,7 @@ export function TaskDashboardCanvas({
                               onOpenTaskPath(task.path, task.title)
                             }}
                             disabled={!canOpen}
-                            aria-label={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'} data-tooltip={canOpen ? `Task oeffnen (${task.id})` : 'Task kann nicht geoeffnet werden'}
+                            aria-label={canOpen ? `Task öffnen (${task.id})` : 'Task kann nicht geöffnet werden'} data-tooltip={canOpen ? `Task öffnen (${task.id})` : 'Task kann nicht geöffnet werden'}
                           >
                             <LucideNamedIcon name="ArrowUpRight" size={14} />
                           </button>

@@ -12,9 +12,9 @@
   min-height: 0;
   max-height: calc(100vh - 2.2rem);
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-dialog);
   background: var(--surface);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow);
   display: block;
   overflow: hidden;
   position: relative;
@@ -72,7 +72,7 @@
   width: 100%;
   min-width: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text);
   display: grid;
@@ -209,7 +209,7 @@
   margin: 0;
   appearance: none;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--muted) 24%, transparent);
   position: relative;
   transition:
@@ -224,7 +224,7 @@
   height: 14px;
   left: 2px;
   top: 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   transition: transform 120ms ease;
@@ -262,7 +262,7 @@
 }
 
 .settings-modal-actions .settings-save-feedback {display: grid; justify-content: start; min-width: 0;}
-.settings-save-feedback p {margin: 0; padding: var(--space-2); background: var(--error-bg); color: var(--error-text); border: 1px solid var(--error-border); border-radius: var(--radius-sm); overflow-wrap: anywhere;}
+.settings-save-feedback p {margin: 0; padding: var(--space-2); background: var(--error-bg); color: var(--error-text); border: 1px solid var(--error-border); border-radius: var(--radius-control); overflow-wrap: anywhere;}
 
 .settings-modal-actions .primary {
   border-color: var(--accent);

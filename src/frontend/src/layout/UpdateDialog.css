@@ -2,4 +2,4 @@
 .update-dialog progress {width:100%;accent-color:var(--accent);}
 .update-actions {display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;}
 .update-overlay {-webkit-app-region:no-drag;user-select:text;}
-.update-badge {margin-left:auto;-webkit-app-region:no-drag;font-size:var(--font-caption);padding:3px 9px;border-radius:5px;border:1px solid var(--accent);color:var(--text);background:var(--surface);}
+.update-badge {margin-left:auto;-webkit-app-region:no-drag;font-size:var(--font-caption);padding:3px 9px;border-radius:var(--radius-control);border:1px solid var(--accent);color:var(--text);background:var(--surface);}

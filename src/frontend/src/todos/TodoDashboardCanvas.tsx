@@ -330,7 +330,7 @@ export function TodoDashboardCanvas({
       </div>
 
       <div className="todo-canvas-body">
-        {groups.length === 0 ? <p className="empty-copy">Keine To-dos fuer den aktuellen Filter.</p> : null}
+        {groups.length === 0 ? <p className="empty-copy">Keine To-dos für den aktuellen Filter.</p> : null}
 
         {groups.map((group) => (
           <section key={group.key} className="todo-canvas-section">
@@ -364,7 +364,7 @@ export function TodoDashboardCanvas({
                               key={`${todo.id}-tag-${token.key}-${index}`}
                               className={`todo-inline-tag-chip todo-inline-tag-chip-button ${tagMatchesQuery ? 'query-match' : ''}`}
                               style={{ '--todo-tag-color': token.color } as CSSProperties}
-                              data-tooltip={`${token.raw} - Tag-Overview oeffnen`}
+                              data-tooltip={`${token.raw} - Tag-Overview öffnen`}
                               onClick={() => onOpenTagOverview(token.key)}
                             >
                               {token.label}
@@ -377,7 +377,7 @@ export function TodoDashboardCanvas({
                     <div className="todo-canvas-line-actions">
                       <button
                         className="icon-button compact muted"
-                        aria-label={`Ursprung oeffnen (${todoNoteLabel(todo)})`} data-tooltip={`Ursprung oeffnen (${todoNoteLabel(todo)})`}
+                        aria-label={`Ursprung öffnen (${todoNoteLabel(todo)})`} data-tooltip={`Ursprung öffnen (${todoNoteLabel(todo)})`}
                         onClick={() => onOpenOrigin(todo.note_path, todo.note_title || undefined)}
                       >
                         <LucideNamedIcon name="ArrowUpRight" size={14} />
@@ -385,7 +385,7 @@ export function TodoDashboardCanvas({
                       {todo.promoted ? (
                         <button
                           className="icon-button compact muted"
-                          aria-label={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'} data-tooltip={canOpenPromotedTask ? `Task oeffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'}
+                          aria-label={canOpenPromotedTask ? `Task öffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'} data-tooltip={canOpenPromotedTask ? `Task öffnen (${todo.promoted_task_id})` : 'Task verlinkt, aber gerade nicht geladen'}
                           onClick={() => {
                             if (!canOpenPromotedTask) {
                               return

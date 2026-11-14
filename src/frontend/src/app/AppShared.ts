@@ -355,8 +355,8 @@ export const DEFAULT_EXPLORER_VIEW_STATE: ExplorerViewState = {
     iconOverrides: { folders: {}, files: {} },
 };
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
-    new_topic: '#4f8cff',
-    open: '#cf5d5d',
+    new_topic: '#8b7fd6',
+    open: '#3b82f6',
     in_progress: '#d3a33a',
     on_hold: '#8a8da1',
     done: '#43a36f',
@@ -460,7 +460,7 @@ export function readFileAsBase64(file: File): Promise<string> {
             const marker = 'base64,';
             const markerIndex = result.indexOf(marker);
             if (markerIndex < 0) {
-                reject(new Error('Ungueltiges Bildformat.'));
+                reject(new Error('Ungültiges Bildformat.'));
                 return;
             }
             resolve(result.slice(markerIndex + marker.length));

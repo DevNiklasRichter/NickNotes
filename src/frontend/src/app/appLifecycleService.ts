@@ -384,12 +384,12 @@ export class AppLifecycleService {
         const name = normalizeLabel(this.snapshot.getCreateNoteBaseName());
         const nextDisplayName = normalizeLabel(this.snapshot.getCreateNoteBaseDisplayName());
         if (!parentPath) {
-            this.writer.setError('Bitte zuerst einen Speicherort fuer die neue NoteBase auswaehlen.');
+            this.writer.setError('Bitte zuerst einen Speicherort für die neue NoteBase auswählen.');
             this.writer.setCreateNoteBaseError('Bitte zuerst einen Speicherort für die neue NoteBase auswählen.');
             return;
         }
         if (!name) {
-            this.writer.setError('Bitte einen Namen fuer die neue NoteBase eingeben.');
+            this.writer.setError('Bitte einen Namen für die neue NoteBase eingeben.');
             this.writer.setCreateNoteBaseError('Bitte einen Namen für die neue NoteBase eingeben.');
             return;
         }
@@ -584,10 +584,10 @@ export class AppLifecycleService {
         const currentName = targetPath ? getPathTail(targetPath) || targetPath : this.getNoteBaseName();
         const confirmed = await this.context.openTagActionDialog({
             kind: 'choice',
-            title: 'NoteBase loeschen',
+            title: 'NoteBase löschen',
             message: `Soll die NoteBase "${currentName}" mit allen Dateien in den Papierkorb verschoben werden?`,
             actions: [
-                { id: 'delete', label: 'Loeschen', tone: 'danger' },
+                { id: 'delete', label: 'Löschen', tone: 'danger' },
                 { id: 'cancel', label: 'Abbrechen' }
             ],
         });
@@ -596,8 +596,8 @@ export class AppLifecycleService {
         }
         const secondCheckDialog = await this.context.openTagActionDialog({
             kind: 'input',
-            title: 'Loeschen bestaetigen',
-            message: 'Bitte "LOESCHEN" eingeben, um das Verschieben in den Papierkorb zu bestaetigen.',
+            title: 'Löschen bestätigen',
+            message: 'Bitte "Löschen" eingeben, um das Verschieben in den Papierkorb zu bestätigen.',
             initialValue: '',
             actions: [
                 { id: 'confirm', label: 'In den Papierkorb', tone: 'danger' },
@@ -608,8 +608,8 @@ export class AppLifecycleService {
             return;
         }
         const secondCheck = normalizeLabel(secondCheckDialog.value);
-        if (secondCheck.toUpperCase() !== 'LOESCHEN') {
-            this.writer.setMessage('Loeschen abgebrochen.');
+        if (secondCheck.toUpperCase() !== 'Löschen') {
+            this.writer.setMessage('Löschen abgebrochen.');
             return;
         }
         try {
@@ -658,7 +658,7 @@ export class AppLifecycleService {
             return;
         }
         if (!window.nicknotes?.openPathInFileExplorer && !window.nicknotes?.openExternalUrl) {
-            this.writer.setMessage('Windows Explorer ist nur in der Desktop-App verfuegbar.');
+            this.writer.setMessage('Windows Explorer ist nur in der Desktop-App verfügbar.');
             return;
         }
         try {
@@ -666,10 +666,10 @@ export class AppLifecycleService {
                 ? await window.nicknotes.openPathInFileExplorer(path)
                 : await window.nicknotes.openExternalUrl?.(toLocalDirectoryFileUrl(path));
             if (!result?.ok) {
-                this.writer.setError(result?.message || 'NoteBase konnte nicht im Windows Explorer geoeffnet werden.');
+                this.writer.setError(result?.message || 'NoteBase konnte nicht im Windows Explorer geöffnet werden.');
                 return;
             }
-            this.writer.setMessage(`NoteBase im Windows Explorer geoeffnet: ${getPathTail(path) || path}`);
+            this.writer.setMessage(`NoteBase im Windows Explorer geöffnet: ${getPathTail(path) || path}`);
         }
         catch (caught) {
             this.writer.setError(String(caught));
@@ -711,7 +711,7 @@ export class AppLifecycleService {
                             this.refreshRecentNoteBases();
                             this.writer.setVaultPath('');
                             this.writer.setError('');
-                            this.writer.setMessage('Letzte NoteBase nicht gefunden. Bitte waehle eine NoteBase aus.');
+                            this.writer.setMessage('Letzte NoteBase nicht gefunden. Bitte wähle eine NoteBase aus.');
                             missingRememberedPathHandled = true;
                         }
                         else {

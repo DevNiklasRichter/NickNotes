@@ -723,8 +723,8 @@ class BackendApiService:
             identity = None
         if not isinstance(identity, str) or not identity.strip():
             raise ValidationDomainError(
-                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht geloescht. "
-                "Oeffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
+                "Dieser Ordner ist keine von NickNotes angelegte NoteBase und wird nicht gelöscht. "
+                "Öffne ihn zuerst in NickNotes oder entferne ihn im Windows-Explorer.",
                 operation="delete_notebase",
                 vault_id=str(target),
             )
@@ -744,7 +744,7 @@ class BackendApiService:
         except OSError as exc:
             # A 409 keeps the reason visible; 5xx messages are replaced by a generic text.
             raise ConflictDomainError(
-                f"Die NoteBase wurde nicht geloescht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
+                f"Die NoteBase wurde nicht gelöscht: {exc} Du kannst den Ordner im Windows-Explorer entfernen.",
                 operation="delete_notebase",
                 vault_id=str(target),
                 internal_message=str(exc),
@@ -1075,7 +1075,7 @@ class BackendApiService:
             payload = base64.b64decode(req.data_base64.encode("utf-8"), validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValidationDomainError(
-                f"Ungueltige Bilddaten: {exc}",
+                f"Ungültige Bilddaten: {exc}",
                 operation="add_note_media_asset",
                 vault_id=str(vault.vault_path),
                 internal_message=str(exc),

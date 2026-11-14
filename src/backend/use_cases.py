@@ -328,21 +328,21 @@ class SaveNoteContentUseCase:
         normalized_path = service._resolve_note_request_path(vault=vault, raw_path=req.path, allow_missing=True)
         actual = hashlib.sha256(normalized_path.read_bytes()).hexdigest() if normalized_path.exists() else None
         if actual != req.expected_revision:
-            raise ConflictDomainError('Die Notiz wurde zwischenzeitlich geaendert. Bitte neu laden; dein Entwurf bleibt erhalten.')
+            raise ConflictDomainError('Die Notiz wurde zwischenzeitlich geändert. Bitte neu laden; dein Entwurf bleibt erhalten.')
         try:
             if len(req.content.encode('utf-8'))>5*1024*1024:
-                raise MarkdownFormatError('Eine Notiz darf maximal 5 MB gross sein.')
+                raise MarkdownFormatError('Eine Notiz darf maximal 5 MB groß sein.')
             incoming, _ = parse_markdown_text(req.content)
             existing, _ = parse_markdown_text(normalized_path.read_text(encoding='utf-8'))
             for identity in ('id','node_id'):
                 if existing.get(identity) and incoming.get(identity) != existing[identity]:
-                    raise MarkdownFormatError('Die stabile Notiz-ID darf beim Speichern nicht geaendert oder entfernt werden.')
+                    raise MarkdownFormatError('Die stabile Notiz-ID darf beim Speichern nicht geändert oder entfernt werden.')
             if incoming.get('due_date'):
                 date.fromisoformat(str(incoming['due_date']))
             if 'status' in incoming and str(incoming['status']).lower().replace('-','_').replace(' ','_') not in {'new_topic','open','in_progress','on_hold','done'}:
                 raise MarkdownFormatError('Unbekannter Task-Status.')
             if 'priority' in incoming and str(incoming['priority']).lower() not in {'l','m','h','low','medium','high'}:
-                raise MarkdownFormatError('Unbekannte Prioritaet.')
+                raise MarkdownFormatError('Unbekannte Priorität.')
         except (MarkdownFormatError,ValueError) as exc:
             raise ValidationDomainError(str(exc)) from exc
         # A failure below leaves through the source journal of the coordinated

@@ -34,8 +34,8 @@ export function createWindowCloseGuard(win, dialog) {
     win.setEnabled(true)
     const choice=dialog.showMessageBoxSync(win,{
       type:'question',buttons:['Speichern','Nicht speichern','Abbrechen'],
-      defaultId:0,cancelId:2,title:'Ungespeicherte Aenderungen',
-      message:'Es gibt ungespeicherte Aenderungen. Vor dem Schliessen speichern?',noLink:true,
+      defaultId:0,cancelId:2,title:'Ungespeicherte Änderungen',
+      message:'Es gibt ungespeicherte Änderungen. Vor dem Schließen speichern?',noLink:true,
     })
     if(choice===1){finish();return}
     if(choice!==0){reset();return}

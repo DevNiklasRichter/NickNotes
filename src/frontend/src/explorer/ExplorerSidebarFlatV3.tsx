@@ -132,7 +132,7 @@ function createLockedReason(folderKey: string): string {
   if (!isCreateLockedFolderKey(folderKey)) {
     return ''
   }
-  return 'In daily, tags und tasks koennen keine neuen Ordner, Notizen oder Tasks angelegt werden.'
+  return 'In daily, tags und tasks können keine neuen Ordner, Notizen oder Tasks angelegt werden.'
 }
 
 function isInputEventTarget(target: EventTarget | null): boolean {
@@ -1332,9 +1332,9 @@ export function ExplorerSidebar({
           return
         }
         const confirmed = await askConfirmDialog(
-          'Ordner loeschen',
-          `Ordner "${node.name}" wirklich loeschen?`,
-          'Loeschen',
+          'Ordner löschen',
+          `Ordner "${node.name}" wirklich löschen?`,
+          'Löschen',
           true
         )
         if (!confirmed) {
@@ -1348,9 +1348,9 @@ export function ExplorerSidebar({
       }
 
       const confirmed = await askConfirmDialog(
-        'Datei loeschen',
-        `Datei "${node.name}" wirklich loeschen?`,
-        'Loeschen',
+        'Datei löschen',
+        `Datei "${node.name}" wirklich löschen?`,
+        'Löschen',
         true
       )
       if (!confirmed) {
@@ -1785,7 +1785,7 @@ export function ExplorerSidebar({
                 {contextNode.type === 'file' ? (
                   <ContextMenuItem onClick={() => { void onOpenFile(resolveOpenPath(contextNode), contextNode.name); setContextMenu(null) }}>
                     <LucideNamedIcon name="ExternalLink" className="context-menu-icon" size={14} />
-                    <span>Datei oeffnen</span>
+                    <span>Datei öffnen</span>
                   </ContextMenuItem>
                 ) : null}
                 {contextNode.type === 'folder' ? (
@@ -1830,7 +1830,7 @@ export function ExplorerSidebar({
                 <ContextMenuItem
 
                   disabled={contextReadonlyLinkFile}
-                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht umbenannt werden.' : 'Umbenennen'}
+                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links können hier nicht umbenannt werden.' : 'Umbenennen'}
                   onClick={() => {
                     void renameNodeFromContext(contextNode)
                   }}
@@ -1851,13 +1851,13 @@ export function ExplorerSidebar({
                 <ContextMenuItem
                   className="danger"
                   disabled={(contextNode.type === 'folder' && contextNode.canDelete === false) || contextReadonlyLinkFile}
-                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links koennen hier nicht geloescht werden.' : 'Loeschen'}
+                  data-tooltip={contextReadonlyLinkFile ? 'Task-Links können hier nicht gelöscht werden.' : 'Löschen'}
                   onClick={() => {
                     void deleteNodeFromContext(contextNode)
                   }}
                 >
                   <LucideNamedIcon name="Trash2" className="context-menu-icon" size={14} />
-                  <span>Loeschen</span>
+                  <span>Löschen</span>
                 </ContextMenuItem>
               </>
             ) : null}
@@ -1966,14 +1966,14 @@ export function ExplorerSidebar({
             }}
           >
             <header className="explorer-icon-picker-header">
-              <h4>Icon waehlen: {iconPicker.label}</h4>
+              <h4>Icon wählen: {iconPicker.label}</h4>
               <button
                 className="icon-button compact muted"
                 onClick={() => {
                   setIconPicker(null)
                   setIconSearchQuery('')
                 }}
-                aria-label="Schliessen" data-tooltip="Schliessen"
+                aria-label="Schließen" data-tooltip="Schließen"
               >
                 <LucideNamedIcon name="X" size={14} className="row-action-icon" />
               </button>

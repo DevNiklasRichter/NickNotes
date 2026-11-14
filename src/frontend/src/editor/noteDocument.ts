@@ -234,9 +234,9 @@ function parseFrontmatter(text: string): { frontmatter: Record<string, unknown>;
   const end = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
   if (end < 0) throw new Error('Frontmatter-Abschluss fehlt.')
   const header = lines.slice(1, end).join('\n')
-  if (header.length > 65536) throw new Error('Frontmatter ist zu gross.')
+  if (header.length > 65536) throw new Error('Frontmatter ist zu groß.')
   const document = parseDocument(header, { uniqueKeys: true })
-  if (document.errors.length) throw new Error('Ungueltiges YAML-Frontmatter: ' + document.errors[0].message)
+  if (document.errors.length) throw new Error('Ungültiges YAML-Frontmatter: ' + document.errors[0].message)
   const value: unknown = document.toJS({ maxAliasCount: 32 })
   if (value !== null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('Frontmatter muss ein Objekt sein.')
   return { frontmatter: (value ?? {}) as Record<string, unknown>, body: lines.slice(end + 1).join('\n').replace(/^\n+/, ''), hadFrontmatter: true }

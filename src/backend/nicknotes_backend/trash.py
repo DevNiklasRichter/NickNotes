@@ -17,7 +17,7 @@ def move_to_trash(path: Path) -> None:
     """Move one existing folder to the Recycle Bin or raise OSError and leave it in place."""
     target = Path(path).resolve()
     if sys.platform != "win32":
-        raise OSError("Der Papierkorb wird nur unter Windows unterstuetzt.")
+        raise OSError("Der Papierkorb wird nur unter Windows unterstützt.")
     import ctypes
     from ctypes import wintypes
 
