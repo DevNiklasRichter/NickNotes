@@ -33,10 +33,11 @@ const tooltips = process.argv.includes('--tooltips')
 const searchCommands = process.argv.includes('--search-commands')
 const writing = process.argv.includes('--writing-mode')
 const inline = process.argv.includes('--inline')
+const whatsNew = process.argv.includes('--whats-new')
 const feedback = process.argv.includes('--feedback')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1852,6 +1853,29 @@ async function verifyFeedback() {
   report.checks.feedbackReducedMotionAndThemes=true
 }
 
+async function verifyWhatsNew() {
+  // A version change since the last start opens the notes once; the next start stays quiet.
+  await windowSize(1280,800); await theme('light')
+  await page.evaluate(()=>window.localStorage.setItem('nicknotes.whatsNew.seenVersion','0.0.1'))
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible()
+  const dialog=page.getByRole('dialog',{name:/Neu in NickNotes/})
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('listitem').first()).toBeVisible()
+  await expect(dialog.getByRole('button',{name:'Was ist neu schließen'})).toBeFocused()
+  await capture('whats-new-light','After an update the changelog section of the new version opens once')
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden()
+  await page.reload(); await expect(page.locator('.activity-rail')).toBeVisible(); await page.waitForTimeout(800)
+  await expect(dialog).toBeHidden()
+  // Hilfe → Was ist neu opens it any time.
+  await theme('dark')
+  await page.getByRole('menubar').getByRole('menuitem',{name:'Hilfe',exact:true}).click()
+  await page.locator('[role="menu"] [data-command="whatsNew"]').click()
+  await expect(dialog).toBeVisible()
+  await capture('whats-new-dark','Help menu opens the same notes; dark theme')
+  await page.keyboard.press('Escape'); await openNote('Arbeitsnotiz')  // the base flow continues in dark
+  report.checks.whatsNewOncePerVersion=true
+}
+
 async function verifyInlineSuggestions() {
   await request('/tag-groups/add-group',{groupId:'projekt',displayName:'Projekt',color:'#81a1c1'})
   await request('/tag-groups/add-tag',{groupId:'projekt',tagId:'umzug',displayName:'Umzug'})
@@ -2373,6 +2397,7 @@ try {
     if (feedback) await verifyFeedback()
     if (writing) await verifyWritingMode()
     if (inline) await verifyInlineSuggestions()
+    if (whatsNew) await verifyWhatsNew()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

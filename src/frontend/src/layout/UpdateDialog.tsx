@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from 'react'
 import type {UpdateState} from '../app/updateTypes'
+import {ReleaseNotes} from './ReleaseNotes'
 import './UpdateDialog.css'
 
 export function UpdateDialog({open,onOpen,onClose}:{open:boolean;onOpen:()=>void;onClose:()=>void}) {
@@ -37,6 +38,7 @@ export function UpdateDialog({open,onOpen,onClose}:{open:boolean;onOpen:()=>void
     <div className="command-dialog-header"><h2 id="updates-heading">NickNotes aktualisieren</h2><button ref={close} onClick={onClose} aria-label="Updatefenster schließen">✕</button></div>
     <p>Installierte Version: <strong>{state.currentVersion||'Entwicklung'}</strong></p>
     <p role={state.phase==='error'?'alert':'status'}>{state.message}</p>
+    {state.notes&&['available','downloading','downloaded'].includes(state.phase)&&<section className="update-notes" aria-label={`Neu in ${state.version}`}><h3>Neu in {state.version}</h3><ReleaseNotes text={state.notes}/></section>}
     {state.phase==='downloading'&&<progress aria-label="Update-Download" max={100} value={state.percent??0}/>}
     <div className="update-actions">
       {['idle','current','error'].includes(state.phase)&&<button disabled={busy} onClick={()=>void run(window.nicknotes?.checkForUpdates)}>Nach Updates suchen</button>}
