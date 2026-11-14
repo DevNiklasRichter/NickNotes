@@ -198,40 +198,6 @@
   min-width: 0;
 }
 
-.settings-subsection {
-  display: grid;
-  gap: 0;
-  padding: 0.78rem 0;
-}
-
-.settings-subsection > * + * {
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.settings-subsection-header {
-  min-height: 32px;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.7rem;
-  align-items: center;
-  padding: 0 0 0.46rem;
-}
-
-.settings-subsection-header strong {
-  color: var(--text);
-  font-size: var(--font-ui);
-  font-weight: 760;
-}
-
-.settings-subsection-header span {
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--font-caption);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-toggle-row {
   cursor: pointer;
 }
@@ -350,10 +316,6 @@
 
   .settings-row {
     grid-template-columns: 1fr;
-  }
-
-  .settings-subsection-header {
-    display: grid;
   }
 
   .settings-modal-actions {
