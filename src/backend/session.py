@@ -186,6 +186,7 @@ class RuntimeState:
     repairing: bool = False
     change_version: int = 0
     handled_files: dict[Path, tuple[int, int] | None] = field(default_factory=dict)
+    client_seen: float = field(default_factory=time.monotonic)  # last /state poll; paces the watcher
     last_change: dict[str, Any] = field(default_factory=dict)
 
     def record_change(self, operation: str, paths: list[Path]) -> None:

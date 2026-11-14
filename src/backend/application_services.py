@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import logging
 import hashlib
 import os
@@ -530,6 +531,7 @@ class BackendApiService:
     @coordinated
     def get_state(self) -> dict[str, Any]:
         runtime = self.state
+        runtime.client_seen = time.monotonic()
         if not runtime.vault or not runtime.indexer:
             return {"vaultLoaded": False}
         return {
