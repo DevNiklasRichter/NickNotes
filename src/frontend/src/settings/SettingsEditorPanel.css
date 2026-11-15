@@ -152,7 +152,6 @@
 }
 
 .settings-block {
-  border-top: 1px solid var(--line);
   display: grid;
 }
 
@@ -237,6 +236,99 @@
 
 .settings-toggle-row input[type='checkbox']:checked::after {
   transform: translateX(14px);
+}
+
+.settings-groups {
+  display: grid;
+  gap: 1.35rem;
+}
+
+.settings-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.settings-group > h4 {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-label);
+  font-weight: 650;
+}
+
+.settings-card {
+  border-radius: var(--radius-control);
+  padding: 0.1rem 0.85rem;
+  background: color-mix(in srgb, var(--surface) 94%, var(--surface-contrast));
+  display: grid;
+}
+
+.settings-card > * + * {
+  border-top: 1px solid var(--line);
+}
+
+.settings-card .settings-row,
+.settings-card .settings-toggle-row {
+  min-height: 52px;
+}
+
+.settings-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.settings-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-label);
+  line-height: 1.35;
+}
+
+.settings-code {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface) 94%, var(--surface-contrast));
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-label);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.settings-segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.settings-segmented button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-segmented button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--surface) 90%, var(--surface-contrast));
+  font-weight: 650;
+}
+
+.settings-tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+
+.settings-tag[data-write='true'] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 
 .settings-modal-actions {

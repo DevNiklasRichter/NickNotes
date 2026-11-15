@@ -109,7 +109,7 @@ NickNotes hat keinen eingebauten Chat und ruft selbst kein Sprachmodell auf. Sta
 lokalen, authentifizierten **MCP-Server** bereit. Damit können Claude Code, Codex und andere MCP-Clients
 Notizen lesen, durchsuchen und – wenn du es erlaubst – schreiben.
 
-1. **Einstellungen → Agent-Verbindungen** öffnen.
+1. **Einstellungen → MCP** öffnen.
 2. Eine benannte Freigabe erstellen. Standard ist **nur Lesen**; Schreiben schaltest du bewusst dazu.
 3. Die angezeigte Konfiguration in den Client übernehmen.
 

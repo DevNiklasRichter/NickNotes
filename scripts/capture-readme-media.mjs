@@ -173,7 +173,7 @@ try {
     }
     await setTheme('light')
     await rail('Einstellungen').click()
-    await page.getByRole('button', {name: 'Agent-Verbindungen'}).click()
+    await page.getByRole('button', {name: 'MCP'}).click()
     await still('agents-light')
     await page.getByRole('button', {name: 'Einstellungen schließen'}).click()
   }

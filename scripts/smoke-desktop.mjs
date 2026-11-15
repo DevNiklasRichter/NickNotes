@@ -115,7 +115,7 @@ try {
  const grant=await request('/agents',{name:'SDK smoke',write:true})
  const client=sdk(grant.token)
  await page.getByRole('button',{name:'Einstellungen',exact:true}).click()
- await page.getByRole('button').filter({hasText:'Agent-Verbindungen'}).click()
+ await page.getByRole('button').filter({hasText:'MCP'}).click()
  await expect(page.getByText('Externe Agenten verbinden',{exact:true})).toBeVisible()
  await page.screenshot({path:path.join(root,'.tmp/desktop-agents.png')})
  await page.getByRole('button',{name:'Darstellung',exact:true}).click()

@@ -43,7 +43,7 @@ weiterhin genau ein Prozess in jede NoteBase. Die App zeigt eine aktive NoteBase
 benoetigen, und schliesst sie nach 10 Minuten ohne Zugriff.
 
 **Hintergrundbetrieb** (nur installierte Windows-App, Schalter unter
-Agent-Verbindungen, beim ersten Anlegen einer Freigabe eingeschaltet): Autostart
+MCP, beim ersten Anlegen einer Freigabe eingeschaltet): Autostart
 per `HKCU\…\Run` („NickNotes Dienst“), der Dienst laeuft nach dem Schliessen der
 App weiter. Ist er aus, setzt die App ihre PID als Besitzer (`/service/owner`);
 der Dienst endet dann mit ihr. Installer und Updater beenden den Dienst vor dem

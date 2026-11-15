@@ -213,8 +213,11 @@ const backendService=createBackendService({
 })
 
 // "Reachable in the background": login autostart of the service, which then also outlives the app.
-const loginItem=()=>({path:path.join(process.resourcesPath,'backend',PACKAGED_BACKEND),args:['--service'],name:'NickNotes Dienst'})
-const backgroundEnabled=()=>app.isPackaged&&process.platform==='win32'&&app.getLoginItemSettings(loginItem()).openAtLogin
+const LOGIN_ITEM_NAME='NickNotes Dienst'
+const loginItem=()=>({path:path.join(process.resourcesPath,'backend',PACKAGED_BACKEND),args:['--service'],name:LOGIN_ITEM_NAME})
+// getLoginItemSettings kennt (anders als set) keine eigene Registry-Bezeichnung und wuerde den Eintrag unter dem
+// Standardnamen suchen; deshalb den Eintrag selbst ueber launchItems finden.
+const backgroundEnabled=()=>app.isPackaged&&process.platform==='win32'&&app.getLoginItemSettings(loginItem()).launchItems.some(item=>item.name===LOGIN_ITEM_NAME&&item.enabled)
 const backgroundState=()=>({available:app.isPackaged&&process.platform==='win32',enabled:backgroundEnabled()})
 
 async function startBackend() {
