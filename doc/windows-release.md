@@ -210,6 +210,22 @@ im Installer ist dann „SignPath Foundation“, nicht der eigene Name. Daraus f
    Auto-Update); erst danach folgt die Aufnahme bei SignPath und der erste
    signierte stabile Release.
 
+Stand der Vorbereitung (15. November 2026):
+
+- Das Repository ist oeffentlich; Private Vulnerability Reporting, Secret Scanning,
+  Push Protection, CodeQL und das Ruleset fuer `main` (PR + Windows-CI `quality`)
+  sind aktiv.
+- Der Abschnitt „Code signing policy“ und der Datenschutzhinweis stehen im README.
+  Der SignPath-Pflichthinweis wird erst nach der Aufnahme ergaenzt.
+- Testkandidaten (`v2.1.0-rc.N`) werden von der CI gebaut, bekommen aber keinen
+  Release-Entwurf; der unsignierte Installer wird von Hand an einen Pre-Release
+  angehaengt (`gh release create <Tag> --prerelease`). Stabile Tags (`v2.1.0`)
+  erzeugen weiter den Entwurf.
+- Noch offen: MFA fuer GitHub und SignPath, der Antrag bei SignPath, danach die
+  Signatur-Action in der Release-CI (braucht Projekt- und Organisations-ID von
+  SignPath, die erst nach der Aufnahme vorliegen) und gegebenenfalls ein Schalter,
+  der die automatische Updatepruefung abschaltet.
+
 Kein Zertifikat beseitigt SmartScreen-Hinweise sofort; die Reputation waechst mit
 Downloads.
 
