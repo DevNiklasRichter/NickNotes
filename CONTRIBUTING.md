@@ -31,7 +31,7 @@ npm run dev
 ```
 
 Das startet den Vite-Dev-Server, Electron und das lokale Python-Backend.
-Alternativ geht `.\Start-NickNotes.ps1`. Zum Ausprobieren eignet sich die
+Alternativ geht `.\scripts\Start-NickNotes.ps1`. Zum Ausprobieren eignet sich die
 [Beispiel-NoteBase](examples/demo-notebase).
 
 Fenster und Schnellerfassungsentwurf starten vor der vollständigen Oberfläche und

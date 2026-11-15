@@ -1,6 +1,6 @@
 /**
  * Erzeugt die Screenshots und GIFs der README aus der echten Desktop-App.
- * Datenquelle ist ausschließlich die fiktive Demo-NoteBase unter scripts/fixtures/demo-notebase.
+ * Datenquelle ist ausschließlich die fiktive Demo-NoteBase unter examples/demo-notebase.
  * Aufruf: npm run readme:media [-- --stills | --gifs]   (GIFs brauchen ffmpeg im PATH)
  */
 import {_electron as electron, expect} from '@playwright/test'
