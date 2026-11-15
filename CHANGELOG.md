@@ -13,6 +13,8 @@ Abschnitt der nächsten Version.
 
 ### Neu
 
+- NickNotes hat ein neues App-Icon: ein schwarz-weißes Notizblatt mit einem N,
+  sichtbar in der Taskleiste, im Startmenü und im Installer.
 - Agenten wie Claude Code erreichen deine NoteBase jetzt auch, wenn die App
   geschlossen ist: Ein kleiner Hintergrunddienst startet auf Wunsch mit Windows
   (Einstellungen → Agenten).
