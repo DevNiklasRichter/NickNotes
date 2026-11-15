@@ -116,7 +116,7 @@ try {
  const client=sdk(grant.token)
  await page.getByRole('button',{name:'Einstellungen',exact:true}).click()
  await page.getByRole('button').filter({hasText:'MCP'}).click()
- await expect(page.getByText('Externe Agenten verbinden',{exact:true})).toBeVisible()
+ await expect(page.getByText('Neue Verbindung',{exact:true})).toBeVisible()
  await page.screenshot({path:path.join(root,'.tmp/desktop-agents.png')})
  await page.getByRole('button',{name:'Darstellung',exact:true}).click()
  await page.getByRole('combobox').first().selectOption('dark')
