@@ -1,9 +1,9 @@
-# NickNotes: lokale Agent-Verbindungen
+# NickNotes: lokale MCP-Verbindungen
 
 Der MCP-Server laeuft im lokalen NickNotes-Dienst. Mit **Im Hintergrund erreichbar** startet der Dienst mit Windows und bleibt nach dem Schliessen der App aktiv; Agenten erreichen die NoteBase dann, ohne dass die App offen ist. Es gibt keinen eingebauten Chat, keine Provider-Konfiguration und keinen LLM-Aufruf aus NickNotes.
 
 1. Die NoteBase oeffnen, mit der der Agent arbeiten soll.
-2. **Einstellungen → Agent-Verbindungen** oeffnen.
+2. **Einstellungen → MCP** oeffnen.
 3. Eine benannte Freigabe erstellen. Standard ist **nur Lesen**; Schreiben bewusst einschalten. Die erste Freigabe schaltet den Hintergrundbetrieb ein (abschaltbar).
 4. Die einmal angezeigte Konfiguration in den gewuenschten Client uebernehmen (Claude Code, Codex oder MCP-JSON). Den Schluessel wie ein Passwort behandeln.
 

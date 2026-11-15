@@ -11,6 +11,15 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+### Verbessert
+
+- Die Einstellungen „Agent-Verbindungen“ heißen jetzt **MCP** und sind übersichtlicher: Dienst, neue Verbindung (mit Verbindungsdaten) und bestehende Verbindungen stehen in eigenen Blöcken.
+- In allen Einstellungen entfällt die doppelte Trennlinie über dem obersten Eintrag.
+
+### Behoben
+
+- „Im Hintergrund erreichbar“ zeigte sich als ausgeschaltet, obwohl es aktiv war, und ließ sich nicht dauerhaft setzen. Der Schalter zeigt jetzt den tatsächlichen Zustand.
+
 ## [2.1.0-rc.5] - 2026-11-15
 
 ### Neu

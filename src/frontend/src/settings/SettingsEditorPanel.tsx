@@ -103,7 +103,7 @@ const SETTINGS_SECTIONS: Array<{
         description: 'Farbschema der App.',
         icon: 'Palette',
     },
-    {id: 'agents', title: 'Agent-Verbindungen', eyebrow: 'MCP', description: 'Externe Agenten gezielt für diese NoteBase freigeben.', icon: 'Plug'},
+    {id: 'agents', title: 'MCP', eyebrow: 'Agenten', description: 'Externen Agenten Zugriff auf NoteBases geben.', icon: 'Plug'},
     {
         id: 'imports',
         title: 'Import',

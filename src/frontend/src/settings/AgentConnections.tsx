@@ -44,20 +44,55 @@ export function AgentConnections({ backendUrl, vaultLoaded }: { backendUrl: stri
   const config = format === 'claude'
     ? `claude mcp add --transport http --scope user nicknotes ${backendUrl}/mcp/ --header "Authorization: Bearer ${key}"`
     : format === 'codex' ? `[mcp_servers.nicknotes]\nurl = "${backendUrl}/mcp/"\nhttp_headers = { Authorization = "Bearer ${key}" }\n` : jsonConfig
-  return <section className="settings-block">
-    <h4>Externe Agenten verbinden</h4>
-    <p>Jede Freigabe gilt genau für diese NoteBase – auch wenn NickNotes eine andere NoteBase zeigt.</p>
-    {background?.available
-      ? <label className="settings-toggle"><input type="checkbox" checked={background.enabled} onChange={event => void changeBackground(event.target.checked)} /><span>Im Hintergrund erreichbar: startet mit Windows und läuft weiter, wenn die App geschlossen ist</span></label>
-      : <p>Ohne geöffnete App erreichbar ist NickNotes nur in der installierten Windows-App.</p>}
-    {!vaultLoaded ? <p>Öffne zuerst eine NoteBase.</p> : <>
-      <label className="settings-field"><span>Name der Verbindung</span><input value={name} maxLength={80} onChange={event => setName(event.target.value)} /></label>
-      <label className="settings-toggle"><input type="checkbox" checked={write} onChange={event => setWrite(event.target.checked)} /><span>Notizen, Tasks und Tags anlegen und bearbeiten erlauben</span></label>
-      <button type="button" disabled={busy || !name.trim()} onClick={() => void create()}>Freigabe erstellen</button>
-      {message && <p role="status">{message}</p>}
-      {secret && <div><label className="settings-field"><span>Format für den Client</span><select value={format} onChange={event=>setFormat(event.target.value as 'claude'|'codex'|'json')}><option value="claude">Claude Code (Befehl)</option><option value="codex">Codex (config.toml)</option><option value="json">MCP-JSON</option></select></label><label className="settings-field"><span>Verbindungskonfiguration (enthält den geheimen Schlüssel)</span><textarea readOnly rows={12} value={config} aria-label="MCP-Verbindungskonfiguration" /></label><button type="button" onClick={() => { void navigator.clipboard.writeText(config).then(() => setMessage('Konfiguration kopiert.')).catch(() => setMessage('Bitte den Text manuell kopieren.')) }}>Konfiguration kopieren</button><button type="button" onClick={() => setSecret('')}>Schlüssel ausblenden</button></div>}
-      <p>Transport: Streamable HTTP · Adresse: <code>{backendUrl}/mcp/</code> · Anmeldung: Bearer-Token</p>
-      <ul>{grants.map(grant => <li key={grant.id}><strong>{grant.name}</strong> — {grant.write ? 'Lesen und Schreiben' : 'Nur Lesen'} <button type="button" disabled={busy} onClick={() => void revoke(grant.id)}>Widerrufen</button></li>)}</ul>
+  const formats: Array<[typeof format, string]> = [['claude', 'Claude Code'], ['codex', 'Codex'], ['json', 'JSON']]
+  return <div className="settings-groups">
+    <section className="settings-group">
+      <h4>Dienst</h4>
+      <div className="settings-card">
+        {background?.available
+          ? <label className="settings-toggle-row" htmlFor="settings-mcp-background">
+            <span><strong>Im Hintergrund erreichbar</strong><small>Gilt für alle NoteBases. Startet mit Windows und läuft weiter, wenn die App geschlossen ist.</small></span>
+            <input id="settings-mcp-background" type="checkbox" checked={background.enabled} onChange={event => void changeBackground(event.target.checked)} />
+          </label>
+          : <div className="settings-row"><span><strong>Im Hintergrund erreichbar</strong><small className="muted-copy">Nur in der installierten Windows-App verfügbar.</small></span></div>}
+      </div>
+    </section>
+    {!vaultLoaded ? <p className="settings-hint">Öffne zuerst eine NoteBase, um Verbindungen anzulegen.</p> : <>
+      <section className="settings-group">
+        <h4>Neue Verbindung</h4>
+        <div className="settings-card">
+          <div className="settings-row"><label htmlFor="settings-mcp-name">Name</label><input id="settings-mcp-name" value={name} maxLength={80} onChange={event => setName(event.target.value)} /></div>
+          <label className="settings-toggle-row" htmlFor="settings-mcp-write">
+            <span><strong>Schreiben erlauben</strong><small>Notizen, Tasks und Tags anlegen und bearbeiten. Ohne: nur lesen.</small></span>
+            <input id="settings-mcp-write" type="checkbox" checked={write} onChange={event => setWrite(event.target.checked)} />
+          </label>
+        </div>
+        <div className="settings-group-actions"><button type="button" disabled={busy || !name.trim()} onClick={() => void create()}>Verbindung erstellen</button></div>
+        {message && <p className="settings-hint" role="status">{message}</p>}
+        {secret && <>
+          <div className="settings-group-actions" style={{justifyContent: 'space-between'}}>
+            <div className="settings-segmented" role="group" aria-label="Format für den Client">
+              {formats.map(([id, label]) => <button key={id} type="button" aria-pressed={format === id} onClick={() => setFormat(id)}>{label}</button>)}
+            </div>
+            <span className="settings-group-actions">
+              <button type="button" onClick={() => { void navigator.clipboard.writeText(config).then(() => setMessage('Konfiguration kopiert.')).catch(() => setMessage('Bitte den Text manuell kopieren.')) }}>Kopieren</button>
+              <button type="button" onClick={() => setSecret('')}>Ausblenden</button>
+            </span>
+          </div>
+          <pre className="settings-code" aria-label="MCP-Verbindungskonfiguration">{config}</pre>
+          <p className="settings-hint">Enthält den geheimen Schlüssel. Er wird nur jetzt angezeigt.</p>
+        </>}
+      </section>
+      <section className="settings-group">
+        <h4>Bestehende Verbindungen</h4>
+        {grants.length === 0
+          ? <p className="settings-hint">Noch keine Verbindungen.</p>
+          : <div className="settings-card">{grants.map(grant => <div className="settings-row" key={grant.id}>
+            <span><strong>{grant.name}</strong><small className="muted-copy">Angelegt am {new Date(grant.createdAt).toLocaleDateString('de-DE')}</small></span>
+            <span className="settings-group-actions"><span className="settings-tag" data-write={grant.write}>{grant.write ? 'Lesen und Schreiben' : 'Nur Lesen'}</span><button type="button" disabled={busy} onClick={() => void revoke(grant.id)}>Widerrufen</button></span>
+          </div>)}</div>}
+      </section>
+      <p className="settings-hint">Jede Verbindung gilt nur für diese NoteBase. Transport: Streamable HTTP · <code>{backendUrl}/mcp/</code> · Bearer-Token</p>
     </>}
-  </section>
+  </div>
 }
