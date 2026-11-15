@@ -18,6 +18,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc -b && vite build",
+    "readme:media": "node scripts/capture-readme-media.mjs",
     "lint": "eslint src/frontend/src",
     "test:frontend": "vitest run --root src/frontend",
     "test:backend": "node scripts/run-backend-tests.mjs",

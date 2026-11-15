@@ -1,11 +1,8 @@
 # Sicherheitsmeldungen
 
-Sicherheitslücken bitte vertraulich über
+Sicherheitslücken bitte **vertraulich** über
 [GitHub Private Vulnerability Reporting](https://github.com/DevNiklasRichter/NickNotes/security/advisories/new)
-melden. Der Maintainer muss diese Funktion vor der öffentlichen Freigabe in den
-Repository-Einstellungen aktivieren. Falls sie noch nicht verfügbar ist, ein
-Issue mit der Bitte um einen vertraulichen Kontakt eröffnen; dort keine
-ausnutzbaren Details oder persönlichen Daten veröffentlichen.
+melden (Reiter **Security → Report a vulnerability**) und nicht als öffentliches Issue.
 
 Bitte betroffene Version, Windows-Version und eine minimale Reproduktion mit
 synthetischer NoteBase angeben. Keine echten Notizen, Zugriffstokens, lokalen

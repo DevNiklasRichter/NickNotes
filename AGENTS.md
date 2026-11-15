@@ -1,6 +1,6 @@
 # NickNotes Arbeitskontext
 
-Vor Aenderungen immer zuerst [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) lesen. Dieses Dokument ist die kurze, verbindliche Leitplanke fuer kuenftige Arbeiten.
+Vor Aenderungen immer zuerst [PROJECT_ARCHITECTURE.md](doc/PROJECT_ARCHITECTURE.md) lesen. Dieses Dokument ist die kurze, verbindliche Leitplanke fuer kuenftige Arbeiten.
 
 ## Produktprinzipien
 
@@ -19,7 +19,7 @@ Vor Aenderungen immer zuerst [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) 
 - Migrationen fuer bestehende NoteBases gezielt und nachvollziehbar halten; Legacy-Kompatibilitaet nicht ungeprueft weiter ausbauen.
 - Frontend-Aenderungen aus Nutzersicht pruefen: klare Bezeichnungen, kurze Wege, sichtbares Feedback, robuste Fehlermeldungen und keine ueberladenen Oberflaechen.
 - Bei Aenderungen an Markdown, Tasks, Tags oder Dateipfaden immer Reindex, Link-Rewrite, Graph-Projektion und bestehende NoteBases mitdenken.
-- `PROJECT_ARCHITECTURE.md` bei relevanten Architektur-, Struktur-, Datenmodell-, Konfigurations- oder Funktionsaenderungen direkt mit aktualisieren.
+- `doc/PROJECT_ARCHITECTURE.md` bei relevanten Architektur-, Struktur-, Datenmodell-, Konfigurations- oder Funktionsaenderungen direkt mit aktualisieren.
 
 ## Orientierung
 

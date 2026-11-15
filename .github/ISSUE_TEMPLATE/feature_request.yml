@@ -1,0 +1,19 @@
+name: Idee oder Funktionswunsch
+description: Eine Verbesserung oder neue Funktion für NickNotes vorschlagen
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Was möchtest du erreichen?
+      description: Beschreibe die Situation oder das Problem, nicht nur die Lösung.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Wie könnte es aussehen?
+      description: Ein Lösungsvorschlag, eine Skizze oder ein Beispiel aus einer anderen App.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Was machst du bisher stattdessen?

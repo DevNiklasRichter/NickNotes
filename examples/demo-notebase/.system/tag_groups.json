@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "abteilung",
+      "displayName": "Abteilungen",
+      "color": "#6f4e37",
+      "tags": [
+        {
+          "id": "anlagensoftware",
+          "displayName": "Anlagensoftware"
+        },
+        {
+          "id": "elektro",
+          "displayName": "Elektrokonstruktion"
+        },
+        {
+          "id": "mechanik",
+          "displayName": "Mechanische Konstruktion"
+        },
+        {
+          "id": "produkt",
+          "displayName": "Produktmanagement"
+        },
+        {
+          "id": "projektleitung",
+          "displayName": "Projektleitung"
+        },
+        {
+          "id": "qualitaet",
+          "displayName": "Qualitätssicherung"
+        },
+        {
+          "id": "service",
+          "displayName": "Service und Inbetriebnahme"
+        }
+      ]
+    },
+    {
+      "id": "kunde",
+      "displayName": "Kunden",
+      "color": "#2e6f40",
+      "tags": [
+        {
+          "id": "eichenwerk",
+          "displayName": "Eichenwerk Komponenten"
+        },
+        {
+          "id": "intern",
+          "displayName": "Interne Entwicklung"
+        },
+        {
+          "id": "nordhafen",
+          "displayName": "Nordhafen Verpackung"
+        },
+        {
+          "id": "tria",
+          "displayName": "Tria Fluidtechnik"
+        },
+        {
+          "id": "westbogen",
+          "displayName": "Westbogen Montagetechnik"
+        }
+      ]
+    },
+    {
+      "id": "format",
+      "displayName": "Notizarten",
+      "color": "#a52a2a",
+      "tags": [
+        {
+          "id": "einszueins",
+          "displayName": "1:1-Gespräch"
+        },
+        {
+          "id": "abstimmung",
+          "displayName": "Abstimmung"
+        },
+        {
+          "id": "entscheidung",
+          "displayName": "Entscheidung"
+        },
+        {
+          "id": "referenz",
+          "displayName": "Stammdaten"
+        },
+        {
+          "id": "daily",
+          "displayName": "Tagesnotiz"
+        }
+      ]
+    },
+    {
+      "id": "projekt",
+      "displayName": "Projekte",
+      "color": "#d47e30",
+      "tags": [
+        {
+          "id": "atlas",
+          "displayName": "Atlas"
+        },
+        {
+          "id": "boreal",
+          "displayName": "Boreal"
+        },
+        {
+          "id": "cobalt",
+          "displayName": "Cobalt"
+        },
+        {
+          "id": "delta",
+          "displayName": "Delta"
+        },
+        {
+          "id": "kompass",
+          "displayName": "Kompass"
+        }
+      ]
+    },
+    {
+      "id": "team",
+      "displayName": "Teams",
+      "color": "#be5103",
+      "tags": [
+        {
+          "id": "plattform",
+          "displayName": "Daten und Plattform"
+        },
+        {
+          "id": "hmi",
+          "displayName": "HMI und Visualisierung"
+        },
+        {
+          "id": "sps",
+          "displayName": "SPS und Motion"
+        },
+        {
+          "id": "test",
+          "displayName": "Test und Inbetriebnahme"
+        }
+      ]
+    },
+    {
+      "id": "thema",
+      "displayName": "Themen",
+      "color": "#ffce1b",
+      "tags": [
+        {
+          "id": "hmi",
+          "displayName": "HMI und Bedienung"
+        },
+        {
+          "id": "planung",
+          "displayName": "Kapazitätsplanung"
+        },
+        {
+          "id": "daten",
+          "displayName": "Prüfdaten"
+        },
+        {
+          "id": "retrofit",
+          "displayName": "Retrofit"
+        },
+        {
+          "id": "simulation",
+          "displayName": "Simulation"
+        },
+        {
+          "id": "sps",
+          "displayName": "SPS und Motion"
+        },
+        {
+          "id": "fat",
+          "displayName": "Werksabnahme"
+        }
+      ]
+    },
+    {
+      "id": "person",
+      "displayName": "Verantwortliche",
+      "color": "#2f3593",
+      "tags": [
+        {
+          "id": "aylin",
+          "displayName": "Aylin Demir"
+        },
+        {
+          "id": "cem",
+          "displayName": "Cem Yilmaz"
+        },
+        {
+          "id": "david",
+          "displayName": "David Schuster"
+        },
+        {
+          "id": "ines",
+          "displayName": "Ines Keller"
+        },
+        {
+          "id": "jonas",
+          "displayName": "Jonas Kern"
+        },
+        {
+          "id": "leonie",
+          "displayName": "Leonie Brandt"
+        },
+        {
+          "id": "luca",
+          "displayName": "Luca Steiner"
+        },
+        {
+          "id": "mara",
+          "displayName": "Mara Vogt"
+        },
+        {
+          "id": "nadine",
+          "displayName": "Nadine Weiss"
+        },
+        {
+          "id": "rosa",
+          "displayName": "Rosa Nguyen"
+        }
+      ]
+    }
+  ]
+}

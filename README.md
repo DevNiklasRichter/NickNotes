@@ -1,134 +1,172 @@
+<div align="center">
+
+<img src="build/icon.png" alt="NickNotes" width="96" height="96">
+
 # NickNotes
 
-NickNotes ist eine lokale Windows-first Desktop-App fuer portable Markdown-NoteBases. Notizen und eigenstaendige Tasks bleiben als Markdown-Dateien lesbar; Indizes, Graphen und Uebersichten sind nur wiederherstellbare Projektionen.
+**Deine Notizen, Aufgaben und Gedanken – als einfache Markdown-Dateien auf deinem eigenen Rechner.**
 
-## Download und erster Start
+Lokale Desktop-App für Windows mit Wissensgraph, Tasks und Zugang für KI-Agenten.
+Kein Konto, keine Cloud, kein Datenformat, das dich festhält.
 
-Freigegebene Installer stehen unter
-[GitHub Releases](https://github.com/DevNiklasRichter/NickNotes/releases).
-Solange dort noch keine stabile Version freigegeben ist, gibt es ausschließlich
-Testkandidaten. RCs und Actions-Artefakte sind Testfassungen.
+[![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-informational.svg)](LICENSE)
+[![Windows-CI](https://github.com/DevNiklasRichter/NickNotes/actions/workflows/windows.yml/badge.svg)](https://github.com/DevNiklasRichter/NickNotes/actions/workflows/windows.yml)
+[![Release](https://img.shields.io/github/v/release/DevNiklasRichter/NickNotes?include_prereleases&label=Release)](https://github.com/DevNiklasRichter/NickNotes/releases)
+![Plattform: Windows](https://img.shields.io/badge/Plattform-Windows%20x64-0078D4)
 
-Für Windows x64 den Installer `NickNotes-Setup-<Version>-x64.exe` herunterladen
-und ausführen. Die Installation erfolgt pro Benutzer mit wählbarem Zielordner;
-Node.js und Python müssen auf dem Zielgerät nicht installiert werden. Danach
-NickNotes starten und eine NoteBase anlegen oder einen bestehenden Ordner öffnen.
-Die NoteBase liegt separat von der Installation und bleibt bei der Deinstallation
-erhalten. Vor einem Versionswechsel eine Sicherung der eigenen NoteBase anlegen.
+[Download](#download) · [Funktionen](#funktionen) · [Agenten](#agenten-verbinden) · [Beispiel ausprobieren](#beispiel-notebase) · [Mitmachen](CONTRIBUTING.md)
 
-NickNotes arbeitet lokal und offline. **Hilfe → Nach Updates suchen** zeigt die
-installierte Version und den Updatestatus. Signierte öffentliche Pakete prüfen
-nach dem Start und regelmäßig auf veröffentlichte stabile Versionen. Download
-und Installationsneustart benötigen eine bewusste Aktion; RCs werden nicht als
-stabiles Update angeboten. In unsignierten Testpaketen sind Updates deaktiviert.
-Ein manueller neuer Installer bleibt als Updateweg verfügbar.
+<br>
 
-Notizen und Tasks sind Markdown-Dateien, Tags stehen in `.system/tag_groups.json`.
-SQLite und Graph-Dateien sind wiederherstellbare Projektionen. MCP-Freigaben und
-der noch nicht abgesendete Capture-Entwurf liegen im lokalen App-Profil und
-werden nicht mit der NoteBase übertragen. Details: [Windows-Auslieferung](doc/windows-release.md).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="doc/media/note-dark.png">
+  <img src="doc/media/note-light.png" alt="NickNotes mit einer geöffneten Notiz" width="860">
+</picture>
 
-## Hilfe und Beiträge
+</div>
 
-- Fehler und Vorschläge: [Issues](https://github.com/DevNiklasRichter/NickNotes/issues).
-- Sicherheitsmeldungen: [SECURITY.md](SECURITY.md).
-- Änderungen und bekannte Grenzen: [Changelog](CHANGELOG.md).
-- Beiträge: [CONTRIBUTING.md](CONTRIBUTING.md).
-- Lizenz: [MIT](LICENSE); mitgelieferte Drittanbieterhinweise bleiben gültig.
+## Warum NickNotes?
 
-## Stack
+- **Deine Daten bleiben Markdown.** Jede Notiz und jede Task ist eine Textdatei in einem Ordner,
+  den du selbst wählst. Du kannst sie mit jedem Editor öffnen, mit OneDrive oder Git sichern und
+  jederzeit mitnehmen. Suchindex und Graph sind nur Hilfsdaten und werden bei Bedarf neu aufgebaut.
+- **Schnell und ruhig.** Eine kompakte, vollständig per Tastatur bedienbare Oberfläche in Hell und Dunkel.
+  Auch große NoteBases öffnen und speichern zügig.
+- **Notizen und Aufgaben an einem Ort.** Aus einer Notiz heraus entstehen To-dos, eigenständige Tasks
+  bekommen Status, Priorität und Fälligkeit – alles bleibt verknüpft.
+- **Lokal und offline.** NickNotes funktioniert ohne Internet und ohne Konto. Agenten wie Claude Code
+  erreichen deine NoteBase nur über eine Freigabe, die du selbst erstellst und jederzeit widerrufst.
 
-- Frontend: React, TypeScript, Vite
-- Desktop: Electron
-- Backend: Python, FastAPI, Uvicorn
-- Suche/Projektionen: SQLite mit FTS5
+## Funktionen
 
-## Repository
+### Schnellerfassung: Gedanken festhalten, bevor sie weg sind
+
+Mit **Strg+Umschalt+Leertaste** öffnet sich ein Eingabefeld. `[[` verlinkt eine Notiz, `#` setzt einen Tag,
+`@` ein Datum wie „morgen“, „Freitag“ oder „20.11.“. Aus `- [ ] Angebot schicken @morgen` wird
+automatisch eine Task mit Fälligkeitsdatum. Ein nicht abgesendeter Entwurf geht nie verloren.
+
+<p align="center"><img src="doc/media/schnellerfassung.gif" alt="Schnellerfassung mit Link-, Tag- und Datumsvorschlägen" width="820"></p>
+
+### Alles sofort finden
+
+**Strg+O** durchsucht Notizen und App-Befehle in einem gemeinsamen Suchfeld. Die Volltextsuche
+läuft auf einem lokalen SQLite-Index mit FTS5.
+
+<p align="center"><img src="doc/media/suche.gif" alt="Suche nach einer Notiz mit Strg+O" width="820"></p>
+
+### Wissensgraph: sehen, wie deine Notizen zusammenhängen
+
+Der Graph zeigt zuerst die Umgebung der geöffneten Notiz – mit wählbarer Tiefe und Tag-Filter.
+Notizen, Tasks und Tags sind verschiedenfarbige Knoten; Links, Rückverweise und gemeinsame Tags
+werden zu Verbindungen. „Ganzer Graph“ bleibt einen Klick entfernt.
+
+<p align="center"><img src="doc/media/graph.gif" alt="Wissensgraph: Zoomen, Verschieben und Suchen" width="820"></p>
+
+### Tasks als Board oder Liste
+
+Eigenständige Tasks haben Status, Priorität, Fälligkeit und Tags. Du gruppierst und filterst nach
+Status, Priorität, Fälligkeit oder Tags und wechselst zwischen Spalten und Liste.
+Der Bereich **Fokus** zeigt, was heute dran ist.
+
+<p align="center"><img src="doc/media/tasks.gif" alt="Tasks nach Status und Priorität gruppieren, Spalten und Liste" width="820"></p>
+
+### Tags mit Struktur
+
+Tags sind eindeutig als `gruppe:tag` definiert, im Text als `{tag:projekt/atlas}` referenziert und
+zentral in `.system/tag_groups.json` gepflegt. Jeder Tag bekommt eine eigene Übersichtsnotiz.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="doc/media/tags-dark.png">
+  <img src="doc/media/tags-light.png" alt="Tag-Gruppen und Tags" width="860">
+</picture>
+
+### Mehr
+
+- **Fokus und Rückblick** als eigene Bereiche neben Notizen und Tasks
+- **Schreibmodus**, der Seitenleisten ausblendet, ohne dass ein Entwurf verloren geht
+- **Geteilte Ansicht** mit mehreren Editorgruppen und Registerkarten
+- **Absturzsicher**: Entwürfe, Tags und Task-Abschlüsse sind gegen Abbrüche mitten im Schreiben geschützt;
+  gelöschte NoteBases landen im Windows-Papierkorb
+- **OneNote-Import** für den Umstieg
+- **Komplett per Tastatur bedienbar**, mit Befehlsübersicht auf **F1** – siehe [Tastatur und Menüs](doc/keyboard-and-menus.md)
+- **Updates auf Wunsch**: signierte Pakete prüfen auf neue stabile Versionen, installiert wird nur nach deiner Bestätigung
+
+## Download
+
+Den aktuellen Installer gibt es unter [**GitHub Releases**](https://github.com/DevNiklasRichter/NickNotes/releases):
+`NickNotes-Setup-<Version>-x64.exe` für Windows (x64) herunterladen und ausführen.
+
+- Installation pro Benutzer mit wählbarem Zielordner – Node.js und Python werden **nicht** benötigt.
+- Beim ersten Start eine NoteBase anlegen oder einen bestehenden Ordner öffnen. Die NoteBase liegt getrennt
+  von der Installation und bleibt bei der Deinstallation erhalten.
+- Solange es noch keine stabile Version gibt, sind die Veröffentlichungen Testkandidaten (RC). Lege vor einem
+  Versionswechsel eine Sicherung deiner NoteBase an.
+- Was die Pakete enthalten und wie sie entstehen: [Windows-Auslieferung](doc/windows-release.md).
+
+## Agenten verbinden
+
+NickNotes hat keinen eingebauten Chat und ruft selbst kein Sprachmodell auf. Stattdessen stellt die App einen
+lokalen, authentifizierten **MCP-Server** bereit. Damit können Claude Code, Codex und andere MCP-Clients
+Notizen lesen, durchsuchen und – wenn du es erlaubst – schreiben.
+
+1. **Einstellungen → Agent-Verbindungen** öffnen.
+2. Eine benannte Freigabe erstellen. Standard ist **nur Lesen**; Schreiben schaltest du bewusst dazu.
+3. Die angezeigte Konfiguration in den Client übernehmen.
+
+Jede Freigabe gilt für genau **eine** NoteBase und lässt sich jederzeit widerrufen. Ein kleiner Hintergrunddienst
+macht die NoteBase auf Wunsch auch erreichbar, wenn die App geschlossen ist.
+Die Anleitung mit Beispielen: [MCP-Verbindungen](doc/mcp-connections.md).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="doc/media/graph-dark.png">
+  <img src="doc/media/graph-light.png" alt="Wissensgraph" width="860">
+</picture>
+
+## Beispiel-NoteBase
+
+Unter [`examples/demo-notebase`](examples/demo-notebase) liegt eine vollständig erfundene NoteBase
+(die Anlagenbau-Abteilung der fiktiven „Falkenried Maschinenbau AG“) mit Projekten, Besprechungen, Tasks und
+Tags. Kopiere den Ordner an einen beliebigen Ort und öffne ihn in NickNotes über **NoteBase laden**, um alle
+Funktionen auszuprobieren. Alle Bilder und GIFs in diesem README stammen aus genau dieser NoteBase.
+
+## So funktioniert es
 
 ```text
-NickNotes/
-  src/
-    backend/       # FastAPI, Use-Cases, Vault-/Index-/Import-Logik, Tests
-    desktop/       # Electron Main Process und Preload Bridge
-    frontend/      # React-App, Editor, Dashboards, Explorer, Graph
-  doc/             # Architektur-, API- und Backlog-Dokumentation
-  PROJECT_ARCHITECTURE.md
-  package.json
-  package-lock.json
-  requirements.txt
-  Start-NickNotes.ps1
+NoteBase/                  ← dein Ordner, normale Markdown-Dateien
+├── Projekte/…             ← Notizen in deiner eigenen Ordnerstruktur
+├── tasks/…                ← eigenständige Tasks
+└── .system/tag_groups.json   ← zentrale Tag-Definition
+
+%LOCALAPPDATA%/NickNotes/  ← nur auf diesem PC: Suchindex, Graph, Agent-Freigaben
 ```
 
-`PROJECT_ARCHITECTURE.md` ist die verbindliche Kurzleitplanke fuer Architektur- und Strukturentscheidungen. Weitere Details liegen in `doc/`.
+Markdown-Dateien sind die einzige Quelle der Wahrheit. Index, Graph und Übersichten lassen sich daraus
+jederzeit neu aufbauen – deshalb synchronisiert OneDrive nur, was du selbst angelegt hast.
+Die Details stehen in der [Architektur](doc/PROJECT_ARCHITECTURE.md).
 
-## Voraussetzungen
+## Technik
 
-- Entwicklung: Node.js 24.14.x mit npm und Python 3.13
-- Fertiges Windows-Paket: keine zusaetzliche Node-/Python-Installation
+| Bereich | Technik |
+| --- | --- |
+| Oberfläche | React, TypeScript, Vite, CodeMirror |
+| Desktop | Electron |
+| Backend | Python, FastAPI, Uvicorn |
+| Suche und Projektionen | SQLite mit FTS5 |
+| Agentenzugang | Model Context Protocol (MCP) über Streamable HTTP |
+| Paketierung | electron-builder, Windows-Installer (NSIS) |
 
-## Installation
+## Selbst bauen und mitmachen
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-npm ci
-```
+Fehler, Ideen und Pull Requests sind willkommen. Wie du NickNotes lokal startest, testest und paketierst,
+steht in [CONTRIBUTING.md](CONTRIBUTING.md). Für Fragen zur Struktur beginnt man am besten bei der
+[Architektur](doc/PROJECT_ARCHITECTURE.md). Sicherheitsprobleme bitte nach [SECURITY.md](SECURITY.md) melden.
 
-## Entwicklung
+Weitere Dokumentation in [`doc/`](doc): [Wissensgraph](doc/graph-feature.md) ·
+[Start und Wiederherstellung](doc/startup-and-recovery.md) · [Oberflächen-Styleguide](doc/ui-styleguide.md) ·
+[GitHub-Pipeline](doc/github-pipeline.md)
 
-```powershell
-npm run dev
-```
+Was sich geändert hat, steht im [Changelog](CHANGELOG.md).
 
-Das startet den Vite-Dev-Server, Electron und das lokale Python-Backend. Alternativ kann `.\Start-NickNotes.ps1` genutzt werden.
+## Lizenz
 
-Das Fenster und ein lokal gesicherter Schnellerfassungsentwurf starten vor der
-vollstaendigen Oberflaeche und dem Backend. Danach uebernimmt Quick Capture den
-Text; **Senden** speichert ihn in der gewaehlten NoteBase. Ladefehler erhalten eine
-Wiederholen-Aktion. [Start und Wiederherstellung](doc/startup-and-recovery.md).
-`npm run smoke:startup` prueft den echten Entwicklungsstart mit isoliertem Profil
-und frischem Vite-Cache. Ein Entwicklungs-Kaltstart ist langsamer als das fertige Paket.
-
-## Pruefung
-
-```powershell
-npm run check
-npm run contracts:check
-npm run icons:check
-```
-
-## Tastatur und Menues
-
-Datei, Bearbeiten, Ansicht und Hilfe sind direkt in der Titelleiste verfuegbar.
-Haeufige Aktionen: **Strg+N** neue Notiz, **Strg+Umschalt+N** neuer Task,
-**Strg+O** Notiz suchen/oeffnen, **Strg+S** speichern,
-**Strg+Umschalt+S** alle Notizen speichern, **Strg+W** aktive Ansicht schliessen.
-**F1** zeigt alle Befehle, **F10** fokussiert das Menue. Icons zeigen ihre
-Tastenkuerzel beim Darueberfahren. [Vollstaendige Bedienung](doc/keyboard-and-menus.md).
-
-Entwicklungspruefung mit isolierter synthetischer NoteBase: `npm run smoke:commands`.
-Sie prueft auch, dass keine Save-/Refresh-Schleife im Leerlauf entsteht.
-
-## Windows-Paket und externe Agenten
-
-```powershell
-npm run package:win
-npm run verify:package
-npm run smoke:desktop
-npm run release:checksums
-```
-
-Der vollstaendige Offline-Installer liegt unter `dist/installers`. Ressourcen und
-Backendlaufzeit sind enthalten. [Build, Installation und Releasegrenzen](doc/windows-release.md)
-beschreiben den noch nicht signierten Windows-Kandidaten.
-[Was die GitHub-Pipeline auf welchem Rechner macht](doc/github-pipeline.md).
-
-Der eingebaute Assistant wurde durch einen lokalen, authentifizierten MCP-Zugang
-ersetzt. **Einstellungen → Agent-Verbindungen** erstellt widerrufbare Freigaben
-mit getrenntem Schreibrecht. [MCP-Anleitung](doc/mcp-connections.md).
-
-## Repo-Hygiene
-
-Nicht eingecheckt werden lokale Abhaengigkeiten, Build-Ausgaben, Test-Runtimes, Logdateien, lokale NoteBases und generierte Projektionen wie `.venv/`, `node_modules/`, `dist/`, `.tmp/`, `*NoteBase/` oder `.system/index.db`.
+[MIT](LICENSE) © Niklas Richter. Die Lizenzen mitgelieferter Drittanbieter-Komponenten bleiben gültig.
