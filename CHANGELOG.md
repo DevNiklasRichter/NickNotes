@@ -11,6 +11,8 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+## [2.1.0-rc.6] - 2026-11-15
+
 ### Verbessert
 
 - Die Einstellungen „Agent-Verbindungen“ heißen jetzt **MCP** und sind übersichtlicher: Dienst, neue Verbindung (mit Verbindungsdaten) und bestehende Verbindungen stehen in eigenen Blöcken.

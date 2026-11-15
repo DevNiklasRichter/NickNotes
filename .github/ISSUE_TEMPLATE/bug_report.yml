@@ -5,7 +5,7 @@ body:
     id: version
     attributes:
       label: NickNotes- und Windows-Version
-      placeholder: z. B. 2.1.0-rc.5, Windows 11
+      placeholder: z. B. 2.1.0-rc.6, Windows 11
     validations:
       required: true
   - type: textarea
