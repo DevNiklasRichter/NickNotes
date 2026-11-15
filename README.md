@@ -167,6 +167,47 @@ Weitere Dokumentation in [`doc/`](doc): [Wissensgraph](doc/graph-feature.md) ·
 
 Was sich geändert hat, steht im [Changelog](CHANGELOG.md).
 
+## Code-Signatur und Datenschutz
+
+### Code signing policy
+
+Die bisherigen Veröffentlichungen sind Testkandidaten und **nicht signiert**. Windows zeigt
+deshalb beim Installieren eine SmartScreen-Warnung („Unbekannter Herausgeber“). Die Prüfsummen
+(`SHA256SUMS.txt`) liegen jedem Release bei. Für stabile Versionen soll kostenlose Code-Signatur der
+[SignPath Foundation](https://signpath.org/) beantragt werden. Sobald die Aufnahme bestätigt ist,
+steht an dieser Stelle der vorgeschriebene Hinweis: *Free code signing provided by
+[SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).*
+
+Vorgesehene Regeln für signierte Veröffentlichungen:
+
+- **Nur eigener Code:** Signiert wird ausschließlich der Windows-Installer, der in diesem Repository
+  aus dem Quellcode und den hier liegenden Build-Skripten entsteht. Gebaut wird in GitHub Actions
+  aus einem Versionstag; es wird nichts signiert, was lokal gebaut oder von Dritten geliefert wurde.
+- **Manuelle Freigabe:** Jede Signatur wird von einer Person aus der Rolle „Approver“ einzeln
+  bestätigt.
+- **Rollen:** Autor, Committer, Reviewer und Approver ist derzeit der Maintainer
+  [@DevNiklasRichter](https://github.com/DevNiklasRichter). Änderungen von anderen Personen kommen
+  nur über einen Pull Request in `main`, der vor dem Merge geprüft wird; `main` ist durch Ruleset und
+  grüne Windows-CI geschützt.
+- **Zwei-Faktor-Anmeldung** ist für GitHub und SignPath Pflicht.
+- **Keine Schadsoftware:** NickNotes enthält keine Werkzeuge zum Aufspüren oder Ausnutzen von
+  Schwachstellen und verändert das System nur durch die normale Installation pro Benutzer
+  (Deinstallation über Windows-Einstellungen). Verdachtsfälle bitte nach [SECURITY.md](SECURITY.md) melden.
+
+### Datenschutz
+
+NickNotes hat kein Konto, keine Telemetrie und lädt keine Notizen hoch. Ihre NoteBase bleibt auf
+Ihrem Rechner. Die App verbindet sich nur in diesen Fällen mit dem Netzwerk:
+
+- **Updateprüfung (nur signierte Pakete):** Etwa 30 Sekunden nach dem Start und danach alle vier Stunden
+  fragt NickNotes bei GitHub Releases nach einer neueren stabilen Version. Dabei sieht GitHub, wie bei
+  jedem Webzugriff, Ihre IP-Adresse und die angefragte Datei. NickNotes sendet keine Notizen,
+  Einstellungen oder Gerätekennungen. Heruntergeladen und installiert wird nur nach Ihrer
+  Bestätigung. In unsignierten Testpaketen ist die Updatefunktion abgeschaltet.
+- **Lokale Dienste:** Das Backend und die MCP-Schnittstelle für Agenten lauschen nur auf dem lokalen
+  Loopback (`127.0.0.1`) und sind durch Schlüssel geschützt. Eine Agentenfreigabe erteilen Sie selbst
+  und können sie jederzeit widerrufen.
+
 ## Lizenz
 
 [MIT](LICENSE) © Niklas Richter. Die Lizenzen mitgelieferter Drittanbieter-Komponenten bleiben gültig.
