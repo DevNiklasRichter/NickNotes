@@ -236,6 +236,8 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 740,
     autoHideMenuBar: true,
+    // Gepackt liefert die .exe das Icon; in der Entwicklung sonst das Electron-Standardicon.
+    ...(app.isPackaged ? {} : {icon: path.join(__dirname, '../../build/icon.png')}),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: startupTheme==='dark'?'#191b1e':'#eeeef0',
