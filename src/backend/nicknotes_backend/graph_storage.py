@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .graph_index import GRAPH_INDEX_VERSION, GraphDiagnostic, GraphIndex, graph_index_from_dict
+from .graph_index import GraphDiagnostic, GraphIndex, graph_index_from_dict
 from .projection_registry import GRAPH_STATE_SCHEMA_VERSION, quarantine_projection_file
 
 

@@ -31,7 +31,7 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "CapturePreviewResponse": "CapturePreviewResponse",
     "ParsedTaskResponse": "ParsedTaskResponse",
     "SaveCaptureResponse": "SaveCaptureResponse",
-    "SaveFocusMitResponse": "FocusMitSaveResponse",
+    "FocusMitSaveResponse": "FocusMitSaveResponse",
     "QuickCaptureFocusTodoResponse": "QuickCaptureFocusTodoResponse",
     "DailyOpenResponse": "DailyOpenResponse",
     "TaskRowResponse": "TaskRow",
@@ -50,8 +50,6 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "NoteContentResponse": "NoteContentResponse",
     "NoteSaveResponse": "NoteSaveResponse",
     "NoteMediaResponse": "NoteMediaResponse",
-    "OpenNoteResponse": "OpenNoteResponse",
-    "ReviewResponse": "ReviewResponse",
     "ReviewDashboardResponse": "ReviewDashboardResponse",
     "UiSettingsResponse": "UiSettingsResponse",
     "TagGroupsResponse": "TagGroupsResponse",
@@ -244,16 +242,12 @@ class SaveCaptureResponse(_ContractModel):
     counts: VaultCounts = Field(default_factory=VaultCounts)
 
 
-class SaveFocusMitResponse(_ContractModel):
+class FocusMitSaveResponse(_ContractModel):
     saved: bool = True
     date: str = ""
     notePath: str = ""
     mitIds: list[str] = Field(default_factory=list)
     counts: VaultCounts = Field(default_factory=VaultCounts)
-
-
-# Backward-compatible alias for frontend contract naming.
-FocusMitSaveResponse = SaveFocusMitResponse
 
 
 class QuickCaptureFocusTodoResponse(_ContractModel):
@@ -414,16 +408,6 @@ class NoteMediaResponse(_ContractModel):
     mediaPath: str = ""
     markdownPath: str = ""
     fileName: str = ""
-
-
-class OpenNoteResponse(_ContractModel):
-    opened: bool = True
-    path: str = ""
-
-
-class ReviewResponse(_ContractModel):
-    daily: dict[str, Any] = Field(default_factory=dict)
-    weekly: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReviewDashboardResponse(_ContractModel):

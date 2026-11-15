@@ -75,7 +75,7 @@ function makeNote(id: string, title: string, path: string, updatedAt: string): S
   }
 }
 
-export function runPhaseFFocusModelAssertions(): void {
+function runFocusModelAssertions(): void {
   const todayIso = '2026-04-20'
   const tasks: TaskRow[] = [
     makeTask({
@@ -251,4 +251,4 @@ export function runPhaseFFocusModelAssertions(): void {
   }
 }
 
-test('focus planning and execution', runPhaseFFocusModelAssertions)
+test('focus planning and execution', runFocusModelAssertions)

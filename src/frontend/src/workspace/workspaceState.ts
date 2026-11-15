@@ -387,18 +387,6 @@ export function getActiveTabIdForPane(state: WorkspaceState, paneId: PaneId): st
   return state.panes[paneId].activeTabId
 }
 
-export function getActiveNoteIdForPane(state: WorkspaceState, paneId: PaneId): string | null {
-  const activeTabId = state.panes[paneId].activeTabId
-  if (!activeTabId) {
-    return null
-  }
-  return state.tabsById[activeTabId]?.noteId ?? null
-}
-
-export function getPaneTabIds(state: WorkspaceState, paneId: PaneId): string[] {
-  return state.panes[paneId].tabIds
-}
-
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case 'RESET':

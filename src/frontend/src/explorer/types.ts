@@ -3,7 +3,6 @@
 export type ExplorerSortMode = 'manual' | 'name' | 'modified' | 'noteCount'
 export type ExplorerSortDirection = 'asc' | 'desc'
 
-export type ExplorerGitStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
 
 export type ExplorerSourceGroup = {
   key: string
@@ -37,7 +36,6 @@ export type ExplorerNode = {
   selected: boolean
   hidden?: boolean
   modified?: boolean
-  gitStatus?: ExplorerGitStatus
   updatedAt?: string
   linkTargetPath?: string
   isVirtualLink?: boolean

@@ -145,7 +145,8 @@ frueheren Namen (`system`, `99_system`, `01_daily`, `02_tags`, `03_tasks`) werde
 nicht mehr erkannt: Eine NoteBase mit altem Systemordner wird vor jeder Aenderung
 mit einem Hinweis abgelehnt, gleichnamige eigene Ordner sind normale Ordner.
 Alte Konfigurationen (`config.json` vor Formatversion 2) werden weiterhin gezielt
-migriert. Widerspruechliche Tagquellen und unbekannte kuenftige Formate brechen
+migriert. Aeltere Ordnerlayouts (`00_inbox`, `daily/notes`, Tagesnotizen direkt
+unter `daily/`) werden nicht mehr umgezogen; solche Dateien bleiben normale Notizen. Widerspruechliche Tagquellen und unbekannte kuenftige Formate brechen
 vor inhaltlichen Aenderungen ab. Downgrade ist nicht unterstuetzt.
 
 ## Schreiben und Projektionen

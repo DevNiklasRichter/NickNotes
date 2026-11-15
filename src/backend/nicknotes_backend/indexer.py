@@ -216,8 +216,6 @@ class VaultIndexer:
                 USING fts5(note_id UNINDEXED, title, body);
                 """
             )
-            self._ensure_tasks_schema(cur)
-            self._ensure_todos_schema(cur)
             self._commit()
 
     def _ensure_schema_version(self) -> None:
@@ -238,42 +236,6 @@ class VaultIndexer:
             cur.execute("INSERT INTO notes_fts(rowid, note_id, title, body) SELECT rowid, id, title, body FROM notes;")
             cur.execute(f"PRAGMA user_version={INDEXER_SCHEMA_VERSION};")
             self._commit()
-
-    def _ensure_tasks_schema(self, cur: sqlite3.Cursor) -> None:
-        cur.execute("PRAGMA table_info(tasks);")
-        columns = {str(row["name"]) for row in cur.fetchall()}
-        migrations: list[str] = []
-        if "estimate_minutes" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN estimate_minutes INTEGER;")
-        if "completed_at" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN completed_at TEXT;")
-        if "blocked_by_ids_json" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN blocked_by_ids_json TEXT NOT NULL DEFAULT '[]';")
-        if "waiting_for" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN waiting_for TEXT;")
-        if "follow_up_date" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN follow_up_date TEXT;")
-        if "blocked_reason" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN blocked_reason TEXT;")
-        if "next_action_hint" not in columns:
-            migrations.append("ALTER TABLE tasks ADD COLUMN next_action_hint TEXT;")
-        for statement in migrations:
-            cur.execute(statement)
-
-    def _ensure_todos_schema(self, cur: sqlite3.Cursor) -> None:
-        cur.execute("PRAGMA table_info(todos);")
-        columns = {str(row["name"]) for row in cur.fetchall()}
-        migrations: list[str] = []
-        needs_created_backfill = False
-        if "created_at" not in columns:
-            migrations.append("ALTER TABLE todos ADD COLUMN created_at TEXT;")
-            needs_created_backfill = True
-        if "completed_at" not in columns:
-            migrations.append("ALTER TABLE todos ADD COLUMN completed_at TEXT;")
-        for statement in migrations:
-            cur.execute(statement)
-        if needs_created_backfill:
-            cur.execute("UPDATE todos SET created_at = COALESCE(created_at, updated_at, datetime('now'));")
 
     def clear_all(self) -> None:
         with self._lock:
@@ -649,9 +611,6 @@ class VaultIndexer:
             )
             return [dict(row) for row in cur.fetchall()]
 
-    def catalog_notes(self, limit: int = 100, offset: int = 0, tag: str | None = None, note_type: str | None = None) -> list[dict[str, Any]]:
-        return self.search_notes('', limit=limit, offset=offset, tag=tag, note_type=note_type)
-
     def search_notes(self, query: str, limit: int = 100, offset: int = 0, tag: str | None = None, note_type: str | None = None) -> list[dict[str, Any]]:
         cleaned = query.strip()
         if len(cleaned) > 2000:
@@ -805,79 +764,6 @@ class VaultIndexer:
                 (category, slug),
             )
             return [dict(row) for row in cur.fetchall()]
-
-    def daily_summary(self, day: date) -> dict[str, Any]:
-        day_str = day.isoformat()
-        with self._lock:
-            cur = self.conn.cursor()
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM notes WHERE local_day(created_at) = ?;",
-                (day_str,),
-            )
-            notes_count = _count_from_cursor(cur)
-            cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM tasks
-                WHERE status <> 'done' AND (due_date IS NULL OR due_date >= ?);
-                """,
-                (day_str,),
-            )
-            open_count = _count_from_cursor(cur)
-            cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM tasks
-                WHERE status = 'done' AND local_day(completed_at) = ?;
-                """,
-                (day_str,),
-            )
-            done_count = _count_from_cursor(cur)
-        return {
-            "date": day_str,
-            "new_notes": notes_count,
-            "open_tasks": open_count,
-            "done_today": done_count,
-        }
-
-    def weekly_summary(self, end_day: date) -> dict[str, Any]:
-        start = end_day - timedelta(days=6)
-        with self._lock:
-            cur = self.conn.cursor()
-            cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM notes
-                WHERE local_day(created_at) BETWEEN ? AND ?;
-                """,
-                (start.isoformat(), end_day.isoformat()),
-            )
-            notes_count = _count_from_cursor(cur)
-            cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM tasks
-                WHERE status <> 'done';
-                """
-            )
-            open_tasks = _count_from_cursor(cur)
-            cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM tasks
-                WHERE status = 'done'
-                  AND local_day(completed_at) BETWEEN ? AND ?;
-                """,
-                (start.isoformat(), end_day.isoformat()),
-            )
-            done_week = _count_from_cursor(cur)
-        return {
-            "from": start.isoformat(),
-            "to": end_day.isoformat(),
-            "notes_total": notes_count,
-            "tasks_open": open_tasks,
-            "tasks_done": done_week,
-        }
 
     def review_dashboard(
         self,

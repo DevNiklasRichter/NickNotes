@@ -17,9 +17,9 @@ from src.backend.use_cases import GetFocusDashboardUseCase
 from src.backend.tests.http_client import TestClient
 
 
-class PhaseEBackendTests(unittest.TestCase):
+class VaultWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
-        base_tmp = Path(__file__).resolve().parents[3] / ".tmp" / "phase_e_runtime"
+        base_tmp = Path(__file__).resolve().parents[3] / ".tmp" / "vault_workflows_runtime"
         base_tmp.mkdir(parents=True, exist_ok=True)
         self.test_root = base_tmp / f"case_{uuid.uuid4().hex}"
         self.vault_path = self.test_root / "vault"
@@ -55,11 +55,11 @@ class PhaseEBackendTests(unittest.TestCase):
 
     def test_task_completed_at_semantics_and_blocked_by_hygiene(self) -> None:
         now = datetime(2026, 4, 19, 9, 30, 0)
-        task_id = "tk_phase_e_semantics"
+        task_id = "tk_status_semantics"
         task_path = self.vault._create_task_file(
             task_id=task_id,
             note_id="note_semantics",
-            task=ParsedTask(title="Phase E semantics", status="open", priority="M"),
+            task=ParsedTask(title="Status semantics", status="open", priority="M"),
             now=now,
             indexer=self.indexer,
         )
@@ -67,7 +67,7 @@ class PhaseEBackendTests(unittest.TestCase):
         meta, body = parse_markdown(task_path)
         meta["status"] = "done"
         meta["completed_at"] = "2001-01-01T00:00:00"
-        meta["blocked_by_ids"] = [task_id, "TK_PHASE_E_SEMANTICS", "tk_other", "tk_other"]
+        meta["blocked_by_ids"] = [task_id, "TK_STATUS_SEMANTICS", "tk_other", "tk_other"]
         done_markdown, _done_meta = self.vault.normalize_note_markdown_text(
             text=dump_markdown(meta, body),
             path=task_path,
@@ -99,14 +99,14 @@ class PhaseEBackendTests(unittest.TestCase):
         self.assertNotEqual(redone_completed_at, "2001-01-01T00:00:00")
 
     def test_todo_toggle_sets_and_clears_completed_at(self) -> None:
-        result = self.vault.add_quick_todo_to_daily(text="Phase E todo", indexer=self.indexer, day_iso="2026-04-19")
+        result = self.vault.add_quick_todo_to_daily(text="Schnelles Todo", indexer=self.indexer, day_iso="2026-04-19")
         note_path = Path(result["note_path"])
         self.assertRegex(
             note_path.read_text(encoding="utf-8"),
-            r"- \[ \] Phase E todo <!-- nn:todo created=\S+ --> \^nn-todo_[0-9a-f]{16}",
+            r"- \[ \] Schnelles Todo <!-- nn:todo created=\S+ --> \^nn-todo_[0-9a-f]{16}",
         )
         todos = self.indexer.list_todos()
-        target = next((item for item in todos if item.get("raw_text") == "Phase E todo"), None)
+        target = next((item for item in todos if item.get("raw_text") == "Schnelles Todo"), None)
         self.assertIsNotNone(target)
         assert target is not None
         todo_id = str(target["id"])
@@ -369,39 +369,6 @@ class PhaseEBackendTests(unittest.TestCase):
         risk = payload.get("risk") or {}
         self.assertIn(str(risk.get("level", "")), {"low", "medium", "high"})
 
-    def test_daily_note_creation_and_legacy_notes_folder_migration(self) -> None:
-        legacy_notes_dir = self.vault.daily_root_path / "notes"
-        legacy_notes_dir.mkdir(parents=True, exist_ok=True)
-        legacy_note_path = legacy_notes_dir / "2026-04-21.md"
-        legacy_note_path.write_text(
-            dump_markdown(
-                {
-                    "id": "note_legacy_daily_migration",
-                    "node_id": "note_legacy_daily_migration",
-                    "title": "2026-04-21",
-                    "type": "note",
-                    "created_at": "2026-04-21T08:00:00",
-                    "updated_at": "2026-04-21T08:00:00",
-                    "status": "open",
-                    "priority": "medium",
-                    "due_date": "",
-                    "tags": [],
-                    "tags_auto": [],
-                    "related": [],
-                    "related_auto": [],
-                },
-                "# 2026-04-21",
-            ),
-            encoding="utf-8",
-        )
-
-        self.indexer.close()
-        self.vault.ensure_structure()
-        self.indexer = VaultIndexer(self.vault.db_path)
-        self.indexer.reindex_vault(self.vault.vault_path)
-
-        self.assertTrue((self.vault.daily_root_path / "2026.04" / "2026-04-21.md").exists())
-
     def test_daily_note_helpers_use_month_folders(self) -> None:
         result = self.vault.add_quick_todo_to_daily(text="Monatsordner Todo", indexer=self.indexer, day_iso="2026-12-05")
         note_path = Path(result["note_path"])
@@ -443,27 +410,6 @@ class PhaseEBackendTests(unittest.TestCase):
         tasks = self.indexer.list_tasks(include_done=True)
         self.assertEqual([item["id"] for item in tasks], [task_id])
         self.assertTrue((self.vault.tasks_root_path / "open" / f"{task_id}.md").exists())
-
-    def test_flat_daily_notes_are_migrated_to_month_folders(self) -> None:
-        flat_path = self.vault.daily_root_path / "2026-11-03.md"
-        flat_path.write_text(
-            dump_markdown(
-                {
-                    "id": "daily_2026-11-03",
-                    "title": "2026-11-03",
-                    "type": "daily",
-                    "created_at": "2026-11-03T00:00:00",
-                    "updated_at": "2026-11-03T00:00:00",
-                    "tags": [],
-                },
-                "# 2026-11-03",
-            ),
-            encoding="utf-8",
-        )
-
-        self.vault.ensure_structure()
-
-        self.assertTrue((self.vault.daily_root_path / "2026.11" / "2026-11-03.md").exists())
 
     def test_note_media_assets_are_created_below_note_path(self) -> None:
         self.vault.create_note_group("Projects", "")

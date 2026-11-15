@@ -119,51 +119,6 @@ function normalizeGroupEntry(value: unknown): TagGroupDefinition | null {
   return { id, displayName, color, tags }
 }
 
-function normalizeLegacyGroups(value: Record<string, unknown>): TagGroupDefinition[] {
-  const groupsById = new Map<string, TagGroupDefinition>()
-
-  for (const [rawGroupName, rawTags] of Object.entries(value)) {
-    if (!Array.isArray(rawTags)) {
-      continue
-    }
-    const id = normalizeTagId(rawGroupName)
-    if (!id) {
-      continue
-    }
-
-    const existing = groupsById.get(id)
-    const tagsById = new Map<string, TagDefinition>()
-    if (existing) {
-      for (const tag of existing.tags) {
-        tagsById.set(tag.id, tag)
-      }
-    }
-
-    for (const rawTag of rawTags) {
-      if (typeof rawTag !== 'string') {
-        continue
-      }
-      const cleanDisplay = normalizeLabel(rawTag)
-      const tagId = normalizeTagId(cleanDisplay)
-      if (!tagId) {
-        continue
-      }
-      if (!tagsById.has(tagId)) {
-        tagsById.set(tagId, { id: tagId, displayName: cleanDisplay || tagId })
-      }
-    }
-
-    groupsById.set(id, {
-      id,
-      displayName: normalizeLabel(rawGroupName) || id,
-      color: FALLBACK_COLOR,
-      tags: Array.from(tagsById.values()).sort((left, right) => left.displayName.localeCompare(right.displayName, 'de')),
-    })
-  }
-
-  return Array.from(groupsById.values()).sort((left, right) => left.displayName.localeCompare(right.displayName, 'de'))
-}
-
 export function normalizeTagGroups(value: unknown): TagGroupDefinition[] {
   if (!value || typeof value !== 'object') {
     return []
@@ -211,7 +166,7 @@ export function normalizeTagGroups(value: unknown): TagGroupDefinition[] {
     return Array.from(groupsById.values()).sort((left, right) => left.displayName.localeCompare(right.displayName, 'de'))
   }
 
-  return normalizeLegacyGroups(candidate)
+  return []
 }
 
 export function buildTagLookup(groups: TagGroupDefinition[]): TagLookup {

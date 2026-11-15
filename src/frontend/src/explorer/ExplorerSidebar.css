@@ -153,11 +153,6 @@
   border-color: transparent;
 }
 
-.explorer-row.drop-target {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
 .twistie {
   width: 1rem;
   height: 1rem;

@@ -4,7 +4,6 @@ import shutil
 import unittest
 import uuid
 from pathlib import Path
-from unittest import mock
 
 from src.backend import api as backend_api
 from src.backend.errors import DomainError
@@ -46,26 +45,6 @@ class VaultFilePolicyTests(unittest.TestCase):
             backend_api.read_note_content(str(outside_path))
         self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(caught.exception.error_code, "request.validation")
-
-    def test_open_note_file_uses_same_vault_boundary(self) -> None:
-        inside_path = self.vault_path / "notes" / "openable.md"
-        inside_path.parent.mkdir(parents=True, exist_ok=True)
-        inside_path.write_text("# Openable", encoding="utf-8")
-        outside_path = self.test_root / "outside-open.md"
-        outside_path.write_text("# Outside", encoding="utf-8")
-
-        with self.assertRaises(DomainError) as caught:
-            backend_api.open_note_file(backend_api.NoteOpenRequest(path=str(outside_path)))
-        self.assertEqual(caught.exception.status_code, 400)
-
-        with mock.patch("src.backend.application_services.sys.platform", "linux"), mock.patch(
-            "src.backend.application_services.subprocess.run"
-        ) as run:
-            allowed = backend_api.open_note_file(backend_api.NoteOpenRequest(path=str(inside_path)))
-
-        self.assertTrue(allowed.get("opened"))
-        run.assert_called_once_with(["xdg-open", str(inside_path.resolve())], check=False)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,6 @@ Vor Aenderungen immer zuerst [PROJECT_ARCHITECTURE.md](doc/PROJECT_ARCHITECTURE.
 - Desktop-Wrapper: `src/desktop`
 - Backend-API: `src/backend/api.py`
 - Fachlogik: `src/backend/nicknotes_backend`
-- Tests: `src/backend/tests` sowie `*.spec.ts`
+- Tests: `src/backend/tests` sowie `*.test.ts`
 - Start: `npm run dev` oder `Start-NickNotes.ps1`
 - Build: `npm run build`

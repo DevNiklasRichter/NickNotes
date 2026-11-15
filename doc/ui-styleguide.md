@@ -33,12 +33,12 @@ mindestens 32 px hohe Schaltflächen.
 | --- | --- | --- |
 | Primärer/sekundärer Text | `--text`, `--muted` | Inhalte bzw. Zusatzinformation; keine reine Farbkennzeichnung wichtiger Zustände |
 | Fläche | `--surface`, `--surface-strong`, `--surface-contrast` | Arbeitsbereich, Gruppierung, abgesetzte Controls |
-| Fensterhintergrund | `--bg-layer-1/2/3` | bestehende Ebenen des Fensterlayouts |
+| Fensterhintergrund | `--bg-layer-1` | Hintergrund des Fensterlayouts |
 | Notizfläche | `--editor-note-bg` | unabhängig konfigurierbare Editorfläche |
 | Rand | `--line`, `--line-strong` | ruhige Trennung, stärkerer Rand bei Bedarf |
 | Akzent | `--accent`, `--accent-strong`, `--accent-soft` | Auswahl, Primäraktion und Fokus; neutral (Graphit hell, Hellgrau dunkel), kein Blau |
 | Tastaturfokus | `--focus-ring` | sichtbare 2-px-Kontur mit 2-px-Abstand |
-| Erfolg/Fehler | `--ok-bg/border/text`, `--error-bg/border/text` | Meldungsfläche mit Text; fachliche Statusfarben ergänzend |
+| Erfolg/Fehler | `--ok-text`, `--error-bg/border/text` | Meldungsfläche mit Text; fachliche Statusfarben ergänzend |
 
 Hell/Dunkel überschreiben Farben, nicht Typografie oder Shell-Geometrie. Es gibt
 nur diese zwei Themes; `.system/ui_settings.json` speichert `theme`, eigene
