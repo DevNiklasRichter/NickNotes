@@ -11,6 +11,8 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+## [2.1.0-rc.5] - 2026-11-15
+
 ### Neu
 
 - NickNotes hat ein neues App-Icon: ein schwarz-weißes Notizblatt mit einem N,
