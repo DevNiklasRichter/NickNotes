@@ -494,40 +494,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/notes/open": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Open Note File */
-        post: operations["open_note_file_notes_open_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/review": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Review */
-        get: operations["get_review_review_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/review/dashboard": {
         parameters: {
             query?: never;
@@ -745,23 +711,6 @@ export interface paths {
         put?: never;
         /** Rename Tag */
         post: operations["rename_tag_tag_groups_rename_tag_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tag-groups/move-tag": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Move Tag */
-        post: operations["move_tag_tag_groups_move_tag_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1126,23 +1075,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/notes/catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Note Catalog */
-        get: operations["note_catalog_notes_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/recovery": {
         parameters: {
             query?: never;
@@ -1407,6 +1339,29 @@ export interface components {
             notePath: string;
             /** Mitids */
             mitIds: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** FocusMitSaveResponse */
+        FocusMitSaveResponse: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved: boolean;
+            /**
+             * Date
+             * @default
+             */
+            date: string;
+            /**
+             * Notepath
+             * @default
+             */
+            notePath: string;
+            /** Mitids */
+            mitIds: string[];
+            counts: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;
         };
@@ -1979,11 +1934,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** NoteOpenRequest */
-        NoteOpenRequest: {
-            /** Path */
-            path: string;
-        };
         /** NoteSaveRequest */
         NoteSaveRequest: {
             /** Path */
@@ -2172,21 +2122,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** OpenNoteResponse */
-        OpenNoteResponse: {
-            /**
-             * Opened
-             * @default true
-             */
-            opened: boolean;
-            /**
-             * Path
-             * @default
-             */
-            path: string;
-        } & {
-            [key: string]: unknown;
-        };
         /** OperationStatusResponse */
         OperationStatusResponse: {
             /**
@@ -2338,19 +2273,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** ReviewResponse */
-        ReviewResponse: {
-            /** Daily */
-            daily: {
-                [key: string]: unknown;
-            };
-            /** Weekly */
-            weekly: {
-                [key: string]: unknown;
-            };
-        } & {
-            [key: string]: unknown;
-        };
         /** SaveCaptureResponse */
         SaveCaptureResponse: {
             /**
@@ -2375,29 +2297,6 @@ export interface components {
             notePath: string;
             /** Tasks */
             tasks: components["schemas"]["CapturedTask"][];
-            counts: components["schemas"]["VaultCounts"];
-        } & {
-            [key: string]: unknown;
-        };
-        /** SaveFocusMitResponse */
-        SaveFocusMitResponse: {
-            /**
-             * Saved
-             * @default true
-             */
-            saved: boolean;
-            /**
-             * Date
-             * @default
-             */
-            date: string;
-            /**
-             * Notepath
-             * @default
-             */
-            notePath: string;
-            /** Mitids */
-            mitIds: string[];
             counts: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;
@@ -2672,20 +2571,6 @@ export interface components {
             total: number;
         } & {
             [key: string]: unknown;
-        };
-        /** TagMoveRequest */
-        TagMoveRequest: {
-            /** Fromgroup */
-            fromGroup: string;
-            /** Tagid */
-            tagId: string;
-            /** Togroup */
-            toGroup: string;
-            /**
-             * Applytonotes
-             * @default true
-             */
-            applyToNotes: boolean;
         };
         /** TagOverviewResponse */
         TagOverviewResponse: {
@@ -3699,7 +3584,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SaveFocusMitResponse"];
+                    "application/json": components["schemas"]["FocusMitSaveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4140,59 +4025,6 @@ export interface operations {
             };
         };
     };
-    open_note_file_notes_open_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NoteOpenRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OpenNoteResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_review_review_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewResponse"];
-                };
-            };
-        };
-    };
     get_review_dashboard_review_dashboard_get: {
         parameters: {
             query?: {
@@ -4588,39 +4420,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["TagRenameRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagGroupsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    move_tag_tag_groups_move_tag_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TagMoveRequest"];
             };
         };
         responses: {
@@ -5289,40 +5088,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    note_catalog_notes_catalog_get: {
-        parameters: {
-            query?: {
-                offset?: number;
-                limit?: number;
-                tag?: string | null;
-                note_type?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
                 };
             };
             /** @description Validation Error */

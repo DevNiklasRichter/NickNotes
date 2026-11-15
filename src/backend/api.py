@@ -41,12 +41,10 @@ from .contracts import (
     OneNoteImportPreviewResponse,
     OneNoteImportResponse,
     OneNoteImportStatusResponse,
-    OpenNoteResponse,
     OperationStatusResponse,
     QuickCaptureFocusTodoResponse,
     ReindexResponse,
     ReviewDashboardResponse,
-    ReviewResponse,
     SaveCaptureResponse,
     SearchResponse,
     TagGroupsResponse,
@@ -80,7 +78,6 @@ from .commands import (
     NoteGroupMoveRequest,
     NoteGroupRenameRequest,
     NoteMediaAddRequest,
-    NoteOpenRequest,
     NoteSaveRequest,
     OneNoteImportPreviewRequest,
     OneNoteImportRequest,
@@ -90,7 +87,6 @@ from .commands import (
     TagGroupRenameRequest,
     TagGroupRequest,
     TagMatchApplyRequest,
-    TagMoveRequest,
     TagRenameRequest,
     TodoToggleRequest,
     UiSettingsUpdateRequest,
@@ -503,16 +499,6 @@ def get_note_media_content(path: str, source: str) -> FileResponse:
     return FileResponse(path=asset["path"], media_type=asset["mediaType"], filename=asset["fileName"])
 
 
-@app.post("/notes/open", response_model=OpenNoteResponse)
-def open_note_file(req: NoteOpenRequest) -> dict[str, Any]:
-    return backend_api_service.open_note_file(req)
-
-
-@app.get("/review", response_model=ReviewResponse)
-def get_review() -> dict[str, Any]:
-    return backend_api_service.get_review()
-
-
 @app.get("/review/dashboard", response_model=ReviewDashboardResponse)
 def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
     return backend_api_service.get_review_dashboard(days, day, top)
@@ -586,11 +572,6 @@ def delete_tag_group(req: TagGroupDeleteRequest) -> dict[str, Any]:
 @app.post("/tag-groups/rename-tag", response_model=TagGroupsResponse)
 def rename_tag(req: TagRenameRequest) -> dict[str, Any]:
     return backend_api_service.rename_tag(req)
-
-
-@app.post("/tag-groups/move-tag", response_model=TagGroupsResponse)
-def move_tag(req: TagMoveRequest) -> dict[str, Any]:
-    return backend_api_service.move_tag(req)
 
 
 @app.post("/tag-groups/delete-tag", response_model=TagGroupsResponse)
@@ -717,11 +698,6 @@ def graph_related(path: str, limit: int = 50):
         index = read_graph_index(vault.graph_index_path)
         entry = index.files.get(resolved.relative_to(vault.vault_path).as_posix())
         return related_files(index, entry.id, limit) if entry else {'items': [], 'truncated': False}
-
-
-@app.get('/notes/catalog', response_model=SearchResponse)
-def note_catalog(offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None):
-    return backend_api_service.search_notes('', offset=offset, limit=limit, tag=tag, note_type=note_type)
 
 
 @app.get('/recovery')

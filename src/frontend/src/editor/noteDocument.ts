@@ -385,14 +385,3 @@ export function serializeNoteDocument(document: ParsedNoteDocument): string {
   lines.push('')
   return lines.join('\n')
 }
-
-export function parseCommaSeparated(value: string): string[] {
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-}
-
-export function toCommaSeparated(values: string[]): string {
-  return values.join(', ')
-}

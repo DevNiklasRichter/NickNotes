@@ -3,16 +3,13 @@ from __future__ import annotations
 import time
 import logging
 import hashlib
-import os
 import base64
 import binascii
 import json
 import re
-import subprocess
-import sys
 import threading
 from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
-from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteOpenRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagMoveRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
+from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -202,15 +199,6 @@ class BackendApiService:
                 )
 
         return sorted(by_key.values(), key=lambda item: (item["category"], item["display_name"], item["slug"]))
-
-    @staticmethod
-    def _merge_suggestions(base: list[TagSuggestion], extra: list[TagSuggestion]) -> list[TagSuggestion]:
-        by_key = {item.key: item for item in base}
-        for item in extra:
-            current = by_key.get(item.key)
-            if not current or item.confidence > current.confidence:
-                by_key[item.key] = item
-        return sorted(by_key.values(), key=lambda item: (-item.confidence, item.key))
 
     @coordinated
     def compute_capture(self, text: str, vault: Any, indexer: Any) -> list[TagSuggestion]:
@@ -1157,40 +1145,6 @@ class BackendApiService:
         return {"path": asset_path, "mediaType": mime_type, "fileName": asset_path.name}
 
     @coordinated
-    def open_note_file(self, req: NoteOpenRequest) -> dict[str, Any]:
-        vault, _indexer = self.require_loaded()
-        raw_path = str(getattr(req, "path", ""))
-        file_path = self._resolve_note_request_path(vault=vault, raw_path=raw_path)
-
-        if file_path.suffix.lower() not in {".md", ".txt"}:
-            raise ValidationDomainError("Only Markdown and plain text can be opened as notes.")
-        try:
-            if sys.platform.startswith("win"):
-                os.startfile(str(file_path))  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.run(["open", str(file_path)], check=False)
-            else:
-                subprocess.run(["xdg-open", str(file_path)], check=False)
-        except OSError as exc:
-            raise InfrastructureDomainError(
-                "Could not open file.",
-                operation="open_note_file",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-
-        return {"opened": True, "path": str(file_path)}
-
-    @coordinated
-    def get_review(self) -> dict[str, Any]:
-        _vault, indexer = self.require_loaded()
-        today = date.today()
-        return {
-            "daily": indexer.daily_summary(today),
-            "weekly": indexer.weekly_summary(today),
-        }
-
-    @coordinated
     def get_review_dashboard(self, days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
         day_iso = GetFocusDashboardUseCase._normalize_iso_day_param(day)
@@ -1342,26 +1296,6 @@ class BackendApiService:
             raise ValidationDomainError(
                 str(exc),
                 operation="rename_tag",
-                vault_id=str(vault.vault_path),
-                internal_message=str(exc),
-            ) from exc
-        return {"groups": groups, "notesUpdated": touched, "counts": self.counts(indexer), "graphStatus": self.rebuild_graph_projection(vault)}
-
-    @coordinated(mutation=True)
-    def move_tag(self, req: TagMoveRequest) -> dict[str, Any]:
-        vault, indexer = self.require_loaded()
-        try:
-            groups, touched = vault.move_tag(
-                from_group=req.from_group,
-                tag_name=req.tag_id,
-                to_group=req.to_group,
-                apply_to_notes=req.apply_to_notes,
-                indexer=indexer,
-            )
-        except ValueError as exc:
-            raise ValidationDomainError(
-                str(exc),
-                operation="move_tag",
                 vault_id=str(vault.vault_path),
                 internal_message=str(exc),
             ) from exc

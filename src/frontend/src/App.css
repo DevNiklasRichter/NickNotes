@@ -859,11 +859,6 @@
   gap: 0.45rem;
 }
 
-.task-board-properties {
-  display: grid;
-  gap: 0.08rem;
-}
-
 .task-board-property-line {
   margin: 0;
   font-size: var(--font-label);
@@ -2904,11 +2899,6 @@
   border-radius: var(--radius-control);
   padding: 0.18rem 0.62rem;
   font-size: var(--font-caption);
-}
-
-.status-note-base {
-  font-size: var(--font-caption);
-  opacity: 0.86;
 }
 
 .status-bar-left,
