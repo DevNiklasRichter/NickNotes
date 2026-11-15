@@ -78,7 +78,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run icons:check
       - name: Validate stable release tag
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
