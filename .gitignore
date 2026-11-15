@@ -34,3 +34,25 @@ pnpm-debug.log*
 /testValue/
 /nn-test-*/
 /pytest-cache-files-*/
+
+# Lokale Agenten-Kontexte (nur auf diesem Rechner, nie versionieren)
+/AGENTS.md
+/CLAUDE.md
+/.agents/
+/.claude/
+
+# Abgeleitete NoteBase-Projektionen (entstehen beim Oeffnen, nie versionieren)
+task_status_links.json
+graph-index.json
+projection-dirty.json
+
+# Editor-, OS- und Tool-Reste
+.vscode/
+.idea/
+.env
+.env.*
+*.tsbuildinfo
+.mypy_cache/
+coverage/
+Thumbs.db
+.DS_Store

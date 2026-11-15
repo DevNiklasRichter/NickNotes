@@ -1,6 +1,6 @@
 ﻿$ErrorActionPreference = "Stop"
 
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
 
 $requirementsFile = Join-Path $projectRoot "requirements.txt"
