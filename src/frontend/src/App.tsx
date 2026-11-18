@@ -31,7 +31,8 @@ import { WorkbenchSidebarContent } from './sidebar/WorkbenchSidebarContent';
 const SettingsEditorPanel = lazy(() => import('./settings/SettingsEditorPanel').then(module => ({default: module.SettingsEditorPanel})));
 import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas';
 import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas';
-import { FocusDashboardCanvas } from './focus/FocusDashboardCanvas';
+import { FocusDashboardCanvas, type FocusRelatedNote } from './focus/FocusDashboardCanvas';
+import { toShortDayLabel } from './focus/focusDashboardModel';
 import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas';
 const GraphDashboardCanvas = lazy(() => import('./graph/GraphDashboardCanvas').then(module => ({default: module.GraphDashboardCanvas})));
 import { GraphWorkspaceProvider } from './graph/GraphWorkspaceContext';
@@ -52,7 +53,7 @@ import {useMutationRefresh} from './app/useMutationRefresh';
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
 import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
-import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, FocusDashboardAggregateStats, NoteGroup, GraphIndexStatus } from './app/AppShared';
+import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, NoteGroup, GraphIndexStatus } from './app/AppShared';
 function resolveGraphNodePath(path: string, vaultPath: string): string {
     const cleanPath = normalizeLabel(path);
     if (!cleanPath || /^[A-Za-z]:[\\/]/.test(cleanPath) || cleanPath.startsWith('\\\\')) {
@@ -65,18 +66,6 @@ function resolveGraphNodePath(path: string, vaultPath: string): string {
     const relativePath = cleanPath.replace(/^[\\/]+/, '').replace(/\//g, '\\');
     return `${cleanVaultPath}\\${relativePath}`;
 }
-const EMPTY_FOCUS_DASHBOARD_STATS: FocusDashboardAggregateStats = {
-    overdueCount: 0,
-    blockedCount: 0,
-    waitingCount: 0,
-    doneToday: 0,
-    doneTodayTasks: 0,
-    doneTodayTodos: 0,
-    openTasksWithoutEstimateCount: 0,
-    waitingWithoutFollowUpCount: 0,
-    unknownBlockerTaskCount: 0,
-    unknownBlockerReferenceCount: 0,
-};
 const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/g, '');
 const toNoteId = (path: string): string => normalizePath(path).toLowerCase();
 
@@ -108,7 +97,6 @@ function App() {
     const [reviewDashboardFilters, setReviewDashboardFilters] = useState<ReviewDashboardFilters>({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS });
     const [reviewDashboardData, setReviewDashboardData] = useState<ReviewDashboardResponse | null>(null);
     const [focusMitIds, setFocusMitIds] = useState<string[]>([]);
-    const [focusDashboardStats, setFocusDashboardStats] = useState<FocusDashboardAggregateStats>(EMPTY_FOCUS_DASHBOARD_STATS);
     const [searchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
     const [allNotes, setAllNotes] = useState<SearchRow[]>([]);
@@ -435,7 +423,6 @@ function App() {
         setSearchResults,
         setAllNotes,
         setReviewDashboardData,
-        setFocusDashboardStats,
         setCounts,
         setFocusMitIds,
         setCustomTagGroups,
@@ -463,7 +450,6 @@ function App() {
         setTasks([]);
         setTodos([]);
         setFocusMitIds([]);
-        setFocusDashboardStats(EMPTY_FOCUS_DASHBOARD_STATS);
         setSearchResults([]);
         setSuggestions([]);
         setSelectedTagKeys([]);
@@ -1303,15 +1289,44 @@ function App() {
             },
         });
     };
+    const setTaskFollowUp = async (taskId: string, date: string): Promise<void> => {
+        const response = await apiRequest<{
+            taskPath: string;
+            followUpDate: string | null;
+            counts: VaultCounts;
+        }>(backendUrl, `/tasks/${encodeURIComponent(taskId)}/follow-up`, {
+            method: 'POST',
+            body: JSON.stringify({ date }),
+        });
+        setCounts(response.counts);
+        const title = tasks.find((task) => task.id === taskId)?.title || 'Task';
+        setMessage(response.followUpDate ? `„${title}“ ruht bis ${toShortDayLabel(response.followUpDate, toLocalIsoDate())}.` : `„${title}“ ist wieder im Fokus.`);
+        await emitMutationEvent({
+            kind: 'note-saved',
+            noteType: 'task',
+            paths: [response.taskPath],
+            refresh: {
+                search: true,
+                focusAggregate: true,
+                review: true,
+            },
+        });
+    };
+    const loadRelatedNotes = useCallback(async (path: string): Promise<FocusRelatedNote[]> => {
+        const response = await apiRequest<{
+            items: FocusRelatedNote[];
+        }>(backendUrl, `/graph/related?path=${encodeURIComponent(path)}&limit=8`);
+        return response.items;
+    }, [backendUrl]);
     const toggleTodo = async (todoId: string, checked?: boolean) => {
         try {
-            await apiRequest<{
+            const response = await apiRequest<{
                 todo?: TodoRow;
             }>(backendUrl, `/todos/${encodeURIComponent(todoId)}/toggle`, {
                 method: 'POST',
                 body: JSON.stringify(typeof checked === 'boolean' ? { checked } : {}),
             });
-            setMessage(`Todo aktualisiert (${todoId}).`);
+            setMessage(response.todo?.checked === false ? 'To-do wieder offen.' : 'To-do erledigt.');
             await emitMutationEvent({
                 kind: 'todo-updated',
                 refresh: {
@@ -2362,22 +2377,14 @@ function App() {
                 }} taskStatusClassName={taskStatusClassName} taskStatusLabel={taskStatusLabel} taskPriorityDotClassName={taskPriorityDotClassName} taskPriorityLabel={taskPriorityLabel} toGermanTimestamp={toGermanTimestamp}/>);
         }
         if (paneTab.kind === 'focus_dashboard') {
-            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} filters={focusDashboardFilters} mitIds={focusMitIds} focusStats={focusDashboardStats} taskFeatureSettings={taskFeatureSettings} onFiltersChange={setFocusDashboardFilters} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onOpenTaskPath={(path, title) => {
-                    if (!path) {
-                        return;
-                    }
-                    void openNoteInTab(path, title, { initialNoteType: 'task' });
-                }} onOpenTodoOrigin={(path, title) => {
-                    if (!path) {
-                        return;
-                    }
-                    void openNoteInTab(path, title, { initialNoteType: 'note' });
-                }} onOpenNotePath={(path, title, noteType) => {
+            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} query={focusDashboardFilters.query} mitIds={focusMitIds} showTaskDetails={taskFeatureSettings.advancedTaskHandling} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onToggleTodo={(todoId, checked) => toggleTodo(todoId, checked)} onSetTaskFollowUp={setTaskFollowUp} onLoadRelatedNotes={loadRelatedNotes} onOpenNotePath={(path, title, noteType) => {
                     if (!path) {
                         return;
                     }
                     void openNoteInTab(path, title, { initialNoteType: noteType === 'task' ? 'task' : 'note' });
-                }} toGermanTimestamp={toGermanTimestamp}/>);
+                }} onOpenTodayDaily={() => {
+                    void openOrCreateTodayDaily();
+                }} onOpenTodoDashboard={openTodoDashboardTab} onOpenTaskDashboard={openTaskDashboardTab}/>);
         }
         if (paneTab.kind === 'review_dashboard') {
             return (<ReviewDashboardCanvas data={reviewDashboardData} filters={reviewDashboardFilters} onFiltersChange={setReviewDashboardFilters} onOpenNotePath={(path, title, noteType) => {

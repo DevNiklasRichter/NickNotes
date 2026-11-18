@@ -138,10 +138,10 @@ export function NotePropertiesPanel({
       if (titleDraft !== document.frontmatter.title) onTitleChange(titleDraft)
       if (document.frontmatter.type !== 'task') return true
       if (taskTimeManagementEnabled && (taskFieldErrors?.estimate_minutes || estimateDraft !== (document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : ''))) valid = onEstimateMinutesChange(estimateDraft) && valid
+      if (taskFieldErrors?.follow_up_date || followUpDateDraft !== document.frontmatter.follow_up_date) valid = onFollowUpDateChange(followUpDateDraft) && valid
       if (!taskAdvancedHandlingEnabled) return finish()
       if (blockedByIdsDraft !== document.frontmatter.blocked_by_ids.join(', ')) onBlockedByIdsChange(blockedByIdsDraft)
       if (waitingForDraft !== document.frontmatter.waiting_for) onWaitingForChange(waitingForDraft)
-      if (taskFieldErrors?.follow_up_date || followUpDateDraft !== document.frontmatter.follow_up_date) valid = onFollowUpDateChange(followUpDateDraft) && valid
       if (blockedReasonDraft !== document.frontmatter.blocked_reason) onBlockedReasonChange(blockedReasonDraft)
       if (nextActionHintDraft !== document.frontmatter.next_action_hint) onNextActionHintChange(nextActionHintDraft)
       return finish()
@@ -298,6 +298,41 @@ export function NotePropertiesPanel({
               ) : null}
             </div>
 
+            <span className="property-key">Wiedervorlage</span>
+            <div className="property-value-stack">
+              <div className="property-value-inline">
+                <input
+                  className="property-date-input"
+                  type="date"
+                  aria-label="Wiedervorlagedatum"
+                  aria-invalid={!!taskFieldErrors?.follow_up_date}
+                  aria-describedby={taskFieldErrors?.follow_up_date ? `${panelId}-follow_up_date-error` : undefined}
+                  value={followUpDateDraft}
+                  onChange={(event) => {
+                    setFollowUpDateDraft(event.target.value)
+                  }}
+                  onBlur={event => {
+                    if (event.currentTarget.value !== (document.frontmatter.follow_up_date) || taskFieldErrors?.follow_up_date) onFollowUpDateChange(event.currentTarget.value)
+                  }}
+                  onKeyDown={event => onTaskInputKeyDown(event, document.frontmatter.follow_up_date, setFollowUpDateDraft)}
+                />
+                {document.frontmatter.follow_up_date ? (
+                  <button
+                    type="button"
+                    className="property-chip add"
+                    onClick={() => {
+                      setFollowUpDateDraft('')
+                      onFollowUpDateChange('')
+                    }}
+                    aria-label="Wiedervorlagedatum entfernen" data-tooltip="Wiedervorlage entfernen"
+                  >
+                    x
+                  </button>
+                ) : null}
+              </div>
+              {taskFieldErrors?.follow_up_date ? <span id={`${panelId}-follow_up_date-error`} className="property-inline-error" role="alert">{taskFieldErrors.follow_up_date}</span> : null}
+            </div>
+
             {taskTimeManagementEnabled ? (
               <>
                 <span className="property-key">Schätzung</span>
@@ -396,41 +431,6 @@ export function NotePropertiesPanel({
                       onKeyDown={event => onTaskInputKeyDown(event, document.frontmatter.waiting_for, setWaitingForDraft)}
                     placeholder="z. B. Rückmeldung Team"
                   />
-                </div>
-
-                <span className="property-key">Wiedervorlage</span>
-                <div className="property-value-stack">
-                  <div className="property-value-inline">
-                    <input
-                      className="property-date-input"
-                      type="date"
-                      aria-label="Wiedervorlagedatum"
-                    aria-invalid={!!taskFieldErrors?.follow_up_date}
-                      aria-describedby={taskFieldErrors?.follow_up_date ? `${panelId}-follow_up_date-error` : undefined}
-                      value={followUpDateDraft}
-                      onChange={(event) => {
-                        setFollowUpDateDraft(event.target.value)
-                      }}
-                      onBlur={event => {
-                        if (event.currentTarget.value !== (document.frontmatter.follow_up_date) || taskFieldErrors?.follow_up_date) onFollowUpDateChange(event.currentTarget.value)
-                      }}
-                      onKeyDown={event => onTaskInputKeyDown(event, document.frontmatter.follow_up_date, setFollowUpDateDraft)}
-                    />
-                    {document.frontmatter.follow_up_date ? (
-                      <button
-                        type="button"
-                        className="property-chip add"
-                        onClick={() => {
-                          setFollowUpDateDraft('')
-                          onFollowUpDateChange('')
-                        }}
-                        aria-label="Wiedervorlagedatum entfernen" data-tooltip="Follow-up entfernen"
-                      >
-                        x
-                      </button>
-                    ) : null}
-                  </div>
-                  {taskFieldErrors?.follow_up_date ? <span id={`${panelId}-follow_up_date-error`} className="property-inline-error" role="alert">{taskFieldErrors.follow_up_date}</span> : null}
                 </div>
 
                 <span className="property-key">Blockierungsgrund</span>

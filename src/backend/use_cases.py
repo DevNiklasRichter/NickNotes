@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .config import FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT
-from .nicknotes_backend.dates import calendar_day
 from .nicknotes_backend.markdown_io import parse_markdown_text, snapshot_operation, MarkdownFormatError
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.onenote_importer import (
@@ -154,7 +153,7 @@ class OpenVaultUseCase:
 
 
 class GetFocusDashboardUseCase:
-    """Build focus dashboard payload and aggregate metrics from canonical index data."""
+    """Tasks, to-dos, notes and today's MIT selection for the focus view; the view derives everything else."""
 
     def execute(self, service: "BackendApiService", date_param: str | None = None) -> dict[str, Any]:
         vault, indexer = service.require_loaded()
@@ -176,137 +175,6 @@ class GetFocusDashboardUseCase:
         return date.today().isoformat()
 
     @staticmethod
-    def _to_iso_day(value: Any) -> str:
-        return calendar_day(value)
-
-    @staticmethod
-    def _to_blocked_by_ids(raw: Any) -> list[str]:
-        if isinstance(raw, list):
-            values = [str(item).strip() for item in raw]
-        elif isinstance(raw, str):
-            values = [item.strip() for item in raw.split(",")]
-        else:
-            values = []
-        seen: set[str] = set()
-        normalized: list[str] = []
-        for value in values:
-            if not value:
-                continue
-            key = value.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized.append(value)
-        return normalized
-
-    @staticmethod
-    def _to_estimate_minutes(raw: Any) -> int | None:
-        if raw is None:
-            return None
-        try:
-            value = int(str(raw).strip())
-        except (TypeError, ValueError):
-            return None
-        if value <= 0:
-            return None
-        return value
-
-    @staticmethod
-    def _is_task_blocked(task: dict[str, Any], status_by_id: dict[str, str]) -> bool:
-        status = str(task.get("status", "")).strip().lower().replace("-", "_")
-        if status == "done":
-            return False
-
-        waiting_for = str(task.get("waiting_for", "")).strip()
-        if waiting_for:
-            return True
-
-        blocked_by_ids = GetFocusDashboardUseCase._to_blocked_by_ids(task.get("blocked_by_ids"))
-        for blocker_id in blocked_by_ids:
-            blocker_status = status_by_id.get(blocker_id.lower())
-            if not blocker_status:
-                return True
-            normalized_blocker_status = blocker_status.strip().lower().replace("-", "_")
-            if normalized_blocker_status != "done":
-                return True
-        return False
-
-    @staticmethod
-    def _compute_done_today_counts(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> tuple[int, int]:
-        done_tasks = 0
-        for task in tasks:
-            status = str(task.get("status", "")).strip().lower().replace("-", "_")
-            if status != "done":
-                continue
-            completed_day = GetFocusDashboardUseCase._to_iso_day(task.get("completed_at"))
-            if completed_day == day_iso:
-                done_tasks += 1
-
-        done_todos = 0
-        for todo in todos:
-            if not bool(todo.get("checked")):
-                continue
-            completed_day = GetFocusDashboardUseCase._to_iso_day(todo.get("completed_at"))
-            if completed_day == day_iso:
-                done_todos += 1
-
-        return done_tasks, done_todos
-
-    @staticmethod
-    def _compute_focus_stats(tasks: list[dict[str, Any]], todos: list[dict[str, Any]], day_iso: str) -> dict[str, int]:
-        status_by_id = {str(task.get("id", "")).strip().lower(): str(task.get("status", "")) for task in tasks if task.get("id")}
-        overdue_count = 0
-        blocked_count = 0
-        waiting_count = 0
-        open_tasks_without_estimate_count = 0
-        waiting_without_follow_up_count = 0
-        unknown_blocker_task_count = 0
-        unknown_blocker_reference_count = 0
-
-        for task in tasks:
-            status = str(task.get("status", "")).strip().lower().replace("-", "_")
-            if status == "done":
-                continue
-            if GetFocusDashboardUseCase._to_estimate_minutes(task.get("estimate_minutes")) is None:
-                open_tasks_without_estimate_count += 1
-            due_date = str(task.get("due_date", "")).strip()
-            if len(due_date) >= 10:
-                due_iso = due_date[:10]
-                if due_iso < day_iso:
-                    overdue_count += 1
-            waiting_for = str(task.get("waiting_for", "")).strip()
-            follow_up_day = GetFocusDashboardUseCase._to_iso_day(task.get("follow_up_date"))
-            if waiting_for:
-                waiting_count += 1
-                if not follow_up_day:
-                    waiting_without_follow_up_count += 1
-            blocked_by_ids = GetFocusDashboardUseCase._to_blocked_by_ids(task.get("blocked_by_ids"))
-            unknown_refs_for_task = 0
-            for blocker_id in blocked_by_ids:
-                if blocker_id.lower() not in status_by_id:
-                    unknown_refs_for_task += 1
-            if unknown_refs_for_task > 0:
-                unknown_blocker_task_count += 1
-                unknown_blocker_reference_count += unknown_refs_for_task
-            if GetFocusDashboardUseCase._is_task_blocked(task, status_by_id):
-                blocked_count += 1
-
-        done_today_tasks, done_today_todos = GetFocusDashboardUseCase._compute_done_today_counts(tasks=tasks, todos=todos, day_iso=day_iso)
-
-        return {
-            "overdueCount": overdue_count,
-            "blockedCount": blocked_count,
-            "waitingCount": waiting_count,
-            "doneToday": done_today_tasks + done_today_todos,
-            "doneTodayTasks": done_today_tasks,
-            "doneTodayTodos": done_today_todos,
-            "openTasksWithoutEstimateCount": open_tasks_without_estimate_count,
-            "waitingWithoutFollowUpCount": waiting_without_follow_up_count,
-            "unknownBlockerTaskCount": unknown_blocker_task_count,
-            "unknownBlockerReferenceCount": unknown_blocker_reference_count,
-        }
-
-    @staticmethod
     def _build_focus_dashboard_payload(vault: VaultManager, indexer: VaultIndexer, day_iso: str) -> dict[str, Any]:
         tasks = indexer.list_tasks(include_done=True)
         todos = indexer.list_todos()
@@ -319,7 +187,6 @@ class GetFocusDashboardUseCase:
             "notes": notes,
             "mitIds": mit_state.get("mit_ids", []),
             "mitNotePath": str(mit_state.get("note_path", "")),
-            "stats": GetFocusDashboardUseCase._compute_focus_stats(tasks=tasks, todos=todos, day_iso=day_iso),
         }
 
 

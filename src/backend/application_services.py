@@ -9,7 +9,7 @@ import json
 import re
 import threading
 from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
-from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
+from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TaskFollowUpRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +24,7 @@ from .config import (
 )
 from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update_graph_index_for_file
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
-from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown
+from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
 
 from .use_cases import (
@@ -910,6 +910,29 @@ class BackendApiService:
                 vault_id=str(vault.vault_path),
                 internal_message=str(exc),
             ) from exc
+
+    @coordinated(mutation=True)
+    def set_task_follow_up(self, task_id: str, req: TaskFollowUpRequest) -> dict[str, Any]:
+        """Defer a task until `date` (Wiedervorlage) through the normal note save path."""
+        vault, indexer = self.require_loaded()
+        follow_up = req.date.strip()
+        if follow_up:
+            try:
+                follow_up = date.fromisoformat(follow_up).isoformat()
+            except ValueError as exc:
+                raise ValidationDomainError("Bitte ein gültiges Datum angeben.", operation="set_task_follow_up", vault_id=str(vault.vault_path)) from exc
+        row = next((item for item in indexer.list_tasks(include_done=True) if item["id"] == task_id), None)
+        if row is None or not row.get("path"):
+            raise NotFoundDomainError("Task nicht gefunden.", operation="set_task_follow_up", vault_id=str(vault.vault_path))
+        current = self.read_note_content(str(row["path"]))
+        meta, body = parse_markdown_text(current["content"])
+        if follow_up:
+            meta["follow_up_date"] = follow_up
+        else:
+            meta.pop("follow_up_date", None)
+        meta["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        saved = self.save_note_content(NoteSaveRequest(path=current["path"], content=dump_markdown(meta, body), expectedRevision=current["revision"]))
+        return {"taskId": task_id, "taskPath": saved["path"], "followUpDate": follow_up or None, "counts": saved["counts"]}
 
     @coordinated(mutation=True)
     def mark_task_done(self, task_id: str = '') -> dict[str, Any]:

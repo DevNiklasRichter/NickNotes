@@ -9,7 +9,6 @@ import { GraphSidebarPanel } from '../graph/GraphSidebarPanel'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 import {
-  DEFAULT_FOCUS_DASHBOARD_FILTERS,
   DEFAULT_REVIEW_DASHBOARD_FILTERS,
   DEFAULT_TASK_DASHBOARD_FILTERS,
   TASK_STATUS_OPTIONS,
@@ -552,28 +551,6 @@ export function WorkbenchSidebarContent({
     onTaskFiltersChange({...taskFilters, query: '', statuses: [...DEFAULT_TASK_DASHBOARD_FILTERS.statuses], priorities: [...DEFAULT_TASK_DASHBOARD_FILTERS.priorities], dueBuckets: [...DEFAULT_TASK_DASHBOARD_FILTERS.dueBuckets], tagGroups: [], tags: [], related: []})
   }
 
-  const focusSectionOptions: Array<{ value: 'tasks' | 'todos' | 'notes'; label: string }> = [
-    { value: 'tasks', label: 'Tasks' },
-    { value: 'todos', label: 'Todos' },
-    { value: 'notes', label: 'Notizen' },
-  ]
-
-  const toggleFocusSection = (section: 'tasks' | 'todos' | 'notes') => {
-    const selected = new Set(focusFilters.sections)
-    if (selected.has(section)) {
-      selected.delete(section)
-    } else {
-      selected.add(section)
-    }
-    setFocusFilter({ sections: Array.from(selected) })
-  }
-
-  const focusSectionSummary = focusFilters.sections.length === 0 ? 'Alle Bereiche' : `${focusFilters.sections.length} ausgewählt`
-
-  const resetFocusFilters = () => {
-    onFocusFiltersChange({ ...DEFAULT_FOCUS_DASHBOARD_FILTERS })
-  }
-
   const resetReviewFilters = () => {
     onReviewFiltersChange({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS })
   }
@@ -992,13 +969,7 @@ export function WorkbenchSidebarContent({
       <div className="explorer-shell todo-explorer-shell">
         <header className="explorer-toolbar todo-sidebar-toolbar">
           <div className="explorer-toolbar-top">
-            <div className="explorer-toolbar-left">
-              <div className="explorer-sort-anchor">
-                <button className="icon-button compact" disabled={!vaultLoaded} aria-label="Filteroptionen" data-tooltip="Filteroptionen">
-                  <LucideNamedIcon name="ArrowUpDown" className="row-action-icon" size={14} />
-                </button>
-              </div>
-            </div>
+            <div className="explorer-toolbar-left" />
             <h3>Fokus</h3>
             <div className="explorer-toolbar-right">
               <button
@@ -1008,7 +979,7 @@ export function WorkbenchSidebarContent({
                   onRefreshFocusData()
                 }}
                 disabled={!vaultLoaded}
-                aria-label="Focus-Daten aktualisieren" data-tooltip="Focus-Daten aktualisieren"
+                aria-label="Fokus aktualisieren" data-tooltip="Fokus aktualisieren"
               >
                 <LucideNamedIcon name="RefreshCw" size={14} />
               </button>
@@ -1023,7 +994,7 @@ export function WorkbenchSidebarContent({
                 value={focusFilters.query}
                 onChange={(event) => setFocusFilter({ query: event.target.value })}
                 placeholder="Suchen"
-                aria-label="Focus durchsuchen" data-tooltip="Focus durchsuchen"
+                aria-label="Fokus durchsuchen" data-tooltip="Fokus durchsuchen"
               />
               {focusFilters.query ? (
                 <button
@@ -1051,91 +1022,12 @@ export function WorkbenchSidebarContent({
         )}
 
         <section className="todo-sidebar-section">
-          <div className="todo-section-header">
-            <h4>Filter</h4>
-            <button
-              className="icon-button compact muted todo-section-reset-button"
-              onClick={resetFocusFilters}
-              data-tooltip="Focus-Filter zurücksetzen"
-              aria-label="Focus-Filter zurücksetzen"
-            >
-              <LucideNamedIcon name="FilterX" size={13} />
-            </button>
-          </div>
-          <div className="todo-filter-rows">
-            <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Bereiche</span>
-              <div className="focus-sidebar-check-grid">
-                {focusSectionOptions.map((option) => {
-                  const checked = focusFilters.sections.includes(option.value)
-                  return (
-                    <label key={option.value} className="focus-sidebar-check-option">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          toggleFocusSection(option.value)
-                        }}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  )
-                })}
-                <span className="focus-sidebar-check-summary">{focusSectionSummary}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="todo-sidebar-section todo-sidebar-grouping-section">
-          <h4>Ausrichtung</h4>
-          <div className="todo-filter-rows">
-            <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Modus</span>
-              <label className="todo-grouping-select">
-                <select value={focusFilters.mode} onChange={(event) => setFocusFilter({ mode: event.target.value as FocusDashboardFilters['mode'] })}>
-                  <option value="execution">Execution</option>
-                  <option value="planning">Planning</option>
-                  <option value="rescue">Rescue</option>
-                  <option value="context">Context</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Zeitraum</span>
-              <label className="todo-grouping-select">
-                <select value={focusFilters.scope} onChange={(event) => setFocusFilter({ scope: event.target.value as FocusDashboardFilters['scope'] })}>
-                  <option value="overdue">Überfällig</option>
-                  <option value="today">Heute</option>
-                  <option value="tomorrow">Morgen</option>
-                  <option value="week">Woche</option>
-                  <option value="next7">7 Tage</option>
-                  <option value="all">Alles</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="todo-filter-row">
-              <span className="todo-filter-row-label">Fokuspunkte</span>
-              <label className="todo-grouping-select">
-                <select
-                  value={String(focusFilters.maxItems)}
-                  onChange={(event) => {
-                    const parsed = Number.parseInt(event.target.value, 10)
-                    if (Number.isFinite(parsed)) {
-                      setFocusFilter({ maxItems: parsed })
-                    }
-                  }}
-                >
-                  <option value="8">8</option>
-                  <option value="12">12</option>
-                  <option value="16">16</option>
-                  <option value="20">20</option>
-                </select>
-              </label>
-            </div>
-          </div>
+          <h4>So funktioniert Fokus</h4>
+          <ul className="focus-sidebar-legend">
+            <li><LucideNamedIcon name="Star" size={13} />Bis zu drei Einträge, die heute wirklich zählen</li>
+            <li><LucideNamedIcon name="CalendarClock" size={13} />Task zurückstellen: Sie ruht bis zum gewählten Tag</li>
+            <li><LucideNamedIcon name="Info" size={13} />Kontext: verknüpfte Notizen und Details</li>
+          </ul>
         </section>
       </div>
     )

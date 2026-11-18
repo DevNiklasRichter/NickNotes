@@ -162,3 +162,8 @@ class OneNoteImportRequest(BaseModel):
 
 class TodoToggleRequest(BaseModel):
     checked: bool | None = None
+
+
+class TaskFollowUpRequest(BaseModel):
+    """ISO date from which a task is due for attention again; empty clears it."""
+    date: str = ""

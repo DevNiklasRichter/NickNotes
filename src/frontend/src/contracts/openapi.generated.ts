@@ -375,6 +375,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{task_id}/follow-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Task Follow Up */
+        post: operations["set_task_follow_up_tasks__task_id__follow_up_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{task_id}/done": {
         parameters: {
             query?: never;
@@ -1265,63 +1282,7 @@ export interface components {
              * @default
              */
             mitNotePath: string;
-            stats: components["schemas"]["FocusDashboardStatsResponse"];
             counts: components["schemas"]["VaultCounts"];
-        } & {
-            [key: string]: unknown;
-        };
-        /** FocusDashboardStatsResponse */
-        FocusDashboardStatsResponse: {
-            /**
-             * Overduecount
-             * @default 0
-             */
-            overdueCount: number;
-            /**
-             * Blockedcount
-             * @default 0
-             */
-            blockedCount: number;
-            /**
-             * Waitingcount
-             * @default 0
-             */
-            waitingCount: number;
-            /**
-             * Donetoday
-             * @default 0
-             */
-            doneToday: number;
-            /**
-             * Donetodaytasks
-             * @default 0
-             */
-            doneTodayTasks: number;
-            /**
-             * Donetodaytodos
-             * @default 0
-             */
-            doneTodayTodos: number;
-            /**
-             * Opentaskswithoutestimatecount
-             * @default 0
-             */
-            openTasksWithoutEstimateCount: number;
-            /**
-             * Waitingwithoutfollowupcount
-             * @default 0
-             */
-            waitingWithoutFollowUpCount: number;
-            /**
-             * Unknownblockertaskcount
-             * @default 0
-             */
-            unknownBlockerTaskCount: number;
-            /**
-             * Unknownblockerreferencecount
-             * @default 0
-             */
-            unknownBlockerReferenceCount: number;
         } & {
             [key: string]: unknown;
         };
@@ -2630,6 +2591,38 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * TaskFollowUpRequest
+         * @description ISO date from which a task is due for attention again; empty clears it.
+         */
+        TaskFollowUpRequest: {
+            /**
+             * Date
+             * @default
+             */
+            date: string;
+        };
+        /** TaskFollowUpResponse */
+        TaskFollowUpResponse: {
+            /**
+             * Taskid
+             * @default
+             */
+            taskId: string;
+            /**
+             * Taskpath
+             * @default
+             */
+            taskPath: string;
+            /**
+             * Followupdate
+             * @default null
+             */
+            followUpDate: string | null;
+            counts: components["schemas"]["VaultCounts"];
+        } & {
+            [key: string]: unknown;
+        };
         /** TaskListResponse */
         TaskListResponse: {
             /** Items */
@@ -3801,6 +3794,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TodoPromoteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_task_follow_up_tasks__task_id__follow_up_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskFollowUpRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskFollowUpResponse"];
                 };
             };
             /** @description Validation Error */

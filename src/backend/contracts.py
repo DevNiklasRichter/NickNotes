@@ -41,7 +41,7 @@ CONTRACT_SYNC_MODEL_MAP: dict[str, str] = {
     "TodoToggleResponse": "TodoToggleResponse",
     "TodoPromoteResponse": "TodoPromoteResponse",
     "TaskDoneResponse": "TaskDoneResponse",
-    "FocusDashboardStatsResponse": "FocusDashboardAggregateStats",
+    "TaskFollowUpResponse": "TaskFollowUpResponse",
     "FocusDashboardAggregateResponse": "FocusDashboardAggregateResponse",
     "GraphIndexResponse": "GraphIndexResponse",
     "GraphIndexStatusResponse": "GraphIndexStatusResponse",
@@ -331,17 +331,11 @@ class TaskDoneResponse(_ContractModel):
     taskPath: str = ""
 
 
-class FocusDashboardStatsResponse(_ContractModel):
-    overdueCount: int = 0
-    blockedCount: int = 0
-    waitingCount: int = 0
-    doneToday: int = 0
-    doneTodayTasks: int = 0
-    doneTodayTodos: int = 0
-    openTasksWithoutEstimateCount: int = 0
-    waitingWithoutFollowUpCount: int = 0
-    unknownBlockerTaskCount: int = 0
-    unknownBlockerReferenceCount: int = 0
+class TaskFollowUpResponse(_ContractModel):
+    taskId: str = ""
+    taskPath: str = ""
+    followUpDate: str | None = None
+    counts: VaultCounts = Field(default_factory=VaultCounts)
 
 
 class FocusDashboardAggregateResponse(_ContractModel):
@@ -351,7 +345,6 @@ class FocusDashboardAggregateResponse(_ContractModel):
     notes: list[SearchRowResponse] = Field(default_factory=list)
     mitIds: list[str] = Field(default_factory=list)
     mitNotePath: str = ""
-    stats: FocusDashboardStatsResponse = Field(default_factory=FocusDashboardStatsResponse)
     counts: VaultCounts = Field(default_factory=VaultCounts)
 
 
