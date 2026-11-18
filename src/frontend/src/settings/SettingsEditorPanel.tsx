@@ -578,7 +578,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 <label className="settings-toggle-row" htmlFor="settings-task-advanced">
                   <span>
                     <strong>Detailliertes Task-Handling</strong>
-                    <small>Blocker, Waiting, Follow-up und Next Action verwenden.</small>
+                    <small>Blocker, „Warten auf“ und „Nächster Schritt“ bei Tasks verwenden.</small>
                   </span>
                   <input id="settings-task-advanced" type="checkbox" checked={taskFeatureSettings.advancedTaskHandling} onChange={(event) => setTaskFeatureSettings((prev) => ({ ...prev, advancedTaskHandling: event.target.checked }))}/>
                 </label>

@@ -35,9 +35,10 @@ const writing = process.argv.includes('--writing-mode')
 const inline = process.argv.includes('--inline')
 const whatsNew = process.argv.includes('--whats-new')
 const feedback = process.argv.includes('--feedback')
+const focusView = process.argv.includes('--focus')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new','--focus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new] [--focus]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -1853,6 +1854,104 @@ async function verifyFeedback() {
   report.checks.feedbackReducedMotionAndThemes=true
 }
 
+function isoDay(offset = 0) {
+  const day = new Date()
+  day.setDate(day.getDate() + offset)
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`
+}
+
+/** Synthetic workday: overdue, due, resumed, deferred and upcoming tasks, today's and older to-dos. */
+async function seedFocusDay() {
+  const taskDir = path.join(vaultPath, 'tasks')
+  fs.mkdirSync(taskDir, {recursive: true})
+  const task = (id, title, fields, body) => fs.writeFileSync(path.join(taskDir, `${id}.md`),
+    `---\nid: ${id}\nnode_id: ${id}\ntitle: ${title}\ntype: task\ncreated_at: ${isoDay(-9)}T09:00:00\nupdated_at: ${isoDay(-1)}T09:00:00\n${fields}tags: []\n---\n\n${body}\n`)
+  task('ux-focus-offer', 'Angebot für Messestand abschicken', `status: open\npriority: H\ndue_date: ${isoDay(-2)}\n`, 'Grundlage ist die [[Messeplanung]].')
+  task('ux-focus-report', 'Quartalsbericht prüfen', `status: in_progress\npriority: M\ndue_date: ${isoDay(0)}\n`, 'Zahlen gegen die [[Messeplanung]] abgleichen.')
+  task('ux-focus-supplier', 'Rückmeldung vom Lieferanten einholen', `status: open\npriority: M\ndue_date: ${isoDay(-5)}\nfollow_up_date: ${isoDay(3)}\n`, 'Erst nach dem Werksurlaub erreichbar.')
+  task('ux-focus-texts', 'Website-Texte überarbeiten', `status: open\npriority: L\nfollow_up_date: ${isoDay(0)}\n`, 'Heute wieder aufnehmen.')
+  task('ux-focus-workshop', 'Workshop vorbereiten', `status: open\npriority: M\ndue_date: ${isoDay(4)}\n`, 'Agenda und Raum klären.')
+  task('ux-focus-ideas', 'Ideen für das nächste Quartal sammeln', 'status: open\npriority: L\n', 'Ohne Termin.')
+  fs.writeFileSync(path.join(vaultPath, 'Messeplanung.md'),
+    `---\nid: ux-focus-fair\ntitle: Messeplanung\ntype: note\ncreated_at: ${isoDay(-6)}T09:00:00\n---\n\nStandfläche, Budget und Ansprechpartner der Messe.\n\n- [ ] Standskizze an die Agentur senden\n`)
+  await request('/notebase/reindex', {})
+  for (const text of ['Rechnung an den Kunden schicken', 'Zahnarzttermin vereinbaren', 'Kaffeebohnen kaufen']) {
+    await request('/focus/quick-capture', {text, date: isoDay(0)})
+  }
+  await request('/focus/mit', {date: isoDay(0), mitIds: ['task:ux-focus-offer', 'task:ux-focus-report']})
+  await page.reload()
+  await expect(page.locator('.activity-rail')).toBeVisible()
+}
+
+async function verifyFocus() {
+  await seedFocusDay()
+  await windowSize(1440, 900)
+  const canvas = page.locator('.focus-canvas')
+  const column = name => canvas.getByRole('region', {name, exact: true})
+  const row = (name, text) => column(name).locator('.focus-row').filter({hasText: text})
+  await theme('light')
+  await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
+  await expect(canvas).toBeVisible()
+  await expect(canvas.locator('.focus-mit-list li')).toHaveCount(2)
+  await expect(column('Tasks').locator('.focus-list').first().locator(':scope > .focus-row')).toHaveText([/Angebot/, /Quartalsbericht/, /Website-Texte/])
+  await expect(row('Tasks', 'Rückmeldung vom Lieferanten')).toBeHidden()
+  await expect(column('Tasks').getByText('Zurückgestellt')).toBeVisible()
+  const todayTodos = column('To-dos').locator('.focus-list').first()
+  for (const text of ['Rechnung an den Kunden schicken', 'Zahnarzttermin vereinbaren', 'Kaffeebohnen kaufen']) await expect(todayTodos.locator(':scope > .focus-row').filter({hasText: text})).toHaveCount(1)
+  await expect(column('To-dos').getByText('Früher notiert')).toBeVisible()
+  await capture('focus-light', 'Focus: MIT bullets, tasks | to-dos | notes side by side, deferred task hidden, light, 1440×900')
+
+  // Check off a to-do in place; it stays visible, struck through, and the file changes.
+  const coffee = row('To-dos', 'Kaffeebohnen kaufen')
+  const doneCount = canvas.locator('.focus-stats dd').first()
+  const doneBefore = Number(await doneCount.textContent())
+  await coffee.getByRole('checkbox').check()
+  await expect(coffee).toHaveClass(/done/)
+  await expect(doneCount).toHaveText(String(doneBefore + 1))
+  const daily = fs.readdirSync(path.join(vaultPath, 'daily'), {recursive: true}).find(name => String(name).endsWith(`${isoDay(0)}.md`))
+  await expect.poll(() => fs.readFileSync(path.join(vaultPath, 'daily', String(daily)), 'utf8')).toMatch(/- \[x\] Kaffeebohnen kaufen/)
+  await expect(coffee.getByRole('checkbox')).toBeChecked()
+  report.checks.focusTodoCheckedInPlace = true
+
+  // Star a to-do into "Heute wichtig"; the fourth candidate is refused.
+  const invoice = row('To-dos', 'Rechnung an den Kunden')
+  await invoice.hover()
+  await invoice.getByRole('button', {name: 'Zu „Heute wichtig“ hinzufügen'}).click()
+  await expect(canvas.locator('.focus-mit-list li')).toHaveCount(3)
+  const dentist = row('To-dos', 'Zahnarzttermin')
+  await dentist.hover()
+  await expect(dentist.getByRole('button', {name: /Höchstens 3 Einträge/})).toBeDisabled()
+  report.checks.focusMitLimit = true
+
+  // Defer a task to tomorrow through the shared menu; the Markdown gets follow_up_date.
+  const texts = row('Tasks', 'Website-Texte')
+  await texts.hover()
+  await texts.getByRole('button', {name: 'Zurückstellen'}).click()
+  await capture('focus-defer-menu-light', 'Defer menu: tomorrow, next Monday, one week, own date, remove the Wiedervorlage')
+  await page.getByRole('menuitem', {name: /^Morgen/}).click()
+  await expect(column('Tasks').locator('.focus-list').first().locator(':scope > .focus-row')).toHaveCount(2)
+  const taskSource = id => fs.readdirSync(path.join(vaultPath, 'tasks'), {recursive: true}).map(name => path.join(vaultPath, 'tasks', String(name))).filter(file => file.endsWith('.md')).map(file => fs.readFileSync(file, 'utf8')).find(text => new RegExp(`^id: ${id}$`, 'm').test(text) && /^type: task$/m.test(text)) ?? ''
+  await expect.poll(() => taskSource('ux-focus-texts')).toMatch(new RegExp(`follow_up_date: ['"]?${isoDay(1)}`))
+  report.checks.focusTaskDeferred = true
+
+  // Context on demand: linked notes appear only after the button.
+  const offer = row('Tasks', 'Angebot für Messestand')
+  await offer.hover()
+  await offer.getByRole('button', {name: 'Kontext anzeigen'}).click()
+  await expect(offer.locator('.focus-context')).toContainText('Messeplanung')
+  await capture('focus-context-light', 'Context opened on one task: status, due date and the linked note from the graph')
+  report.checks.focusContextOnDemand = true
+
+  await theme('dark')
+  await expect(canvas).toBeVisible()
+  await capture('focus-dark', 'Focus view after the interactions, dark, 1440×900')
+  await windowSize(1100, 800)
+  await capture('focus-narrow-dark', 'Narrow window: columns stack and the page scrolls')
+  await windowSize(1280, 800)
+  await page.locator('.activity-rail').getByRole('button', {name: 'Notizen', exact: true}).click()
+  await openNote('Arbeitsnotiz')
+}
+
 async function verifyWhatsNew() {
   // A version change since the last start opens the notes once; the next start stays quiet.
   await windowSize(1280,800); await theme('light')
@@ -2398,6 +2497,7 @@ try {
     if (writing) await verifyWritingMode()
     if (inline) await verifyInlineSuggestions()
     if (whatsNew) await verifyWhatsNew()
+    if (focusView) await verifyFocus()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

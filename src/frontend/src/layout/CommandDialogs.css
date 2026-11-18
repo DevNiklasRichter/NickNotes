@@ -1,7 +1,6 @@
-.window-search-button {display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); flex: 0 1 350px; min-width: 28px; max-width: 350px; margin-left: auto; padding: 3px var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: var(--font-caption); -webkit-app-region: no-drag;}
+.window-search-button {display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); flex: 0 1 350px; min-width: 28px; max-width: 350px; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 350px; padding: 3px var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: var(--font-caption); -webkit-app-region: no-drag;}
 .window-search-button > svg {flex-shrink: 0;}
 .window-search-button > span {overflow: hidden; white-space: nowrap; text-overflow: ellipsis;}
-.window-search-button kbd {margin-left: auto; white-space: nowrap; font: inherit;}
 .quick-open-dialog {display: flex; flex-direction: column; gap: var(--space-3); box-sizing: border-box; min-height: 0; max-height: calc(100vh - 32px); padding: var(--space-4);}
 .quick-open-dialog .command-dialog-header {margin: 0; flex-shrink: 0;}
 .quick-open-dialog > input {flex-shrink: 0;}
@@ -22,6 +21,6 @@
 .quick-open-error {display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--error-text);}
 .quick-open-error p {flex: 1 1 240px;}
 .quick-open-dialog > .muted-copy {flex-shrink: 0;}
-@media (max-width: 1000px) {.window-search-button {flex: 0 0 28px; justify-content: center; padding: 3px; margin-left: auto;} .window-search-button > span, .window-search-button kbd {display: none;}}
+@media (max-width: 1000px) {.window-search-button {flex: 0 0 28px; width: 28px; min-width: 28px; justify-content: center; padding: 3px;} .window-search-button > span {display: none;}}
 @media (max-width: 700px) {.window-titlebar-title {display: none;} .app-menu-bar {margin-left: var(--space-2);} .app-menu-root > button {padding-inline: 6px;}}
 @media (max-height: 320px) {.quick-open-dialog {display: block; overflow: auto;} .quick-open-dialog > * + * {margin-top: var(--space-2);} .quick-open-dialog .quick-open-results {overflow: visible;}}

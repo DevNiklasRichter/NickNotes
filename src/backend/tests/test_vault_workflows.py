@@ -12,7 +12,6 @@ from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
 from src.backend.nicknotes_backend.vault import VaultManager
 
 from src.backend import api as backend_api
-from src.backend.use_cases import GetFocusDashboardUseCase
 
 from src.backend.tests.http_client import TestClient
 
@@ -163,21 +162,6 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.indexer.list_tasks()), 0)
         self.assertEqual(len(self.indexer.list_todos()), 0)
 
-    def test_compute_done_today_counts_does_not_invent_legacy_completion_times(self) -> None:
-        tasks = [
-            {"status": "done", "completed_at": "2026-04-19T10:00:00", "updated_at": "2026-04-18T10:00:00"},
-            {"status": "done", "completed_at": "", "updated_at": "2026-04-19T11:00:00"},
-            {"status": "open", "completed_at": "2026-04-19T12:00:00", "updated_at": "2026-04-19T12:00:00"},
-        ]
-        todos = [
-            {"checked": True, "completed_at": "2026-04-19T09:00:00", "updated_at": "2026-04-17T09:00:00"},
-            {"checked": True, "completed_at": None, "updated_at": "2026-04-19T15:00:00"},
-            {"checked": False, "completed_at": "2026-04-19T16:00:00", "updated_at": "2026-04-19T16:00:00"},
-        ]
-        done_tasks, done_todos = GetFocusDashboardUseCase._compute_done_today_counts(tasks=tasks, todos=todos, day_iso="2026-04-19")
-        self.assertEqual(done_tasks, 1)
-        self.assertEqual(done_todos, 1)
-
     def test_open_endpoint_recovers_corrupt_index_db(self) -> None:
         self.indexer.close()
         self.vault.db_path.write_text("NOT A SQLITE DATABASE", encoding="utf-8")
@@ -194,60 +178,6 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertTrue(self.vault.db_path.exists())
 
         self.indexer = VaultIndexer(self.vault.db_path)
-
-    def test_compute_focus_stats_includes_phase_f_hygiene_counts(self) -> None:
-        tasks = [
-            {
-                "id": "task_a",
-                "status": "open",
-                "due_date": "2026-04-18",
-                "estimate_minutes": 30,
-                "waiting_for": "",
-                "follow_up_date": "",
-                "blocked_by_ids": [],
-                "updated_at": "2026-04-18T10:00:00",
-            },
-            {
-                "id": "task_b",
-                "status": "open",
-                "due_date": "",
-                "estimate_minutes": None,
-                "waiting_for": "Vendor feedback",
-                "follow_up_date": "",
-                "blocked_by_ids": [],
-                "updated_at": "2026-04-19T10:00:00",
-            },
-            {
-                "id": "task_c",
-                "status": "open",
-                "due_date": "",
-                "estimate_minutes": "",
-                "waiting_for": "",
-                "follow_up_date": "",
-                "blocked_by_ids": ["task_a", "missing_task"],
-                "updated_at": "2026-04-19T12:00:00",
-            },
-            {
-                "id": "task_done",
-                "status": "done",
-                "due_date": "2026-04-19",
-                "estimate_minutes": 15,
-                "waiting_for": "",
-                "follow_up_date": "",
-                "blocked_by_ids": [],
-                "completed_at": "2026-04-19T18:00:00",
-                "updated_at": "2026-04-19T18:00:00",
-            },
-        ]
-        stats = GetFocusDashboardUseCase._compute_focus_stats(tasks=tasks, todos=[], day_iso="2026-04-19")
-        self.assertEqual(int(stats.get("overdueCount", 0)), 1)
-        self.assertEqual(int(stats.get("blockedCount", 0)), 2)
-        self.assertEqual(int(stats.get("waitingCount", 0)), 1)
-        self.assertEqual(int(stats.get("doneTodayTasks", 0)), 1)
-        self.assertEqual(int(stats.get("openTasksWithoutEstimateCount", 0)), 2)
-        self.assertEqual(int(stats.get("waitingWithoutFollowUpCount", 0)), 1)
-        self.assertEqual(int(stats.get("unknownBlockerTaskCount", 0)), 1)
-        self.assertEqual(int(stats.get("unknownBlockerReferenceCount", 0)), 1)
 
     def test_focus_dashboard_endpoint_returns_aggregate_structure(self) -> None:
         backend_api.state.dispose_session()
@@ -291,16 +221,35 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertIn("todos", payload)
         self.assertIn("notes", payload)
         self.assertIn("mitIds", payload)
-        self.assertIn("stats", payload)
         self.assertIn("counts", payload)
+        self.assertNotIn("stats", payload)
+        legacy = next(task for task in payload["tasks"] if task["id"] == "tk_legacy_done_no_completed")
+        self.assertFalse(legacy.get("completed_at"))  # An unknown completion stays unknown; the view must not count it.
 
-        stats = payload.get("stats") or {}
-        self.assertEqual(int(stats.get("doneTodayTasks", 0)), 0)  # Legacy completion date is unknown.
-        self.assertGreaterEqual(int(stats.get("doneToday", 0)), int(stats.get("doneTodayTasks", 0)))
-        self.assertIn("openTasksWithoutEstimateCount", stats)
-        self.assertIn("waitingWithoutFollowUpCount", stats)
-        self.assertIn("unknownBlockerTaskCount", stats)
-        self.assertIn("unknownBlockerReferenceCount", stats)
+    def test_task_follow_up_defers_and_resumes_through_note_save(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post("/notebase/open", json={"path": str(self.vault_path)}).status_code, 200)
+        created = client.post("/note-groups/add-note", json={"groupKey": "", "title": "Lieferant anrufen", "noteType": "task"})
+        self.assertEqual(created.status_code, 200)
+        task_path = Path(created.json()["notePath"])
+        task_id = str(parse_markdown(task_path)[0]["id"])
+
+        deferred = client.post(f"/tasks/{task_id}/follow-up", json={"date": "2026-11-21"})
+        self.assertEqual(deferred.status_code, 200)
+        self.assertEqual(deferred.json()["followUpDate"], "2026-11-21")
+        meta, _ = parse_markdown(task_path)
+        self.assertEqual(meta["follow_up_date"], "2026-11-21")
+        row = next(task for task in client.get("/tasks").json()["items"] if task["id"] == task_id)
+        self.assertEqual(row["follow_up_date"], "2026-11-21")
+
+        resumed = client.post(f"/tasks/{task_id}/follow-up", json={"date": ""})
+        self.assertEqual(resumed.status_code, 200)
+        self.assertIsNone(resumed.json()["followUpDate"])
+        self.assertNotIn("follow_up_date", parse_markdown(task_path)[0])
+
+        self.assertEqual(client.post(f"/tasks/{task_id}/follow-up", json={"date": "21.11.2026"}).status_code, 400)
+        self.assertEqual(client.post("/tasks/tk_missing/follow-up", json={"date": "2026-11-21"}).status_code, 404)
 
     def test_daily_open_today_endpoint_creates_then_reuses_daily(self) -> None:
         backend_api.state.dispose_session()

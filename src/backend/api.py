@@ -51,6 +51,7 @@ from .contracts import (
     TagMatchCandidatesResponse,
     TagOverviewResponse,
     TaskDoneResponse,
+    TaskFollowUpResponse,
     TaskListResponse,
     TodoListResponse,
     TodoPromoteResponse,
@@ -88,6 +89,7 @@ from .commands import (
     TagGroupRequest,
     TagMatchApplyRequest,
     TagRenameRequest,
+    TaskFollowUpRequest,
     TodoToggleRequest,
     UiSettingsUpdateRequest,
     VaultCreateRequest,
@@ -461,6 +463,11 @@ def toggle_todo(todo_id: str, req: TodoToggleRequest) -> dict[str, Any]:
 @app.post("/todos/{todo_id}/promote", response_model=TodoPromoteResponse)
 def promote_todo(todo_id: str) -> dict[str, Any]:
     return backend_api_service.promote_todo(todo_id)
+
+
+@app.post("/tasks/{task_id}/follow-up", response_model=TaskFollowUpResponse)
+def set_task_follow_up(task_id: str, req: TaskFollowUpRequest) -> dict[str, Any]:
+    return backend_api_service.set_task_follow_up(task_id, req)
 
 
 @app.post("/tasks/{task_id}/done", response_model=TaskDoneResponse)

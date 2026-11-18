@@ -6,7 +6,7 @@ import { API_CONTRACT_VERSION as BACKEND_API_CONTRACT_VERSION } from '../contrac
 export { normalizeTagCandidate } from '../tags/tagTypes';
 export { DEFAULT_TAG_GROUP_COLOR, TAG_COLOR_PRESETS } from '../tags/tagColorPalette';
 export { TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, } from '../shared/taskDomain';
-import type { VaultCounts as ContractVaultCounts, SuggestionResponse as ContractSuggestionResponse, SearchRow as ContractSearchRow, SearchResponse as ContractSearchResponse, TaskRow as ContractTaskRow, TodoRow as ContractTodoRow, FocusDashboardAggregateStats as ContractFocusDashboardAggregateStats, FocusDashboardAggregateResponse as ContractFocusDashboardAggregateResponse, GraphIndexStatusResponse as ContractGraphIndexStatus, BackendStateResponse as ContractBackendState } from '../contracts/apiContracts';
+import type { VaultCounts as ContractVaultCounts, SuggestionResponse as ContractSuggestionResponse, SearchRow as ContractSearchRow, SearchResponse as ContractSearchResponse, TaskRow as ContractTaskRow, TodoRow as ContractTodoRow, FocusDashboardAggregateResponse as ContractFocusDashboardAggregateResponse, GraphIndexStatusResponse as ContractGraphIndexStatus, BackendStateResponse as ContractBackendState } from '../contracts/apiContracts';
 export const API_CONTRACT_VERSION = BACKEND_API_CONTRACT_VERSION;
 export type VaultCounts = ContractVaultCounts;
 export type Suggestion = ContractSuggestionResponse;
@@ -14,7 +14,6 @@ export type SearchRow = ContractSearchRow;
 export type SearchResponse = ContractSearchResponse;
 export type TaskRow = ContractTaskRow;
 export type TodoRow = ContractTodoRow;
-export type FocusDashboardAggregateStats = ContractFocusDashboardAggregateStats;
 export type FocusDashboardAggregateResponse = ContractFocusDashboardAggregateResponse;
 export type GraphIndexStatus = ContractGraphIndexStatus;
 export type BackendState = ContractBackendState;
@@ -47,15 +46,8 @@ export type TaskDashboardFilters = {
     listSortBy: TaskListSortField;
     listSortDirection: TaskListSortDirection;
 };
-export type FocusDashboardSection = 'tasks' | 'todos' | 'notes';
-export type FocusDashboardScope = 'overdue' | 'today' | 'tomorrow' | 'week' | 'next7' | 'all';
-export type FocusDashboardMode = 'execution' | 'planning' | 'rescue' | 'context';
 export type FocusDashboardFilters = {
     query: string;
-    sections: FocusDashboardSection[];
-    scope: FocusDashboardScope;
-    mode: FocusDashboardMode;
-    maxItems: number;
 };
 export type MediaUploadResponse = {
     mediaPath: string;
@@ -259,10 +251,6 @@ export const DEFAULT_TASK_DASHBOARD_FILTERS: TaskDashboardFilters = {
 };
 export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
     query: '',
-    sections: [],
-    scope: 'today',
-    mode: 'execution',
-    maxItems: 12,
 };
 export const DEFAULT_REVIEW_DASHBOARD_FILTERS: ReviewDashboardFilters = {
     window: '30d',

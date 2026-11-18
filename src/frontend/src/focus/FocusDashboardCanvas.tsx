@@ -1,266 +1,166 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
-import {
-  type FocusDashboardMode,
-  type FocusDashboardAggregateStats,
-  taskPriorityDotClassName,
-  taskPriorityLabel,
-  taskStatusClassName,
-  taskStatusLabel,
-  getRelativeVaultPath,
-  toLocalIsoDate,
-  type FocusDashboardFilters,
-  type SearchRow,
-  type TaskFeatureSettings,
-  type TaskRow,
-  type TodoRow,
-} from '../app/AppShared'
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { getRelativeVaultPath, normalizeFilePathKey, taskStatusLabel, toLocalIsoDate, type SearchRow, type TaskRow, type TodoRow } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import { localCalendarDay } from '../shared/dates'
+import { ContextMenuItem } from '../ui/ContextMenu'
+import { MenuButton } from '../ui/MenuButton'
 import {
-  buildFocusContextHits,
+  addDays,
   buildFocusDashboardData,
-  toDotDateLabel,
-  type FocusCapacityStatus,
-  type FocusMitSuggestion,
-  type FocusNextActionItem,
-  type FocusPrimaryItem,
+  deferOptions,
+  MAX_MIT_ITEMS,
+  toHeaderDateLabel,
+  toPlainTodoText,
+  toShortDayLabel,
+  toTaskReasonLabel,
+  type FocusMitEntry,
+  type FocusNoteItem,
+  type FocusTaskItem,
+  type FocusTodoItem,
 } from './focusDashboardModel'
+
+/** One neighbour from `/graph/related`: linked notes and notes sharing weighted tags. */
+export type FocusRelatedNote = {
+  path: string
+  title: string
+  linked: boolean
+  sharedTags: string[]
+}
+
+type NoteType = 'note' | 'task'
 
 type FocusDashboardCanvasProps = {
   tasks: TaskRow[]
   todos: TodoRow[]
   notes: SearchRow[]
-  focusStats: FocusDashboardAggregateStats
   noteBasePath: string
-  filters: FocusDashboardFilters
+  query: string
   mitIds: string[]
-  taskFeatureSettings: TaskFeatureSettings
-  onFiltersChange: (next: FocusDashboardFilters) => void
+  showTaskDetails: boolean
   onSaveMit: (nextMitIds: string[]) => Promise<string[]>
   onQuickCaptureTodo: (rawText: string) => Promise<void>
-  onOpenTaskPath: (path: string, title?: string) => void
-  onOpenTodoOrigin: (notePath: string, title?: string) => void
-  onOpenNotePath: (path: string, title?: string, noteType?: 'note' | 'task') => void
-  toGermanTimestamp: (value: string) => string
+  onToggleTodo: (todoId: string, checked: boolean) => Promise<void>
+  onSetTaskFollowUp: (taskId: string, date: string) => Promise<void>
+  onLoadRelatedNotes: (path: string) => Promise<FocusRelatedNote[]>
+  onOpenNotePath: (path: string, title?: string, noteType?: NoteType) => void
+  onOpenTodayDaily: () => void
+  onOpenTodoDashboard: () => void
+  onOpenTaskDashboard: () => void
 }
 
-type ScopeOption = {
-  value: FocusDashboardFilters['scope']
+const EARLIER_TODO_LIMIT = 30
+
+function errorText(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
+/** Time for today's edits, the short day otherwise. */
+function toEditedLabel(updatedAt: string, todayIso: string): string {
+  const day = localCalendarDay(updatedAt)
+  if (!day) return ''
+  if (day !== todayIso) return toShortDayLabel(day, todayIso)
+  const stamp = new Date(updatedAt)
+  return Number.isNaN(stamp.getTime()) ? '' : stamp.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+}
+
+function toNoteBaseAbsolutePath(relativePath: string, noteBasePath: string): string {
+  const separator = noteBasePath.includes('\\') ? '\\' : '/'
+  return `${noteBasePath.replace(/[\\/]+$/, '')}${separator}${relativePath.replace(/[\\/]+/g, separator)}`
+}
+
+function IconButton({ label, icon, onClick, pressed, expanded, disabled, className = '' }: {
   label: string
+  icon: string
+  onClick: () => void
+  pressed?: boolean
+  expanded?: boolean
+  disabled?: boolean
+  className?: string
+}) {
+  return (
+    <button type="button" className={`icon-button compact muted ${className}`} aria-label={label} data-tooltip={label}
+      aria-pressed={pressed} aria-expanded={expanded} disabled={disabled} onClick={onClick}>
+      <LucideNamedIcon name={icon} size={14} />
+    </button>
+  )
 }
 
-type ModeOption = {
-  value: FocusDashboardMode
-  label: string
+function MitMarker() {
+  return <span className="focus-mit-marker" data-tooltip="Heute wichtig"><LucideNamedIcon name="Star" size={12} /></span>
 }
 
-const SCOPE_OPTIONS: ScopeOption[] = [
-  { value: 'overdue', label: 'Überfällig' },
-  { value: 'today', label: 'Heute' },
-  { value: 'tomorrow', label: 'Morgen' },
-  { value: 'week', label: 'Woche' },
-  { value: 'next7', label: '7 Tage' },
-  { value: 'all', label: 'Alles' },
-]
+function ColumnHeader({ title, count, action }: { title: string; count?: number; action?: ReactNode }) {
+  return (
+    <header className="focus-column-header">
+      <h3>{title}</h3>
+      {typeof count === 'number' ? <span className="focus-count">{count}</span> : null}
+      <span className="focus-column-header-action">{action}</span>
+    </header>
+  )
+}
 
-const MODE_OPTIONS: ModeOption[] = [
-  { value: 'execution', label: 'Execution' },
-  { value: 'planning', label: 'Planning' },
-  { value: 'rescue', label: 'Rescue' },
-  { value: 'context', label: 'Context' },
-]
+type ContextLine = { label: string; value: string }
 
-function focusItemMetaLabel(item: FocusPrimaryItem): string {
-  if (item.kind === 'task') {
-    const dueLabel = toDotDateLabel(item.dueDate)
-    return `Fällig: ${dueLabel} | Update: ${item.updatedAt.slice(0, 10)}`
+function FocusContextPanel({ path, lines, origin, linkedTitles, notes, noteBasePath, onLoadRelatedNotes, onOpenNotePath }: {
+  path: string | null
+  lines: ContextLine[]
+  origin?: { path: string; title: string }
+  linkedTitles: string[]
+  notes: SearchRow[]
+  noteBasePath: string
+  onLoadRelatedNotes: (path: string) => Promise<FocusRelatedNote[]>
+  onOpenNotePath: (path: string, title?: string, noteType?: NoteType) => void
+}) {
+  const [related, setRelated] = useState<{ path: string; items: FocusRelatedNote[]; error: string } | null>(null)
+  useEffect(() => {
+    if (!path) return
+    let current = true
+    onLoadRelatedNotes(path).then(
+      (items) => { if (current) setRelated({ path, items, error: '' }) },
+      (error: unknown) => { if (current) setRelated({ path, items: [], error: errorText(error, 'Verknüpfte Notizen konnten nicht geladen werden.') }) },
+    )
+    return () => { current = false }
+  }, [onLoadRelatedNotes, path])
+
+  const notesByRelativePath = useMemo(() => new Map(notes.map((note) => [normalizeFilePathKey(getRelativeVaultPath(note.path, noteBasePath)), note])), [noteBasePath, notes])
+  const notesByTitle = useMemo(() => new Map(notes.map((note) => [note.title.replace(/\.md$/i, '').trim().toLowerCase(), note])), [notes])
+  const open = (relativeOrAbsolute: string, title: string) => {
+    const known = notesByRelativePath.get(normalizeFilePathKey(relativeOrAbsolute))
+    const noteType: NoteType = known?.note_type.trim().toLowerCase() === 'task' ? 'task' : 'note'
+    onOpenNotePath(known?.path || toNoteBaseAbsolutePath(relativeOrAbsolute, noteBasePath), title, noteType)
   }
-  return `Todo | Update: ${item.updatedAt.slice(0, 10)}`
-}
-
-function cleanNoteTitle(rawTitle: string): string {
-  return rawTitle.replace(/\.md$/i, '')
-}
-
-function toNoteRelativeDisplayPath(path: string, noteBasePath: string): string {
-  return getRelativeVaultPath(path, noteBasePath).replace(/\\/g, '/').replace(/\.md$/i, '')
-}
-
-function toMarkedRelativeNotePath(path: string, noteBasePath: string): string {
-  return toNoteRelativeDisplayPath(path, noteBasePath)
-    .split('/')
-    .filter(Boolean)
-    .join(' / ')
-}
-
-function noteTypeIcon(noteType: string): string {
-  return noteType.trim().toLowerCase() === 'task' ? 'CheckSquare' : 'FileText'
-}
-
-function toErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message
-  }
-  return fallback
-}
-
-function toEstimateLabel(minutes: number | null): string {
-  if (minutes === null || minutes <= 0) {
-    return ''
-  }
-  return `${minutes}m`
-}
-
-function truncateText(raw: string | null, limit: number): string {
-  const clean = (raw || '').trim()
-  if (!clean) {
-    return ''
-  }
-  if (clean.length <= limit) {
-    return clean
-  }
-  return `${clean.slice(0, Math.max(0, limit - 3)).trimEnd()}...`
-}
-
-function dedupeByKey(items: FocusPrimaryItem[]): FocusPrimaryItem[] {
-  const seen = new Set<string>()
-  const deduped: FocusPrimaryItem[] = []
-  for (const item of items) {
-    if (seen.has(item.key)) {
-      continue
-    }
-    seen.add(item.key)
-    deduped.push(item)
-  }
-  return deduped
-}
-
-function toCapacityLabel(status: FocusCapacityStatus): string {
-  if (status === 'light') {
-    return 'Leicht'
-  }
-  if (status === 'balanced') {
-    return 'Ausbalanciert'
-  }
-  if (status === 'heavy') {
-    return 'Voll'
-  }
-  return 'Überladen'
-}
-
-function toSuggestionActionDisabled(entry: FocusMitSuggestion, mitBusyKey: string): boolean {
-  return Boolean(mitBusyKey) || !entry.item.canAddToMit
-}
-
-function toNextActionEntry(item: FocusNextActionItem): FocusPrimaryItem {
-  return item.item
-}
-
-type FocusItemCardProps = {
-  item: FocusPrimaryItem
-  selected: boolean
-  overdue?: boolean
-  focusMode: FocusDashboardMode
-  showAdvancedTaskSignals: boolean
-  showTaskTimeManagement: boolean
-  mitBusy: boolean
-  onSelect: (itemKey: string) => void
-  onToggleMit: (item: FocusPrimaryItem) => void
-  onOpenOrigin: (item: FocusPrimaryItem) => void
-}
-
-function FocusItemCard({
-  item,
-  selected,
-  overdue = false,
-  focusMode,
-  showAdvancedTaskSignals,
-  showTaskTimeManagement,
-  mitBusy,
-  onSelect,
-  onToggleMit,
-  onOpenOrigin,
-}: FocusItemCardProps) {
-  const canOpen = Boolean(item.path)
-  const mitActionDisabled = mitBusy || (!item.isMit && !item.canAddToMit)
-  const mitActionTitle = item.isMit
-    ? 'Aus MIT entfernen'
-    : item.canAddToMit
-      ? 'Als MIT setzen'
-      : 'MIT-Limit erreicht oder Element ist erledigt'
+  const linkedNotes = linkedTitles.map((title) => notesByTitle.get(title.split('/').pop()!.trim().toLowerCase())).filter((note): note is SearchRow => Boolean(note))
+  const shown = new Set([origin?.path, ...linkedNotes.map((note) => note.path)].filter(Boolean).map((entry) => normalizeFilePathKey(getRelativeVaultPath(entry!, noteBasePath))))
+  const relatedItems = related?.path === path ? related.items.filter((item) => !shown.has(normalizeFilePathKey(item.path))) : []
+  const loading = Boolean(path) && related?.path !== path
 
   return (
-    <article
-      className={`focus-primary-card ${selected ? 'selected' : ''} ${overdue ? 'overdue' : ''} ${item.isMit ? 'mit' : ''} ${item.isDone ? 'done' : ''} ${
-        item.isBlocked ? 'blocked' : ''
-      } ${focusMode === 'context' && item.contextBadgeCount > 0 ? 'context-boost' : ''}`}
-    >
-      <button
-        className="focus-primary-card-main"
-        onClick={() => {
-          onSelect(item.key)
-        }}
-        data-tooltip="Kontext zu diesem Fokuspunkt anzeigen"
-      >
-        <div className="focus-primary-card-head">
-          <span className={`item-kind-pill ${item.kind === 'todo' ? 'todo' : ''}`}>{item.kind === 'task' ? 'TASK' : 'TODO'}</span>
-          {item.kind === 'task' ? <span className={taskStatusClassName(item.status || 'open')}>{taskStatusLabel(item.status || 'open')}</span> : null}
-          {item.kind === 'task' ? (
-            <span className="task-priority-badge">
-              <span className={taskPriorityDotClassName(item.priority || 'medium')} aria-hidden="true" />
-              {taskPriorityLabel(item.priority || 'medium')}
-            </span>
-          ) : null}
-          {showTaskTimeManagement && item.kind === 'task' && item.estimateMinutes !== null ? (
-            <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span>
-          ) : null}
-          {item.isDone ? <span className="focus-context-badge-chip">Erledigt</span> : null}
-          {showAdvancedTaskSignals && item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
-          {showAdvancedTaskSignals && item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
-          {showAdvancedTaskSignals && item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
-          {showAdvancedTaskSignals && item.unknownBlockerCount > 0 ? (
-            <span className="focus-context-badge-chip">
-              {item.unknownBlockerCount} unbekannter Blocker
-            </span>
-          ) : null}
-        </div>
-        <strong>{item.title}</strong>
-        <p>{focusItemMetaLabel(item)}</p>
-        {showAdvancedTaskSignals && item.waitingFor ? <p className="focus-item-secondary">Warten auf: {truncateText(item.waitingFor, 56)}</p> : null}
-        {showAdvancedTaskSignals && item.blockedReason ? <p className="focus-item-secondary">Blocker: {truncateText(item.blockedReason, 56)}</p> : null}
-        {showAdvancedTaskSignals && item.nextActionHint ? <p className="focus-item-secondary">Nächster Schritt: {truncateText(item.nextActionHint, 72)}</p> : null}
-        {item.contextBadgeCount > 0 ? (
-          <div className="focus-context-badge-row">
-            <span className="focus-context-badge-chip">Kontext {item.contextBadgeCount}</span>
-            {item.hasOriginNote ? <span className="focus-context-badge-chip">Ursprung</span> : null}
-            {item.hasRelatedContext ? <span className="focus-context-badge-chip">Related</span> : null}
-            {item.hasTagContext ? <span className="focus-context-badge-chip">Tag</span> : null}
-          </div>
+    <div className="focus-context">
+      {lines.length > 0 ? (
+        <dl className="focus-context-lines">
+          {lines.map((line) => (
+            <div key={line.label}><dt>{line.label}</dt><dd>{line.value}</dd></div>
+          ))}
+        </dl>
+      ) : null}
+      <ul className="focus-context-notes">
+        {origin ? (
+          <li><button type="button" onClick={() => onOpenNotePath(origin.path, origin.title, 'note')}>{origin.title}</button><span>steht in</span></li>
         ) : null}
-      </button>
-
-      <div className="focus-primary-actions">
-        <button
-          className="focus-card-action-button"
-          onClick={() => {
-            onToggleMit(item)
-          }}
-          disabled={mitActionDisabled}
-          data-tooltip={mitActionTitle}
-        >
-          {item.isMit ? 'Aus MIT' : 'Als MIT'}
-        </button>
-        <button
-          className="icon-button compact muted"
-          disabled={!canOpen}
-          onClick={() => {
-            onOpenOrigin(item)
-          }}
-          aria-label={canOpen ? 'Ursprung öffnen' : 'Kein Ursprungspfad vorhanden'} data-tooltip={canOpen ? 'Ursprung öffnen' : 'Kein Ursprungspfad vorhanden'}
-        >
-          <LucideNamedIcon name="ArrowUpRight" size={14} />
-        </button>
-      </div>
-    </article>
+        {linkedNotes.map((note) => (
+          <li key={`linked:${note.path}`}><button type="button" onClick={() => onOpenNotePath(note.path, note.title, note.note_type.trim().toLowerCase() === 'task' ? 'task' : 'note')}>{note.title}</button><span>im To-do verlinkt</span></li>
+        ))}
+        {relatedItems.map((item) => (
+          <li key={item.path}>
+            <button type="button" onClick={() => open(item.path, item.title)}>{item.title}</button>
+            <span>{item.linked ? 'verlinkt' : item.sharedTags.map((tag) => `#${tag.split(':').pop()}`).join(' ')}</span>
+          </li>
+        ))}
+      </ul>
+      {loading ? <p className="focus-hint">Suche verknüpfte Notizen …</p> : null}
+      {related?.path === path && related.error ? <p className="focus-inline-error">{related.error}</p> : null}
+      {related?.path === path && !related.error && relatedItems.length === 0 && !origin && linkedNotes.length === 0 ? <p className="focus-hint">Keine verknüpften Notizen.</p> : null}
+    </div>
   )
 }
 
@@ -269,723 +169,319 @@ export function FocusDashboardCanvas({
   todos,
   notes,
   noteBasePath,
-  filters,
-  focusStats,
+  query,
   mitIds,
-  taskFeatureSettings,
-  onFiltersChange,
+  showTaskDetails,
   onSaveMit,
   onQuickCaptureTodo,
-  onOpenTaskPath,
-  onOpenTodoOrigin,
+  onToggleTodo,
+  onSetTaskFollowUp,
+  onLoadRelatedNotes,
   onOpenNotePath,
-  toGermanTimestamp,
+  onOpenTodayDaily,
+  onOpenTodoDashboard,
+  onOpenTaskDashboard,
 }: FocusDashboardCanvasProps) {
-  const todayIso = useMemo(() => toLocalIsoDate(), [])
-  const data = useMemo(
-    () =>
-      buildFocusDashboardData({
-        tasks,
-        todos,
-        notes,
-        filters,
-        todayIso,
-        mitIds,
-        focusStats,
-        taskFeatureSettings,
-      }),
-    [filters, focusStats, mitIds, notes, taskFeatureSettings, tasks, todayIso, todos]
-  )
+  const todayIso = toLocalIsoDate()
+  const data = useMemo(() => buildFocusDashboardData({ tasks, todos, notes, mitIds, todayIso, query }), [mitIds, notes, query, tasks, todayIso, todos])
 
-  const showAdvancedTaskSignals = taskFeatureSettings.advancedTaskHandling
-  const showTaskTimeManagement = taskFeatureSettings.taskTimeManagement
-
-  const selectableItems = useMemo(
-    () => dedupeByKey([...data.mitItems, ...data.overdueItems, ...data.blockedItems, ...data.waitingItems, ...data.followUpTodayItems, ...data.focusItems, ...data.candidateItems]),
-    [data.blockedItems, data.candidateItems, data.focusItems, data.followUpTodayItems, data.mitItems, data.overdueItems, data.waitingItems]
-  )
-
-  const [selectedKey, setSelectedKey] = useState<string>('')
-  const [mitBusyKey, setMitBusyKey] = useState<string>('')
+  const [mitBusy, setMitBusy] = useState(false)
   const [mitError, setMitError] = useState('')
+  const [taskError, setTaskError] = useState('')
+  const [todoError, setTodoError] = useState('')
+  const [contextKey, setContextKey] = useState('')
+  const [pickingKey, setPickingKey] = useState('')
+  const [busyTaskKey, setBusyTaskKey] = useState('')
+  const [pendingChecks, setPendingChecks] = useState<Record<string, boolean>>({})
   const [captureValue, setCaptureValue] = useState('')
   const [captureBusy, setCaptureBusy] = useState(false)
-  const [captureError, setCaptureError] = useState('')
-  const [captureSuccess, setCaptureSuccess] = useState('')
 
-  const selectedItem = useMemo(
-    () => selectableItems.find((item) => item.key === selectedKey) || selectableItems[0] || null,
-    [selectableItems, selectedKey]
-  )
-  const contextHits = useMemo(() => (selectedItem ? buildFocusContextHits(selectedItem, notes) : []), [notes, selectedItem])
+  const toggleContext = (key: string) => setContextKey((current) => (current === key ? '' : key))
 
-  useEffect(() => {
-    if (!captureSuccess) {
-      return
-    }
-    const timer = window.setTimeout(() => {
-      setCaptureSuccess('')
-    }, 2200)
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [captureSuccess])
-
-  const setScope = (scope: FocusDashboardFilters['scope']) => {
-    if (scope === filters.scope) {
-      return
-    }
-    onFiltersChange({ ...filters, scope })
-  }
-
-  const setMode = (mode: FocusDashboardMode) => {
-    if (mode === filters.mode) {
-      return
-    }
-    onFiltersChange({ ...filters, mode })
-  }
-
-  const openItemOrigin = (item: FocusPrimaryItem) => {
-    if (!item.path) {
-      return
-    }
-    if (item.kind === 'task') {
-      onOpenTaskPath(item.path, item.title)
-      return
-    }
-    onOpenTodoOrigin(item.path, item.title)
-  }
-
-  const toggleMit = async (item: FocusPrimaryItem) => {
-    if (mitBusyKey) {
-      return
-    }
-    const currentMitIds = data.mitIds
-    const nextMitIds = item.isMit ? currentMitIds.filter((entry) => entry !== item.key) : [...currentMitIds, item.key]
-    setMitBusyKey(item.key)
+  const saveMit = async (next: string[]) => {
+    if (mitBusy) return
+    setMitBusy(true)
     setMitError('')
     try {
-      await onSaveMit(nextMitIds)
+      await onSaveMit(next)
     } catch (error) {
-      setMitError(toErrorMessage(error, 'MIT konnte nicht gespeichert werden.'))
+      setMitError(errorText(error, '„Heute wichtig“ konnte nicht gespeichert werden.'))
     } finally {
-      setMitBusyKey('')
+      setMitBusy(false)
+    }
+  }
+  const toggleMit = (key: string) => {
+    void saveMit(data.mitIds.includes(key) ? data.mitIds.filter((entry) => entry !== key) : [...data.mitIds, key])
+  }
+
+  const deferTask = async (task: FocusTaskItem, date: string) => {
+    setBusyTaskKey(task.key)
+    setTaskError('')
+    try {
+      await onSetTaskFollowUp(task.id, date)
+      setPickingKey('')
+    } catch (error) {
+      setTaskError(errorText(error, 'Die Task konnte nicht zurückgestellt werden.'))
+    } finally {
+      setBusyTaskKey('')
     }
   }
 
-  const submitQuickCapture = async () => {
-    if (captureBusy) {
-      return
+  const toggleTodo = async (todo: FocusTodoItem, checked: boolean) => {
+    setPendingChecks((current) => ({ ...current, [todo.id]: checked }))
+    setTodoError('')
+    try {
+      await onToggleTodo(todo.id, checked)
+    } catch (error) {
+      setTodoError(errorText(error, 'Das To-do konnte nicht gespeichert werden.'))
+    } finally {
+      setPendingChecks((current) => {
+        const next = { ...current }
+        delete next[todo.id]
+        return next
+      })
     }
+  }
+
+  const submitCapture = async () => {
     const clean = captureValue.trim()
-    if (!clean) {
-      return
-    }
+    if (!clean || captureBusy) return
     setCaptureBusy(true)
-    setCaptureError('')
-    setCaptureSuccess('')
+    setTodoError('')
     try {
       await onQuickCaptureTodo(clean)
       setCaptureValue('')
-      setCaptureSuccess('Todo für heute gespeichert.')
     } catch (error) {
-      setCaptureError(toErrorMessage(error, 'Schnellerfassung konnte nicht gespeichert werden.'))
+      setTodoError(errorText(error, 'Das To-do konnte nicht gespeichert werden.'))
     } finally {
       setCaptureBusy(false)
     }
   }
-
   const onCaptureKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      void submitQuickCapture()
-      return
-    }
-    if (event.key === 'Escape') {
+      void submitCapture()
+    } else if (event.key === 'Escape' && captureValue) {
       event.preventDefault()
       setCaptureValue('')
-      setCaptureError('')
-      setCaptureSuccess('')
     }
   }
 
-  const totalAutoFocusItems = data.focusItems.length + data.candidateItems.length
-  const blockingSectionItems = useMemo(
-    () => dedupeByKey([...data.followUpTodayItems, ...data.waitingItems, ...data.blockedItems]).slice(0, 10),
-    [data.blockedItems, data.followUpTodayItems, data.waitingItems]
+  const mitButton = (key: string, isMit: boolean, title: string) => (
+    <IconButton
+      label={isMit ? `„${title}“ aus „Heute wichtig“ entfernen` : data.canAddMit ? 'Zu „Heute wichtig“ hinzufügen' : `Höchstens ${MAX_MIT_ITEMS} Einträge – erst einen entfernen`}
+      icon="Star"
+      className={`focus-star ${isMit ? 'active' : ''}`}
+      pressed={isMit}
+      disabled={mitBusy || (!isMit && !data.canAddMit)}
+      onClick={() => toggleMit(key)}
+    />
   )
-  const planningHintEntries = useMemo(() => {
-    const entries: Array<{ key: string; label: string; count: number }> = []
-    if (showTaskTimeManagement && data.planningHints.focusWithoutEstimateCount > 0) {
-      entries.push({
-        key: 'focus_without_estimate',
-        label: 'Fokus ohne Schätzung',
-        count: data.planningHints.focusWithoutEstimateCount,
-      })
-    }
-    if (showTaskTimeManagement && data.planningHints.mitWithoutEstimateCount > 0) {
-      entries.push({
-        key: 'mit_without_estimate',
-        label: 'MIT ohne Schätzung',
-        count: data.planningHints.mitWithoutEstimateCount,
-      })
-    }
-    if (showAdvancedTaskSignals && data.planningHints.waitingWithoutFollowUpCount > 0) {
-      entries.push({
-        key: 'waiting_without_followup',
-        label: 'Waiting ohne Follow-up',
-        count: data.planningHints.waitingWithoutFollowUpCount,
-      })
-    }
-    if (showAdvancedTaskSignals && data.planningHints.unknownBlockerTaskCount > 0) {
-      entries.push({
-        key: 'unknown_blockers',
-        label: 'Tasks mit unbekanntem Blocker',
-        count: data.planningHints.unknownBlockerTaskCount,
-      })
-    }
-    return entries
-  }, [
-    data.planningHints.focusWithoutEstimateCount,
-    data.planningHints.mitWithoutEstimateCount,
-    data.planningHints.unknownBlockerTaskCount,
-    data.planningHints.waitingWithoutFollowUpCount,
-    showAdvancedTaskSignals,
-    showTaskTimeManagement,
-  ])
+
+  const contextPanelProps = { notes, noteBasePath, onLoadRelatedNotes, onOpenNotePath }
+
+  const renderTask = (task: FocusTaskItem) => {
+    const label = toTaskReasonLabel(task, todayIso)
+    const contextOpen = contextKey === task.key
+    const lines: ContextLine[] = [
+      { label: 'Status', value: taskStatusLabel(task.status) },
+      ...(task.dueDate ? [{ label: 'Fällig', value: toShortDayLabel(task.dueDate, todayIso) }] : []),
+      ...(task.followUpDate ? [{ label: 'Wiedervorlage', value: toShortDayLabel(task.followUpDate, todayIso) }] : []),
+      ...(showTaskDetails && task.nextActionHint ? [{ label: 'Nächster Schritt', value: task.nextActionHint }] : []),
+      ...(showTaskDetails && task.waitingFor ? [{ label: 'Warten auf', value: task.waitingFor }] : []),
+      ...(showTaskDetails && task.blockedReason ? [{ label: 'Blockiert', value: task.blockedReason }] : []),
+    ]
+    return (
+      <li key={task.key} className={`focus-row ${contextOpen ? 'expanded' : ''}`} aria-busy={busyTaskKey === task.key || undefined}>
+        <div className="focus-row-line">
+          <span className={`focus-priority ${task.priority === 'high' ? 'high' : ''}`} aria-hidden="true" />
+          <button type="button" className="focus-row-title" onClick={() => task.path && onOpenNotePath(task.path, task.title, 'task')} disabled={!task.path}>
+            {task.title}
+          </button>
+          {task.isMit ? <MitMarker /> : null}
+          {label ? <span className={`focus-row-meta ${task.overdueDays > 0 ? 'overdue' : ''}`}>{label}</span> : null}
+          <span className="focus-row-actions">
+            {mitButton(task.key, task.isMit, task.title)}
+            <MenuButton label="Zurückstellen" heading="Wieder anzeigen ab" icon={<LucideNamedIcon name="CalendarClock" size={14} />} className="icon-button compact muted" disabled={busyTaskKey === task.key}>
+              {deferOptions(todayIso).map((option) => (
+                <ContextMenuItem key={option.label} onClick={() => void deferTask(task, option.date)}>
+                  {option.label}<span className="focus-menu-date">{toShortDayLabel(option.date, todayIso)}</span>
+                </ContextMenuItem>
+              ))}
+              <ContextMenuItem onClick={() => setPickingKey(task.key)}>Datum wählen …</ContextMenuItem>
+              {task.followUpDate ? <ContextMenuItem onClick={() => void deferTask(task, '')}>Wiedervorlage entfernen</ContextMenuItem> : null}
+            </MenuButton>
+            <IconButton label={contextOpen ? 'Kontext ausblenden' : 'Kontext anzeigen'} icon="Info" expanded={contextOpen} onClick={() => toggleContext(task.key)} />
+          </span>
+        </div>
+        {pickingKey === task.key ? (
+          <form className="focus-defer-form" onSubmit={(event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault()
+            const value = new FormData(event.currentTarget).get('follow-up')
+            if (typeof value === 'string' && value) void deferTask(task, value)
+          }} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); setPickingKey('') } }}>
+            <label>
+              <span>Wieder anzeigen ab</span>
+              <input name="follow-up" type="date" min={addDays(todayIso, 1)} defaultValue={task.followUpDate && task.followUpDate > todayIso ? task.followUpDate : addDays(todayIso, 7)} required autoFocus />
+            </label>
+            <button type="submit" className="primary" disabled={busyTaskKey === task.key}>Zurückstellen</button>
+            <button type="button" onClick={() => setPickingKey('')}>Abbrechen</button>
+          </form>
+        ) : null}
+        {contextOpen ? <FocusContextPanel path={task.path} lines={lines} linkedTitles={[]} {...contextPanelProps} /> : null}
+      </li>
+    )
+  }
+
+  const renderTodo = (todo: FocusTodoItem, showOrigin: boolean) => {
+    const checked = pendingChecks[todo.id] ?? todo.checked
+    const contextOpen = contextKey === todo.key
+    const text = toPlainTodoText(todo.text)
+    return (
+      <li key={todo.key} className={`focus-row ${checked ? 'done' : ''} ${contextOpen ? 'expanded' : ''}`}>
+        <div className="focus-row-line">
+          <label className="focus-todo-check">
+            <input type="checkbox" checked={checked} onChange={(event) => void toggleTodo(todo, event.target.checked)} />
+            <span className="focus-row-text">{text}</span>
+          </label>
+          {todo.isMit ? <MitMarker /> : null}
+          {showOrigin ? <span className="focus-row-meta">{todo.noteTitle}</span> : null}
+          <span className="focus-row-actions">
+            {mitButton(todo.key, todo.isMit, text)}
+            <IconButton label={contextOpen ? 'Kontext ausblenden' : 'Kontext anzeigen'} icon="Info" expanded={contextOpen} onClick={() => toggleContext(todo.key)} />
+            <IconButton label={`„${todo.noteTitle}“ öffnen`} icon="ArrowUpRight" onClick={() => onOpenNotePath(todo.notePath, todo.noteTitle, 'note')} />
+          </span>
+        </div>
+        {contextOpen ? (
+          <FocusContextPanel path={todo.notePath} origin={{ path: todo.notePath, title: todo.noteTitle }} lines={todo.createdDay ? [{ label: 'Notiert', value: toShortDayLabel(todo.createdDay, todayIso) }] : []}
+            linkedTitles={todo.links} {...contextPanelProps} />
+        ) : null}
+      </li>
+    )
+  }
+
+  const renderNote = (note: FocusNoteItem) => (
+    <li key={note.key} className="focus-row">
+      <div className="focus-row-line">
+        <LucideNamedIcon name={note.isDaily ? 'CalendarDays' : 'FileText'} size={13} className="focus-note-icon" />
+        <button type="button" className="focus-row-title" onClick={() => onOpenNotePath(note.path, note.title, 'note')}>{note.title}</button>
+        <span className="focus-row-meta">{toEditedLabel(note.updatedAt, todayIso)}</span>
+      </div>
+    </li>
+  )
+
+  const renderMit = (entry: FocusMitEntry) => (
+    <li key={entry.key} className={entry.isDone ? 'done' : ''}>
+      <span className="focus-mit-bullet" aria-hidden="true">{entry.isDone ? <LucideNamedIcon name="Check" size={13} /> : null}</span>
+      <button type="button" className="focus-row-title" disabled={!entry.path} onClick={() => entry.path && onOpenNotePath(entry.path, entry.title, entry.noteType)}>
+        {entry.kind === 'todo' ? toPlainTodoText(entry.title) : entry.title}
+      </button>
+      {entry.isDone ? <span className="focus-row-meta">erledigt</span> : null}
+      <IconButton label="Aus „Heute wichtig“ entfernen" icon="X" disabled={mitBusy} onClick={() => void saveMit(data.mitIds.filter((key) => key !== entry.key))} />
+    </li>
+  )
+
+  const earlierTodos = data.todosEarlier.slice(0, EARLIER_TODO_LIMIT)
+  const doneShare = data.stats.doneToday + data.stats.openToday > 0 ? data.stats.doneToday / (data.stats.doneToday + data.stats.openToday) : 0
 
   return (
     <div className="focus-canvas">
-      <div className="focus-canvas-header">
-        <div className="focus-canvas-header-top">
+      <div className="focus-layout">
+      <header className="focus-head">
+        <div className="focus-head-title">
           <h2>Fokus</h2>
-          <div className="focus-header-switchers">
-            <div className="focus-mode-switcher" role="tablist" aria-label="Fokusmodus">
-              {MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  className={`focus-scope-switch-button ${filters.mode === option.value ? 'active' : ''}`}
-                  onClick={() => {
-                    setMode(option.value)
-                  }}
-                  role="tab"
-                  aria-selected={filters.mode === option.value}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div className="focus-scope-switcher" role="tablist" aria-label="Zeithorizont">
-              {SCOPE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  className={`focus-scope-switch-button ${filters.scope === option.value ? 'active' : ''}`}
-                  onClick={() => {
-                    setScope(option.value)
-                  }}
-                  role="tab"
-                  aria-selected={filters.scope === option.value}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <span>{toHeaderDateLabel(todayIso)}</span>
         </div>
-        <p>
-          Modus: {data.focusMode} | Query: {filters.query.trim() || 'keine'} | Auto-Fokus: {totalAutoFocusItems} | MIT: {data.mitItems.length}/3
-        </p>
-        {showTaskTimeManagement ? (
-          <div className={`focus-capacity-strip focus-capacity-${data.capacityStatus}`}>
-            <strong>
-              Kapazität: {toCapacityLabel(data.capacityStatus)} ({data.estimatedLoadTodayMinutes}m)
-            </strong>
-            <span>{data.capacityMessage}</span>
-            <span>
-              MIT {data.estimatedMitMinutes}m | Fokus {data.estimatedFocusMinutes}m | Ohne Schätzung {data.withoutEstimateCount}
+        <dl className="focus-stats">
+          <div>
+            <dt>Erledigt heute</dt>
+            <dd>{data.stats.doneToday}</dd>
+            <span className="focus-progress" role="progressbar" aria-label="Tagesfortschritt" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(doneShare * 100)}>
+              <span style={{ width: `${Math.round(doneShare * 100)}%` }} />
             </span>
           </div>
-        ) : null}
+          <div><dt>Offen heute</dt><dd>{data.stats.openToday}</dd></div>
+          <div className={data.stats.overdue > 0 ? 'overdue' : ''}><dt>Überfällig</dt><dd>{data.stats.overdue}</dd></div>
+          <div><dt>Zurückgestellt</dt><dd>{data.stats.deferred}</dd></div>
+        </dl>
+      </header>
 
-        <div className="focus-capture-inline">
-          <label className="focus-capture-label" htmlFor="focus-quick-capture">
-            Schnellerfassung
-          </label>
-          <input
-            id="focus-quick-capture"
-            className="focus-capture-input"
-            value={captureValue}
-            onChange={(event) => {
-              setCaptureValue(event.target.value)
-            }}
-            onKeyDown={onCaptureKeyDown}
-            placeholder="Neues Todo für heute..."
-            disabled={captureBusy}
-          />
-          <button className="focus-capture-submit" onClick={() => void submitQuickCapture()} disabled={captureBusy || !captureValue.trim()}>
-            {captureBusy ? 'Speichere...' : 'Erfassen'}
-          </button>
-        </div>
-        {captureError ? <p className="focus-inline-error">{captureError}</p> : null}
-        {!captureError && captureSuccess ? <p className="focus-inline-success">{captureSuccess}</p> : null}
-      </div>
+      <section className="focus-mit" aria-labelledby="focus-mit-title">
+        <header className="focus-column-header">
+          <h3 id="focus-mit-title">Heute wichtig</h3>
+          <span className="focus-count">{data.mitEntries.length}/{MAX_MIT_ITEMS}</span>
+        </header>
+        {data.mitEntries.length === 0 ? (
+          <p className="focus-hint">Was zählt heute wirklich? Markiere bis zu drei Tasks oder To-dos mit dem Stern.</p>
+        ) : (
+          <ul className="focus-mit-list">{data.mitEntries.map(renderMit)}</ul>
+        )}
+        {mitError ? <p className="focus-inline-error" role="alert">{mitError}</p> : null}
+      </section>
 
-      <div className="focus-metric-grid">
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Offene Tasks</span>
-          <strong>{data.openTaskCount}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">In Arbeit</span>
-          <strong>{data.inProgressTaskCount}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Heute fällig</span>
-          <strong>{data.dueTodayTaskCount}</strong>
-        </article>
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Offene Todos</span>
-          <strong>{data.openTodoCount}</strong>
-        </article>
-        {showAdvancedTaskSignals ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Blockiert</span>
-            <strong>{data.blockedTaskCount}</strong>
-          </article>
-        ) : null}
-        {showAdvancedTaskSignals ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Waiting For</span>
-            <strong>{data.waitingTaskCount}</strong>
-            <span className="focus-metric-subtext">Follow-up heute: {data.followUpTodayCount}</span>
-          </article>
-        ) : null}
-        {showTaskTimeManagement ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Dauer heute</span>
-            <strong>{data.todayEstimatedMinutes > 0 ? `${data.todayEstimatedMinutes}m` : '-'}</strong>
-          </article>
-        ) : null}
-        {showTaskTimeManagement ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Dauer MIT</span>
-            <strong>{data.mitEstimatedMinutes > 0 ? `${data.mitEstimatedMinutes}m` : '-'}</strong>
-          </article>
-        ) : null}
-        {showTaskTimeManagement ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Dauer Fokus</span>
-            <strong>{data.focusEstimatedMinutes > 0 ? `${data.focusEstimatedMinutes}m` : '-'}</strong>
-          </article>
-        ) : null}
-        {showTaskTimeManagement ? (
-          <article className="focus-metric-card">
-            <span className="focus-metric-label">Ohne Schätzung</span>
-            <strong>{data.withoutEstimateCount}</strong>
-          </article>
-        ) : null}
-        <article className="focus-metric-card">
-          <span className="focus-metric-label">Done heute</span>
-          <strong>{data.doneToday}</strong>
-          <span className="focus-metric-subtext">
-            {data.doneTodayTasks} Tasks | {data.doneTodayTodos} Todos
-          </span>
-        </article>
-      </div>
-
-      <div className={`focus-canvas-grid ${data.focusMode === 'context' ? 'context-mode' : ''}`}>
-        <div className="focus-panel-stack">
-          <section className="focus-panel focus-panel-mit">
-            <header className="focus-panel-header">
-              <h3>Most Important Tasks</h3>
-              <span>{data.mitItems.length}</span>
-            </header>
-            {mitError ? <p className="focus-inline-error">{mitError}</p> : null}
-            {data.mitItems.length === 0 ? <p className="empty-copy">Noch keine MITs für heute gesetzt.</p> : null}
-            <div className="focus-primary-list">
-              {data.mitItems.map((item) => (
-                <FocusItemCard
-                  key={item.key}
-                  item={item}
-                  selected={selectedItem?.key === item.key}
-                  focusMode={data.focusMode}
-                  showAdvancedTaskSignals={showAdvancedTaskSignals}
-                  showTaskTimeManagement={showTaskTimeManagement}
-                  mitBusy={mitBusyKey === item.key}
-                  onSelect={setSelectedKey}
-                  onToggleMit={(target) => {
-                    void toggleMit(target)
-                  }}
-                  onOpenOrigin={openItemOrigin}
-                />
-              ))}
-            </div>
-            {data.suggestedMitItems.length > 0 ? (
-              <div className="focus-inline-suggestions">
-                <p className="focus-context-subtitle">MIT-Vorschlaege</p>
-                <ul className="focus-note-list">
-                  {data.suggestedMitItems.map((entry) => (
-                    <li key={`mit-suggestion-${entry.item.key}`} className="focus-note-row">
-                    <button
-                      className="focus-blocking-row-main"
-                      onClick={() => {
-                        setSelectedKey(entry.item.key)
-                      }}
-                    >
-                      <span className="focus-note-row-title">{entry.item.title}</span>
-                      {entry.reasons.length > 0 ? (
-                        <span className="focus-context-badge-row">
-                          {entry.reasons.map((reason) => (
-                            <span key={`${entry.item.key}-${reason}`} className="focus-context-badge-chip">
-                              {reason}
-                            </span>
-                          ))}
-                        </span>
-                      ) : null}
-                    </button>
-                      <button
-                        className="focus-card-action-button"
-                        disabled={toSuggestionActionDisabled(entry, mitBusyKey)}
-                        data-tooltip={entry.item.canAddToMit ? 'Als MIT übernehmen' : 'MIT-Limit erreicht oder Element ist erledigt'}
-                        onClick={() => {
-                          void toggleMit(entry.item)
-                        }}
-                      >
-                        Übernehmen
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+      <div className="focus-columns">
+        <section className="focus-column" aria-label="Tasks">
+          <ColumnHeader title="Tasks" count={data.tasksToday.length}
+            action={<IconButton label="Alle Tasks öffnen" icon="ArrowUpRight" onClick={onOpenTaskDashboard} />} />
+          <div className="focus-column-body">
+            {taskError ? <p className="focus-inline-error" role="alert">{taskError}</p> : null}
+            {data.tasksToday.length === 0 ? <p className="focus-hint">Heute ist keine Task fällig.</p> : <ul className="focus-list">{data.tasksToday.map(renderTask)}</ul>}
+            {data.tasksUpcoming.length > 0 ? (
+              <details className="focus-group">
+                <summary>Nächste 7 Tage <span className="focus-count">{data.tasksUpcoming.length}</span></summary>
+                <ul className="focus-list">{data.tasksUpcoming.map(renderTask)}</ul>
+              </details>
             ) : null}
-          </section>
-
-          {data.overdueItems.length > 0 ? (
-            <section className="focus-panel focus-panel-overdue">
-              <header className="focus-panel-header">
-                <h3>Überfällig</h3>
-                <span>{data.overdueItems.length}</span>
-              </header>
-              <div className="focus-primary-list">
-                {data.overdueItems.map((item) => (
-                  <FocusItemCard
-                    key={item.key}
-                    item={item}
-                    selected={selectedItem?.key === item.key}
-                    overdue
-                    focusMode={data.focusMode}
-                    showAdvancedTaskSignals={showAdvancedTaskSignals}
-                    showTaskTimeManagement={showTaskTimeManagement}
-                    mitBusy={mitBusyKey === item.key}
-                    onSelect={setSelectedKey}
-                    onToggleMit={(target) => {
-                      void toggleMit(target)
-                    }}
-                    onOpenOrigin={openItemOrigin}
-                  />
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          <section className="focus-panel">
-            <header className="focus-panel-header">
-              <h3>Heute im Fokus</h3>
-              <span>{data.focusItems.length}</span>
-            </header>
-            {data.focusItems.length === 0 ? <p className="empty-copy">Keine Fokuspunkte für den aktuellen Filter.</p> : null}
-            <div className="focus-primary-list">
-              {data.focusItems.map((item) => (
-                <FocusItemCard
-                  key={item.key}
-                  item={item}
-                  selected={selectedItem?.key === item.key}
-                  focusMode={data.focusMode}
-                  showAdvancedTaskSignals={showAdvancedTaskSignals}
-                  showTaskTimeManagement={showTaskTimeManagement}
-                  mitBusy={mitBusyKey === item.key}
-                  onSelect={setSelectedKey}
-                  onToggleMit={(target) => {
-                    void toggleMit(target)
-                  }}
-                  onOpenOrigin={openItemOrigin}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section className="focus-panel">
-            <header className="focus-panel-header">
-              <h3>Weitere Kandidaten</h3>
-              <span>{data.candidateItems.length}</span>
-            </header>
-            {data.candidateItems.length === 0 ? <p className="empty-copy">Keine weiteren Kandidaten.</p> : null}
-            <div className="focus-primary-list">
-              {data.candidateItems.map((item) => (
-                <FocusItemCard
-                  key={item.key}
-                  item={item}
-                  selected={selectedItem?.key === item.key}
-                  focusMode={data.focusMode}
-                  showAdvancedTaskSignals={showAdvancedTaskSignals}
-                  showTaskTimeManagement={showTaskTimeManagement}
-                  mitBusy={mitBusyKey === item.key}
-                  onSelect={setSelectedKey}
-                  onToggleMit={(target) => {
-                    void toggleMit(target)
-                  }}
-                  onOpenOrigin={openItemOrigin}
-                />
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <div className="focus-panel-stack">
-          {showAdvancedTaskSignals ? (
-            <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
-              <header className="focus-panel-header">
-                <h3>Nächste sinnvolle Schritte</h3>
-                <span>{data.nextActionItems.length}</span>
-              </header>
-              {data.nextActionItems.length === 0 ? <p className="empty-copy">Noch keine klaren Next Actions in MIT/Fokus.</p> : null}
-              <ul className="focus-note-list">
-                {data.nextActionItems.map((entry) => {
-                  const item = toNextActionEntry(entry)
-                  return (
-                  <li key={`next-action-${item.key}`} className="focus-note-row">
-                    <button
-                      className="focus-blocking-row-main"
-                      onClick={() => {
-                        setSelectedKey(item.key)
-                      }}
-                    >
-                      <span className="focus-note-row-title">{item.title}</span>
-                      <span className="focus-context-badge-row">
-                        {item.nextActionHint ? <span className="focus-context-badge-chip">{truncateText(item.nextActionHint, 54)}</span> : null}
-                        {entry.reasons.map((reason) => (
-                          <span key={`${item.key}-${reason}`} className="focus-context-badge-chip">
-                            {reason}
-                          </span>
-                        ))}
-                      </span>
-                    </button>
-                    <button
-                      className="icon-button compact muted"
-                      onClick={() => {
-                        openItemOrigin(item)
-                      }}
-                      disabled={!item.path}
-                      aria-label="Ursprung öffnen" data-tooltip="Ursprung öffnen"
-                    >
-                      <LucideNamedIcon name="ArrowUpRight" size={14} />
-                    </button>
-                  </li>
-                  )
-                })}
-              </ul>
-            </section>
-          ) : null}
-
-          <section className={`focus-panel ${data.focusMode === 'context' ? 'focus-panel-context-priority' : ''}`}>
-            <header className="focus-panel-header">
-              <h3>Kontext</h3>
-              <span>{contextHits.length}</span>
-            </header>
-            {!selectedItem ? <p className="empty-copy">Wähle links einen Fokuspunkt aus.</p> : null}
-            {selectedItem ? (
-              <p className="focus-context-subtitle">
-                Aktiv: {selectedItem.kind === 'task' ? 'Task' : 'Todo'} | {selectedItem.title}
-              </p>
+            {data.tasksDeferred.length > 0 ? (
+              <details className="focus-group">
+                <summary>Zurückgestellt <span className="focus-count">{data.tasksDeferred.length}</span></summary>
+                <ul className="focus-list">{data.tasksDeferred.map(renderTask)}</ul>
+              </details>
             ) : null}
-            {selectedItem && contextHits.length === 0 ? <p className="empty-copy">Keine passenden Querverweise gefunden.</p> : null}
-            <ul className="focus-context-list">
-              {contextHits.map((note) => (
-                <li key={note.key} className="focus-context-row">
-                  <div className="focus-context-row-main">
-                    <span className="focus-context-note-type">
-                      <LucideNamedIcon name={noteTypeIcon(note.noteType)} size={12} />
-                    </span>
-                    <span className="focus-context-note-title">{cleanNoteTitle(note.title)}</span>
-                    <span className="focus-context-reasons">{note.reasons.join(', ')}</span>
-                  </div>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => {
-                      const noteType = note.noteType.trim().toLowerCase() === 'task' ? 'task' : 'note'
-                      onOpenNotePath(note.path, note.title, noteType)
-                    }}
-                    aria-label={`Notiz öffnen (${note.path})`} data-tooltip={`Notiz öffnen (${note.path})`}
-                  >
-                    <LucideNamedIcon name="ArrowUpRight" size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          </div>
+        </section>
 
-          {data.focusMode === 'context' ? (
-            <section className="focus-panel focus-panel-context-priority">
-              <header className="focus-panel-header">
-                <h3>Daily Trail</h3>
-                <span>{data.dailyTrailItems.length}</span>
-              </header>
-              <p className="focus-context-subtitle">Daily Notes der letzten Tage.</p>
-              {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
-              <ul className="focus-note-list">
-                {data.dailyTrailItems.map((dailyItem) => (
-                  <li key={dailyItem.key} className="focus-note-row">
-                    <div className="focus-note-row-main">
-                      <span className="focus-note-row-title">{cleanNoteTitle(dailyItem.title)}</span>
-                      {dailyItem.isToday ? <span className="focus-trail-today">Heute</span> : null}
-                      <span className="focus-note-row-time">{toGermanTimestamp(dailyItem.updatedAt)}</span>
-                    </div>
-                    <button
-                      className="icon-button compact muted"
-                      onClick={() => {
-                        onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
-                      }}
-                      aria-label="Daily öffnen" data-tooltip="Daily öffnen"
-                    >
-                      <LucideNamedIcon name="ArrowUpRight" size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+        <section className="focus-column" aria-label="To-dos">
+          <ColumnHeader title="To-dos" count={data.openTodosToday}
+            action={<IconButton label="Alle To-dos öffnen" icon="ArrowUpRight" onClick={onOpenTodoDashboard} />} />
+          <div className="focus-capture">
+            <LucideNamedIcon name="Plus" size={14} aria-hidden="true" />
+            <input value={captureValue} onChange={(event) => setCaptureValue(event.target.value)} onKeyDown={onCaptureKeyDown}
+              placeholder="Neues To-do für heute …" aria-label="Neues To-do für heute" disabled={captureBusy} />
+          </div>
+          <div className="focus-column-body">
+            {todoError ? <p className="focus-inline-error" role="alert">{todoError}</p> : null}
+            {data.todosToday.length === 0 ? <p className="focus-hint">Noch keine To-dos für heute.</p> : <ul className="focus-list">{data.todosToday.map((todo) => renderTodo(todo, false))}</ul>}
+            {data.todosEarlier.length > 0 ? (
+              <details className="focus-group">
+                <summary>Früher notiert <span className="focus-count">{data.openTodosEarlier}</span></summary>
+                <ul className="focus-list">{earlierTodos.map((todo) => renderTodo(todo, true))}</ul>
+                {data.todosEarlier.length > earlierTodos.length ? (
+                  <button type="button" className="focus-link-button" onClick={onOpenTodoDashboard}>Alle {data.openTodosEarlier} offenen To-dos ansehen</button>
+                ) : null}
+              </details>
+            ) : null}
+          </div>
+        </section>
 
-          {showAdvancedTaskSignals ? (
-            <section className="focus-panel focus-panel-blocking">
-              <header className="focus-panel-header">
-                <h3>Blockiert / Warten auf</h3>
-                <span>{blockingSectionItems.length}</span>
-              </header>
-              <p className="focus-context-subtitle">
-                Blockiert: {data.blockedTaskCount} | Waiting: {data.waitingTaskCount} | Follow-up heute: {data.followUpTodayCount}
-              </p>
-              {blockingSectionItems.length === 0 ? <p className="empty-copy">Keine offenen Blocker oder Waiting-Themen.</p> : null}
-              <ul className="focus-note-list">
-                {blockingSectionItems.map((item) => (
-                  <li key={`blocking-${item.key}`} className="focus-note-row">
-                    <button
-                      className="focus-blocking-row-main"
-                      onClick={() => {
-                        setSelectedKey(item.key)
-                      }}
-                    >
-                      <span className="focus-note-row-title">{item.title}</span>
-                      <span className="focus-context-badge-row">
-                        {item.hasTaskBlocker ? <span className="focus-context-badge-chip">Blockiert</span> : null}
-                        {item.hasExternalWaiting ? <span className="focus-context-badge-chip">Waiting</span> : null}
-                        {item.unknownBlockerCount > 0 ? <span className="focus-context-badge-chip">{item.unknownBlockerCount} unbekannt</span> : null}
-                        {item.followUpDate ? <span className="focus-context-badge-chip">Follow-up {toDotDateLabel(item.followUpDate)}</span> : null}
-                        {showTaskTimeManagement && item.estimateMinutes !== null ? (
-                          <span className="focus-context-badge-chip">{toEstimateLabel(item.estimateMinutes)}</span>
-                        ) : null}
-                      </span>
-                    </button>
-                    <button
-                      className="icon-button compact muted"
-                      onClick={() => {
-                        openItemOrigin(item)
-                      }}
-                      disabled={!item.path}
-                      aria-label="Ursprung öffnen" data-tooltip="Ursprung öffnen"
-                    >
-                      <LucideNamedIcon name="ArrowUpRight" size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
-          {showAdvancedTaskSignals || showTaskTimeManagement ? (
-            <section className="focus-panel focus-panel-hints">
-              <header className="focus-panel-header">
-                <h3>Planungshinweise</h3>
-                <span>{planningHintEntries.length}</span>
-              </header>
-              {planningHintEntries.length === 0 ? <p className="empty-copy">Keine offenen Hygiene-Hinweise.</p> : null}
-              {planningHintEntries.length > 0 ? (
-                <ul className="focus-note-list">
-                  {planningHintEntries.map((hint) => (
-                    <li key={`hint-${hint.key}`} className="focus-note-row">
-                      <div className="focus-note-row-main">
-                        <span className="focus-note-row-title">{hint.label}</span>
-                      </div>
-                      <span className="focus-context-badge-chip">{hint.count}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {showAdvancedTaskSignals && data.planningHints.unknownBlockerReferenceCount > 0 ? (
-                <p className="focus-context-subtitle">Unbekannte Blocker-Referenzen: {data.planningHints.unknownBlockerReferenceCount}</p>
-              ) : null}
-            </section>
-          ) : null}
-
-          {data.focusMode !== 'context' ? (
-            <section className="focus-panel">
-              <header className="focus-panel-header">
-                <h3>Daily Trail</h3>
-                <span>{data.dailyTrailItems.length}</span>
-              </header>
-              <p className="focus-context-subtitle">Daily Notes der letzten Tage.</p>
-              {data.dailyTrailItems.length === 0 ? <p className="empty-copy">Keine Daily Notes gefunden.</p> : null}
-              <ul className="focus-note-list">
-                {data.dailyTrailItems.map((dailyItem) => (
-                  <li key={dailyItem.key} className="focus-note-row">
-                    <div className="focus-note-row-main">
-                      <span className="focus-note-row-title">{cleanNoteTitle(dailyItem.title)}</span>
-                      {dailyItem.isToday ? <span className="focus-trail-today">Heute</span> : null}
-                      <span className="focus-note-row-time">{toGermanTimestamp(dailyItem.updatedAt)}</span>
-                    </div>
-                    <button
-                      className="icon-button compact muted"
-                      onClick={() => {
-                        onOpenNotePath(dailyItem.path, dailyItem.title, 'note')
-                      }}
-                      aria-label="Daily öffnen" data-tooltip="Daily öffnen"
-                    >
-                      <LucideNamedIcon name="ArrowUpRight" size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
-          <section className="focus-panel">
-            <header className="focus-panel-header">
-              <h3>Notizen heute</h3>
-              <span>{data.notesToday.length}</span>
-            </header>
-            <p className="focus-context-subtitle">Notizen, die heute bearbeitet wurden.</p>
-            <ul className="focus-note-list">
-              {data.notesToday.length === 0 ? <li className="empty-copy">Heute noch keine Notizen.</li> : null}
-              {data.notesToday.map((note) => (
-                <li key={`${note.id}:${note.path}`} className="focus-note-row">
-                  <div className="focus-note-row-main">
-                    <span className="focus-note-row-title">{toMarkedRelativeNotePath(note.path, noteBasePath)}</span>
-                    <span className="focus-note-row-time">{toGermanTimestamp(note.updated_at)}</span>
-                  </div>
-                  <button
-                    className="icon-button compact muted"
-                    onClick={() => {
-                      const noteType = note.note_type.trim().toLowerCase() === 'task' ? 'task' : 'note'
-                      onOpenNotePath(note.path, note.title, noteType)
-                    }}
-                    aria-label="Notiz öffnen" data-tooltip="Notiz öffnen"
-                  >
-                    <LucideNamedIcon name="ArrowUpRight" size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
+        <section className="focus-column focus-column-notes" aria-label="Notizen">
+          <ColumnHeader title="Notizen heute" count={data.notesToday.length}
+            action={<IconButton label="Tagesnotiz öffnen" icon="CalendarDays" onClick={onOpenTodayDaily} />} />
+          <div className="focus-column-body">
+            {data.notesToday.length > 0 ? <ul className="focus-list">{data.notesToday.map(renderNote)}</ul> : (
+              <>
+                <p className="focus-hint">Heute noch keine Notiz bearbeitet.</p>
+                {data.recentNotes.length > 0 ? (
+                  <>
+                    <h4 className="focus-subheading">Zuletzt bearbeitet</h4>
+                    <ul className="focus-list">{data.recentNotes.map(renderNote)}</ul>
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+        </section>
+      </div>
       </div>
     </div>
   )

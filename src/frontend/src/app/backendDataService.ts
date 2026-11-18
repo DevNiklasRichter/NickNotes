@@ -1,5 +1,4 @@
 import type {
-  FocusDashboardAggregateStats,
   FocusDashboardAggregateResponse,
   NoteGroup,
   ReviewDashboardFilters,
@@ -31,7 +30,6 @@ type BackendStateWriter = {
   setSearchResults: (rows: SearchRow[]) => void
   setAllNotes: (rows: SearchRow[]) => void
   setReviewDashboardData: (data: ReviewDashboardResponse | null) => void
-  setFocusDashboardStats: (stats: FocusDashboardAggregateStats) => void
   setCounts: (counts: VaultCounts) => void
   setFocusMitIds: (ids: string[]) => void
   setCustomTagGroups: (groups: TagGroupDefinition[]) => void
@@ -205,7 +203,6 @@ export class BackendDataService {
     this.writers.setTodos(Array.isArray(response.todos) ? response.todos : [])
     this.writers.setAllNotes(Array.isArray(response.notes) ? response.notes : [])
     this.writers.setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
-    this.writers.setFocusDashboardStats(response.stats)
     if (response.counts) {
       this.writers.setCounts(response.counts)
     }
