@@ -2613,7 +2613,7 @@ function App() {
     const windowTitlebar = (<div className="window-titlebar">
       <div className="window-titlebar-brand" aria-label="NickNotes"><span className="window-titlebar-logo">NN</span><span className="window-titlebar-title">NickNotes</span></div>
       <AppMenuBar commands={appCommands} execute={executeCommand}/>
-      <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span><kbd>{shortcutLabel('openNote')}</kbd></button>
+      <button type="button" className="window-search-button" disabled={noteBaseOpenStatus?.active} aria-label="Notizen und Befehle suchen" aria-haspopup="dialog" data-tooltip={`Notizen suchen (${shortcutLabel('openNote')})\nApp-Befehle (${shortcutLabel('commandPalette')})`} onPointerDown={event=>event.preventDefault()} onClick={()=>openSearch(vaultLoaded?'':'>')}><LucideNamedIcon name="Search" size={14}/><span>Notizen und Befehle suchen</span></button>
       <UpdateDialog open={updatesOpen} onOpen={()=>setUpdatesOpen(true)} onClose={()=>setUpdatesOpen(false)}/>
       <WhatsNewDialog open={whatsNewOpen} onOpen={()=>setWhatsNewOpen(true)} onClose={()=>setWhatsNewOpen(false)}/>
       <NotificationCenter items={operatorNotifications} onDismiss={clearOperatorNotification}/>
