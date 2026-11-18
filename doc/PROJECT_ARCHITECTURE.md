@@ -128,9 +128,24 @@ stabilen Blockreferenzen und Zeitfelder im Markdown
 (`<!-- nn:todo created=... --> ^nn-todo_...`). `completed=...` wird nur mit einem
 Erledigungszeitpunkt geschrieben. Bestehende Marker mit leerem `completed=`
 bleiben lesbar.
-Historisch unbekannte Zeitpunkte bleiben unbekannt. Neue Zeitstempel enthalten
-einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion verweist
-im Quelldokument auf den erzeugten Task. Reindex darf keine Historie erfinden.
+Historisch unbekannte Zeitpunkte bleiben unbekannt: Ein beim Speichern
+vorgefundenes To-do ohne Zeitfeld bekommt `created=` leer, nicht "jetzt". Nur die
+Projektion `todos.created_at` datiert solche To-dos auf `created_at` ihrer Notiz,
+damit Auswertungen jedes To-do einem Tag zuordnen koennen. Neue Zeitstempel
+enthalten einen Offset; Dashboards verwenden den lokalen Kalendertag. Promotion
+verweist im Quelldokument auf den erzeugten Task. Reindex darf keine Historie
+erfinden.
+
+Der Rueckblick (`GET /review/dashboard`, `VaultIndexer.review_dashboard`)
+rekonstruiert den Zeitraum aus dem aktuellen Stand der Quellen: Erstell- und
+Erledigt-Zeitpunkte aus Task-Frontmatter und To-do-Zeitfeldern. Es gibt kein
+Ereignisprotokoll; geloeschte Eintraege verschwinden daher auch rueckwirkend.
+Zu Tasks gemachte To-dos zaehlen nur als Task, Checklisten in Tasks werden nicht
+als To-dos indiziert. Die Antwort enthaelt Tagesreihe (offen/neu/erledigt),
+Zusammenfassung, Aufmerksamkeitsgruppen (ueberfaellig, Wiedervorlage faellig,
+wartend/blockiert, To-dos aelter als `REVIEW_STALE_TODO_DAYS`; jeder Task in
+hoechstens einer Gruppe) und die erledigten Eintraege. Die Wochenbuendelung fuer
+lange Zeitraeume passiert im Frontend (`review/reviewSeries.ts`).
 
 Beim Senden der Schnellerfassung wird ein offenes To-do mit Termin
 (`- [ ] Angebot schicken @2026-11-20`) per Promotion zur Task mit diesem

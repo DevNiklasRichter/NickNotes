@@ -2246,30 +2246,34 @@ export interface components {
             period: {
                 [key: string]: unknown;
             };
-            /** Kpis */
-            kpis: {
-                [key: string]: unknown;
-            };
-            /** Risk */
-            risk: {
-                [key: string]: unknown;
+            /** Summary */
+            summary: {
+                [key: string]: number;
             };
             /** Series */
             series: {
                 [key: string]: unknown;
             }[];
-            /** Top Notes */
-            top_notes: {
-                [key: string]: unknown;
-            }[];
-            /** Top Tasks */
-            top_tasks: {
-                [key: string]: unknown;
-            }[];
+            /** Attention */
+            attention: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /**
+             * Completed Total
+             * @default 0
+             */
+            completed_total: number;
             /** Completed Items */
             completed_items: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Stale Todo Days
+             * @default 30
+             */
+            stale_todo_days: number;
         } & {
             [key: string]: unknown;
         };
@@ -4030,7 +4034,6 @@ export interface operations {
             query?: {
                 days?: number;
                 day?: string | null;
-                top?: number;
             };
             header?: never;
             path?: never;

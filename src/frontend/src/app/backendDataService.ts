@@ -15,9 +15,6 @@ import { apiRequest, normalizeFilePathKey, toLocalIsoDate, toStorageTagGroups } 
 type ReviewWindow = ReviewDashboardFilters['window']
 
 export const toReviewWindowDays = (windowValue: ReviewWindow): number => {
-  if (windowValue === 'today') {
-    return 1
-  }
   if (windowValue === '7d') {
     return 7
   }
@@ -185,7 +182,7 @@ export class BackendDataService {
       const reviewDays = toReviewWindowDays(this.context.getReviewWindow())
       const dashboard = await apiRequest<ReviewDashboardResponse>(
         this.backendUrl,
-        `/review/dashboard?days=${reviewDays}&top=10&day=${encodeURIComponent(todayIso)}`
+        `/review/dashboard?days=${reviewDays}&day=${encodeURIComponent(todayIso)}`
       )
       this.writers.setReviewDashboardData(dashboard)
     } catch (caught) {

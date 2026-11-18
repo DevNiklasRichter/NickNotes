@@ -412,12 +412,12 @@ class NoteMediaResponse(_ContractModel):
 
 class ReviewDashboardResponse(_ContractModel):
     period: dict[str, Any] = Field(default_factory=dict)
-    kpis: dict[str, Any] = Field(default_factory=dict)
-    risk: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, int] = Field(default_factory=dict)
     series: list[dict[str, Any]] = Field(default_factory=list)
-    top_notes: list[dict[str, Any]] = Field(default_factory=list)
-    top_tasks: list[dict[str, Any]] = Field(default_factory=list)
+    attention: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    completed_total: int = 0
     completed_items: list[dict[str, Any]] = Field(default_factory=list)
+    stale_todo_days: int = 30
 
 
 class UiSettingsResponse(_ContractModel):

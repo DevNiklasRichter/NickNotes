@@ -62,49 +62,34 @@ export type MediaUploadResponse = {
     markdownPath: string;
     fileName: string;
 };
-export type ReviewDashboardWindow = 'today' | '7d' | '30d' | '90d';
-export type ReviewBacklogMode = 'grouped' | 'stacked';
+export type ReviewDashboardWindow = '7d' | '30d' | '90d';
 export type ReviewDashboardFilters = {
     window: ReviewDashboardWindow;
-    backlogMode: ReviewBacklogMode;
 };
-export type ReviewDashboardRiskLevel = 'low' | 'medium' | 'high';
 export type ReviewDashboardSeriesPoint = {
     date: string;
-    new_notes: number;
     new_tasks: number;
-    completed_tasks: number;
     new_todos: number;
+    completed_tasks: number;
     completed_todos: number;
     open_tasks: number;
     open_todos: number;
 };
-export type ReviewDashboardTopNote = {
+export type ReviewDashboardItem = {
+    kind: 'task' | 'todo';
+    id: string;
     path: string;
     title: string;
-    note_type: string;
-    updated_at: string;
-    activity_events: number;
-    note_events: number;
-    todo_events: number;
+    source_title: string;
+    date: string;
+    detail: string;
 };
-export type ReviewDashboardTopTask = {
-    path: string;
-    title: string;
-    updated_at: string;
-    activity_events: number;
-    created_events: number;
-    done_events: number;
-    updated_events: number;
-    todo_events: number;
-};
-export type ReviewDashboardCompletedItemKind = 'task' | 'todo';
-export type ReviewDashboardCompletedItem = {
-    kind: ReviewDashboardCompletedItemKind;
-    path: string;
-    title: string;
-    note_type: string;
+export type ReviewDashboardCompletedItem = ReviewDashboardItem & {
     completed_at: string;
+};
+export type ReviewAttentionGroup = {
+    total: number;
+    items: ReviewDashboardItem[];
 };
 export type ReviewDashboardResponse = {
     period: {
@@ -112,35 +97,26 @@ export type ReviewDashboardResponse = {
         to: string;
         days: number;
     };
-    kpis: {
-        open_tasks_now: number;
-        open_todos_now: number;
-        open_total_now: number;
-        overdue_open_tasks: number;
-        new_notes_period: number;
-        notes_updated_period: number;
-        new_tasks_period: number;
-        new_todos_period: number;
-        new_work_period: number;
-        done_tasks_period: number;
-        done_todos_period: number;
-        done_work_period: number;
-        completion_ratio: number;
-        backlog_start: number;
-        backlog_end: number;
-        backlog_delta: number;
-    };
-    risk: {
-        level: ReviewDashboardRiskLevel;
-        reasons: string[];
-        backlog_delta: number;
-        completion_ratio: number;
-        overdue_open_tasks: number;
+    summary: {
+        new_tasks: number;
+        new_todos: number;
+        done_tasks: number;
+        done_todos: number;
+        open_tasks_start: number;
+        open_todos_start: number;
+        open_tasks_end: number;
+        open_todos_end: number;
     };
     series: ReviewDashboardSeriesPoint[];
-    top_notes: ReviewDashboardTopNote[];
-    top_tasks: ReviewDashboardTopTask[];
+    attention: {
+        overdue: ReviewAttentionGroup;
+        follow_up: ReviewAttentionGroup;
+        waiting: ReviewAttentionGroup;
+        stale_todos: ReviewAttentionGroup;
+    };
+    completed_total: number;
     completed_items: ReviewDashboardCompletedItem[];
+    stale_todo_days: number;
 };
 export type GraphNodeType = 'note' | 'task' | 'tag' | 'tagGroup';
 export type GraphEdgeType = 'link' | 'tagUsage' | 'sharedTag';
@@ -290,7 +266,6 @@ export const DEFAULT_FOCUS_DASHBOARD_FILTERS: FocusDashboardFilters = {
 };
 export const DEFAULT_REVIEW_DASHBOARD_FILTERS: ReviewDashboardFilters = {
     window: '30d',
-    backlogMode: 'stacked',
 };
 export type StatusBarPrefs = {
     showNoteBaseName: boolean;

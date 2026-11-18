@@ -2385,6 +2385,8 @@ function App() {
                         return;
                     }
                     void openNoteInTab(path, title, { initialNoteType: noteType === 'task' ? 'task' : 'note' });
+                }} onToggleTodo={(todoId, checked) => {
+                    void toggleTodo(todoId, checked);
                 }}/>);
         }
         if (paneTab.kind === 'graph_dashboard') {

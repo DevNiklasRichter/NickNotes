@@ -1194,7 +1194,6 @@ export function WorkbenchSidebarContent({
                     })
                   }
                 >
-                  <option value="today">Heute</option>
                   <option value="7d">7 Tage</option>
                   <option value="30d">30 Tage</option>
                   <option value="90d">90 Tage</option>

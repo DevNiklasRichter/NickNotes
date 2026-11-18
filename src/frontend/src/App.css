@@ -1363,26 +1363,22 @@
   overflow: auto;
   padding: 0.9rem 1rem 1.2rem;
   display: grid;
+  grid-auto-rows: max-content;
   align-content: start;
-  gap: 0.82rem;
+  gap: 0.7rem;
 }
 
-.review-canvas-header h2 {
-  margin: 0;
-  font-size: var(--font-section);
-}
-
-.review-canvas-header p {
-  margin: 0.22rem 0 0;
-  color: var(--muted);
-}
-
-.review-canvas-header-top {
+.review-canvas-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
   flex-wrap: wrap;
+}
+
+.review-canvas-header h2 {
+  margin: 0;
+  font-size: var(--font-section);
 }
 
 .review-window-switcher {
@@ -1393,8 +1389,6 @@
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
-  overflow-x: auto;
-  max-width: 100%;
 }
 
 .review-window-switch-button {
@@ -1416,375 +1410,367 @@
   color: var(--text);
 }
 
-.review-metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-  gap: 0.45rem;
-}
-
-.review-metric-card {
-  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-  border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--surface-contrast) 88%, transparent);
-  padding: 0.45rem 0.52rem;
-  display: grid;
-  gap: 0.14rem;
-}
-
-.review-metric-label {
-  font-size: var(--font-caption);
+.review-summary {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 0.3rem;
   color: var(--muted);
-}
-
-.review-metric-card strong {
   font-size: var(--font-ui);
 }
 
-.review-metric-subtext {
+.review-summary strong {
+  color: var(--text);
+  font-size: var(--font-section);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-summary-delta {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.review-info {
+  align-self: center;
+  display: inline-flex;
   color: var(--muted);
-  font-size: var(--font-caption);
+  cursor: help;
+  border-radius: var(--radius-pill);
 }
 
-.review-trend-up {
-  color: var(--error-text);
-}
-
-.review-trend-down {
-  color: var(--ok-text);
-}
-
-.review-canvas-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.72rem;
-  align-items: stretch;
+.review-info:hover,
+.review-info:focus-visible {
+  color: var(--text);
 }
 
 .review-panel {
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
   border-radius: var(--radius-control);
   background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
-  padding: 0.48rem;
+  padding: 0.55rem 0.6rem;
+  min-width: 0;
   min-height: 0;
   display: grid;
   align-content: start;
-  gap: 0.34rem;
+  gap: 0.45rem;
 }
 
 .review-panel-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .review-panel-header h3 {
   margin: 0;
+  flex: none;
   font-size: var(--font-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
 }
 
-.review-panel-header span {
+.review-count {
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
-  padding: 0.02rem 0.4rem;
+  padding: 0 0.38rem;
   font-size: var(--font-caption);
+  font-weight: 400;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.review-inline-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.18rem;
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: var(--radius-pill);
-  padding: 0.14rem;
-  background: color-mix(in srgb, var(--surface) 84%, transparent);
-}
-
-.review-inline-toggle-button {
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--font-caption);
-  padding: 0.14rem 0.4rem;
+.review-trend-readout {
+  margin: 0 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  font-variant-numeric: tabular-nums;
 }
 
-.review-inline-toggle-button:hover {
-  color: var(--text);
-}
-
-.review-inline-toggle-button.active {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
-}
-
-.review-chart-shell {
-  --review-y-axis-width: 40px;
-  min-width: 0;
-  display: grid;
-  gap: 0.26rem;
-}
-
-.review-chart-frame {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: var(--review-y-axis-width) minmax(0, 1fr);
-  align-items: end;
-  gap: 0;
-}
-
-.review-y-axis {
-  height: 160px;
-  min-height: 160px;
+.review-trend-charts {
   position: relative;
-  border-right: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  color: color-mix(in srgb, var(--muted) 90%, transparent);
+  display: grid;
+  gap: 0.2rem;
 }
 
-.review-y-axis-tick {
+.review-chart-caption {
+  font-size: var(--font-caption);
+  color: var(--muted);
+}
+
+.review-chart {
+  position: relative;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+}
+
+.review-chart-max {
   position: absolute;
-  right: 0.32rem;
-  transform: translateY(-50%);
+  top: -0.1rem;
+  right: 0;
   font-size: var(--font-caption);
   line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
-.review-y-axis-tick::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: -0.42rem;
-  width: 6px;
-  height: 1px;
-  transform: translateY(-50%);
-  background: color-mix(in srgb, var(--line) 76%, transparent);
+.review-open-chart {
+  height: 120px;
 }
 
-.review-throughput-chart,
-.review-backlog-chart {
-  min-height: 160px;
-  height: 160px;
-  min-width: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 0.3rem;
-  overflow: hidden;
-}
-
-.review-throughput-column,
-.review-backlog-column {
-  min-width: 0;
-  flex: 1 1 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-
-.review-throughput-bars,
-.review-backlog-bars {
+.review-open-chart svg {
+  display: block;
   width: 100%;
-  height: 160px;
+  height: 100%;
+  overflow: visible;
+}
+
+.review-gridline {
+  stroke: color-mix(in srgb, var(--line) 80%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.review-open-area {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.review-open-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.review-crosshair {
+  stroke: color-mix(in srgb, var(--muted) 60%, transparent);
+  stroke-width: 1;
+}
+
+.review-open-marker {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface-contrast);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.review-flow-chart {
+  height: 56px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.review-flow-column {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
   display: flex;
   align-items: flex-end;
   justify-content: center;
   gap: 2px;
+  padding: 0 1px;
 }
 
-.review-throughput-bar {
-  width: calc(50% - 1px);
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
-  min-height: 0;
+.review-flow-column.is-active {
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
 
-.review-backlog-bar {
-  width: calc(50% - 1px);
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
-  min-height: 0;
+.review-flow-bar {
+  flex: none;
+  width: 36%;
+  max-width: 12px;
+  border-radius: 4px 4px 0 0;
 }
 
-.review-backlog-chart.is-stacked {
-  gap: 0.14rem;
+.review-flow-bar.is-new,
+.legend-swatch.is-new {
+  background: var(--line-strong);
 }
 
-.review-backlog-chart.is-stacked .review-backlog-bars {
-  width: 90%;
-  justify-content: flex-start;
-  align-items: stretch;
-  flex-direction: column-reverse;
-  gap: 0;
+.review-flow-bar.is-done,
+.legend-swatch.is-done {
+  background: var(--accent);
 }
 
-.review-backlog-chart.is-stacked .review-backlog-bar {
-  width: 100%;
-  border-radius: 0;
-}
-
-.review-backlog-chart.is-stacked .review-backlog-bar.todos {
-  border-radius: var(--radius-control) var(--radius-control) 0 0;
-}
-
-.review-throughput-bar.created {
-  background: color-mix(in srgb, var(--warning) 82%, transparent);
-}
-
-.review-throughput-bar.done {
-  background: color-mix(in srgb, var(--success) 82%, transparent);
-}
-
-.review-backlog-bar.tasks {
-  background: color-mix(in srgb, var(--danger) 80%, transparent);
-}
-
-.review-backlog-bar.todos {
-  background: color-mix(in srgb, var(--info) 82%, transparent);
-}
-
-.review-axis-ticks {
-  position: relative;
-  margin-left: var(--review-y-axis-width);
-  width: calc(100% - var(--review-y-axis-width));
-  min-height: 0.96rem;
-  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-}
-
-.review-axis-tick {
+.review-hover-layer {
   position: absolute;
-  top: 0.14rem;
+  inset: 0 0 1.1rem;
+  display: grid;
+}
+
+.review-axis {
+  position: relative;
+  height: 1.1rem;
+}
+
+.review-axis span {
+  position: absolute;
+  top: 0.15rem;
   transform: translateX(-50%);
   font-size: var(--font-caption);
   color: var(--muted);
   white-space: nowrap;
 }
 
-.review-axis-tick.is-start {
-  transform: translateX(0);
+.review-axis span.is-start {
+  transform: none;
+  left: 0 !important;
 }
 
-.review-axis-tick.is-end {
-  transform: translateX(-100%);
+.review-axis span.is-end {
+  transform: none;
+  left: auto !important;
+  right: 0;
 }
 
 .review-chart-legend {
   margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+
+.review-chart-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  color: var(--muted);
-  font-size: var(--font-caption);
+  gap: 0.3rem;
 }
 
-.legend-dot {
-  width: 8px;
+.legend-swatch {
+  width: 10px;
   height: 8px;
-  border-radius: var(--radius-pill);
+  border-radius: 2px;
   display: inline-block;
-  margin-right: 0.16rem;
 }
 
-.legend-dot.created {
-  background: color-mix(in srgb, var(--warning) 82%, transparent);
+.legend-swatch.is-open {
+  height: 2px;
+  background: var(--accent);
 }
 
-.legend-dot.done {
-  background: color-mix(in srgb, var(--success) 82%, transparent);
+.review-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.legend-dot.tasks {
-  background: color-mix(in srgb, var(--danger) 80%, transparent);
+.review-trend-panel {
+  position: relative;
 }
 
-.legend-dot.todos {
-  background: color-mix(in srgb, var(--info) 82%, transparent);
-}
-
-.review-risk-strip {
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: var(--radius-control);
-  padding: 0.46rem 0.52rem;
+.review-columns {
   display: grid;
-  gap: 0.2rem;
-  background: color-mix(in srgb, var(--surface-contrast) 90%, transparent);
-}
-
-.review-risk-strip strong {
-  font-size: var(--font-label);
-}
-
-.review-risk-strip ul,
-.review-risk-strip p {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-caption);
-}
-
-.review-risk-strip ul {
-  padding-left: 1rem;
-  display: grid;
-  gap: 0.12rem;
-}
-
-.review-risk-low {
-  border-color: color-mix(in srgb, var(--success) 32%, var(--line));
-}
-
-.review-risk-medium {
-  border-color: color-mix(in srgb, var(--warning) 36%, var(--line));
-}
-
-.review-risk-high {
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
-}
-
-.review-top-panel {
-  gap: 0.25rem;
-}
-
-.review-bottom-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.72rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
   align-items: start;
 }
 
-.review-top-note-list {
+.review-attention-groups,
+.review-completed-days {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.review-attention-group h4,
+.review-completed-day h4 {
+  margin: 0 0 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-label);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.review-completed-day h4 {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.review-item-list {
   margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.16rem;
+  gap: 0.05rem;
 }
 
-.review-top-note-row {
+.review-item-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.12rem 0.2rem;
   border-radius: var(--radius-control);
-  padding: 0.2rem 0.22rem;
 }
 
-.review-top-note-row:hover {
-  background: color-mix(in srgb, var(--surface-contrast) 72%, transparent);
+.review-item-row:hover {
+  background: var(--control-bg);
 }
 
-.review-top-note-main {
-  min-width: 0;
+.review-item-check {
+  margin: 0.2rem 0 0;
+  flex: none;
 }
 
-.review-top-note-main strong {
-  display: block;
-  font-size: var(--font-label);
-}
-
-.review-top-note-main p {
-  margin: 0.08rem 0 0;
+.review-done-icon {
+  margin-top: 0.18rem;
+  flex: none;
   color: var(--muted);
+}
+
+.review-item-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.02rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-item-title {
+  font-size: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-item-meta {
   font-size: var(--font-caption);
-  word-break: break-word;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-more {
+  margin: 0.1rem 0 0 0.2rem;
+  font-size: var(--font-caption);
+  color: var(--muted);
 }
 
 @media (max-width: 1160px) {
@@ -1833,32 +1819,8 @@
     grid-column: 1 / -1;
   }
 
-  .review-canvas-grid {
+  .review-columns {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-bottom-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-canvas-header-top {
-    align-items: stretch;
-  }
-
-  .review-window-switcher {
-    width: 100%;
-  }
-
-  .review-throughput-chart,
-  .review-backlog-chart {
-    min-height: 150px;
-    height: 150px;
-    gap: 0.22rem;
-  }
-
-  .review-y-axis {
-    min-height: 150px;
-    height: 150px;
   }
 }
 

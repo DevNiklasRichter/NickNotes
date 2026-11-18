@@ -314,7 +314,12 @@ def mark_todo_promoted(
 
 
 def synchronize_todo_history(previous_body: str, body: str, previous_anchor: str, note_anchor: str) -> str:
-    """Adopt stable references and persist editor checkbox transitions in the source."""
+    """Adopt stable references and persist editor checkbox transitions in the source.
+
+    A to-do that already existed without history keeps an unknown creation time
+    (`created=`) instead of "now": its first save in the app is not new work, and the
+    source never records invented history. The index dates such to-dos to their note.
+    """
     previous=_scan_todos(previous_body.splitlines(),previous_anchor,[])
     current=_scan_todos(body.splitlines(),note_anchor,[])
     by_id={item.id:item for item in previous}

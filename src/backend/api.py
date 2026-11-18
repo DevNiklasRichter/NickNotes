@@ -93,7 +93,7 @@ from .commands import (
     VaultCreateRequest,
     VaultOpenRequest,
 )
-from .config import DEFAULT_CORS_ORIGINS, REVIEW_DASHBOARD_DEFAULT_DAYS, REVIEW_DASHBOARD_DEFAULT_TOP_NOTES
+from .config import DEFAULT_CORS_ORIGINS, REVIEW_DASHBOARD_DEFAULT_DAYS
 from .errors import DomainError, ValidationDomainError
 from .mcp_grants import GrantStore
 from .mcp_server import MCPAuthorization, create_mcp
@@ -500,8 +500,8 @@ def get_note_media_content(path: str, source: str) -> FileResponse:
 
 
 @app.get("/review/dashboard", response_model=ReviewDashboardResponse)
-def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
-    return backend_api_service.get_review_dashboard(days, day, top)
+def get_review_dashboard(days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None) -> dict[str, Any]:
+    return backend_api_service.get_review_dashboard(days, day)
 
 
 @app.get("/ui-settings", response_model=UiSettingsResponse)

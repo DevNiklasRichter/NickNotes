@@ -17,11 +17,8 @@ from typing import Any
 
 from .config import (
     REVIEW_DASHBOARD_DEFAULT_DAYS,
-    REVIEW_DASHBOARD_DEFAULT_TOP_NOTES,
     REVIEW_DASHBOARD_DAYS_MAX,
     REVIEW_DASHBOARD_DAYS_MIN,
-    REVIEW_DASHBOARD_TOP_NOTES_MAX,
-    REVIEW_DASHBOARD_TOP_NOTES_MIN,
     TAG_GROUP_DEFAULT_COLOR,
     TAG_MATCH_CONTEXT_RADIUS,
 )
@@ -1145,7 +1142,7 @@ class BackendApiService:
         return {"path": asset_path, "mediaType": mime_type, "fileName": asset_path.name}
 
     @coordinated
-    def get_review_dashboard(self, days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None, top: int = REVIEW_DASHBOARD_DEFAULT_TOP_NOTES) -> dict[str, Any]:
+    def get_review_dashboard(self, days: int = REVIEW_DASHBOARD_DEFAULT_DAYS, day: str | None = None) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
         day_iso = GetFocusDashboardUseCase._normalize_iso_day_param(day)
         try:
@@ -1153,8 +1150,7 @@ class BackendApiService:
         except ValueError:
             end_day = date.today()
         safe_days = max(REVIEW_DASHBOARD_DAYS_MIN, min(int(days), REVIEW_DASHBOARD_DAYS_MAX))
-        safe_top = max(REVIEW_DASHBOARD_TOP_NOTES_MIN, min(int(top), REVIEW_DASHBOARD_TOP_NOTES_MAX))
-        return indexer.review_dashboard(end_day=end_day, window_days=safe_days, top_notes_limit=safe_top)
+        return indexer.review_dashboard(end_day=end_day, window_days=safe_days)
 
     @coordinated
     def get_ui_settings(self) -> dict[str, Any]:
