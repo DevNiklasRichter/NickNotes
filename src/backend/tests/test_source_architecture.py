@@ -53,7 +53,9 @@ class SourceArchitectureTests(unittest.TestCase):
         self.assertEqual(len(self.indexer.list_tasks()),1)
         self.assertEqual({f"{row['category']}:{row['slug']}" for row in self.indexer.get_all_tags()},{'project:alpha','topic:test'})
         todo = self.indexer.list_todos()[0]
-        self.assertFalse(todo['created_at'])
+        # Without a history comment the to-do dates back to its note.
+        root_note = next(row for row in self.indexer.search_notes('') if row['id'] == 'root')
+        self.assertEqual(todo['created_at'][:10], root_note['created_at'][:10])
         self.vault.toggle_todo(todo['id'],self.indexer,True)
         before = self.indexer.list_todos()[0]
         self.assertTrue(before['completed_at'])

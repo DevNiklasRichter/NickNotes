@@ -327,47 +327,98 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertFalse(bool(second_payload.get("created")))
         self.assertEqual(str(second_payload.get("notePath", "")).strip(), first_path)
 
-    def test_review_dashboard_endpoint_returns_timeseries_payload(self) -> None:
-        now = datetime(2026, 4, 20, 9, 0, 0)
-        self.vault._create_task_file(
-            task_id="tk_review_dashboard_open",
-            note_id="note_review_dashboard_open",
-            task=ParsedTask(title="Review endpoint task", status="open", priority="M"),
-            now=now,
-            indexer=self.indexer,
+    def _write_review_task(self, task_id: str, title: str, **fields: str) -> None:
+        task_path = self.vault.vault_path / "Projects" / "Tasks" / f"{task_id}.md"
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        frontmatter = {
+            "id": task_id,
+            "node_id": task_id,
+            "title": title,
+            "type": "task",
+            "status": "open",
+            "priority": "M",
+            "created_at": "2026-04-01T09:00:00",
+            "updated_at": "2026-04-02T09:00:00",
+            "tags": [],
+            **fields,
+        }
+        task_path.write_text(dump_markdown(frontmatter, "Synthetischer Task"), encoding="utf-8")
+
+    def test_review_dashboard_reconstructs_period_and_attention(self) -> None:
+        note_path = self.vault.vault_path / "Projects" / "Review Notiz.md"
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(
+            dump_markdown(
+                {"id": "note_review", "title": "Review Notiz", "type": "note", "created_at": "2026-04-05T08:00:00", "updated_at": "2026-04-15T08:00:00"},
+                "\n".join(
+                    [
+                        "- [x] Erledigt im Zeitraum <!-- nn:todo created=2026-04-10T09:00:00 completed=2026-04-15T10:00:00 --> ^nn-todo_aaaaaaaaaaaaaaaa",
+                        "- [ ] Liegt lange <!-- nn:todo created=2026-03-01T09:00:00 --> ^nn-todo_bbbbbbbbbbbbbbbb",
+                        "- [ ] Ohne Verlauf",
+                        "- [ ] Zur Task gemacht <!-- nn:todo created=2026-04-12T09:00:00 --> ^nn-todo_cccccccccccccccc <!-- nn:todo:promoted:tk_review_overdue -->",
+                    ]
+                ),
+            ),
+            encoding="utf-8",
         )
-        self.vault.add_quick_todo_to_daily(text="Review endpoint todo", indexer=self.indexer, day_iso="2026-04-20")
+        self._write_review_task("tk_review_overdue", "Überfällig", due_date="2026-04-18")
+        self._write_review_task("tk_review_follow_up", "Wiedervorlage", follow_up_date="2026-04-21")
+        self._write_review_task("tk_review_waiting", "Wartet", status="on_hold", waiting_for="Rückmeldung")
+        self._write_review_task("tk_review_done", "Erledigt", status="done", completed_at="2026-04-19T16:00:00")
+        self.indexer.reindex_vault(self.vault.vault_path)
 
         backend_api.state.dispose_session()
         client = TestClient(backend_api.app)
-        open_response = client.post("/notebase/open", json={"path": str(self.vault_path)})
-        self.assertEqual(open_response.status_code, 200)
-
-        response = client.get("/review/dashboard?days=30&day=2026-04-21&top=5")
+        self.assertEqual(client.post("/notebase/open", json={"path": str(self.vault_path)}).status_code, 200)
+        response = client.get("/review/dashboard?days=30&day=2026-04-21")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
 
-        self.assertIn("period", payload)
-        self.assertIn("kpis", payload)
-        self.assertIn("risk", payload)
-        self.assertIn("series", payload)
-        self.assertIn("top_notes", payload)
-        self.assertIn("top_tasks", payload)
-        self.assertIn("completed_items", payload)
+        self.assertEqual(payload["period"], {"from": "2026-03-23", "to": "2026-04-21", "days": 30})
+        self.assertEqual(len(payload["series"]), 30)
+        # The to-do without history dates back to its note; the promoted one counts only as task.
+        self.assertEqual(
+            payload["summary"],
+            {
+                "new_tasks": 4,
+                "new_todos": 2,
+                "done_tasks": 1,
+                "done_todos": 1,
+                "open_tasks_start": 0,
+                "open_todos_start": 1,
+                "open_tasks_end": 3,
+                "open_todos_end": 2,
+            },
+        )
+        attention = payload["attention"]
+        self.assertEqual([item["id"] for item in attention["overdue"]["items"]], ["tk_review_overdue"])
+        self.assertEqual([item["id"] for item in attention["follow_up"]["items"]], ["tk_review_follow_up"])
+        self.assertEqual([item["id"] for item in attention["waiting"]["items"]], ["tk_review_waiting"])
+        self.assertEqual(attention["waiting"]["items"][0]["detail"], "Rückmeldung")
+        self.assertEqual([item["title"] for item in attention["stale_todos"]["items"]], ["Liegt lange"])
+        self.assertEqual(attention["stale_todos"]["items"][0]["source_title"], "Review Notiz")
 
-        period = payload.get("period") or {}
-        self.assertEqual(int(period.get("days", 0)), 30)
-        series = payload.get("series") or []
-        self.assertEqual(len(series), 30)
+        self.assertEqual(payload["completed_total"], 2)
+        self.assertEqual([(item["kind"], item["title"]) for item in payload["completed_items"]], [("task", "Erledigt"), ("todo", "Erledigt im Zeitraum")])
 
-        kpis = payload.get("kpis") or {}
-        self.assertIn("open_tasks_now", kpis)
-        self.assertIn("open_todos_now", kpis)
-        self.assertIn("completion_ratio", kpis)
-        self.assertIn("backlog_delta", kpis)
+    def test_first_save_keeps_unknown_creation_time_of_existing_todos(self) -> None:
+        note_path = self.vault.vault_path / "Projects" / "Altbestand.md"
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(
+            dump_markdown({"id": "note_legacy", "title": "Altbestand", "type": "note", "created_at": "2026-02-01T08:00:00"}, "- [ ] Alter Eintrag"),
+            encoding="utf-8",
+        )
+        self.indexer.reindex_vault(self.vault.vault_path)
 
-        risk = payload.get("risk") or {}
-        self.assertIn(str(risk.get("level", "")), {"low", "medium", "high"})
+        self.vault.save_note_document(str(note_path), note_path.read_text(encoding="utf-8") + "- [ ] Neuer Eintrag\n", self.indexer)
+
+        saved = next(self.vault.vault_path.rglob("Altbestand.md")).read_text(encoding="utf-8")
+        # The source keeps the unknown time; only the index dates the old to-do to its note.
+        self.assertIn("Alter Eintrag <!-- nn:todo created= -->", saved)
+        self.assertRegex(saved, r"Neuer Eintrag <!-- nn:todo created=\S+ --> \^nn-todo_[0-9a-f]{16}")
+        created_by_text = {row["raw_text"]: row["created_at"] for row in self.indexer.list_todos()}
+        self.assertEqual(created_by_text["Alter Eintrag"], "2026-02-01T08:00:00")
+        self.assertNotEqual(created_by_text["Neuer Eintrag"][:10], "2026-02-01")
 
     def test_daily_note_helpers_use_month_folders(self) -> None:
         result = self.vault.add_quick_todo_to_daily(text="Monatsordner Todo", indexer=self.indexer, day_iso="2026-12-05")
