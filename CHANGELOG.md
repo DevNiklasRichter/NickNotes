@@ -11,12 +11,31 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+### Neu
+
+- Tasks lassen sich **zurückstellen**: Mit „Wiedervorlage“ ruht eine Task bis zu
+  einem Tag deiner Wahl und erscheint erst dann wieder im Fokus – auch wenn sie
+  eigentlich schon überfällig ist. Im Fokus geht das mit einem Klick (morgen,
+  nächster Montag, in einer Woche oder eigenes Datum), in den Task-Eigenschaften
+  steht das Feld jetzt für alle Tasks bereit.
+
 ### Verbessert
 
 - Der **Rückblick** ist aufgeräumt und beantwortet zwei Fragen: Komme ich hinterher, und worum muss ich mich kümmern? Oben steht eine Zeile mit erledigt, neu und offen (samt Veränderung im Zeitraum), darunter ein Verlauf der offenen Arbeit mit neuen und erledigten Einträgen. Bei 90 Tagen wird nach Kalenderwochen zusammengefasst.
 - Neu im Rückblick: **Braucht Aufmerksamkeit** mit überfälligen Tasks, fälligen Wiedervorlagen, wartenden oder blockierten Tasks und ToDos, die seit mehr als 30 Tagen offen sind. ToDos lassen sich dort direkt abhaken.
 - Die Liste **Erledigt** ist nach Tagen gruppiert, zeigt den ToDo-Text mit seiner Notiz und ist nicht mehr auf zehn Einträge gekürzt.
 - Entfallen sind Risiko-Ampel, Kennzahl-Karten, die Listen der meistbearbeiteten Notizen und Tasks sowie der Zeitraum „Heute“ (dafür gibt es den Fokus). Das Info-Symbol neben der Zusammenfassung erklärt, worauf die Zahlen beruhen.
+- Der **Fokus** ist neu aufgebaut und deutlich ruhiger: oben das Datum, ein paar
+  Kennzahlen und „Heute wichtig“ (höchstens drei Einträge) als schlichte Liste,
+  darunter Tasks, To-dos und die heute bearbeiteten Notizen nebeneinander.
+- To-dos hakst du direkt im Fokus ab; sie bleiben bis zum Abend durchgestrichen
+  stehen, damit ein Fehlklick leicht rückgängig zu machen ist. Ältere offene
+  To-dos liegen eingeklappt unter „Früher notiert“.
+- Verknüpfte Notizen und Details zu einer Task oder einem To-do erscheinen erst,
+  wenn du auf „Kontext anzeigen“ klickst. Sie kommen jetzt aus echten Links und
+  gemeinsamen Tags.
+- Die Modi „Execution“, „Planning“, „Rescue“ und „Context“, die Zeitraum-Auswahl
+  und der „Daily Trail“ entfallen.
 
 ### Behoben
 

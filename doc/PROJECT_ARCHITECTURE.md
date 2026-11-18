@@ -155,6 +155,19 @@ Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
 dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der
 gerade bearbeiteten Notiz (1 oder 2 Ebenen, optional nach einem Tag gefiltert).
 
+Der Fokus (`focus/focusDashboardModel.ts`) leitet alles aus Tasks, To-dos und
+Notizzeilen von `/focus/dashboard` ab; das Backend liefert keine eigenen
+Kennzahlen. Heute dran sind offene Tasks, die faellig oder ueberfaellig sind,
+`in_progress` stehen oder deren Wiedervorlage (`follow_up_date`) erreicht ist.
+Eine Wiedervorlage in der Zukunft stellt eine Task bis zu diesem Tag zurueck,
+auch wenn sie ueberfaellig ist; `on_hold` kommt nur ueber eine Wiedervorlage
+zurueck. `POST /tasks/{id}/follow-up` setzt oder loescht das Feld ueber den
+normalen Speicherpfad (`save_note_content`, Revision, Reindex, Graph).
+To-dos von heute sind die mit heutigem `created=` oder aus der heutigen
+Tagesnotiz; heute abgehakte bleiben durchgestrichen an ihrem Platz. „Heute
+wichtig“ (hoechstens drei `task:`/`todo:`-Schluessel) bleibt im Frontmatter
+`mit` der Tagesnotiz. Kontext laedt erst auf Knopfdruck ueber `/graph/related`.
+
 Die Ordnernamen `daily`, `tags`, `tasks`, `.media` und `.system` sind fest. Die
 frueheren Namen (`system`, `99_system`, `01_daily`, `02_tags`, `03_tasks`) werden
 nicht mehr erkannt: Eine NoteBase mit altem Systemordner wird vor jeder Aenderung
