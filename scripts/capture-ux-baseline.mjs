@@ -1873,7 +1873,7 @@ async function seedFocusDay() {
   task('ux-focus-workshop', 'Workshop vorbereiten', `status: open\npriority: M\ndue_date: ${isoDay(4)}\n`, 'Agenda und Raum klären.')
   task('ux-focus-ideas', 'Ideen für das nächste Quartal sammeln', 'status: open\npriority: L\n', 'Ohne Termin.')
   fs.writeFileSync(path.join(vaultPath, 'Messeplanung.md'),
-    '---\nid: ux-focus-fair\ntitle: Messeplanung\ntype: note\n---\n\nStandfläche, Budget und Ansprechpartner der Messe.\n\n- [ ] Standskizze an die Agentur senden\n')
+    `---\nid: ux-focus-fair\ntitle: Messeplanung\ntype: note\ncreated_at: ${isoDay(-6)}T09:00:00\n---\n\nStandfläche, Budget und Ansprechpartner der Messe.\n\n- [ ] Standskizze an die Agentur senden\n`)
   await request('/notebase/reindex', {})
   for (const text of ['Rechnung an den Kunden schicken', 'Zahnarzttermin vereinbaren', 'Kaffeebohnen kaufen']) {
     await request('/focus/quick-capture', {text, date: isoDay(0)})

@@ -163,8 +163,9 @@ Eine Wiedervorlage in der Zukunft stellt eine Task bis zu diesem Tag zurueck,
 auch wenn sie ueberfaellig ist; `on_hold` kommt nur ueber eine Wiedervorlage
 zurueck. `POST /tasks/{id}/follow-up` setzt oder loescht das Feld ueber den
 normalen Speicherpfad (`save_note_content`, Revision, Reindex, Graph).
-To-dos von heute sind die mit heutigem `created=` oder aus der heutigen
-Tagesnotiz; heute abgehakte bleiben durchgestrichen an ihrem Platz. „Heute
+To-dos von heute sind die mit heutigem Erstellzeitpunkt (ohne `created=` gilt
+der der Notiz) oder aus der heutigen Tagesnotiz; heute abgehakte bleiben
+durchgestrichen an ihrem Platz. „Heute
 wichtig“ (hoechstens drei `task:`/`todo:`-Schluessel) bleibt im Frontmatter
 `mit` der Tagesnotiz. Kontext laedt erst auf Knopfdruck ueber `/graph/related`.
 
