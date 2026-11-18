@@ -1624,6 +1624,39 @@ const todoMetadataSelectionGuard = EditorState.transactionFilter.of((transaction
   return [transaction, { selection: { anchor: selection.empty ? guard.to : selection.anchor, head: guard.to }, sequential: true }]
 })
 
+const TODO_MARKER_PATTERN = /^(\s*[-+*]\s+)\[( |x|X)\](\s+|$)/
+
+// Wird die Checkbox `[ ]` einer ToDo-Zeile beschaedigt, verschwindet sie ganz - samt Metadaten.
+// So bleiben keine Reste oder Kommentar-Metadaten als Text zurueck. Umschalten ([ ] <-> [x]) bleibt gueltig.
+export const todoMarkerCleanupFilter = EditorState.transactionFilter.of((transaction) => {
+  if (!transaction.docChanged) return transaction
+  const doc = transaction.startState.doc
+  const removals: { from: number; to: number }[] = []
+  const seen = new Set<number>()
+  transaction.changes.iterChangedRanges((fromA, toA) => {
+    const lastLine = doc.lineAt(toA).number
+    for (let number = doc.lineAt(fromA).number; number <= lastLine; number += 1) {
+      if (seen.has(number)) continue
+      seen.add(number)
+      const line = doc.line(number)
+      if (!line.text.includes('nn:todo')) continue
+      const marker = TODO_MARKER_PATTERN.exec(line.text)
+      const metadata = TODO_METADATA_PATTERN.exec(line.text)
+      if (!marker || !metadata) continue
+      const markerFrom = line.from + marker[1].length
+      const markerTo = markerFrom + 3
+      if (!(fromA < markerTo && toA > markerFrom) && !(fromA === toA && fromA > markerFrom && fromA < markerTo)) continue
+      if (fromA <= line.from && toA >= line.to) continue
+      const newLine = transaction.newDoc.lineAt(transaction.changes.mapPos(line.from, -1))
+      if (TODO_MARKER_PATTERN.test(newLine.text) && TODO_METADATA_PATTERN.test(newLine.text)) continue
+      const spaceAfter = doc.sliceString(markerTo, markerTo + 1) === ' ' ? 1 : 0
+      removals.push({ from: markerFrom, to: markerTo + spaceAfter }, { from: line.from + metadata.index, to: line.to })
+    }
+  })
+  if (removals.length === 0) return transaction
+  return [transaction, { changes: removals, sequential: false }]
+})
+
 function decorateTaskLines(
   entries: DecorationEntry[],
   view: EditorView,
@@ -2533,6 +2566,7 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
     markdownTableDecorationsField,
     todoMetadataAtomicField,
     todoMetadataSelectionGuard,
+    todoMarkerCleanupFilter,
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
       pointerdown: (event, view) => {
