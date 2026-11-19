@@ -2543,7 +2543,7 @@ class VaultManager:
             raise ValueError("Focus session ends before it starts")
         if not 1 <= int(minutes) <= FOCUS_SESSION_MAX_MINUTES:
             raise ValueError(f"Focus session minutes must be between 1 and {FOCUS_SESSION_MAX_MINUTES}")
-        day = _normalize_daily_day(day_iso or f"{started.astimezone():%Y-%m-%d}")
+        day = _normalize_daily_day(day_iso or f"{started:%Y-%m-%d}")
         clean_label = _inline_label(label)
         target = ""
         if task_id:
@@ -2557,7 +2557,8 @@ class VaultManager:
                 target = f"{clean_label} ({note_link})" if clean_label else note_link
         if not target:
             target = clean_label
-        line = f"- Fokuszeit {started.astimezone():%H:%M}–{ended.astimezone():%H:%M} ({int(minutes)} min)"
+        # Times stay in the offset the app sent (the user's local time), not the service's zone.
+        line = f"- Fokuszeit {started:%H:%M}–{ended.astimezone(started.tzinfo):%H:%M} ({int(minutes)} min)"
         if target:
             line += f": {target}"
         now_iso = datetime.now().astimezone().isoformat(timespec="seconds")

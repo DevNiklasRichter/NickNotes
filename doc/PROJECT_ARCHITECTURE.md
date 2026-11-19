@@ -192,7 +192,8 @@ Knopf „Fokuszeit“ in der Leiste ueber dem Editor oder den Befehl „Fokuszei
 starten“. Verkleinert bleibt er als verschiebbares kleines Fenster sichtbar
 (Position geraetelokal im `localStorage`). Eine Fokusrunde ab einer Minute
 (abgelaufen, beendet oder durch eine neue ersetzt) schickt `POST /focus/sessions`;
-das Backend haengt genau eine Zeile an die Tagesnotiz ihres Starttages:
+das Backend haengt genau eine Zeile an die Tagesnotiz ihres Starttages (Uhrzeiten im
+mitgeschickten Zeitzonenversatz, nicht in dem des Dienstes):
 `- Fokuszeit 09:30–09:55 (25 min): [[<Dateiname>|<Titel>]]`. Bei einer Task
 verlinkt die Zeile die Task-Datei, bei einem To-do steht dessen Text mit einem
 Link auf die Notiz, frei ohne Ziel nur der optionale Text. Verlinkt wird ueber den
