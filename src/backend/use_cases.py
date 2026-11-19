@@ -12,6 +12,8 @@ from .config import FOCUS_DASHBOARD_NOTES_SEARCH_LIMIT
 from .nicknotes_backend.markdown_io import parse_markdown_text, snapshot_operation, MarkdownFormatError
 from .nicknotes_backend.indexer import VaultIndexer
 from .nicknotes_backend.onenote_importer import (
+    ONENOTE_TAG_GROUP_ID,
+    ONENOTE_TAG_GROUP_NAME,
     OneNoteImportError,
     OneNoteLocalImporter,
 )
@@ -305,10 +307,8 @@ class StartOneNoteImportUseCase:
 
         try:
             logger.info("Starting OneNote import for %s source(s): %s", len(req.source_paths), req.source_paths)
-            result = OneNoteLocalImporter(vault, progress_callback=update_progress).import_sources(
-                req.source_paths,
-                req.target_folder,
-            )
+            importer = OneNoteLocalImporter(vault, progress_callback=update_progress)
+            result = importer.import_sources(req.source_paths, req.target_folder)
         except OneNoteImportError as exc:
             payload = exc.payload()
             service.state.imports.update(
@@ -372,6 +372,14 @@ class StartOneNoteImportUseCase:
             vault.rebuild_task_status_links(indexer)
         except OSError:
             pass
+        if importer.discovered_tags:
+            # OneNote tags arrive as {tag:onenote/...} in the notes; their definition belongs in tag_groups.json.
+            try:
+                vault.add_tag_group(ONENOTE_TAG_GROUP_ID, ONENOTE_TAG_GROUP_NAME, "", indexer)
+                for tag_id, display_name in sorted(importer.discovered_tags.items()):
+                    vault.add_tag_to_group(ONENOTE_TAG_GROUP_ID, tag_id, display_name, indexer)
+            except (OSError, ValueError):
+                logger.exception("OneNote tags could not be registered")
         tag_groups = vault.sync_tag_groups_with_index(indexer)
         graph_status = service.rebuild_graph_projection(vault)
         response = {

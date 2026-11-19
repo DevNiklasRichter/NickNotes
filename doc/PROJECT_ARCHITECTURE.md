@@ -123,6 +123,18 @@ Datei-, Frontmatter-, Tiefe- und Aliaslimits begrenzen die Verarbeitung. Stabile
 Manuelle `tags`/`related` und aus dem Body abgeleitete `tags_auto`/`related_auto`
 werden gemeinsam projiziert. Task-Typen gelten unabhaengig vom Ordner.
 
+Der OneNote-Import (`onenote_importer.py`) laesst OneNote Desktop eine `.onepkg`
+per COM exportieren und schreibt pro Seite eine Notiz unter
+`<Ziel>/<Notizbuch>/<Abschnittsgruppen>/<Abschnitt>/`. `created_at`/`updated_at`
+stammen aus der Seite; zusaetzliche Frontmatter-Felder `onenote_notebook`,
+`onenote_section`, `onenote_page_id` (stabile Seiten-GUID, verhindert doppelte
+Importe und loest Seitenlinks auf), `onenote_page_level` (Unterseiten) und
+`onenote_authors` (nur bei mehreren Autoren). OneNote-Aufgaben werden To-dos mit
+Zeitmarker, andere OneNote-Kategorien Inline-Tags `{tag:onenote/...}`, deren
+Definition der Import in `tag_groups.json` (Gruppe `onenote`) eintraegt. Bilder
+und Anhaenge liegen im Medienordner der Notiz. Papierkorbseiten werden
+uebersprungen; jede Seite wird unter eigenem `SourceJournal` geschrieben.
+
 To-dos erhalten beim Bearbeiten und bei der Schnellerfassung im Fokus dieselben
 stabilen Blockreferenzen und Zeitfelder im Markdown
 (`<!-- nn:todo created=... --> ^nn-todo_...`). `completed=...` wird nur mit einem
