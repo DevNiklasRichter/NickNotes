@@ -176,7 +176,7 @@ async def lifespan(app):
             backend_api_service.sessions.close_idle(float('inf'))
             state.dispose_session()
 
-app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.6", lifespan=lifespan)
+app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.7", lifespan=lifespan)
 app.mount('/mcp', mcp_gateway)
 app.add_middleware(LocalApiSecurity)
 allowed_origins = _build_allowed_cors_origins()

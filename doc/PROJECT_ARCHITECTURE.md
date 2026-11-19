@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 13. November 2026, Windows-Kandidat 2.1.0-rc.6. Dieses Dokument beschreibt
+Stand: 13. November 2026, Windows-Kandidat 2.1.0-rc.7. Dieses Dokument beschreibt
 den Ist-Zustand: Grenzen, Zustaendigkeiten und Regeln. Verlauf, Messwerte und
 Abnahmenachweise einzelner Aenderungen stehen in den verlinkten Dokumenten unter
 `doc/` und in der Git-Historie, nicht hier.
