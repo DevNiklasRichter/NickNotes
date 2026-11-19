@@ -273,6 +273,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/focus/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Log Focus Session */
+        post: operations["log_focus_session_focus_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/daily/open-today": {
         parameters: {
             query?: never;
@@ -1339,6 +1356,52 @@ export interface components {
             text: string;
             /** Date */
             date?: string | null;
+        };
+        /** FocusSessionLogRequest */
+        FocusSessionLogRequest: {
+            /** Startedat */
+            startedAt: string;
+            /** Endedat */
+            endedAt: string;
+            /** Minutes */
+            minutes: number;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /** Taskid */
+            taskId?: string | null;
+            /** Todoid */
+            todoId?: string | null;
+            /** Date */
+            date?: string | null;
+        };
+        /** FocusSessionLogResponse */
+        FocusSessionLogResponse: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved: boolean;
+            /**
+             * Date
+             * @default
+             */
+            date: string;
+            /**
+             * Notepath
+             * @default
+             */
+            notePath: string;
+            /**
+             * Line
+             * @default
+             */
+            line: string;
+            counts?: components["schemas"]["VaultCounts"];
+        } & {
+            [key: string]: unknown;
         };
         /** GraphDiagnostic */
         GraphDiagnostic: {
@@ -3615,6 +3678,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuickCaptureFocusTodoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    log_focus_session_focus_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FocusSessionLogRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FocusSessionLogResponse"];
                 };
             };
             /** @description Validation Error */

@@ -258,6 +258,14 @@ class QuickCaptureFocusTodoResponse(_ContractModel):
     counts: VaultCounts = Field(default_factory=VaultCounts)
 
 
+class FocusSessionLogResponse(_ContractModel):
+    saved: bool = True
+    date: str = ""
+    notePath: str = ""
+    line: str = ""
+    counts: VaultCounts = Field(default_factory=VaultCounts)
+
+
 class DailyOpenResponse(_ContractModel):
     date: str = ""
     notePath: str = ""

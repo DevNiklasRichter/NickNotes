@@ -9,7 +9,7 @@ import json
 import re
 import threading
 from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
-from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TaskFollowUpRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
+from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, FocusSessionLogRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TaskFollowUpRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -855,6 +855,38 @@ class BackendApiService:
             "date": result["date"],
             "notePath": str(result["note_path"]),
             "todoText": result["todo_text"],
+            "counts": self.counts(indexer),
+        }
+
+    @coordinated(mutation=True)
+    def log_focus_session(self, req: FocusSessionLogRequest) -> dict[str, Any]:
+        vault, indexer = self.require_loaded()
+        try:
+            result = vault.log_focus_session(
+                started_at=req.started_at,
+                ended_at=req.ended_at,
+                minutes=req.minutes,
+                label=req.label,
+                task_id=req.task_id,
+                todo_id=req.todo_id,
+                day_iso=req.date,
+                indexer=indexer,
+            )
+        except ValueError as exc:
+            raise ValidationDomainError(
+                str(exc),
+                operation="log_focus_session",
+                vault_id=str(vault.vault_path),
+                internal_message=str(exc),
+            ) from exc
+        note_path = Path(result["note_path"])
+        # The line links the task or note it was spent on, so the daily note gains a graph edge.
+        self.update_graph_after_note_save(vault=vault, saved_path=note_path, previous_path=note_path, tag_groups=None)
+        return {
+            "saved": True,
+            "date": result["date"],
+            "notePath": str(note_path),
+            "line": result["line"],
             "counts": self.counts(indexer),
         }
 
