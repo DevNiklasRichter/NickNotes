@@ -1590,6 +1590,12 @@ function resolveLinkRanges(linkNode: { firstChild: SyntaxLikeNode | null }): {
 const TODO_METADATA_PATTERN = /\s+<!-- nn:todo created=[^ ]*(?: completed=[^ ]*)? -->\s+\^[A-Za-z0-9_-]+(?:\s+<!-- nn:todo:promoted:[^>]+ -->)?\s*$/
 const TODO_LINE_PATTERN = /^\s*[-+*]\s+\[( |x|X)\]\s/
 
+// Geschuetzter Bereich der Metadaten: ab dem letzten Leerzeichen vor `<!--` bis Zeilenende.
+// Davor getippte Zeichen (auch Leerzeichen) bleiben normaler Text, und es bleibt immer ein Trenner stehen.
+function todoMetadataProtectedFrom(lineFrom: number, match: RegExpExecArray): number {
+  return lineFrom + match.index + match[0].indexOf('<!--') - 1
+}
+
 // Liefert die Metadaten-Bereiche aller Todo-Zeilen, damit Cursor und Loeschen sie als Einheit ueberspringen.
 function todoMetadataRanges(state: EditorState): DecorationSet {
   const ranges: ReturnType<Decoration['range']>[] = []
@@ -1598,7 +1604,7 @@ function todoMetadataRanges(state: EditorState): DecorationSet {
     const line = state.doc.line(number)
     if (!line.text.includes('nn:todo') || !TODO_LINE_PATTERN.test(line.text)) continue
     const match = TODO_METADATA_PATTERN.exec(line.text)
-    if (match && line.from + match.index < line.to) ranges.push(hidden.range(line.from + match.index, line.to))
+    if (match) ranges.push(hidden.range(todoMetadataProtectedFrom(line.from, match), line.to))
   }
   return ranges.length > 0 ? Decoration.set(ranges, true) : Decoration.none
 }
@@ -1625,6 +1631,24 @@ const todoMetadataSelectionGuard = EditorState.transactionFilter.of((transaction
 })
 
 const TODO_MARKER_PATTERN = /^(\s*[-+*]\s+)\[( |x|X)\](\s+|$)/
+
+// Zeilenumbruch am Textende einer ToDo-Zeile gehoert hinter die Metadaten, damit diese bei der Zeile bleiben.
+export const todoNewlineAfterMetadata = EditorState.transactionFilter.of((transaction) => {
+  if (!transaction.docChanged || !transaction.isUserEvent('input')) return transaction
+  const doc = transaction.startState.doc
+  const moves: { at: number; insert: string }[] = []
+  let other = false
+  transaction.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    const insert = inserted.toString()
+    const line = doc.lineAt(fromA)
+    const metadata = fromA === toA && insert.includes('\n') && line.text.includes('nn:todo') ? TODO_METADATA_PATTERN.exec(line.text) : null
+    if (metadata && fromA >= line.from + metadata.index && fromA <= line.to) moves.push({ at: line.to, insert })
+    else other = true
+  })
+  if (moves.length !== 1 || other) return transaction
+  const { at, insert } = moves[0]
+  return { changes: { from: at, insert }, selection: { anchor: at + insert.length }, userEvent: 'input', scrollIntoView: true }
+})
 
 // Wird die Checkbox `[ ]` einer ToDo-Zeile beschaedigt, verschwindet sie ganz - samt Metadaten.
 // So bleiben keine Reste oder Kommentar-Metadaten als Text zurueck. Umschalten ([ ] <-> [x]) bleibt gueltig.
@@ -1688,7 +1712,7 @@ function decorateTaskLines(
           const metadata = TODO_METADATA_PATTERN.exec(line.text)
           if (metadata) {
             // Todo-Metadaten sind rein technisch: immer verborgen, nie durch Cursor/Auswahl einblendbar.
-            addRange(entries, line.from + metadata.index, line.to, syntaxMutedDeco)
+            addRange(entries, todoMetadataProtectedFrom(line.from, metadata), line.to, syntaxMutedDeco)
           }
 
           const markerIsActive = intersectsSelection(Math.max(line.from, markerFrom - 1), Math.min(line.to, markerTo + 1), selections)
@@ -2567,6 +2591,7 @@ export function liveMarkdownPreview(options: LivePreviewOptions = {}): Extension
     todoMetadataAtomicField,
     todoMetadataSelectionGuard,
     todoMarkerCleanupFilter,
+    todoNewlineAfterMetadata,
     createMarkdownPreviewPlugin(options),
     EditorView.domEventHandlers({
       pointerdown: (event, view) => {

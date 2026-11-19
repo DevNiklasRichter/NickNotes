@@ -39,7 +39,7 @@ Abschnitt der nächsten Version.
 
 ### Behoben
 
-- Die technischen Metadaten einer ToDo-Zeile (Erstellzeitpunkt, Block-ID) werden im Editor nicht mehr eingeblendet, wenn der Cursor oder die Auswahl die Zeile berührt. Sie sind damit nicht mehr versehentlich bearbeitbar; der Cursor überspringt sie. Wird eine Klammer der Checkbox gelöscht, verschwindet die ganze Checkbox samt Metadaten, statt Reste im Text zu hinterlassen.
+- Die technischen Metadaten einer ToDo-Zeile (Erstellzeitpunkt, Block-ID) werden im Editor nicht mehr eingeblendet, wenn der Cursor oder die Auswahl die Zeile berührt. Sie sind damit nicht mehr versehentlich bearbeitbar; der Cursor überspringt sie. Wird eine Klammer der Checkbox gelöscht, verschwindet die ganze Checkbox samt Metadaten, statt Reste im Text zu hinterlassen. Leerzeichen am Zeilenende lassen sich wieder normal tippen, und ein Zeilenumbruch am Ende einer ToDo-Zeile nimmt die Metadaten nicht mehr mit in die neue Zeile.
 - ToDos ohne gespeicherten Erstellzeitpunkt (zum Beispiel außerhalb von NickNotes geschrieben) erhöhten im Rückblick den Bestand, tauchten aber nie als „neu“ auf. Sie zählen jetzt ab dem Datum ihrer Notiz.
 - Beim ersten Speichern einer Notiz in NickNotes bekamen bereits vorhandene ToDos „jetzt“ als Erstellzeitpunkt und erschienen dadurch gesammelt als neue Arbeit. Ihr unbekannter Zeitpunkt bleibt jetzt unbekannt.
 - Zu Tasks gemachte ToDos wurden im Rückblick doppelt gezählt, als ToDo und als Task. Sie zählen jetzt nur als Task.
