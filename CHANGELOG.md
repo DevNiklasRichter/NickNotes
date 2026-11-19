@@ -21,6 +21,20 @@ Abschnitt der nächsten Version.
 
 ### Verbessert
 
+- Der **OneNote-Import** übernimmt deutlich mehr: Überschriften, nummerierte
+  Listen, durchgestrichenen Text, Code-Blöcke, Dateianhänge und die
+  OneNote-Aufgaben als abhakbare To-dos (inklusive Erstell- und Erledigt-Datum).
+  Andere OneNote-Kategorien wie „Wichtig“ oder „Frage“ werden zu Tags der neuen
+  Gruppe „OneNote“. Jede Notiz behält das echte Erstell- und Änderungsdatum der
+  OneNote-Seite sowie Notizbuch und Abschnitt (samt Abschnittsgruppen) als
+  Ordner und Eigenschaft.
+- Links zwischen OneNote-Seiten zeigen nach dem Import zuverlässig auf die
+  richtige Notiz, auch bei gleichnamigen Seiten in verschiedenen Abschnitten.
+- Wer dasselbe Notizbuch erneut importiert, bekommt keine Duplikate mehr: bereits
+  importierte Seiten werden übersprungen. Nach dem Import zeigt NickNotes, was
+  nicht übernommen werden konnte (z. B. Handschrift), und fehlende Bilder sind in
+  der Notiz markiert.
+
 - Der **Rückblick** ist aufgeräumt und beantwortet zwei Fragen: Komme ich hinterher, und worum muss ich mich kümmern? Oben steht eine Zeile mit erledigt, neu und offen (samt Veränderung im Zeitraum), darunter ein Verlauf der offenen Arbeit mit neuen und erledigten Einträgen. Bei 90 Tagen wird nach Kalenderwochen zusammengefasst.
 - Neu im Rückblick: **Braucht Aufmerksamkeit** mit überfälligen Tasks, fälligen Wiedervorlagen, wartenden oder blockierten Tasks und ToDos, die seit mehr als 30 Tagen offen sind. ToDos lassen sich dort direkt abhaken.
 - Die Liste **Erledigt** ist nach Tagen gruppiert, zeigt den ToDo-Text mit seiner Notiz und ist nicht mehr auf zehn Einträge gekürzt.
@@ -47,6 +61,11 @@ Abschnitt der nächsten Version.
   Im Datumsfenster kannst du auch ein eigenes Datum tippen (`20.11.` oder
   `20.11.2026`); ein nicht existierender Tag wird rot unterschlängelt und führt
   nicht zu einer Fälligkeit.
+
+- OneNote-Import: Gelöschte Seiten aus dem OneNote-Papierkorb werden nicht mehr
+  mitimportiert, und das temporär geöffnete Notizbuch bleibt danach nicht mehr in
+  OneNote zurück. Eine einzelne beschädigte Seite bricht den Import nicht mehr
+  ab, und zwei Pakete mit gleichem Dateinamen werden nicht mehr vermischt.
 
 - Die technischen Metadaten einer ToDo-Zeile (Erstellzeitpunkt, Block-ID) werden im Editor nicht mehr eingeblendet, wenn der Cursor oder die Auswahl die Zeile berührt. Sie sind damit nicht mehr versehentlich bearbeitbar; der Cursor überspringt sie. Wird eine Klammer der Checkbox gelöscht, verschwindet die ganze Checkbox samt Metadaten, statt Reste im Text zu hinterlassen. Leerzeichen am Zeilenende lassen sich wieder normal tippen, und ein Zeilenumbruch am Ende einer ToDo-Zeile nimmt die Metadaten nicht mehr mit in die neue Zeile.
 - ToDos ohne gespeicherten Erstellzeitpunkt (zum Beispiel außerhalb von NickNotes geschrieben) erhöhten im Rückblick den Bestand, tauchten aber nie als „neu“ auf. Sie zählen jetzt ab dem Datum ihrer Notiz.
