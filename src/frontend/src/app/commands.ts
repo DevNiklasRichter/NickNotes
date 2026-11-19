@@ -43,6 +43,7 @@ export const COMMANDS = [
   {id:'review', label:'Rückblick', group:'Ansicht', shortcut:'Alt+6'},
   {id:'graph', label:'Wissensgraph', group:'Ansicht', shortcut:'Alt+7'},
   {id:'vault', label:'NoteBase', group:'Ansicht', shortcut:'Alt+0'},
+  {id:'focusTimer', label:'Fokuszeit starten', group:'Ansicht', shortcut:'Mod+Alt+F'},
   {id:'fullscreen', label:'Vollbild', group:'Ansicht', shortcut:'F11'},
   {id:'help', label:'Tastenkürzel und Bedienung …', group:'Hilfe', shortcut:'F1'},
   {id:'whatsNew', label:'Was ist neu …', group:'Hilfe'},

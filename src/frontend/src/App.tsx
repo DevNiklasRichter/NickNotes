@@ -33,6 +33,9 @@ import { TodoDashboardCanvas } from './todos/TodoDashboardCanvas';
 import { TaskDashboardCanvas } from './tasks/TaskDashboardCanvas';
 import { FocusDashboardCanvas, type FocusRelatedNote } from './focus/FocusDashboardCanvas';
 import { toShortDayLabel } from './focus/focusDashboardModel';
+import { FocusTimerOverlay, FocusTimerStatus } from './focus/FocusTimerView';
+import type { FocusSessionLog, FocusTimerTarget } from './focus/focusTimerModel';
+import { useFocusTimer } from './focus/useFocusTimer';
 import { ReviewDashboardCanvas } from './review/ReviewDashboardCanvas';
 const GraphDashboardCanvas = lazy(() => import('./graph/GraphDashboardCanvas').then(module => ({default: module.GraphDashboardCanvas})));
 import { GraphWorkspaceProvider } from './graph/GraphWorkspaceContext';
@@ -1289,6 +1292,50 @@ function App() {
             },
         });
     };
+    const logFocusSession = async (entry: FocusSessionLog): Promise<void> => {
+        const response = await apiRequest<{
+            notePath: string;
+            counts: VaultCounts;
+        }>(backendUrl, '/focus/sessions', {
+            method: 'POST',
+            body: JSON.stringify(entry),
+        });
+        setCounts(response.counts);
+        setMessage(`Fokuszeit festgehalten: ${entry.minutes} min.`);
+        await emitMutationEvent({
+            kind: 'focus-updated',
+            paths: [response.notePath],
+            refresh: {
+                search: true,
+                focusAggregate: true,
+            },
+        });
+    };
+    const focusTimer = useFocusTimer({ onLog: logFocusSession, resetKey: vaultPath });
+    const completeFocusTarget = async (target: FocusTimerTarget): Promise<void> => {
+        if (target.kind === 'todo') {
+            await toggleTodo(target.id, true);
+            return;
+        }
+        if (target.kind !== 'task') {
+            return;
+        }
+        const response = await apiRequest<{
+            taskPath: string;
+        }>(backendUrl, `/tasks/${encodeURIComponent(target.id)}/done`, { method: 'POST' });
+        setMessage(`„${target.title}“ erledigt.`);
+        await emitMutationEvent({
+            kind: 'note-saved',
+            noteType: 'task',
+            paths: [target.path, response.taskPath].filter(Boolean),
+            refresh: {
+                search: true,
+                tasks: true,
+                focusAggregate: true,
+                review: true,
+            },
+        });
+    };
     const setTaskFollowUp = async (taskId: string, date: string): Promise<void> => {
         const response = await apiRequest<{
             taskPath: string;
@@ -2377,7 +2424,7 @@ function App() {
                 }} taskStatusClassName={taskStatusClassName} taskStatusLabel={taskStatusLabel} taskPriorityDotClassName={taskPriorityDotClassName} taskPriorityLabel={taskPriorityLabel} toGermanTimestamp={toGermanTimestamp}/>);
         }
         if (paneTab.kind === 'focus_dashboard') {
-            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} query={focusDashboardFilters.query} mitIds={focusMitIds} showTaskDetails={taskFeatureSettings.advancedTaskHandling} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onToggleTodo={(todoId, checked) => toggleTodo(todoId, checked)} onSetTaskFollowUp={setTaskFollowUp} onLoadRelatedNotes={loadRelatedNotes} onOpenNotePath={(path, title, noteType) => {
+            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} query={focusDashboardFilters.query} mitIds={focusMitIds} showTaskDetails={taskFeatureSettings.advancedTaskHandling} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onToggleTodo={(todoId, checked) => toggleTodo(todoId, checked)} onSetTaskFollowUp={setTaskFollowUp} onLoadRelatedNotes={loadRelatedNotes} focusTimerTargetId={focusTimer.timer?.target.id || ''} focusTimerMinutes={focusTimer.lastMinutes} onStartFocusTimer={focusTimer.start} onOpenNotePath={(path, title, noteType) => {
                     if (!path) {
                         return;
                     }
@@ -2573,7 +2620,8 @@ function App() {
         capture:()=>{setWritingSession(null);setCapturePinned(true);setCapturePanelOpen(value=>writingMode||!value)},focusCapture,
         notes:()=>showSidebar('notes'),todos:()=>{showSidebar('todos');openTodoDashboardTab()},tasks:()=>{showSidebar('tasks');openTaskDashboardTab()},
         focus:()=>{showSidebar('focus');openFocusDashboardTab()},tags:()=>showSidebar('tags'),review:()=>{showSidebar('review');openReviewDashboardTab()},graph:()=>{showSidebar('graph');openGraphDashboardTab()},vault:()=>showSidebar('vault'),
-        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),whatsNew:()=>setWhatsNewOpen(true),
+        fullscreen:()=>window.nicknotes?.windowAction?.('fullscreen'),focusTimer:()=>focusTimer.timer?focusTimer.setExpanded(true):focusTimer.start({kind:'free',id:'',title:'',path:''}),
+        help:()=>setShortcutHelp(true),updates:()=>setUpdatesOpen(true),whatsNew:()=>setWhatsNewOpen(true),
     };
     const appCommands:AppCommand[]=COMMANDS.map(spec=>{
         let enabled=vaultLoaded;
@@ -2676,6 +2724,7 @@ function App() {
       <TooltipLayer/>
       {windowTitlebar}
       {commandDialogs}
+      {focusTimer.timer?.expanded ? <FocusTimerOverlay controls={focusTimer} onCaptureThought={quickCaptureFocusTodo} onComplete={completeFocusTarget}/> : null}
       <div className="window-content">
         <GraphWorkspaceProvider enabled={sidebarView === 'graph' || openTabs.some(tab => tab.kind === 'graph_dashboard')} backendUrl={backendUrl} vaultLoaded={vaultLoaded} graphUpdateToken={graphUpdateToken} latestGraphStatus={latestGraphStatus} activeNotePath={graphNotePath} onOpenNodePath={openGraphNodePath} onRevealNodePath={revealGraphNodePath}>
         <div className={`workbench-shell${writingMode?' is-writing':''}`} style={{'--workspace-sidebar-width': `${sidebarOpen ? explorerWidth : 0}px`} as CSSProperties}>
@@ -2826,7 +2875,7 @@ function App() {
           </ContextMenuItem>
         </ContextMenu>) : null}
 
-      <StatusBar progress={<SaveProgress pending={pendingNoteSaves>0}/>} prefs={statusBarPrefs} notification={latestOperatorNotification} noteBaseName={noteBaseName} counts={counts} dueTodayCount={dueTodayCount}/>
+      <StatusBar progress={<SaveProgress pending={pendingNoteSaves>0}/>} timer={<FocusTimerStatus controls={focusTimer}/>} prefs={statusBarPrefs} notification={latestOperatorNotification} noteBaseName={noteBaseName} counts={counts} dueTodayCount={dueTodayCount}/>
 
       <TagActionDialogModal dialog={tagActionDialog} colorPresets={TAG_COLOR_PRESETS} setDialog={setTagActionDialog} onClose={closeTagActionDialog}/>
       {tagMatchWorkflowModal}

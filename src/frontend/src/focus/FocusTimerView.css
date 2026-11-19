@@ -1,0 +1,188 @@
+/* Focus timer: a calm full view above the workbench, below dialogs. */
+.focus-timer-overlay {
+  position: fixed;
+  inset: var(--layout-titlebar-height) 0 0;
+  z-index: 1100;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 0.75rem 1rem 1.25rem;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.focus-timer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.focus-timer-phase {
+  color: var(--muted);
+  font-size: var(--font-label);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.focus-timer-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  min-height: 0;
+  text-align: center;
+}
+
+.focus-timer-clock {
+  font-size: clamp(4rem, 15vw, 9.5rem);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.focus-timer-clock.paused {
+  color: var(--muted);
+}
+
+.focus-timer-progress {
+  width: min(420px, 70vw);
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.focus-timer-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.focus-timer-target {
+  max-width: min(720px, 90vw);
+  margin: 0.4rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.focus-timer-target.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.focus-timer-label {
+  width: min(520px, 90vw);
+  margin-top: 0.4rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.focus-timer-label:focus {
+  border-bottom-color: var(--line-strong);
+  outline: none;
+}
+
+.focus-timer-detail,
+.focus-timer-note {
+  max-width: min(640px, 90vw);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-section);
+}
+
+.focus-timer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+}
+
+.focus-timer-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.8rem;
+}
+
+.focus-timer-thought {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-contrast);
+  color: var(--muted);
+}
+
+.focus-timer-thought input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0.4rem 0;
+}
+
+.focus-timer-thought input:focus {
+  outline: none;
+}
+
+.focus-timer-thought-area {
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
+}
+
+.focus-timer-thought-status {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+
+.status-item.focus-timer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.4rem;
+  background: transparent;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-item.focus-timer-status.finished {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* Start points in the focus view. */
+.focus-timer-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  align-self: center;
+  padding: 0.25rem 0.65rem;
+  font-size: var(--font-label);
+}
+
+.focus-timer-button.active {
+  color: var(--accent-strong);
+}
+
+.focus-row:has(.focus-timer-button.active) .focus-row-actions {
+  display: inline-flex;
+}
+
+.focus-row:has(.focus-timer-button.active) :is(.focus-row-meta, .focus-mit-marker) {
+  display: none;
+}
