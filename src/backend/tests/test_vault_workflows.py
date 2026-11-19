@@ -97,6 +97,72 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertTrue(redone_completed_at)
         self.assertNotEqual(redone_completed_at, "2001-01-01T00:00:00")
 
+    def test_focus_session_is_logged_as_line_in_daily_note(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        captured = client.post('/capture/save', json={'text': 'Angebot [[schreiben]] @2026-11-20'})
+        self.assertEqual(captured.status_code, 200)
+        task_id = captured.json()['tasks'][0]['taskId']
+        self.assertEqual(client.post('/focus/quick-capture', json={'text': 'Folien {tag:thema/vortrag} kürzen', 'date': '2026-11-19'}).status_code, 200)
+        todo = next(item for item in client.get('/todos').json()['items'] if 'Folien' in item['raw_text'])
+
+        task_session = client.post('/focus/sessions', json={
+            'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:57:00+01:00', 'minutes': 25,
+            'label': 'Angebot [[schreiben]]', 'taskId': task_id,
+        })
+        self.assertEqual(task_session.status_code, 200, task_session.text)
+        self.assertEqual(task_session.json()['date'], '2026-11-19')
+        todo_session = client.post('/focus/sessions', json={
+            'startedAt': '2026-11-19T10:00:00+01:00', 'endedAt': '2026-11-19T10:12:00+01:00', 'minutes': 12,
+            'label': 'Folien {tag:thema/vortrag} kürzen', 'todoId': todo['id'],
+        })
+        self.assertEqual(todo_session.status_code, 200, todo_session.text)
+        free_session = client.post('/focus/sessions', json={
+            'startedAt': '2026-11-19T11:00:00+01:00', 'endedAt': '2026-11-19T11:50:00+01:00', 'minutes': 50, 'label': '',
+        })
+        self.assertEqual(free_session.status_code, 200, free_session.text)
+
+        task_stem = Path(next(row for row in client.get('/tasks').json()['items'] if row['id'] == task_id)['path']).stem
+        daily_text = Path(task_session.json()['notePath']).read_text(encoding='utf-8')
+        self.assertIn(f'- Fokuszeit 09:30–09:57 (25 min): [[{task_stem}|Angebot schreiben]]', daily_text)
+        self.assertIn('- Fokuszeit 10:00–10:12 (12 min): Folien vortrag kürzen ([[2026-11-19]])', daily_text)
+        self.assertIn('- Fokuszeit 11:00–11:50 (50 min)\n', daily_text)
+        # Logging must not invent to-dos or tags.
+        self.assertEqual(len([item for item in client.get('/todos').json()['items'] if 'Folien' in item['raw_text']]), 1)
+
+        for payload in (
+            {'startedAt': '2026-11-19T09:30:00', 'endedAt': '2026-11-19T09:55:00+01:00', 'minutes': 25},
+            {'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:00:00+01:00', 'minutes': 25},
+            {'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:55:00+01:00', 'minutes': 0},
+        ):
+            self.assertIn(client.post('/focus/sessions', json=payload).status_code, {400, 422}, payload)
+
+    def test_focus_thought_goes_to_task_or_daily_note_as_plain_text(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        captured = client.post('/capture/save', json={'text': 'Vortrag vorbereiten @2026-11-20'})
+        task_id = captured.json()['tasks'][0]['taskId']
+        todos_before = len(client.get('/todos').json()['items'])
+
+        in_task = client.post('/focus/thoughts', json={'text': '  Folie 3 kürzen,\n Beispiel zeigen ', 'taskId': task_id})
+        self.assertEqual(in_task.status_code, 200, in_task.text)
+        self.assertEqual(in_task.json()['target'], 'task')
+        task_text = Path(in_task.json()['notePath']).read_text(encoding='utf-8')
+        self.assertTrue(task_text.rstrip().endswith('- Folie 3 kürzen, Beispiel zeigen'), task_text)
+
+        in_daily = client.post('/focus/thoughts', json={'text': 'Zahnarzt anrufen', 'date': '2026-11-19'})
+        self.assertEqual(in_daily.status_code, 200, in_daily.text)
+        self.assertEqual(in_daily.json()['target'], 'daily')
+        daily_text = Path(in_daily.json()['notePath']).read_text(encoding='utf-8')
+        self.assertIn('\n- Zahnarzt anrufen\n', daily_text)
+        self.assertNotIn('- [ ] Zahnarzt', daily_text)
+        self.assertEqual(len(client.get('/todos').json()['items']), todos_before)
+
+        self.assertIn(client.post('/focus/thoughts', json={'text': '   '}).status_code, {400, 422})
+        self.assertEqual(client.post('/focus/thoughts', json={'text': 'x', 'taskId': 'tk_unbekannt'}).status_code, 404)
+
     def test_todo_toggle_sets_and_clears_completed_at(self) -> None:
         result = self.vault.add_quick_todo_to_daily(text="Schnelles Todo", indexer=self.indexer, day_iso="2026-04-19")
         note_path = Path(result["note_path"])

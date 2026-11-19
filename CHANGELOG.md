@@ -11,6 +11,34 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+### Neu
+
+- **Fokuszeit**: Ein Timer für konzentriertes Arbeiten nach der Pomodoro-Idee.
+  Im Fokus startest du ihn mit dem Uhr-Symbol an einer Task, einem To-do oder
+  einem Eintrag unter „Heute wichtig“. Ohne Aufgabe geht das von überall über
+  „Fokuszeit“ in der Leiste über dem Editor (15, 25 oder 50 Minuten) oder mit
+  Strg+Alt+F. Die Restzeit erscheint groß auf dem Bildschirm, darunter die
+  Aufgabe. Du kannst anhalten und fünf Minuten dazugeben oder abziehen. Mit Esc
+  wird daraus ein kleines Fenster unten rechts, das du verschieben kannst und
+  das dieselben Knöpfe hat – so vergisst du nie, dass der Timer läuft.
+- Ist die Zeit um, gibt es einen leisen Ton und, wenn NickNotes im Hintergrund
+  ist, eine Windows-Benachrichtigung. Danach wählst du Pause (5 oder 10 Minuten),
+  eine weitere Runde oder hakst die Aufgabe direkt ab.
+- Jede Fokusrunde ab einer Minute steht als Zeile in der Tagesnotiz, z. B.
+  „Fokuszeit 09:30–09:55 (25 min)“ mit Link auf die Task. So bleibt nachlesbar,
+  woran du wie lange gearbeitet hast.
+- Was dir während der Fokuszeit einfällt, tippst du unten in „Gedanke
+  festhalten“. Er landet als schlichter Text – kein To-do – in der Task, an der
+  du arbeitest. Mit dem kleinen Umschalter daneben schickst du allgemeine
+  Gedanken stattdessen in die heutige Tagesnotiz. Bei To-dos und Timern ohne
+  Aufgabe ist das immer die Tagesnotiz.
+
+### Verbessert
+
+- Ist der lokale NickNotes-Dienst kurz nicht erreichbar (etwa während er beim
+  Start noch hochfährt), steht statt „TypeError: Failed to fetch“ jetzt eine
+  verständliche Meldung da.
+
 ## [2.1.0-rc.7] - 2026-11-19
 
 ### Neu

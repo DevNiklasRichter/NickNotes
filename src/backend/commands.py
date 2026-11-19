@@ -41,6 +41,22 @@ class FocusQuickCaptureRequest(BaseModel):
     date: str | None = None
 
 
+class FocusThoughtRequest(BaseModel):
+    text: str = Field(max_length=2000)
+    task_id: str | None = Field(default=None, alias="taskId", max_length=200)
+    date: str | None = None
+
+
+class FocusSessionLogRequest(BaseModel):
+    started_at: str = Field(alias="startedAt", max_length=64)
+    ended_at: str = Field(alias="endedAt", max_length=64)
+    minutes: int = Field(ge=1, le=600)
+    label: str = Field(default="", max_length=500)
+    task_id: str | None = Field(default=None, alias="taskId", max_length=200)
+    todo_id: str | None = Field(default=None, alias="todoId", max_length=200)
+    date: str | None = None
+
+
 class NoteSaveRequest(BaseModel):
     path: str
     content: str

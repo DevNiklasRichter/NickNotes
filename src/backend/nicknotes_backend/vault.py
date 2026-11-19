@@ -392,6 +392,33 @@ def _normalize_daily_day(raw_day: str | None) -> str:
     return datetime.now().date().isoformat()
 
 
+FOCUS_SESSION_MAX_MINUTES = 600
+
+
+def _parse_session_timestamp(raw: str, field: str) -> datetime:
+    try:
+        value = datetime.fromisoformat(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field}: {raw}") from exc
+    if value.tzinfo is None:
+        raise ValueError(f"{field} needs a timezone offset")
+    return value
+
+
+def _inline_label(raw: str) -> str:
+    """One line of plain text that cannot open links, tags or headings in the daily note."""
+    text = re.sub(r"\{tag:(?:[^}/]*/)?([^}]*)\}", r"\1", str(raw or ""))
+    clean = " ".join(text.replace("[[", "[").replace("]]", "]").split())
+    return clean[:200].strip()
+
+
+def _wikilink_to(path: Path, label: str) -> str:
+    # The file name survives the move between tasks/open and tasks/done; link resolution falls back to it.
+    target = re.sub(r"[\[\]|\n]", " ", path.stem).strip()
+    clean_label = " ".join(re.sub(r"[\[\]|\n]", " ", label).split())
+    return f"[[{target}|{clean_label}]]" if clean_label and clean_label != target else f"[[{target}]]"
+
+
 def _daily_month_folder(day_iso: str) -> str:
     return day_iso[:7].replace("-", ".")
 
@@ -2489,6 +2516,61 @@ class VaultManager:
 
         day = _normalize_daily_day(day_iso)
         now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        block_ref = f"nn-todo_{uuid.uuid4().hex[:16]}"
+        daily_path = self._append_daily_line(day, "- [ ] " + format_todo_tail(clean_text, block_ref, now_iso), now_iso, indexer)
+        return {
+            "date": day,
+            "note_path": daily_path,
+            "todo_text": clean_text,
+        }
+
+    def log_focus_session(
+        self,
+        *,
+        started_at: str,
+        ended_at: str,
+        minutes: int,
+        label: str,
+        indexer: VaultIndexer,
+        task_id: str | None = None,
+        todo_id: str | None = None,
+        day_iso: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one focus session as a plain Markdown line to the daily note of its day."""
+        started = _parse_session_timestamp(started_at, "started_at")
+        ended = _parse_session_timestamp(ended_at, "ended_at")
+        if ended < started:
+            raise ValueError("Focus session ends before it starts")
+        if not 1 <= int(minutes) <= FOCUS_SESSION_MAX_MINUTES:
+            raise ValueError(f"Focus session minutes must be between 1 and {FOCUS_SESSION_MAX_MINUTES}")
+        day = _normalize_daily_day(day_iso or f"{started:%Y-%m-%d}")
+        clean_label = _inline_label(label)
+        target = ""
+        if task_id:
+            row = next((item for item in indexer.list_tasks(include_done=True) if item.get("id") == task_id), None)
+            if row and row.get("path"):
+                target = _wikilink_to(Path(str(row["path"])), clean_label or str(row.get("title") or ""))
+        elif todo_id:
+            todo = indexer.get_todo(todo_id)
+            if todo and todo.get("note_path"):
+                note_link = _wikilink_to(Path(str(todo["note_path"])), str(todo.get("note_title") or ""))
+                target = f"{clean_label} ({note_link})" if clean_label else note_link
+        if not target:
+            target = clean_label
+        # Times stay in the offset the app sent (the user's local time), not the service's zone.
+        line = f"- Fokuszeit {started:%H:%M}–{ended.astimezone(started.tzinfo):%H:%M} ({int(minutes)} min)"
+        if target:
+            line += f": {target}"
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        daily_path = self._append_daily_line(day, line, now_iso, indexer)
+        return {"date": day, "note_path": daily_path, "line": line}
+
+    def append_daily_line(self, day_iso: str | None, line: str, indexer: VaultIndexer) -> Path:
+        """Append one line of Markdown to the daily note of `day_iso` (today when empty)."""
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        return self._append_daily_line(_normalize_daily_day(day_iso), line, now_iso, indexer)
+
+    def _append_daily_line(self, day: str, line: str, now_iso: str, indexer: VaultIndexer) -> Path:
         daily_path = self._ensure_daily_note(day, now_iso)
         meta, body = parse_markdown(daily_path)
 
@@ -2501,21 +2583,14 @@ class VaultManager:
         meta["tags"] = _ensure_string_list(meta.get("tags", []))
         meta["updated_at"] = now_iso
 
-        block_ref = f"nn-todo_{uuid.uuid4().hex[:16]}"
-        todo_line = "- [ ] " + format_todo_tail(clean_text, block_ref, now_iso)
         if body.strip():
-            next_body = body.rstrip() + "\n" + todo_line + "\n"
+            next_body = body.rstrip() + "\n" + line + "\n"
         else:
-            next_body = f"# {day}\n\n{todo_line}\n"
+            next_body = f"# {day}\n\n{line}\n"
 
         atomic_write_text(daily_path, dump_markdown(meta, next_body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, daily_path)
-
-        return {
-            "date": day,
-            "note_path": daily_path,
-            "todo_text": clean_text,
-        }
+        return daily_path
 
     def _create_task_file(
         self,

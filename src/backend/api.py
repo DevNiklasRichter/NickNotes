@@ -22,6 +22,8 @@ from .contracts import (
     FocusDashboardAggregateResponse,
     FocusMitResponse,
     FocusMitSaveResponse,
+    FocusSessionLogResponse,
+    FocusThoughtResponse,
     GraphIndexRebuildResponse,
     GraphIndexResponse,
     GraphIndexStatusResponse,
@@ -67,6 +69,8 @@ from .commands import (
     FavoriteFolderRequest,
     FocusMitUpdateRequest,
     FocusQuickCaptureRequest,
+    FocusSessionLogRequest,
+    FocusThoughtRequest,
     NoteBaseDeleteRequest,
     NoteBaseRenameRequest,
     NoteCreateRequest,
@@ -433,6 +437,16 @@ def save_focus_mit(req: FocusMitUpdateRequest) -> dict[str, Any]:
 @app.post("/focus/quick-capture", response_model=QuickCaptureFocusTodoResponse)
 def quick_capture_focus_todo(req: FocusQuickCaptureRequest) -> dict[str, Any]:
     return backend_api_service.quick_capture_focus_todo(req)
+
+
+@app.post("/focus/sessions", response_model=FocusSessionLogResponse)
+def log_focus_session(req: FocusSessionLogRequest) -> dict[str, Any]:
+    return backend_api_service.log_focus_session(req)
+
+
+@app.post("/focus/thoughts", response_model=FocusThoughtResponse)
+def save_focus_thought(req: FocusThoughtRequest) -> dict[str, Any]:
+    return backend_api_service.save_focus_thought(req)
 
 
 @app.post("/daily/open-today", response_model=DailyOpenResponse)

@@ -18,6 +18,7 @@ import {
   type FocusTaskItem,
   type FocusTodoItem,
 } from './focusDashboardModel'
+import type { FocusTimerTarget } from './focusTimerModel'
 
 /** One neighbour from `/graph/related`: linked notes and notes sharing weighted tags. */
 export type FocusRelatedNote = {
@@ -42,6 +43,10 @@ type FocusDashboardCanvasProps = {
   onToggleTodo: (todoId: string, checked: boolean) => Promise<void>
   onSetTaskFollowUp: (taskId: string, date: string) => Promise<void>
   onLoadRelatedNotes: (path: string) => Promise<FocusRelatedNote[]>
+  /** Task or to-do the focus timer is running for. */
+  focusTimerTargetId: string
+  focusTimerMinutes: number
+  onStartFocusTimer: (target: FocusTimerTarget, minutes?: number) => void
   onOpenNotePath: (path: string, title?: string, noteType?: NoteType) => void
   onOpenTodayDaily: () => void
   onOpenTodoDashboard: () => void
@@ -177,6 +182,9 @@ export function FocusDashboardCanvas({
   onToggleTodo,
   onSetTaskFollowUp,
   onLoadRelatedNotes,
+  focusTimerTargetId,
+  focusTimerMinutes,
+  onStartFocusTimer,
   onOpenNotePath,
   onOpenTodayDaily,
   onOpenTodoDashboard,
@@ -280,6 +288,14 @@ export function FocusDashboardCanvas({
 
   const contextPanelProps = { notes, noteBasePath, onLoadRelatedNotes, onOpenNotePath }
 
+  const timerButton = (target: FocusTimerTarget) => {
+    const active = Boolean(target.id) && target.id === focusTimerTargetId
+    return (
+      <IconButton label={active ? 'Fokuszeit läuft – groß anzeigen' : `Fokuszeit starten (${focusTimerMinutes} min)`} icon="Timer"
+        className={`focus-timer-button ${active ? 'active' : ''}`} pressed={active} onClick={() => onStartFocusTimer(target)} />
+    )
+  }
+
   const renderTask = (task: FocusTaskItem) => {
     const label = toTaskReasonLabel(task, todayIso)
     const contextOpen = contextKey === task.key
@@ -301,6 +317,7 @@ export function FocusDashboardCanvas({
           {task.isMit ? <MitMarker /> : null}
           {label ? <span className={`focus-row-meta ${task.overdueDays > 0 ? 'overdue' : ''}`}>{label}</span> : null}
           <span className="focus-row-actions">
+            {timerButton({ kind: 'task', id: task.id, title: task.title, path: task.path ?? '', detail: showTaskDetails ? task.nextActionHint ?? '' : '' })}
             {mitButton(task.key, task.isMit, task.title)}
             <MenuButton label="Zurückstellen" heading="Wieder anzeigen ab" icon={<LucideNamedIcon name="CalendarClock" size={14} />} className="icon-button compact muted" disabled={busyTaskKey === task.key}>
               {deferOptions(todayIso).map((option) => (
@@ -347,6 +364,7 @@ export function FocusDashboardCanvas({
           {todo.isMit ? <MitMarker /> : null}
           {showOrigin ? <span className="focus-row-meta">{todo.noteTitle}</span> : null}
           <span className="focus-row-actions">
+            {checked ? null : timerButton({ kind: 'todo', id: todo.id, title: text, path: todo.notePath })}
             {mitButton(todo.key, todo.isMit, text)}
             <IconButton label={contextOpen ? 'Kontext ausblenden' : 'Kontext anzeigen'} icon="Info" expanded={contextOpen} onClick={() => toggleContext(todo.key)} />
             <IconButton label={`„${todo.noteTitle}“ öffnen`} icon="ArrowUpRight" onClick={() => onOpenNotePath(todo.notePath, todo.noteTitle, 'note')} />
@@ -376,7 +394,12 @@ export function FocusDashboardCanvas({
       <button type="button" className="focus-row-title" disabled={!entry.path} onClick={() => entry.path && onOpenNotePath(entry.path, entry.title, entry.noteType)}>
         {entry.kind === 'todo' ? toPlainTodoText(entry.title) : entry.title}
       </button>
-      {entry.isDone ? <span className="focus-row-meta">erledigt</span> : null}
+      {entry.isDone ? <span className="focus-row-meta">erledigt</span> : timerButton({
+        kind: entry.kind,
+        id: entry.key.slice(entry.key.indexOf(':') + 1),
+        title: entry.kind === 'todo' ? toPlainTodoText(entry.title) : entry.title,
+        path: entry.path ?? '',
+      })}
       <IconButton label="Aus „Heute wichtig“ entfernen" icon="X" disabled={mitBusy} onClick={() => void saveMit(data.mitIds.filter((key) => key !== entry.key))} />
     </li>
   )

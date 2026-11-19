@@ -24,6 +24,8 @@ export type ExternalNoteDropPayload = {
 }
 
 type EditorWorkspaceLayoutProps = {
+  /** Actions shown first in the toolbar above the editor. */
+  toolbarStart?: ReactNode
   writingMode: boolean
   onToggleWritingMode: () => void
   workspace: WorkspaceState
@@ -118,6 +120,7 @@ function isDraggableWorkspaceTab(tab: NoteTab): boolean {
 }
 
 export function EditorWorkspaceLayout({
+  toolbarStart,
   writingMode,
   onToggleWritingMode,
   workspace,
@@ -644,6 +647,7 @@ export function EditorWorkspaceLayout({
           renderPaneTabBar('left', 'toolbar')
         )}
         <div className="editor-tab-actions">
+          {toolbarStart}
           <button className={`workspace-writing-button${writingMode?' active':''}`} onClick={onToggleWritingMode} aria-pressed={writingMode}
             aria-label={writingMode?'Schreibmodus beenden':'Schreibmodus starten'} data-tooltip={commandTitle('writingMode')}>
             <LucideNamedIcon name="PenLine" size={14}/><span>{writingMode?'Schreibmodus beenden':'Schreiben'}</span>
