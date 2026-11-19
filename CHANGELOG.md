@@ -39,8 +39,9 @@ Abschnitt der nächsten Version.
 
 ### Behoben
 
-- In der Schnellerfassung wird eine Zeile mit `@Datum` jetzt immer zum To-do und
-  damit zur Task mit diesem Fälligkeitstag – auch ohne `- [ ]` davor. Das
+- In der Schnellerfassung wird eine Textzeile mit `@Datum` zu einer Task mit diesem
+  Fälligkeitstag (ohne zusätzliches To-do). Steht das Datum an einem To-do
+  (`- [ ]`), bleibt es ein To-do und es entsteht keine Task. Das
   Auswahlfenster nach `@` wird nicht mehr am Fensterrand abgeschnitten, sondern
   öffnet bei Platzmangel nach oben.
   Im Datumsfenster kannst du auch ein eigenes Datum tippen (`20.11.` oder

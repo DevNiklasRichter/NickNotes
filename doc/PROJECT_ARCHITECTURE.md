@@ -147,14 +147,13 @@ wartend/blockiert, To-dos aelter als `REVIEW_STALE_TODO_DAYS`; jeder Task in
 hoechstens einer Gruppe) und die erledigten Eintraege. Die Wochenbuendelung fuer
 lange Zeitraeume passiert im Frontend (`review/reviewSeries.ts`).
 
-Beim Senden der Schnellerfassung wird ein offenes To-do mit Termin
-(`- [ ] Angebot schicken @2026-11-20`) per Promotion zur Task mit diesem
-Faelligkeitsdatum; die Zeile bleibt in der Tagesnotiz stehen. Eine Zeile mit
-`@Datum` ohne Checkbox wird dabei zum To-do. Von Hand getippte `@20.11.2026` oder
-`@20.11.` werden beim Speichern zu ISO normalisiert; nicht existierende Tage
-bleiben Text und erzeugen keine Task (`_dated_capture_lines_to_todos`). Der Editor
-unterschlaengelt solche Tage rot (`invalidDateMarks.ts`). In anderen Notizen
-ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
+Beim Senden der Schnellerfassung wird eine Textzeile mit `@2026-11-20` direkt zu
+einer Task mit diesem Faelligkeitsdatum (kein To-do); die Zeile bleibt als Text in
+der Tagesnotiz. Ein To-do (`- [ ] ... @2026-11-20`) bleibt ein To-do und erzeugt
+keine Task. Von Hand getippte `@20.11.2026` oder `@20.11.` werden beim Speichern
+zu ISO normalisiert; nicht existierende Tage bleiben Text und erzeugen nichts
+(`_normalize_capture_dates`). Der Editor unterschlaengelt solche Tage rot
+(`invalidDateMarks.ts`). In anderen Notizen ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
 Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
 dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der
 gerade bearbeiteten Notiz (1 oder 2 Ebenen, optional nach einem Tag gefiltert).

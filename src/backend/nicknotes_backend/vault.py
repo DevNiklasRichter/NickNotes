@@ -440,21 +440,27 @@ def _german_due_tokens_to_iso(line: str, today: datetime) -> str:
     return _GERMAN_DUE_TOKEN.sub(replace, line)
 
 
-def _dated_capture_lines_to_todos(text: str) -> str:
-    """Turns capture lines carrying an @date into open to-dos; the date only means something on a to-do."""
+def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Normalizes typed `@dates` and finds plain lines (no checkbox) carrying a valid one: `(title, due_date)`.
+
+    A dated plain line becomes a task; a dated to-do (`- [ ] ... @date`) stays a to-do. Impossible days stay text.
+    """
     out: list[str] = []
+    dated: list[tuple[str, str]] = []
     in_fence = False
     for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
-        if not in_fence:
+        elif not in_fence:
             line = _german_due_tokens_to_iso(line, datetime.now())
-        match = None if in_fence else _CAPTURE_DATED_LINE.match(line)
-        due = DUE_TOKEN_PATTERN.search(match.group(2)) if match else None
-        if match and due and _is_iso_day(due.group(1)):
-            line = f"{match.group(1)}- [ ] {match.group(2)}"
+            match = _CAPTURE_DATED_LINE.match(line)
+            due = DUE_TOKEN_PATTERN.search(match.group(2)) if match else None
+            if match and due and _is_iso_day(due.group(1)):
+                title = " ".join(DUE_TOKEN_PATTERN.sub(" ", match.group(2)).split())
+                if title:
+                    dated.append((title, due.group(1)))
         out.append(line)
-    return "\n".join(out)
+    return "\n".join(out), dated
 
 
 def _is_iso_day(value: str) -> bool:
@@ -2357,7 +2363,7 @@ class VaultManager:
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("Capture text is empty")
-        capture_text = _dated_capture_lines_to_todos(_apply_capture_tag_replacements(clean_text, selected_tags))
+        capture_text, dated_lines = _normalize_capture_dates(_apply_capture_tag_replacements(clean_text, selected_tags))
 
         note_path = self._ensure_daily_note(day, created_at)
         meta, body = parse_markdown(note_path)
@@ -2378,20 +2384,25 @@ class VaultManager:
             next_body = f"{next_body}\n\n{block}\n"
         else:
             next_body = f"{block}\n"
-        known_todos = {row["id"] for row in indexer.list_todos() if row.get("note_path") == str(note_path)}
         atomic_write_text(note_path, dump_markdown(meta, next_body), encoding='utf-8')
         indexer.reindex_markdown_file(self.vault_path, note_path)
 
-        # An open to-do with a date ("- [ ] Angebot schicken @2026-11-20") becomes a task due that day;
-        # the line stays in the daily note and points to the task like any promoted to-do.
+        # A plain line with a date ("Angebot schicken @2026-11-20") becomes a task due that day and stays
+        # ordinary text in the daily note; a to-do with a date stays a to-do and creates no task.
         tasks = []
-        for row in indexer.list_todos():
-            if row.get("note_path") != str(note_path) or row["id"] in known_todos or row.get("checked") or row.get("promoted"):
-                continue
-            due = DUE_TOKEN_PATTERN.search(str(row.get("raw_text", "")))
-            if due and _is_iso_day(due.group(1)):
-                created = self.promote_todo_to_task(row["id"], indexer, due_date=due.group(1))
-                tasks.append({"taskId": created["taskId"], "taskPath": created["taskPath"], "dueDate": due.group(1)})
+        note_anchor = str(meta.get("id", f"daily_{day}"))
+        for title, due_date in dated_lines:
+            task_id = make_task_id(now)
+            task_path = self._create_task_file(
+                task_id=task_id,
+                note_id=note_anchor,
+                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[]),
+                now=now,
+                indexer=indexer,
+                extra_frontmatter={"origin_note_id": note_anchor, "origin_note_path": str(note_path)},
+                body=title,
+            )
+            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date})
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
