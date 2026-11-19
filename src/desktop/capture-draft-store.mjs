@@ -3,7 +3,7 @@ import path from 'node:path'
 
 /** One pending Markdown capture, independent of backend readiness; never a NoteBase writer. */
 export class CaptureDraftStore {
-  constructor(profile) { this.file=path.join(profile,'capture-draft.md');this.current='';this.pending=undefined;this.writing=null }
+  constructor(profile,fileName='capture-draft.md') { this.file=path.join(profile,fileName);this.current='';this.pending=undefined;this.writing=null }
   async load() {
     try {
       const stat=await fs.stat(this.file)

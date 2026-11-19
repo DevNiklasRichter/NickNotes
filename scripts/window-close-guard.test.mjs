@@ -108,3 +108,20 @@ test('cancel and failed update restart never grant later close permission',async
   assert.equal(await failed,false);assert.equal(win.enabled,true);assert.equal(win.destroyed,false)
   win.close();assert.equal(win.destroyed,false)
 })
+test('keeping NickNotes in the tray hides the window instead of closing it',t=>{
+  const win=new EventEmitter(),sent=[]
+  let hidden=0,keep=true
+  win.destroyed=false;win.isDestroyed=()=>win.destroyed;win.setEnabled=()=>{};win.hide=()=>{hidden++}
+  win.webContents={send:(channel,payload)=>sent.push({channel,...payload})}
+  win.close=()=>{let prevented=false;win.emit('close',{preventDefault(){prevented=true}});if(!prevented){win.destroyed=true;win.emit('closed')}}
+  const guard=createWindowCloseGuard(win,{showMessageBoxSync:()=>1,showErrorBox:()=>{}},{hideInstead:()=>keep})
+  t.after(()=>guard.dispose())
+  guard.setReady(true)
+  win.close()
+  assert.equal(hidden,1);assert.equal(win.destroyed,false);assert.deepEqual(sent,[])
+  // Quitting from the tray switches the preference off for this close and goes through the normal check.
+  keep=false;win.close()
+  assert.equal(sent.at(-1).channel,'app:request-close-state')
+  guard.receiveState({requestId:sent.at(-1).requestId,hasUnsavedChanges:false})
+  assert.equal(win.destroyed,true)
+})
