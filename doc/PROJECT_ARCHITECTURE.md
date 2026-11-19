@@ -149,7 +149,11 @@ lange Zeitraeume passiert im Frontend (`review/reviewSeries.ts`).
 
 Beim Senden der Schnellerfassung wird ein offenes To-do mit Termin
 (`- [ ] Angebot schicken @2026-11-20`) per Promotion zur Task mit diesem
-Faelligkeitsdatum; die Zeile bleibt in der Tagesnotiz stehen. In anderen Notizen
+Faelligkeitsdatum; die Zeile bleibt in der Tagesnotiz stehen. Eine Zeile mit
+`@Datum` ohne Checkbox wird dabei zum To-do. Von Hand getippte `@20.11.2026` oder
+`@20.11.` werden beim Speichern zu ISO normalisiert; nicht existierende Tage
+bleiben Text und erzeugen keine Task (`_dated_capture_lines_to_todos`). Der Editor
+unterschlaengelt solche Tage rot (`invalidDateMarks.ts`). In anderen Notizen
 ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
 Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
 dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der

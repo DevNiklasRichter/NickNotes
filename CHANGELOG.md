@@ -39,6 +39,14 @@ Abschnitt der nächsten Version.
 
 ### Behoben
 
+- In der Schnellerfassung wird eine Zeile mit `@Datum` jetzt immer zum To-do und
+  damit zur Task mit diesem Fälligkeitstag – auch ohne `- [ ]` davor. Das
+  Auswahlfenster nach `@` wird nicht mehr am Fensterrand abgeschnitten, sondern
+  öffnet bei Platzmangel nach oben.
+  Im Datumsfenster kannst du auch ein eigenes Datum tippen (`20.11.` oder
+  `20.11.2026`); ein nicht existierender Tag wird rot unterschlängelt und führt
+  nicht zu einer Fälligkeit.
+
 - Die technischen Metadaten einer ToDo-Zeile (Erstellzeitpunkt, Block-ID) werden im Editor nicht mehr eingeblendet, wenn der Cursor oder die Auswahl die Zeile berührt. Sie sind damit nicht mehr versehentlich bearbeitbar; der Cursor überspringt sie. Wird eine Klammer der Checkbox gelöscht, verschwindet die ganze Checkbox samt Metadaten, statt Reste im Text zu hinterlassen. Leerzeichen am Zeilenende lassen sich wieder normal tippen, und ein Zeilenumbruch am Ende einer ToDo-Zeile nimmt die Metadaten nicht mehr mit in die neue Zeile.
 - ToDos ohne gespeicherten Erstellzeitpunkt (zum Beispiel außerhalb von NickNotes geschrieben) erhöhten im Rückblick den Bestand, tauchten aber nie als „neu“ auf. Sie zählen jetzt ab dem Datum ihrer Notiz.
 - Beim ersten Speichern einer Notiz in NickNotes bekamen bereits vorhandene ToDos „jetzt“ als Erstellzeitpunkt und erschienen dadurch gesammelt als neue Arbeit. Ihr unbekannter Zeitpunkt bleibt jetzt unbekannt.

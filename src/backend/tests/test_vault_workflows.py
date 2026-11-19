@@ -162,6 +162,32 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.indexer.list_tasks()), 0)
         self.assertEqual(len(self.indexer.list_todos()), 0)
 
+    def test_save_capture_turns_dated_line_into_task(self) -> None:
+        result = self.vault.save_capture(
+            text="Angebot schicken @2026-11-20\n- [ ] Rechnung pruefen @2026-11-21\nOhne Datum",
+            selected_tags=[],
+            indexer=self.indexer,
+        )
+
+        self.assertEqual([task["dueDate"] for task in result["tasks"]], ["2026-11-20", "2026-11-21"])
+        self.assertEqual(sorted(task["due_date"] for task in self.indexer.list_tasks()), ["2026-11-20", "2026-11-21"])
+        _meta, body = parse_markdown(Path(result["note_path"]))
+        self.assertIn("Ohne Datum", body)
+        self.assertEqual(len(self.indexer.list_todos()), 2)
+
+    def test_save_capture_handles_typed_and_invalid_dates(self) -> None:
+        result = self.vault.save_capture(
+            text="Tippfehler @31.02.2027\nGanz falsch @2026-13-40\nManuell @20.11.2030 erledigen",
+            selected_tags=[],
+            indexer=self.indexer,
+        )
+
+        self.assertEqual([task["dueDate"] for task in result["tasks"]], ["2030-11-20"])
+        _meta, body = parse_markdown(Path(result["note_path"]))
+        self.assertIn("@31.02.2027", body)
+        self.assertIn("@2026-13-40", body)
+        self.assertEqual(len(self.indexer.list_tasks()), 1)
+
     def test_open_endpoint_recovers_corrupt_index_db(self) -> None:
         self.indexer.close()
         self.vault.db_path.write_text("NOT A SQLITE DATABASE", encoding="utf-8")

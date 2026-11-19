@@ -2577,6 +2577,7 @@ button.focus-row-title:hover:not(:disabled) {
 }
 
 .editor-command-palette.slash {
+  position: fixed;
   transform: translateY(0);
 }
 
@@ -4346,4 +4347,9 @@ button.focus-row-title:hover:not(:disabled) {
 .workspace-split-resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+.code-editor-host .cm-invalid-date {
+  text-decoration: underline wavy var(--danger, #c0392b);
+  text-underline-offset: 3px;
 }

@@ -416,6 +416,47 @@ def _normalize_mit_ids(raw_value: Any, limit: int = VAULT_MAX_DAILY_MIT_ITEMS) -
 DUE_TOKEN_PATTERN = re.compile(r"(?:^|\s)@(\d{4}-\d{2}-\d{2})(?=\s|$)")
 
 
+_CAPTURE_DATED_LINE = re.compile(r"^(\s*)(?!(?:[-*+]\s+)?\[[ xX]\])(?!#)(?:[-*+]\s+)?(\S.*)$")
+
+
+_GERMAN_DUE_TOKEN = re.compile(r"(?:^|(?<=\s))@(\d{1,2})\.(\d{1,2})\.(\d{4})?(?=\s|$)")
+
+
+def _german_due_tokens_to_iso(line: str, today: datetime) -> str:
+    """`@20.11.2026` / `@20.11.` typed without the popup become `@2026-11-20`; impossible days stay as typed (no task)."""
+
+    def replace(match: re.Match[str]) -> str:
+        day, month = int(match.group(1)), int(match.group(2))
+        years = [int(match.group(3))] if match.group(3) else range(today.year, today.year + 9)
+        for year in years:
+            try:
+                resolved = datetime(year, month, day)
+            except ValueError:
+                continue
+            if match.group(3) or resolved.date() >= today.date():
+                return f"@{resolved:%Y-%m-%d}"
+        return match.group(0)
+
+    return _GERMAN_DUE_TOKEN.sub(replace, line)
+
+
+def _dated_capture_lines_to_todos(text: str) -> str:
+    """Turns capture lines carrying an @date into open to-dos; the date only means something on a to-do."""
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence:
+            line = _german_due_tokens_to_iso(line, datetime.now())
+        match = None if in_fence else _CAPTURE_DATED_LINE.match(line)
+        due = DUE_TOKEN_PATTERN.search(match.group(2)) if match else None
+        if match and due and _is_iso_day(due.group(1)):
+            line = f"{match.group(1)}- [ ] {match.group(2)}"
+        out.append(line)
+    return "\n".join(out)
+
+
 def _is_iso_day(value: str) -> bool:
     try:
         datetime.strptime(value, "%Y-%m-%d")
@@ -2316,7 +2357,7 @@ class VaultManager:
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("Capture text is empty")
-        capture_text = _apply_capture_tag_replacements(clean_text, selected_tags)
+        capture_text = _dated_capture_lines_to_todos(_apply_capture_tag_replacements(clean_text, selected_tags))
 
         note_path = self._ensure_daily_note(day, created_at)
         meta, body = parse_markdown(note_path)

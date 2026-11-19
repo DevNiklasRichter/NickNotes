@@ -32,7 +32,7 @@ export function detectInlineTrigger(before: string, after: string, lineFrom: num
   return null
 }
 
-export type DateSuggestion = { label: string; description: string; iso: string }
+export type DateSuggestion = { label: string; description: string; iso: string; /** Hint rows leave the text as typed. */ hint?: boolean }
 
 const WEEKDAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
 
@@ -49,26 +49,48 @@ function readable(date: Date): string {
   return `${WEEKDAYS[date.getDay()]}, ${date.getDate()}.${date.getMonth() + 1}.${date.getFullYear()}`
 }
 
-/** Explicit dates: 20.11., 20.11.2026 or 2026-11-20. A day without year means the next such day. */
-function typedDate(query: string, today: Date): Date | null {
-  const iso = query.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  const german = query.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})?$/)
-  let date: Date | null = null
-  if (iso) date = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
-  else if (german) {
-    const [day, month] = [Number(german[1]), Number(german[2])]
-    date = new Date(german[3] ? Number(german[3]) : today.getFullYear(), month - 1, day)
-    if (!german[3] && date < plusDays(today, 0)) date = new Date(today.getFullYear() + 1, month - 1, day)
-    if (date.getDate() !== day) return null
-  }
-  return date && !Number.isNaN(date.getTime()) ? date : null
+function calendarDate(year: number, month: number, day: number): Date | null {
+  const date = new Date(year, month - 1, day)
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null
 }
+
+/** Explicit dates: 20.11., 20.11.2026 or 2026-11-20. A day without year means the next such day. Impossible days (31.2.) give null. */
+export function parseTypedDate(query: string, today: Date): Date | null {
+  const iso = query.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (iso) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))
+  const german = query.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})?$/)
+  if (!german) return null
+  const [day, month] = [Number(german[1]), Number(german[2])]
+  if (german[3]) return calendarDate(Number(german[3]), month, day)
+  const thisYear = calendarDate(today.getFullYear(), month, day)
+  if (thisYear && thisYear >= plusDays(today, 0)) return thisYear
+  // Feb 29 skips ahead to the next leap year.
+  for (let year = today.getFullYear() + 1; year <= today.getFullYear() + 8; year += 1) {
+    const next = calendarDate(year, month, day)
+    if (next) return next
+  }
+  return null
+}
+
+/** A token after `@` that is meant as a date (digits, dots, dashes only) but is not a real day. */
+export function isInvalidDateToken(token: string, today = new Date()): boolean {
+  return /^[\d.-]*\d[\d.-]*$/.test(token) && !parseTypedDate(token, today)
+}
+
+/** Shapes that are complete enough to be judged; anything shorter is still being typed. */
+const COMPLETE_DATE_SHAPE = /^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.(\d{4})?)$/
 
 const fold = (value: string) => value.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
 
 export function dateSuggestions(query: string, today = new Date()): DateSuggestion[] {
-  const explicit = typedDate(query.trim(), today)
+  const typed = query.trim()
+  const explicit = parseTypedDate(typed, today)
   if (explicit) return [{ label: `${explicit.getDate()}.${explicit.getMonth() + 1}.${explicit.getFullYear()}`, description: readable(explicit), iso: isoDate(explicit) }]
+  if (/^[\d.-]+$/.test(typed)) {
+    return COMPLETE_DATE_SHAPE.test(typed)
+      ? [{ label: 'Ungültiges Datum', description: 'Dieser Tag existiert nicht – bitte korrigieren', iso: '', hint: true }]
+      : [{ label: 'Eigenes Datum', description: 'Weiter tippen: 20.11. oder 20.11.2026', iso: '', hint: true }]
+  }
   const named: Array<[string, Date]> = [['Heute', plusDays(today, 0)], ['Morgen', plusDays(today, 1)], ['Übermorgen', plusDays(today, 2)]]
   for (let offset = 1; offset <= 7; offset += 1) {
     const day = plusDays(today, offset)
@@ -76,7 +98,8 @@ export function dateSuggestions(query: string, today = new Date()): DateSuggesti
   }
   named.push(['In zwei Wochen', plusDays(today, 14)])
   const wanted = fold(query.trim())
-  return named
+  const matches = named
     .filter(([label]) => !wanted || fold(label).split(' ').some(word => word.startsWith(wanted)) || fold(label).startsWith(wanted))
     .map(([label, date]) => ({ label, description: readable(date), iso: isoDate(date) }))
+  return wanted ? matches : [...matches, { label: 'Eigenes Datum', description: 'Weiter tippen: 20.11. oder 20.11.2026', iso: '', hint: true }]
 }
