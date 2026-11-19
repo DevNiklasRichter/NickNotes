@@ -11,6 +11,8 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+## [2.1.0-rc.7] - 2026-11-19
+
 ### Neu
 
 - Tasks lassen sich **zurückstellen**: Mit „Wiedervorlage“ ruht eine Task bis zu
