@@ -150,31 +150,100 @@
   font-size: var(--font-caption);
 }
 
-.status-item.focus-timer-status {
+/* Where a thought goes: a quiet two-way switch inside the input, only for tasks. */
+.focus-timer-thought-target {
   display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0 0.4rem;
+  flex: none;
+  gap: 1px;
+  padding: 1px;
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+}
+
+.focus-timer-thought-target button {
+  padding: 0.05rem 0.45rem;
   background: transparent;
-  font-size: inherit;
-  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: var(--font-caption);
 }
 
-.status-item.focus-timer-status.finished {
-  color: var(--accent-strong);
-  font-weight: 600;
+.focus-timer-thought-target button[aria-pressed="true"] {
+  background: var(--surface-contrast);
+  color: var(--text);
 }
 
-/* Start points in the focus view. */
-.focus-timer-start {
-  display: inline-flex;
+/* Small floating window while the full view is minimized. */
+.focus-timer-mini {
+  position: fixed;
+  right: 0.75rem;
+  bottom: 2.25rem;
+  z-index: 400;
+  display: grid;
+  gap: 0.2rem;
+  width: 15.5rem;
+  padding: 0.35rem 0.6rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-menu);
+  background: var(--surface-contrast);
+  box-shadow: var(--shadow);
+}
+
+.focus-timer-mini-head {
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
-  align-self: center;
-  padding: 0.25rem 0.65rem;
+  justify-content: space-between;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.focus-timer-mini-head:active {
+  cursor: grabbing;
+}
+
+.focus-timer-mini-head .focus-timer-phase {
+  font-size: var(--font-caption);
+}
+
+.focus-timer-mini-clock {
+  font-size: 1.9rem;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.focus-timer-mini-clock.paused {
+  color: var(--muted);
+}
+
+.focus-timer-mini-title {
+  overflow: hidden;
+  font-size: var(--font-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-timer-actions.compact {
+  justify-content: flex-start;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.focus-timer-actions.compact button {
+  padding: 0.2rem 0.5rem;
   font-size: var(--font-label);
 }
 
+.focus-timer-mini.finished .focus-timer-mini-clock {
+  color: var(--muted);
+}
+
+/* A toast should not hide behind the floating timer. */
+.window-frame:has(.focus-timer-mini) .notification-attention {
+  bottom: 11rem;
+}
+
+/* Start points in the focus view. */
 .focus-timer-button.active {
   color: var(--accent-strong);
 }

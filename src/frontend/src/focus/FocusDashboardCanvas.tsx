@@ -18,7 +18,7 @@ import {
   type FocusTaskItem,
   type FocusTodoItem,
 } from './focusDashboardModel'
-import { FOCUS_PRESET_MINUTES, type FocusTimerTarget } from './focusTimerModel'
+import type { FocusTimerTarget } from './focusTimerModel'
 
 /** One neighbour from `/graph/related`: linked notes and notes sharing weighted tags. */
 export type FocusRelatedNote = {
@@ -427,14 +427,6 @@ export function FocusDashboardCanvas({
           <div className={data.stats.overdue > 0 ? 'overdue' : ''}><dt>Überfällig</dt><dd>{data.stats.overdue}</dd></div>
           <div><dt>Zurückgestellt</dt><dd>{data.stats.deferred}</dd></div>
         </dl>
-        <MenuButton label="Fokuszeit ohne Aufgabe starten" heading="Fokuszeit" className="focus-timer-start"
-          icon={<><LucideNamedIcon name="Timer" size={14} />Fokuszeit</>}>
-          {FOCUS_PRESET_MINUTES.map((minutes) => (
-            <ContextMenuItem key={minutes} onClick={() => onStartFocusTimer({ kind: 'free', id: '', title: '', path: '' }, minutes)}>
-              {minutes} Minuten
-            </ContextMenuItem>
-          ))}
-        </MenuButton>
       </header>
 
       <section className="focus-mit" aria-labelledby="focus-mit-title">

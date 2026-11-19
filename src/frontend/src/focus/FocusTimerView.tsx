@@ -1,10 +1,14 @@
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react'
+import { commandTitle } from '../app/commands'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import { ContextMenuItem } from '../ui/ContextMenu'
+import { MenuButton } from '../ui/MenuButton'
 import { trapDialogTab, useDialogFocus } from '../ui/useDialogFocus'
 import {
   breakMinutesFor,
   elapsedMs,
   FOCUS_ADJUST_MINUTES,
+  FOCUS_PRESET_MINUTES,
   formatClock,
   isRunning,
   remainingMs,
@@ -13,6 +17,11 @@ import {
 } from './focusTimerModel'
 import type { FocusTimerControls } from './useFocusTimer'
 import './FocusTimerView.css'
+
+/** Where a thought from the focus view is written. */
+export type FocusThoughtTarget = 'task' | 'daily'
+
+const MINI_OFFSET_KEY = 'nicknotes.focusTimer.miniOffset'
 
 /** Current time, refreshed while the timer runs. */
 function useNow(active: boolean): number {
@@ -35,20 +44,47 @@ function phaseLabel(timer: FocusTimer): string {
   return timer.finished ? 'Fokuszeit vorbei' : 'Fokuszeit'
 }
 
+/** Pause, ±5 minutes and end: the same controls in the full view and the small window. */
+function RunningControls({ timer, controls, compact = false }: { timer: FocusTimer; controls: FocusTimerControls; compact?: boolean }) {
+  const paused = timer.runningSince === null
+  const iconSize = compact ? 13 : 14
+  return (
+    <div className={`focus-timer-actions${compact ? ' compact' : ''}`}>
+      {paused ? (
+        <button type="button" className="primary" onClick={controls.resume} aria-label="Fortsetzen" data-tooltip={compact ? 'Fortsetzen' : undefined}>
+          <LucideNamedIcon name="Play" size={iconSize} />{compact ? null : 'Fortsetzen'}
+        </button>
+      ) : (
+        <button type="button" className="primary" onClick={controls.pause} aria-label="Anhalten" data-tooltip={compact ? 'Anhalten' : undefined}>
+          <LucideNamedIcon name="Pause" size={iconSize} />{compact ? null : 'Anhalten'}
+        </button>
+      )}
+      <button type="button" onClick={() => controls.adjust(-FOCUS_ADJUST_MINUTES)} aria-label={`${FOCUS_ADJUST_MINUTES} Minuten weniger`}>−{FOCUS_ADJUST_MINUTES}{compact ? '' : ' min'}</button>
+      <button type="button" onClick={() => controls.adjust(FOCUS_ADJUST_MINUTES)} aria-label={`${FOCUS_ADJUST_MINUTES} Minuten mehr`}>+{FOCUS_ADJUST_MINUTES}{compact ? '' : ' min'}</button>
+      {timer.phase === 'break' && !compact ? <button type="button" onClick={controls.nextRound}>Pause überspringen</button> : null}
+      <button type="button" onClick={controls.stop}
+        data-tooltip={timer.phase === 'focus' ? 'Beendet die Fokuszeit; ab einer Minute wird sie in der Tagesnotiz festgehalten.' : undefined}>
+        Beenden
+      </button>
+    </div>
+  )
+}
+
 type FocusTimerOverlayProps = {
   controls: FocusTimerControls
-  onCaptureThought: (text: string) => Promise<void>
+  onSaveThought: (text: string, target: FocusThoughtTarget) => Promise<void>
   onComplete: (target: FocusTimerTarget) => Promise<void>
 }
 
 /** Full view of the running focus timer with the task underneath. */
-export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: FocusTimerOverlayProps) {
+export function FocusTimerOverlay({ controls, onSaveThought, onComplete }: FocusTimerOverlayProps) {
   const timer = controls.timer!
   const root = useDialogFocus()
   const now = useNow(isRunning(timer))
   const [thought, setThought] = useState('')
   const [thoughtBusy, setThoughtBusy] = useState(false)
   const [thoughtStatus, setThoughtStatus] = useState('')
+  const [thoughtTarget, setThoughtTarget] = useState<FocusThoughtTarget>('task')
   const [completeBusy, setCompleteBusy] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -58,6 +94,8 @@ export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: Fo
   const plannedMinutes = Math.round(timer.plannedMs / 60_000)
   const paused = !timer.finished && timer.runningSince === null
   const { target } = timer
+  // Only a task has a file of its own; everything else goes to the daily note.
+  const destination: FocusThoughtTarget = target.kind === 'task' ? thoughtTarget : 'daily'
 
   const minimize = () => controls.setExpanded(false)
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -77,9 +115,9 @@ export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: Fo
     setThoughtBusy(true)
     setThoughtStatus('')
     try {
-      await onCaptureThought(clean)
+      await onSaveThought(clean, destination)
       setThought('')
-      setThoughtStatus('Notiert – steht als To-do in der heutigen Tagesnotiz.')
+      setThoughtStatus(destination === 'task' ? 'In der Task festgehalten.' : 'In der Tagesnotiz festgehalten.')
     } catch (error) {
       setThoughtStatus(errorText(error, 'Der Gedanke konnte nicht gespeichert werden.'))
     } finally {
@@ -147,23 +185,7 @@ export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: Fo
             </div>
           </>
         ) : (
-          <div className="focus-timer-actions">
-            {paused ? (
-              <button type="button" className="primary" onClick={controls.resume}><LucideNamedIcon name="Play" size={14} />Fortsetzen</button>
-            ) : (
-              <button type="button" className="primary" onClick={controls.pause}><LucideNamedIcon name="Pause" size={14} />Anhalten</button>
-            )}
-            <button type="button" onClick={() => controls.adjust(-FOCUS_ADJUST_MINUTES)} aria-label={`${FOCUS_ADJUST_MINUTES} Minuten weniger`}>−{FOCUS_ADJUST_MINUTES} min</button>
-            <button type="button" onClick={() => controls.adjust(FOCUS_ADJUST_MINUTES)} aria-label={`${FOCUS_ADJUST_MINUTES} Minuten mehr`}>+{FOCUS_ADJUST_MINUTES} min</button>
-            {timer.phase === 'break' ? (
-              <>
-                <button type="button" onClick={controls.nextRound}>Pause überspringen</button>
-                <button type="button" onClick={controls.stop}>Beenden</button>
-              </>
-            ) : (
-              <button type="button" onClick={controls.stop} data-tooltip="Beendet die Fokuszeit; ab einer Minute wird sie in der Tagesnotiz festgehalten.">Beenden</button>
-            )}
-          </div>
+          <RunningControls timer={timer} controls={controls} />
         )}
         {controls.logError ? <p className="focus-inline-error" role="alert">{controls.logError}</p> : null}
         {actionError ? <p className="focus-inline-error" role="alert">{actionError}</p> : null}
@@ -174,7 +196,16 @@ export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: Fo
           <form className="focus-timer-thought" onSubmit={(event) => void submitThought(event)}>
             <LucideNamedIcon name="Plus" size={14} aria-hidden="true" />
             <input value={thought} onChange={(event) => { setThought(event.target.value); setThoughtStatus('') }} disabled={thoughtBusy}
-              placeholder="Gedanke für später … (Eingabe notiert ihn als To-do)" aria-label="Gedanke für später notieren" />
+              placeholder={destination === 'task' ? 'Gedanke festhalten … (Eingabe speichert ihn in der Task)' : 'Gedanke festhalten … (Eingabe speichert ihn in der Tagesnotiz)'}
+              aria-label="Gedanke festhalten" />
+            {target.kind === 'task' ? (
+              <span className="focus-timer-thought-target" role="group" aria-label="Gedanke speichern in">
+                <button type="button" aria-pressed={thoughtTarget === 'task'} onClick={() => setThoughtTarget('task')}
+                  data-tooltip="Gehört zur Task und wird in ihrer Datei gespeichert">Task</button>
+                <button type="button" aria-pressed={thoughtTarget === 'daily'} onClick={() => setThoughtTarget('daily')}
+                  data-tooltip="Allgemeiner Gedanke für die heutige Tagesnotiz">Tagesnotiz</button>
+              </span>
+            ) : null}
           </form>
           <p className="focus-timer-thought-status" role="status">{thoughtStatus}</p>
         </div>
@@ -183,19 +214,106 @@ export function FocusTimerOverlay({ controls, onCaptureThought, onComplete }: Fo
   )
 }
 
-/** Small display in the status bar while the full view is minimized. */
-export function FocusTimerStatus({ controls }: { controls: FocusTimerControls }) {
-  const timer = controls.timer
-  const now = useNow(Boolean(timer && isRunning(timer)))
-  if (!timer || timer.expanded) return null
+type Offset = { x: number; y: number }
+
+function readMiniOffset(): Offset {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(MINI_OFFSET_KEY) || 'null') as Offset | null
+    if (!stored || !Number.isFinite(stored.x) || !Number.isFinite(stored.y)) return { x: 0, y: 0 }
+    // The window may have shrunk since; the panel stays reachable.
+    return {
+      x: Math.min(0, Math.max(stored.x, -(window.innerWidth - 280))),
+      y: Math.min(0, Math.max(stored.y, -(window.innerHeight - 220))),
+    }
+  } catch {
+    return { x: 0, y: 0 }
+  }
+}
+
+function storeMiniOffset(offset: Offset): void {
+  try {
+    window.localStorage.setItem(MINI_OFFSET_KEY, JSON.stringify(offset))
+  } catch {
+    // Device-local convenience only.
+  }
+}
+
+/** Small floating window while the full view is minimized, so a running timer is never out of sight. */
+export function FocusTimerMini({ controls }: { controls: FocusTimerControls }) {
+  const timer = controls.timer!
+  const now = useNow(isRunning(timer))
+  const [offset, setOffset] = useState(readMiniOffset)
+  const panel = useRef<HTMLElement>(null)
+  const drag = useRef<{ startX: number; startY: number; base: Offset; min: Offset; max: Offset } | null>(null)
   const paused = !timer.finished && timer.runningSince === null
-  const label = timer.finished ? phaseLabel(timer) : `${timer.phase === 'break' ? 'Pause' : 'Fokus'} ${formatClock(remainingMs(timer, now))}${paused ? ' (angehalten)' : ''}`
   const title = timer.target.title.trim()
+
+  const startDrag = (event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button') || !panel.current) return
+    const rect = panel.current.getBoundingClientRect()
+    drag.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      base: offset,
+      min: { x: offset.x - rect.left + 8, y: offset.y - rect.top + 40 },
+      max: { x: offset.x + window.innerWidth - rect.right - 8, y: offset.y + window.innerHeight - rect.bottom - 8 },
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const moveDrag = (event: PointerEvent<HTMLElement>) => {
+    const current = drag.current
+    if (!current) return
+    setOffset({
+      x: Math.min(current.max.x, Math.max(current.min.x, current.base.x + event.clientX - current.startX)),
+      y: Math.min(current.max.y, Math.max(current.min.y, current.base.y + event.clientY - current.startY)),
+    })
+  }
+  const endDrag = () => {
+    if (!drag.current) return
+    drag.current = null
+    storeMiniOffset(offset)
+  }
+
   return (
-    <button type="button" className={`status-item focus-timer-status${timer.finished ? ' finished' : ''}`} onClick={() => controls.setExpanded(true)}
-      data-tooltip={title ? `${title} – Fokuszeit groß anzeigen` : 'Fokuszeit groß anzeigen'}>
-      <LucideNamedIcon name="Timer" size={12} />
-      <span>{label}</span>
-    </button>
+    <aside ref={panel} className={`focus-timer-mini${timer.finished ? ' finished' : ''}`} aria-label="Fokuszeit"
+      style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+      <header className="focus-timer-mini-head" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+        data-tooltip="Zum Verschieben ziehen">
+        <span className="focus-timer-phase">{phaseLabel(timer)}{paused ? ' · angehalten' : ''}</span>
+        <button type="button" className="icon-button compact muted" aria-label="Groß anzeigen" data-tooltip="Groß anzeigen" onClick={() => controls.setExpanded(true)}>
+          <LucideNamedIcon name="Maximize2" size={13} />
+        </button>
+      </header>
+      <div className={`focus-timer-mini-clock${paused ? ' paused' : ''}`} role="timer">{formatClock(remainingMs(timer, now))}</div>
+      {title ? <div className="focus-timer-mini-title" title={title}>{title}</div> : null}
+      {timer.finished ? (
+        <div className="focus-timer-actions compact">
+          <button type="button" className="primary" onClick={() => controls.setExpanded(true)}>Weiter</button>
+          <button type="button" onClick={controls.stop}>Schließen</button>
+        </div>
+      ) : (
+        <RunningControls timer={timer} controls={controls} compact />
+      )}
+    </aside>
+  )
+}
+
+/** Toolbar entry above the editor: start with a length, or bring a running timer back. */
+export function FocusTimerToolbarButton({ controls, onStartFree }: { controls: FocusTimerControls; onStartFree: (minutes: number) => void }) {
+  const label = <><LucideNamedIcon name="Timer" size={14} /><span>Fokuszeit</span></>
+  if (controls.timer) {
+    return (
+      <button type="button" className="workspace-writing-button active" aria-pressed="true" onClick={() => controls.setExpanded(true)}
+        aria-label="Fokuszeit groß anzeigen" data-tooltip={commandTitle('focusTimer', 'Fokuszeit groß anzeigen')}>
+        {label}
+      </button>
+    )
+  }
+  return (
+    <MenuButton label={commandTitle('focusTimer')} heading="Fokuszeit" className="workspace-writing-button" icon={label}>
+      {FOCUS_PRESET_MINUTES.map((minutes) => (
+        <ContextMenuItem key={minutes} onClick={() => onStartFree(minutes)}>{minutes} Minuten</ContextMenuItem>
+      ))}
+    </MenuButton>
   )
 }
