@@ -109,22 +109,23 @@ class RuntimeIntegrityTests(unittest.TestCase):
                 self.assertFalse(local.exists())  # moved along, no orphaned projection folder
                 self.assertTrue(moved.db_path.exists())
             finally:service.state.dispose_session()
-    def test_dated_capture_todo_becomes_a_due_task(self):
+    def test_dated_capture_line_becomes_a_due_task_but_dated_todo_stays_a_todo(self):
         from src.backend.commands import CaptureSaveRequest
         from src.backend.nicknotes_backend.markdown_io import parse_markdown
         with tempfile.TemporaryDirectory() as directory:
             service=BackendApiService()
             try:
                 service.create_vault(VaultCreateRequest(parentPath=directory,name='Capture'))
-                text='Telefonat mit Kunde\n- [ ] Angebot schicken @2026-11-20\n- [ ] Ohne Termin\n- [ ] Kein Datum @2026-02-31\nMail an max@firma.de'
+                text='Angebot schicken @2026-11-20\n- [ ] Ohne Task @2026-11-21\n- [ ] Ohne Termin\nKein Datum @2026-02-31\nMail an max@firma.de'
                 saved=service.save_capture(CaptureSaveRequest(text=text,selectedTagKeys=[]))
                 self.assertEqual([task['dueDate'] for task in saved['tasks']],['2026-11-20'])
                 meta,body=parse_markdown(Path(saved['tasks'][0]['taskPath']))
                 self.assertEqual((meta['title'],meta['due_date']),('Angebot schicken','2026-11-20'))
                 daily=Path(saved['notePath']).read_text(encoding='utf-8')
                 self.assertIn('Angebot schicken @2026-11-20',daily)  # the capture keeps what was typed
-                self.assertIn('nn:todo:promoted:',daily)
+                self.assertNotIn('nn:todo:promoted:',daily)
                 self.assertEqual(len(service.state.indexer.list_tasks(include_done=True)),1)
+                self.assertEqual([todo['raw_text'] for todo in service.state.indexer.list_todos()],['Ohne Task @2026-11-21','Ohne Termin'])
             finally:service.state.dispose_session()
     def test_watcher_retries_projection_failure_without_another_source_edit(self):
         from unittest.mock import patch

@@ -3,7 +3,8 @@ import {isContextMenuKey} from '../ui/contextMenuAnchor'
 import type {ContextMenuAnchor} from '../ui/contextMenuAnchor'
 import type {MarkdownTableMenuRequest} from './markdownLivePreview'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from 'react'
+import { createPortal } from 'react-dom'
+import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject, ReactElement } from 'react'
 import { defaultKeymap, history, historyKeymap, undo, redo, selectAll, isolateHistory } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
@@ -36,12 +37,15 @@ import {
 } from './editorCommands'
 import { markdownKeyBindings } from './markdownCommands'
 import { liveMarkdownPreview, markdownTagLookupExtension, flushMarkdownTableDrafts } from './markdownLivePreview'
+import { invalidDateMarks } from './invalidDateMarks'
 import { buildCodeMirrorTheme, markdownHighlightExtension } from './markdownTheme'
 import type { TagDefinition, TagGroupDefinition } from '../tags/tagTypes'
 
+/** Viewport coordinates for the fixed palette; `bottom` is set when it opens upwards. */
 type PaletteAnchor = {
   left: number
-  top: number
+  top?: number
+  bottom?: number
 }
 
 type PaletteState =
@@ -429,17 +433,16 @@ function resolveSlashAnchor(view: EditorView, position: number, host: HTMLElemen
     return { left: 16, top: 32 }
   }
 
-  const rect = host.getBoundingClientRect()
+  const margin = 10
   const panelWidth = 340
-  const panelHeight = Math.min(320, Math.max(160, rect.height - 20))
-  const left = Math.max(10, Math.min(coords.left - rect.left - 16, rect.width - panelWidth - 10))
-  const preferredBelow = coords.bottom - rect.top + 8
-  const maxTop = Math.max(10, rect.height - panelHeight - 10)
-  const top =
-    preferredBelow <= maxTop
-      ? preferredBelow
-      : Math.max(10, Math.min(maxTop, coords.top - rect.top - panelHeight - 8))
-  return { left, top }
+  const panelHeight = 310
+  const left = Math.max(margin, Math.min(coords.left - 16, window.innerWidth - panelWidth - margin))
+  const below = window.innerHeight - coords.bottom - margin
+  const above = coords.top - margin
+  if (below >= panelHeight || below >= above) {
+    return { left, top: Math.max(margin, Math.min(coords.bottom + 8, window.innerHeight - margin - 120)) }
+  }
+  return { left, bottom: Math.max(margin, window.innerHeight - coords.top + 8) }
 }
 
 function resolveSelectionAnchor(view: EditorView, host: HTMLElement | null): PaletteAnchor {
@@ -767,7 +770,7 @@ export function CodeMirrorMarkdownEditor({
     }
 
     if (paletteState.mode === 'slash' && paletteState.trigger === '@') {
-      return dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.iso}`}))
+      return dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.hint ? paletteState.query : date.iso}`}))
     }
 
     if (paletteState.mode === 'slash') {
@@ -986,7 +989,8 @@ export function CodeMirrorMarkdownEditor({
       if (!shell) {
         return
       }
-      if (!shell.contains(event.target as Node)) {
+      const target = event.target as Element | null
+      if (!shell.contains(target as Node) && !target?.closest?.('.editor-command-palette')) {
         setPaletteState(null)
       }
     }
@@ -1416,6 +1420,7 @@ export function CodeMirrorMarkdownEditor({
           EditorView.lineWrapping,
           markdownHighlightExtension,
           tagLookupCompartmentRef.current.of(markdownTagLookupExtension(initialTagGroupsRef.current)),
+          invalidDateMarks(),
           searchHighlightCompartmentRef.current.of(
             buildExplorerSearchHighlightExtension(initialSearchHighlightQueryRef.current)
           ),
@@ -2004,11 +2009,13 @@ export function CodeMirrorMarkdownEditor({
       ? paletteState.anchor.left
       : paletteState.context.anchor.left
     : undefined
-  const paletteTop = isAnchoredPalette
+  const paletteVertical = isAnchoredPalette
     ? paletteState.mode === 'slash'
-      ? paletteState.anchor.top
-      : paletteState.context.anchor.top
+      ? paletteState.anchor
+      : paletteState.context.anchor
     : undefined
+  // Anchored palettes live on <body> with fixed viewport coordinates so no parent can clip them.
+  const wrapPalette = (node: ReactElement) => (isAnchoredPalette ? createPortal(node, document.body) : node)
   const activeCommandIndex = clampIndex(paletteState ? paletteState.selectedIndex : 0, paletteItems.length)
   const showSearchInput = paletteState ? paletteState.mode !== 'slash' : false
 
@@ -2080,10 +2087,10 @@ export function CodeMirrorMarkdownEditor({
         </ContextMenu>
       ) : null}
 
-      {paletteState ? (
+      {paletteState ? wrapPalette(
         <div
           className={`editor-command-palette ${isAnchoredPalette ? 'slash' : 'global'}`}
-          style={isAnchoredPalette ? { left: `${paletteLeft}px`, top: `${paletteTop}px` } : undefined}
+          style={isAnchoredPalette ? { left: `${paletteLeft}px`, top: paletteVertical?.top === undefined ? undefined : `${paletteVertical.top}px`, bottom: paletteVertical?.bottom === undefined ? undefined : `${paletteVertical.bottom}px` } : undefined}
         >
           {paletteState.mode === 'table-size' ? (
             <div className="editor-table-size-panel">

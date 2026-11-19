@@ -53,6 +53,15 @@ Abschnitt der nächsten Version.
 
 ### Behoben
 
+- In der Schnellerfassung wird eine Textzeile mit `@Datum` zu einer Task mit diesem
+  Fälligkeitstag (ohne zusätzliches To-do). Steht das Datum an einem To-do
+  (`- [ ]`), bleibt es ein To-do und es entsteht keine Task. Das
+  Auswahlfenster nach `@` wird nicht mehr am Fensterrand abgeschnitten, sondern
+  öffnet bei Platzmangel nach oben.
+  Im Datumsfenster kannst du auch ein eigenes Datum tippen (`20.11.` oder
+  `20.11.2026`); ein nicht existierender Tag wird rot unterschlängelt und führt
+  nicht zu einer Fälligkeit.
+
 - OneNote-Import: Gelöschte Seiten aus dem OneNote-Papierkorb werden nicht mehr
   mitimportiert, und das temporär geöffnete Notizbuch bleibt danach nicht mehr in
   OneNote zurück. Eine einzelne beschädigte Seite bricht den Import nicht mehr

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dateSuggestions, detectInlineTrigger } from './inlineSuggestions'
+import { dateSuggestions, detectInlineTrigger, isInvalidDateToken } from './inlineSuggestions'
 
 describe('inline triggers', () => {
   it('recognises links, tags, dates and commands at the cursor', () => {
@@ -32,6 +32,17 @@ describe('date suggestions', () => {
     expect(dateSuggestions('20.11.', friday)[0].iso).toBe('2026-11-20')
     expect(dateSuggestions('3.1.', friday)[0].iso).toBe('2027-01-03')
     expect(dateSuggestions('2026-12-24', friday)[0].iso).toBe('2026-12-24')
-    expect(dateSuggestions('31.2.', friday)).toEqual([])
+    expect(dateSuggestions('31.2.', friday)).toEqual([expect.objectContaining({ label: 'Ungültiges Datum', hint: true })])
+    expect(dateSuggestions('2026-13-40', friday)[0].label).toBe('Ungültiges Datum')
+    expect(dateSuggestions('20.1', friday)[0]).toMatchObject({ label: 'Eigenes Datum', hint: true })
+    expect(dateSuggestions('', friday).at(-1)).toMatchObject({ label: 'Eigenes Datum', hint: true })
+  })
+
+  it('flags impossible day tokens but leaves words and real dates alone', () => {
+    expect(isInvalidDateToken('31.2.', friday)).toBe(true)
+    expect(isInvalidDateToken('2026-13-40', friday)).toBe(true)
+    expect(isInvalidDateToken('20.11.2026', friday)).toBe(false)
+    expect(isInvalidDateToken('2026-11-20', friday)).toBe(false)
+    expect(isInvalidDateToken('mon', friday)).toBe(false)
   })
 })
