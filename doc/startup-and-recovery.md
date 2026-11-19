@@ -46,6 +46,10 @@ mit maximal 5 MiB UTF-8-Text. Schnelle Eingaben werden beim Schreiben gebuendelt
 normales Beenden wartet auf ausstehende Schreibvorgaenge. Fehler beim lokalen
 Sichern werden sichtbar gemeldet. Ein Dateisystem- oder Stromausfall kann weiterhin
 eine Datensicherung erfordern; der Entwurf ist kein Backup der NoteBase.
+Das kleine Fenster der Schnellerfassung von ueberall (systemweites Kuerzel) hat
+nach denselben Regeln einen eigenen Entwurf, `quick-capture-draft.md`, und
+schreibt beim Senden in die Tagesnotiz der gerade geoeffneten NoteBase. Ist keine
+geoeffnet, bleibt der Entwurf stehen, bis eine NoteBase geladen ist.
 
 Der Entwurf ist geraetelokal, nicht an eine bestimmte NoteBase gebunden und wird
 nicht mit deren Dateien synchronisiert. Vor dem Absenden gilt die aktuell
