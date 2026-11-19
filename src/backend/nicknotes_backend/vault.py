@@ -2564,6 +2564,11 @@ class VaultManager:
         daily_path = self._append_daily_line(day, line, now_iso, indexer)
         return {"date": day, "note_path": daily_path, "line": line}
 
+    def append_daily_line(self, day_iso: str | None, line: str, indexer: VaultIndexer) -> Path:
+        """Append one line of Markdown to the daily note of `day_iso` (today when empty)."""
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        return self._append_daily_line(_normalize_daily_day(day_iso), line, now_iso, indexer)
+
     def _append_daily_line(self, day: str, line: str, now_iso: str, indexer: VaultIndexer) -> Path:
         daily_path = self._ensure_daily_note(day, now_iso)
         meta, body = parse_markdown(daily_path)

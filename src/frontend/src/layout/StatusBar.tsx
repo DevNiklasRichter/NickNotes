@@ -11,8 +11,6 @@ type StatusBarPrefs = {
 
 type StatusBarProps = {
   progress?: ReactNode
-  /** Running focus timer while its full view is minimized. */
-  timer?: ReactNode
   prefs: StatusBarPrefs
   notification: OperatorNotification | null
   noteBaseName: string
@@ -23,7 +21,7 @@ type StatusBarProps = {
   dueTodayCount: number
 }
 
-export function StatusBar({ progress, timer, prefs, notification, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
+export function StatusBar({ progress, prefs, notification, noteBaseName, counts, dueTodayCount }: StatusBarProps) {
   const statusClass =
     notification?.severity === 'warn'
       ? 'warn'
@@ -47,7 +45,6 @@ export function StatusBar({ progress, timer, prefs, notification, noteBaseName, 
         )}
       </div>
       <div className="status-bar-right">
-        {timer}
         {prefs.showTotalNotes ? <span className="status-item">Notizen: {counts.notes}</span> : null}
         {prefs.showOpenTasks ? <span className="status-item">Tasks offen: {counts.openTasks}</span> : null}
         {prefs.showDueToday ? <span className="status-item">Heute fällig: {dueTodayCount}</span> : null}

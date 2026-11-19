@@ -138,6 +138,31 @@ class VaultWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(client.post('/focus/sessions', json=payload).status_code, {400, 422}, payload)
 
+    def test_focus_thought_goes_to_task_or_daily_note_as_plain_text(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        captured = client.post('/capture/save', json={'text': 'Vortrag vorbereiten @2026-11-20'})
+        task_id = captured.json()['tasks'][0]['taskId']
+        todos_before = len(client.get('/todos').json()['items'])
+
+        in_task = client.post('/focus/thoughts', json={'text': '  Folie 3 kürzen,\n Beispiel zeigen ', 'taskId': task_id})
+        self.assertEqual(in_task.status_code, 200, in_task.text)
+        self.assertEqual(in_task.json()['target'], 'task')
+        task_text = Path(in_task.json()['notePath']).read_text(encoding='utf-8')
+        self.assertTrue(task_text.rstrip().endswith('- Folie 3 kürzen, Beispiel zeigen'), task_text)
+
+        in_daily = client.post('/focus/thoughts', json={'text': 'Zahnarzt anrufen', 'date': '2026-11-19'})
+        self.assertEqual(in_daily.status_code, 200, in_daily.text)
+        self.assertEqual(in_daily.json()['target'], 'daily')
+        daily_text = Path(in_daily.json()['notePath']).read_text(encoding='utf-8')
+        self.assertIn('\n- Zahnarzt anrufen\n', daily_text)
+        self.assertNotIn('- [ ] Zahnarzt', daily_text)
+        self.assertEqual(len(client.get('/todos').json()['items']), todos_before)
+
+        self.assertIn(client.post('/focus/thoughts', json={'text': '   '}).status_code, {400, 422})
+        self.assertEqual(client.post('/focus/thoughts', json={'text': 'x', 'taskId': 'tk_unbekannt'}).status_code, 404)
+
     def test_todo_toggle_sets_and_clears_completed_at(self) -> None:
         result = self.vault.add_quick_todo_to_daily(text="Schnelles Todo", indexer=self.indexer, day_iso="2026-04-19")
         note_path = Path(result["note_path"])

@@ -290,6 +290,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/focus/thoughts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Focus Thought */
+        post: operations["save_focus_thought_focus_thoughts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/daily/open-today": {
         parameters: {
             query?: never;
@@ -1399,6 +1416,36 @@ export interface components {
              * @default
              */
             line: string;
+            counts?: components["schemas"]["VaultCounts"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** FocusThoughtRequest */
+        FocusThoughtRequest: {
+            /** Text */
+            text: string;
+            /** Taskid */
+            taskId?: string | null;
+            /** Date */
+            date?: string | null;
+        };
+        /** FocusThoughtResponse */
+        FocusThoughtResponse: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved: boolean;
+            /**
+             * Target
+             * @default daily
+             */
+            target: string;
+            /**
+             * Notepath
+             * @default
+             */
+            notePath: string;
             counts?: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;
@@ -3711,6 +3758,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FocusSessionLogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_focus_thought_focus_thoughts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FocusThoughtRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FocusThoughtResponse"];
                 };
             };
             /** @description Validation Error */
