@@ -34,7 +34,14 @@ export async function authenticatedFetch(url: string, init: RequestInit = {}): P
   controllers.add(controller)
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(/\/imports\/onenote\/start/.test(url) ? 20*60_000 : /\/reindex|\/graph-index\/rebuild/.test(url) ? 5*60_000 : 30_000), ...(init.signal ? [init.signal] : [])])
   try {
-    const response = await fetch(url, { ...init, headers, signal })
+    let response: Response
+    try {
+      response = await fetch(url, { ...init, headers, signal })
+    } catch (error) {
+      // fetch reports an unreachable service only as "TypeError: Failed to fetch"; aborts and timeouts keep their own errors.
+      if (error instanceof TypeError) throw new ApiError('Der lokale NickNotes-Dienst ist gerade nicht erreichbar. Er startet möglicherweise noch – bitte gleich noch einmal versuchen.', 'service.unreachable', 0)
+      throw error
+    }
     if (started !== epoch) throw new ApiError('Die NoteBase wurde gewechselt. Die alte Antwort wurde verworfen.', 'session.stale', 409)
     if (!response.ok) {
       const payload = await response.json().catch(() => null)

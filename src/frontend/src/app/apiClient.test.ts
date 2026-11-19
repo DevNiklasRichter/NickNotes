@@ -22,3 +22,9 @@ test('all calls carry app credentials; session IDs are never URL parameters', as
   expect(headers.get('Authorization')).toBe('Bearer secret')
   expect(headers.get('X-NoteBase-Session')).toBe('current')
 })
+test('an unreachable service is reported in plain words instead of a raw TypeError', async () => {
+  vi.stubGlobal('window',{nicknotes:{getBackendToken:async ()=>'secret'}})
+  vi.stubGlobal('fetch',vi.fn(async () => {throw new TypeError('Failed to fetch')}))
+  const client=await import('./apiClient')
+  await expect(client.apiRequest('http://127.0.0.1:8765','/state')).rejects.toMatchObject({code:'service.unreachable',message:expect.stringContaining('nicht erreichbar')})
+})
