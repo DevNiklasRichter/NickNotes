@@ -184,6 +184,22 @@ durchgestrichen an ihrem Platz. „Heute
 wichtig“ (hoechstens drei `task:`/`todo:`-Schluessel) bleibt im Frontmatter
 `mit` der Tagesnotiz. Kontext laedt erst auf Knopfdruck ueber `/graph/related`.
 
+Die Fokuszeit (`focus/focusTimerModel.ts`, `focus/useFocusTimer.ts`) ist ein
+einziger App-weiter Countdown im Frontend. Er rechnet mit Zeitstempeln statt mit
+Ticks, gehoert zur geoeffneten NoteBase und verschwindet beim Wechsel. Gestartet
+wird er an Tasks, To-dos und „Heute wichtig“ im Fokus, ohne Aufgabe ueber den
+Fokus-Kopf oder den Befehl „Fokuszeit starten“. Eine Fokusrunde ab einer Minute
+(abgelaufen, beendet oder durch eine neue ersetzt) schickt `POST /focus/sessions`;
+das Backend haengt genau eine Zeile an die Tagesnotiz ihres Starttages:
+`- Fokuszeit 09:30–09:55 (25 min): [[<Dateiname>|<Titel>]]`. Bei einer Task
+verlinkt die Zeile die Task-Datei, bei einem To-do steht dessen Text mit einem
+Link auf die Notiz, frei ohne Ziel nur der optionale Text. Verlinkt wird ueber den
+Dateinamen, damit der Link den Umzug nach `tasks/done` uebersteht; `{tag:...}` und
+`[[` aus dem Text werden entschaerft, damit die Zeile keine Tags oder Links
+erfindet. Es gibt keinen weiteren Speicher fuer Fokuszeiten; Pausen werden nicht
+protokolliert. Gedanken aus der Vollansicht landen ueber `/focus/quick-capture` als
+To-do in der Tagesnotiz.
+
 Die Ordnernamen `daily`, `tags`, `tasks`, `.media` und `.system` sind fest. Die
 frueheren Namen (`system`, `99_system`, `01_daily`, `02_tags`, `03_tasks`) werden
 nicht mehr erkannt: Eine NoteBase mit altem Systemordner wird vor jeder Aenderung

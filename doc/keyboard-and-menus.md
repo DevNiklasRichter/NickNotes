@@ -32,6 +32,7 @@ keine weiteren Betriebssystemfenster.
 | Quick Capture oeffnen und fokussieren | Alt+Q |
 | Notizen, To-dos, Tasks, Fokus, Tags, Review, Wissensgraph | Alt+1 bis Alt+7 |
 | NoteBase-Seitenleiste | Alt+0 |
+| Fokuszeit starten oder laufende groß anzeigen | Strg+Alt+F (Esc verkleinert sie in die Statusleiste) |
 | In aktueller Notiz suchen | Strg+F |
 | NoteBase durchsuchen | Strg+Umschalt+F |
 | Markdown-Befehlspalette | Strg+Umschalt+P (bestehendes Strg+K bleibt erhalten) |
