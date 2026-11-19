@@ -1,5 +1,6 @@
 import {RecoveryPanel} from './RecoveryPanel';
 import { AgentConnections } from './AgentConnections';
+import { DesktopIntegration } from './DesktopIntegration';
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {createPortal} from 'react-dom';
 import {trapDialogTab, useDialogFocus} from '../ui/useDialogFocus';
@@ -94,7 +95,7 @@ const SETTINGS_SECTIONS: Array<{
         id: 'general',
         title: 'Allgemein',
         eyebrow: 'Basis',
-        description: 'Persönliche Anzeige und Grundverhalten.',
+        description: 'Persönliche Anzeige, Schnellerfassung von überall und Verhalten beim Schließen.',
         icon: 'User',
     },
     {
@@ -400,6 +401,10 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                   </div>
                   <input id="settings-display-name" value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} placeholder="Dein Name"/>
                 </div>
+                <section className="settings-group">
+                  <h4>Desktop</h4>
+                  <DesktopIntegration/>
+                </section>
               </section>) : null}
 
             {activeSectionId === 'appearance' ? (<section className="settings-block">
