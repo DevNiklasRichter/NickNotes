@@ -40,6 +40,7 @@ type OneNoteImportResponse = {
     import?: {
         importedPages: number;
         skippedPages: number;
+        skippedDuplicates?: number;
         mediaFiles: number;
         warnings: string[];
         reportPath: string;
@@ -160,6 +161,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
     };
     const [oneNoteMessage, setOneNoteMessage] = useState('');
     const [oneNoteError, setOneNoteError] = useState('');
+    const [oneNoteResultWarnings, setOneNoteResultWarnings] = useState<string[]>([]);
     const [oneNoteImportStatus, setOneNoteImportStatus] = useState<OneNoteImportStatus | null>(null);
     const formatOneNoteImportError = (caught: unknown): string => {
         if (caught instanceof Error) {
@@ -175,13 +177,8 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
                 }).error;
                 const message = error?.message;
                 if (typeof message === 'string' && message.trim()) {
-                    const code = error?.code;
-                    const detailEntries = error?.details && typeof error.details === 'object'
-                        ? Object.entries(error.details)
-                            .map(([key, value]) => `${key}: ${String(value)}`)
-                            .join(', ')
-                        : '';
-                    return code ? `${code}: ${message}${detailEntries ? ` (${detailEntries})` : ''}` : `${message}${detailEntries ? ` (${detailEntries})` : ''}`;
+                    // The backend message already names the cause; codes and raw details stay in the import report.
+                    return message;
                 }
             }
             catch {
@@ -235,6 +232,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             setOneNotePreview(null);
             setOneNoteMessage('');
             setOneNoteError('');
+            setOneNoteResultWarnings([]);
         } catch (caught) {setOneNoteError(formatOneNoteImportError(caught));}
         finally {setImportPending(null);}
     };
@@ -293,6 +291,7 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             result: null,
         });
         setOneNoteError('');
+        setOneNoteResultWarnings([]);
         setOneNoteMessage('Import läuft ...');
         try {
             const response = await apiRequest<OneNoteImportResponse>(backendUrl, '/imports/onenote/start', {
@@ -301,7 +300,11 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             });
             onOneNoteImportComplete(response);
             setOneNotePreview(null);
-            setOneNoteMessage(`Import abgeschlossen: ${response.import?.importedPages ?? 0} Seiten, ${response.import?.mediaFiles ?? 0} Medien.`);
+            const summary = [`${response.import?.importedPages ?? 0} Seiten`, `${response.import?.mediaFiles ?? 0} Medien`];
+            if (response.import?.skippedDuplicates) summary.push(`${response.import.skippedDuplicates} bereits vorhanden`);
+            if (response.import?.skippedPages) summary.push(`${response.import.skippedPages} nicht lesbar`);
+            setOneNoteMessage(`Import abgeschlossen: ${summary.join(', ')}.`);
+            setOneNoteResultWarnings(response.import?.warnings ?? []);
             setOneNoteImportStatus((prev) => ({
                 active: false,
                 done: true,
@@ -491,6 +494,10 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             </div>) : null}
 
           {oneNoteMessage ? <p className="launch-message">{oneNoteMessage}</p> : null}
+          {oneNoteResultWarnings.length ? (<ul className="import-warning-list">
+              {oneNoteResultWarnings.slice(0, 8).map((warning, index) => (<li key={`${index}-${warning}`}>{warning}</li>))}
+              {oneNoteResultWarnings.length > 8 ? (<li>Weitere {oneNoteResultWarnings.length - 8} Hinweise stehen im Importbericht (.system/imports/onenote).</li>) : null}
+            </ul>) : null}
           {oneNoteError ? <p className="launch-error">{oneNoteError}</p> : null}
                 </div>
               </section>) : null}
