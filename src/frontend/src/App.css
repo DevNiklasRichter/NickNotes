@@ -1684,6 +1684,18 @@ button.focus-row-title:hover:not(:disabled) {
   background: var(--accent);
 }
 
+/* Headroom above the bars, so the max label never covers the tallest one. */
+.review-focus-chart {
+  box-sizing: border-box;
+  height: 48px;
+  padding-top: 0.95rem;
+}
+
+.review-flow-bar.is-focus,
+.legend-swatch.is-focus {
+  background: var(--muted);
+}
+
 .review-hover-layer {
   position: absolute;
   inset: 0 0 1.1rem;

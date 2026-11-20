@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent, type 
 import { getRelativeVaultPath, normalizeFilePathKey, taskStatusLabel, toLocalIsoDate, type SearchRow, type TaskRow, type TodoRow } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import { localCalendarDay } from '../shared/dates'
+import { formatMinutes } from '../shared/duration'
 import { ContextMenuItem } from '../ui/ContextMenu'
 import { MenuButton } from '../ui/MenuButton'
 import {
@@ -37,6 +38,8 @@ type FocusDashboardCanvasProps = {
   noteBasePath: string
   query: string
   mitIds: string[]
+  /** Focus time logged in today's daily note. */
+  focusMinutesToday: number
   showTaskDetails: boolean
   onSaveMit: (nextMitIds: string[]) => Promise<string[]>
   onQuickCaptureTodo: (rawText: string) => Promise<void>
@@ -176,6 +179,7 @@ export function FocusDashboardCanvas({
   noteBasePath,
   query,
   mitIds,
+  focusMinutesToday,
   showTaskDetails,
   onSaveMit,
   onQuickCaptureTodo,
@@ -426,6 +430,7 @@ export function FocusDashboardCanvas({
           <div><dt>Offen heute</dt><dd>{data.stats.openToday}</dd></div>
           <div className={data.stats.overdue > 0 ? 'overdue' : ''}><dt>Überfällig</dt><dd>{data.stats.overdue}</dd></div>
           <div><dt>Zurückgestellt</dt><dd>{data.stats.deferred}</dd></div>
+          <div data-tooltip="Aus den Fokuszeit-Zeilen der heutigen Tagesnotiz"><dt>Fokuszeit heute</dt><dd>{formatMinutes(focusMinutesToday)}</dd></div>
         </dl>
       </header>
 

@@ -9,6 +9,7 @@ export type ReviewBucket = {
   doneCount: number
   openTasks: number
   openTodos: number
+  focusMinutes: number
 }
 
 export type ReviewCompletedDay = {
@@ -74,6 +75,7 @@ export function buildReviewBuckets(series: ReviewDashboardSeriesPoint[]): Review
       last.to = point.date
       last.newCount += newCount
       last.doneCount += doneCount
+      last.focusMinutes += point.focus_minutes ?? 0
       last.openTasks = point.open_tasks
       last.openTodos = point.open_todos
       continue
@@ -87,6 +89,7 @@ export function buildReviewBuckets(series: ReviewDashboardSeriesPoint[]): Review
       doneCount,
       openTasks: point.open_tasks,
       openTodos: point.open_todos,
+      focusMinutes: point.focus_minutes ?? 0,
     })
   }
   for (const bucket of buckets) {

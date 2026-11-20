@@ -32,6 +32,7 @@ type BackendStateWriter = {
   setReviewDashboardData: (data: ReviewDashboardResponse | null) => void
   setCounts: (counts: VaultCounts) => void
   setFocusMitIds: (ids: string[]) => void
+  setFocusMinutesToday: (minutes: number) => void
   setCustomTagGroups: (groups: TagGroupDefinition[]) => void
   setNoteGroups: (groups: NoteGroup[]) => void
   setError: (message: string) => void
@@ -203,6 +204,7 @@ export class BackendDataService {
     this.writers.setTodos(Array.isArray(response.todos) ? response.todos : [])
     this.writers.setAllNotes(Array.isArray(response.notes) ? response.notes : [])
     this.writers.setFocusMitIds(Array.isArray(response.mitIds) ? response.mitIds : [])
+    this.writers.setFocusMinutesToday(typeof response.focusMinutes === 'number' ? response.focusMinutes : 0)
     if (response.counts) {
       this.writers.setCounts(response.counts)
     }

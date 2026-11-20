@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReviewAttentionGroup, ReviewDashboardFilters, ReviewDashboardItem, ReviewDashboardResponse } from '../app/AppShared'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
+import { formatMinutes } from '../shared/duration'
 import { buildReviewBuckets, formatShortDay, formatSignedDelta, groupCompletedByDay, type ReviewBucket } from './reviewSeries'
 
 type ReviewDashboardCanvasProps = {
@@ -46,7 +47,8 @@ function itemContext(groupKey: AttentionKey, item: ReviewDashboardItem): string 
 
 function bucketReadout(bucket: ReviewBucket): string {
   const open = bucket.openTasks + bucket.openTodos
-  return `${bucket.label}: ${open} offen (${bucket.openTasks} Tasks, ${bucket.openTodos} ToDos) · ${bucket.newCount} neu · ${bucket.doneCount} erledigt`
+  const focus = bucket.focusMinutes > 0 ? ` · ${formatMinutes(bucket.focusMinutes)} Fokus` : ''
+  return `${bucket.label}: ${open} offen (${bucket.openTasks} Tasks, ${bucket.openTodos} ToDos) · ${bucket.newCount} neu · ${bucket.doneCount} erledigt${focus}`
 }
 
 function ReviewTrend({ buckets }: { buckets: ReviewBucket[] }) {
@@ -55,6 +57,8 @@ function ReviewTrend({ buckets }: { buckets: ReviewBucket[] }) {
   const openValues = buckets.map((bucket) => bucket.openTasks + bucket.openTodos)
   const openMax = Math.max(1, ...openValues)
   const flowMax = Math.max(1, ...buckets.map((bucket) => Math.max(bucket.newCount, bucket.doneCount)))
+  // Focus time gets its own row only once a round was logged in the period.
+  const focusMax = Math.max(0, ...buckets.map((bucket) => bucket.focusMinutes))
   const activeIndex = hoverIndex ?? count - 1
   const active = buckets[activeIndex]
   const toY = (value: number) => 100 - (value / openMax) * 92
@@ -94,6 +98,19 @@ function ReviewTrend({ buckets }: { buckets: ReviewBucket[] }) {
             </div>
           ))}
         </div>
+        {focusMax > 0 ? (
+          <>
+            <span className="review-chart-caption">Fokuszeit</span>
+            <div className="review-chart review-flow-chart review-focus-chart" aria-hidden="true">
+              <span className="review-chart-max">{formatMinutes(focusMax)}</span>
+              {buckets.map((bucket, index) => (
+                <div key={bucket.from} className={`review-flow-column ${hoverIndex === index ? 'is-active' : ''}`}>
+                  <span className="review-flow-bar is-focus" style={{ height: `${(bucket.focusMinutes / focusMax) * 100}%` }} />
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
         <div className="review-hover-layer" style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}>
           {buckets.map((bucket, index) => (
             <span key={bucket.from} onMouseEnter={() => setHoverIndex(index)} />
@@ -115,12 +132,13 @@ function ReviewTrend({ buckets }: { buckets: ReviewBucket[] }) {
         <span><i className="legend-swatch is-open" />Offen gesamt</span>
         <span><i className="legend-swatch is-new" />Neu</span>
         <span><i className="legend-swatch is-done" />Erledigt</span>
+        {focusMax > 0 ? <span><i className="legend-swatch is-focus" />Fokuszeit</span> : null}
       </p>
       <div className="review-sr-only">
       <table>
         <caption>Verlauf je {buckets.length > 0 && buckets[0].from !== buckets[0].to ? 'Woche' : 'Tag'}</caption>
         <thead>
-          <tr><th>Zeitraum</th><th>Offen</th><th>Neu</th><th>Erledigt</th></tr>
+          <tr><th>Zeitraum</th><th>Offen</th><th>Neu</th><th>Erledigt</th><th>Fokuszeit</th></tr>
         </thead>
         <tbody>
           {buckets.map((bucket) => (
@@ -129,6 +147,7 @@ function ReviewTrend({ buckets }: { buckets: ReviewBucket[] }) {
               <td>{bucket.openTasks + bucket.openTodos}</td>
               <td>{bucket.newCount}</td>
               <td>{bucket.doneCount}</td>
+              <td>{formatMinutes(bucket.focusMinutes)}</td>
             </tr>
           ))}
         </tbody>
@@ -227,6 +246,7 @@ export function ReviewDashboardCanvas({ data, filters, onFiltersChange, onOpenNo
         <span className="review-summary-delta" data-tooltip={`Zu Beginn des Zeitraums waren ${openStart} offen.`}>
           {' '}({formatSignedDelta(openEnd - openStart)})
         </span>
+        {summary.focus_minutes > 0 ? <> · <strong>{formatMinutes(summary.focus_minutes)}</strong> Fokus</> : null}
         <span className="review-summary-period"> · {formatShortDay(data.period.from)}–{formatShortDay(data.period.to)}</span>
         <span className="review-info" tabIndex={0} aria-label={DATA_BASIS_HINT} data-tooltip={DATA_BASIS_HINT}>
           <LucideNamedIcon name="Info" size={13} />

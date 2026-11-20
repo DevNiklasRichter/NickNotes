@@ -66,6 +66,8 @@ export type ReviewDashboardSeriesPoint = {
     completed_todos: number;
     open_tasks: number;
     open_todos: number;
+    /** Logged focus minutes of the day (from the daily note). */
+    focus_minutes: number;
 };
 export type ReviewDashboardItem = {
     kind: 'task' | 'todo';
@@ -98,6 +100,7 @@ export type ReviewDashboardResponse = {
         open_todos_start: number;
         open_tasks_end: number;
         open_todos_end: number;
+        focus_minutes: number;
     };
     series: ReviewDashboardSeriesPoint[];
     attention: {

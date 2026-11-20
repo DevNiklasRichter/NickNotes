@@ -1,5 +1,6 @@
 import {useSyncedDraft} from './useSyncedDraft'
-import { useEffect, useId, useLayoutEffect, useRef } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { NoteBacklinks, type NoteBacklink } from './NoteBacklinks'
 import {MultiSelectPicker} from '../ui/MultiSelectPicker'
 import type { CSSProperties, KeyboardEvent, RefObject } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
@@ -41,6 +42,10 @@ type NotePropertiesPanelProps = {
   onOpenTagOverview?: (tag: string) => void
   onRemoveTag: (tag: string) => void
   onRemoveRelated: (related: string) => void
+  /** Incoming links from the knowledge graph; without it the row is hidden. */
+  onLoadBacklinks?: (path: string) => Promise<NoteBacklink[]>
+  onOpenBacklink?: (backlink: NoteBacklink) => void
+  backlinksRefreshKey?: number
 }
 
 export function NotePropertiesPanel({
@@ -77,6 +82,9 @@ export function NotePropertiesPanel({
   onOpenTagOverview,
   onRemoveTag,
   onRemoveRelated,
+  onLoadBacklinks,
+  onOpenBacklink,
+  backlinksRefreshKey,
 }: NotePropertiesPanelProps) {
   const [titleDraft, setTitleDraft] = useSyncedDraft(document.frontmatter.id || tabPath, document.frontmatter.title)
   const [estimateDraft, setEstimateDraft] = useSyncedDraft(document.frontmatter.id || tabPath, document.frontmatter.estimate_minutes ? String(document.frontmatter.estimate_minutes) : '')
@@ -87,6 +95,7 @@ export function NotePropertiesPanel({
   const [nextActionHintDraft, setNextActionHintDraft] = useSyncedDraft(document.frontmatter.id || tabPath, document.frontmatter.next_action_hint)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
   const detailsRef = useRef<HTMLDetailsElement | null>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   useEffect(() => {
     const titleInput = titleInputRef.current
@@ -192,7 +201,7 @@ export function NotePropertiesPanel({
           placeholder="Unbenannt"
         />
       </div>
-      <details ref={detailsRef} className="note-properties-details">
+      <details ref={detailsRef} className="note-properties-details" onToggle={(event) => setDetailsOpen(event.currentTarget.open)}>
       <summary><span>Eigenschaften</span><span className="note-properties-summary">
         {document.frontmatter.type==='task'?`Task · ${taskStatusOptions.find(option=>option.value===document.frontmatter.status)?.label||document.frontmatter.status}`:'Notiz'}
         {manualTags.length+autoTags.length?` · ${manualTags.length+autoTags.length} Tags`:''}
@@ -560,6 +569,10 @@ export function NotePropertiesPanel({
             onToggle={value => {if (manualRelated.includes(value)) onRemoveRelated(value); else onAddRelated(value)}}/>
 
         </div>
+
+        {onLoadBacklinks && onOpenBacklink ? (
+          <NoteBacklinks path={tabPath} active={detailsOpen} refreshKey={backlinksRefreshKey ?? 0} load={onLoadBacklinks} onOpen={onOpenBacklink} />
+        ) : null}
 
         <span className="property-key">Erstellt</span>
         <span className="property-value-static">{formatTimestamp(document.frontmatter.created_at)}</span>

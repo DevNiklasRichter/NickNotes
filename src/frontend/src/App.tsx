@@ -100,6 +100,7 @@ function App() {
     const [reviewDashboardFilters, setReviewDashboardFilters] = useState<ReviewDashboardFilters>({ ...DEFAULT_REVIEW_DASHBOARD_FILTERS });
     const [reviewDashboardData, setReviewDashboardData] = useState<ReviewDashboardResponse | null>(null);
     const [focusMitIds, setFocusMitIds] = useState<string[]>([]);
+    const [focusMinutesToday, setFocusMinutesToday] = useState(0);
     const [searchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
     const [allNotes, setAllNotes] = useState<SearchRow[]>([]);
@@ -428,6 +429,7 @@ function App() {
         setReviewDashboardData,
         setCounts,
         setFocusMitIds,
+        setFocusMinutesToday,
         setCustomTagGroups,
         setNoteGroups,
         setError,
@@ -453,6 +455,7 @@ function App() {
         setTasks([]);
         setTodos([]);
         setFocusMitIds([]);
+        setFocusMinutesToday(0);
         setSearchResults([]);
         setSuggestions([]);
         setSelectedTagKeys([]);
@@ -1308,6 +1311,7 @@ function App() {
             refresh: {
                 search: true,
                 focusAggregate: true,
+                review: true,
             },
         });
     };
@@ -1383,6 +1387,12 @@ function App() {
             },
         });
     };
+    const loadBacklinks = useCallback(async (path: string): Promise<Array<{ path: string; title: string }>> => {
+        const response = await apiRequest<{
+            backlinks: Array<{ path: string; title: string }>;
+        }>(backendUrl, `/graph/context?path=${encodeURIComponent(path)}&limit=50`);
+        return response.backlinks;
+    }, [backendUrl]);
     const loadRelatedNotes = useCallback(async (path: string): Promise<FocusRelatedNote[]> => {
         const response = await apiRequest<{
             items: FocusRelatedNote[];
@@ -1867,7 +1877,7 @@ function App() {
             .map((task) => normalizeLabel(task.id))
             .filter((taskId) => taskId && taskId.toLowerCase() !== currentTaskId)
             .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }));
-        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
+        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} onLoadBacklinks={loadBacklinks} onOpenBacklink={(backlink) => openGraphNodePath(backlink.path, backlink.title, 'note')} backlinksRefreshKey={graphUpdateToken} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
                 updateNoteTitleByPath(tabPath, nextTitle);
             }} onTypeChange={(nextType) => {
                 updateNoteTypeByPath(tabPath, nextType);
@@ -2448,7 +2458,7 @@ function App() {
                 }} taskStatusClassName={taskStatusClassName} taskStatusLabel={taskStatusLabel} taskPriorityDotClassName={taskPriorityDotClassName} taskPriorityLabel={taskPriorityLabel} toGermanTimestamp={toGermanTimestamp}/>);
         }
         if (paneTab.kind === 'focus_dashboard') {
-            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} query={focusDashboardFilters.query} mitIds={focusMitIds} showTaskDetails={taskFeatureSettings.advancedTaskHandling} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onToggleTodo={(todoId, checked) => toggleTodo(todoId, checked)} onSetTaskFollowUp={setTaskFollowUp} onLoadRelatedNotes={loadRelatedNotes} focusTimerTargetId={focusTimer.timer?.target.id || ''} focusTimerMinutes={focusTimer.lastMinutes} onStartFocusTimer={focusTimer.start} onOpenNotePath={(path, title, noteType) => {
+            return (<FocusDashboardCanvas tasks={tasks} todos={todos} notes={allNotes} noteBasePath={vaultPath} query={focusDashboardFilters.query} mitIds={focusMitIds} focusMinutesToday={focusMinutesToday} showTaskDetails={taskFeatureSettings.advancedTaskHandling} onSaveMit={saveFocusMit} onQuickCaptureTodo={quickCaptureFocusTodo} onToggleTodo={(todoId, checked) => toggleTodo(todoId, checked)} onSetTaskFollowUp={setTaskFollowUp} onLoadRelatedNotes={loadRelatedNotes} focusTimerTargetId={focusTimer.timer?.target.id || ''} focusTimerMinutes={focusTimer.lastMinutes} onStartFocusTimer={focusTimer.start} onOpenNotePath={(path, title, noteType) => {
                     if (!path) {
                         return;
                     }

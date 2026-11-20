@@ -3,7 +3,7 @@ import type { ReviewDashboardCompletedItem, ReviewDashboardSeriesPoint } from '.
 import { buildReviewBuckets, formatSignedDelta, groupCompletedByDay } from './reviewSeries'
 
 function point(date: string, values: Partial<ReviewDashboardSeriesPoint> = {}): ReviewDashboardSeriesPoint {
-  return { date, new_tasks: 0, new_todos: 0, completed_tasks: 0, completed_todos: 0, open_tasks: 0, open_todos: 0, ...values }
+  return { date, new_tasks: 0, new_todos: 0, completed_tasks: 0, completed_todos: 0, open_tasks: 0, open_todos: 0, focus_minutes: 0, ...values }
 }
 
 function days(from: string, count: number): string[] {
@@ -33,6 +33,13 @@ describe('buildReviewBuckets', () => {
     expect(buckets[1]).toMatchObject({ from: '2026-08-24', to: '2026-08-30', newCount: 7, openTodos: 10 })
     expect(buckets[1].label).toBe('KW 35 (24.08.–30.08.)')
     expect(buckets.reduce((sum, bucket) => sum + bucket.newCount, 0)).toBe(90)
+  })
+
+  it('sums focus minutes per week', () => {
+    const series = days('2026-08-24', 14).map((date, index) => point(date, { focus_minutes: index < 7 ? 25 : 50 }))
+    const buckets = buildReviewBuckets([...days('2026-07-01', 54).map((date) => point(date)), ...series])
+    expect(buckets.at(-2)).toMatchObject({ from: '2026-08-24', focusMinutes: 175 })
+    expect(buckets.at(-1)).toMatchObject({ from: '2026-08-31', focusMinutes: 350 })
   })
 })
 
