@@ -33,6 +33,7 @@ keine weiteren Betriebssystemfenster.
 | Notizen, To-dos, Tasks, Fokus, Tags, Review, Wissensgraph | Alt+1 bis Alt+7 |
 | NoteBase-Seitenleiste | Alt+0 |
 | Fokuszeit starten oder laufende groß anzeigen | Strg+Alt+F (Esc verkleinert sie in ein kleines Fenster unten rechts) |
+| Schnellerfassung aus jedem Programm (systemweit, solange NickNotes läuft) | Strg+Alt+N, in Einstellungen → Allgemein änderbar oder abschaltbar; im Fenster Strg+Enter sendet, Esc schließt (Entwurf bleibt) |
 | In aktueller Notiz suchen | Strg+F |
 | NoteBase durchsuchen | Strg+Umschalt+F |
 | Markdown-Befehlspalette | Strg+Umschalt+P (bestehendes Strg+K bleibt erhalten) |

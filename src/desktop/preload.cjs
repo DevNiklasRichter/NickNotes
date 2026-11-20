@@ -12,6 +12,23 @@ contextBridge.exposeInMainWorld('nicknotes', {
   setBackgroundService: (enabled) => ipcRenderer.invoke('service:set-background', Boolean(enabled)),
   readCaptureDraft: () => ipcRenderer.invoke('capture:draft-read'),
   writeCaptureDraft: (text) => ipcRenderer.invoke('capture:draft-write',text),
+  getDesktopSettings: () => ipcRenderer.invoke('desktop:settings'),
+  setDesktopSettings: (patch) => ipcRenderer.invoke('desktop:set-settings', patch),
+  onAppCommand: (handler) => {
+    const listener=(_event,command)=>handler(command)
+    ipcRenderer.on('app:command',listener)
+    return()=>ipcRenderer.removeListener('app:command',listener)
+  },
+  quickCapture: {
+    readDraft: () => ipcRenderer.invoke('quick-capture:draft-read'),
+    writeDraft: (text) => ipcRenderer.invoke('quick-capture:draft-write', text),
+    hide: () => ipcRenderer.invoke('quick-capture:hide'),
+    onShown: (handler) => {
+      const listener=(_event,payload)=>handler(payload)
+      ipcRenderer.on('quick-capture:shown',listener)
+      return()=>ipcRenderer.removeListener('quick-capture:shown',listener)
+    },
+  },
   getUpdateState: () => ipcRenderer.invoke('updates:state'),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),
   downloadUpdate: () => ipcRenderer.invoke('updates:download'),

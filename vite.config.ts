@@ -9,5 +9,12 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/frontend'),
     emptyOutDir: true,
+    // Second page: the small capture window behind the global shortcut.
+    rolldownOptions: {
+      input: {
+        main: path.resolve(import.meta.dirname, 'src/frontend/index.html'),
+        capture: path.resolve(import.meta.dirname, 'src/frontend/capture.html'),
+      },
+    },
   },
 })

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, screen, shell, protocol, net } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -7,6 +7,8 @@ import {CaptureDraftStore} from './capture-draft-store.mjs'
 import {createWindowCloseGuard} from './window-close-guard.mjs'
 import {createUpdateService} from './update-service.mjs'
 import {createBackendService} from './backend-service.mjs'
+import {CAPTURE_SHORTCUTS, DesktopSettingsStore, shortcutLabel} from './desktop-settings.mjs'
+import {createQuickCaptureWindow} from './quick-capture-window.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -24,13 +26,16 @@ app.setName('NickNotes')
 if (process.env.NICKNOTES_USER_DATA) app.setPath('userData', process.env.NICKNOTES_USER_DATA)
 if (!app.isPackaged && process.env.NICKNOTES_STARTUP_DIAGNOSTICS === '1') app.commandLine.appendSwitch('remote-debugging-port', '0')
 protocol.registerSchemesAsPrivileged([{ scheme: 'nicknotes', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
-const isTrusted = (event) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return false
+const isAppFrame = (event) => {
+  if (event.senderFrame !== event.sender.mainFrame) return false
   const url = new URL(event.senderFrame.url)
   return app.isPackaged ? url.protocol === 'nicknotes:' && url.hostname === 'app' : url.origin === 'http://localhost:5173'
 }
-const handle = (channel, handler) => ipcMain.handle(channel, (event, ...args) => {
-  if (!isTrusted(event)) throw new Error('Untrusted app frame')
+const isTrusted = (event) => Boolean(mainWindow && event.sender === mainWindow.webContents && isAppFrame(event))
+// The capture window may only reach the backend credentials and its own draft.
+const isQuickCapture = (event) => Boolean(quickCapture?.owns(event.sender) && isAppFrame(event))
+const handle = (channel, handler, {quickCaptureAllowed = false} = {}) => ipcMain.handle(channel, (event, ...args) => {
+  if (!isTrusted(event) && !(quickCaptureAllowed && isQuickCapture(event))) throw new Error('Untrusted app frame')
   return handler(event, ...args)
 })
 const listen = (channel, handler) => ipcMain.on(channel, (event, ...args) => {
@@ -43,6 +48,12 @@ let resolveBackendReady, rejectBackendReady
 const backendReadyPromise=new Promise((resolve,reject)=>{resolveBackendReady=resolve;rejectBackendReady=reject})
 backendReadyPromise.catch(()=>{}) // The renderer receives the same failure through its authenticated connection.
 let draftStore
+let quickDraftStore
+let desktopSettings
+let quickCapture=null
+let tray=null
+let shortcutRegistered=false
+let quitRequested=false
 let startupTheme='light'
 try {const saved=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'window-state.json'),'utf8'));if(saved.theme==='dark')startupTheme='dark'} catch { /* First launch uses a neutral light background. */ }
 let backendAttached = false
@@ -191,6 +202,67 @@ function applyWindowTheme(win, theme = 'dark') {
   }
 }
 
+const windowBackground = () => startupTheme==='dark'?'#1e2023':'#f8f8f9'
+const loadAppPage = (win, page) => app.isPackaged ? win.loadURL(`nicknotes://app/${page}`) : win.loadURL(`http://localhost:5173/${page}`)
+
+function showMainWindow() {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/** Run an allow-listed app command in the main window, e.g. from the tray menu. */
+function runAppCommand(command) {
+  if (!mainWindow || !['focusTimer'].includes(command)) return
+  showMainWindow()
+  mainWindow.webContents.send('app:command', command)
+}
+
+function registerCaptureShortcut() {
+  globalShortcut.unregisterAll()
+  shortcutRegistered = false
+  const accelerator = desktopSettings?.current.captureShortcut
+  if (!accelerator) return
+  try {
+    shortcutRegistered = globalShortcut.register(accelerator, () => quickCapture?.toggle())
+  } catch (error) {
+    console.warn('[desktop] Kürzel konnte nicht registriert werden:', String(error))
+  }
+  if (!shortcutRegistered) console.warn(`[desktop] ${shortcutLabel(accelerator)} ist bereits von einem anderen Programm belegt.`)
+}
+
+function desktopState() {
+  const {captureShortcut, keepInTray} = desktopSettings.current
+  return {captureShortcut, keepInTray, shortcutRegistered, shortcuts: CAPTURE_SHORTCUTS}
+}
+
+function updateTrayMenu() {
+  if (!tray) return
+  const shortcut = shortcutLabel(desktopSettings.current.captureShortcut)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label: 'Schnellerfassung', accelerator: shortcutRegistered ? desktopSettings.current.captureShortcut : undefined, registerAccelerator: false, click: () => quickCapture?.show()},
+    {label: 'Fokuszeit starten', click: () => runAppCommand('focusTimer')},
+    {label: 'NickNotes öffnen', click: showMainWindow},
+    {type: 'separator'},
+    {label: 'Beenden', click: () => {quitRequested = true; if (mainWindow) {showMainWindow(); mainWindow.close()} else app.quit()}},
+  ]))
+  tray.setToolTip(shortcut && shortcutRegistered ? `NickNotes – Schnellerfassung mit ${shortcut}` : 'NickNotes')
+}
+
+async function createTray() {
+  try {
+    const icon = app.isPackaged
+      ? await app.getFileIcon(process.execPath, {size: 'small'})
+      : nativeImage.createFromPath(path.join(__dirname, '../../build/icon.png')).resize({width: 16, height: 16})
+    tray = new Tray(icon)
+    tray.on('click', showMainWindow)
+    updateTrayMenu()
+  } catch (error) {
+    console.warn('[desktop] Symbol im Infobereich nicht verfügbar:', String(error))
+  }
+}
+
 function resolvePythonBinary() {
   const venvPython =
     process.platform === 'win32'
@@ -269,35 +341,45 @@ function createWindow() {
   startupMark('window-created')
   win.webContents.once('dom-ready',()=>startupMark('html-ready'))
   const webContentsId = win.webContents.id
-  closeGuards.set(webContentsId,createWindowCloseGuard(win,dialog))
+  // With "keep in tray", closing hides the window; quitting from the tray or an update closes for real.
+  closeGuards.set(webContentsId,createWindowCloseGuard(win,dialog,{hideInstead:()=>Boolean(tray&&desktopSettings?.current.keepInTray&&!quitRequested)}))
 
   win.on('closed', () => {
     closeGuards.delete(webContentsId)
     if (mainWindow === win) {
       mainWindow = null
+      // The hidden capture window must not keep the app alive without its main window.
+      quickCapture?.destroy()
     }
   })
 
-  if (!app.isPackaged) {
-    win.loadURL('http://localhost:5173')
-    if (process.env.NICKNOTES_DEVTOOLS === '1') win.webContents.openDevTools()
-    return
-  }
-
-  win.loadURL('nicknotes://app/index.html')
+  loadAppPage(win, 'index.html')
+  if (!app.isPackaged && process.env.NICKNOTES_DEVTOOLS === '1') win.webContents.openDevTools()
 }
 
 const hasInstanceLock = app.requestSingleInstanceLock()
 if (!hasInstanceLock) app.quit()
-app.on('second-instance', () => { if (mainWindow) { mainWindow.restore(); mainWindow.focus() } })
+app.on('second-instance', showMainWindow)
+app.on('before-quit', () => { quitRequested = true })
 
 app.whenReady().then(async () => {
   if (!hasInstanceLock) return
   startupMark('app-ready')
   fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  // Windows shows notifications (focus timer) only for an app with its own ID; it matches electron-builder's appId.
+  if(process.platform==='win32')app.setAppUserModelId('local.nicknotes.desktop')
   draftStore=new CaptureDraftStore(app.getPath('userData'))
   const draftLoaded=draftStore.load()
   draftLoaded.catch(error=>console.error('[capture-draft] Entwurf konnte nicht gelesen werden:',String(error)))
+  quickDraftStore=new CaptureDraftStore(app.getPath('userData'),'quick-capture-draft.md')
+  const quickDraftLoaded=quickDraftStore.load()
+  quickDraftLoaded.catch(error=>console.error('[capture-draft] Entwurf der Schnellerfassung konnte nicht gelesen werden:',String(error)))
+  desktopSettings=new DesktopSettingsStore(app.getPath('userData'))
+  await desktopSettings.load()
+  quickCapture=createQuickCaptureWindow({BrowserWindow,screen,preload:path.join(__dirname,'preload.cjs'),
+    load:win=>loadAppPage(win,'capture.html'),theme:()=>startupTheme,background:windowBackground})
+  // Development builds only: automated UI checks open the window without pressing a system-wide key.
+  if(!app.isPackaged)globalThis.__nicknotesQuickCapture=quickCapture
   protocol.handle('nicknotes', async request => {
     const url = new URL(request.url)
     const root = path.join(app.getAppPath(), 'frontend')
@@ -358,7 +440,7 @@ app.whenReady().then(async () => {
     return result.filePaths
   })
 
-  handle('backend:token', async () => {await backendReadyPromise;return API_TOKEN})
+  handle('backend:token', async () => {await backendReadyPromise;return API_TOKEN}, {quickCaptureAllowed:true})
   handle('backend:status', () => backendStatus)
   handle('service:background', () => backgroundState())
   handle('service:set-background', async (_event, enabled) => {
@@ -373,6 +455,16 @@ app.whenReady().then(async () => {
   handle('updates:install',()=>updates.install())
   handle('capture:draft-read', async () => {await draftLoaded;return draftStore.current})
   handle('capture:draft-write', async (_event,text) => {await draftLoaded;await draftStore.set(text)})
+  handle('quick-capture:draft-read', async () => {await quickDraftLoaded;return quickDraftStore.current}, {quickCaptureAllowed:true})
+  handle('quick-capture:draft-write', async (_event,text) => {await quickDraftLoaded;await quickDraftStore.set(text)}, {quickCaptureAllowed:true})
+  handle('quick-capture:hide', () => quickCapture?.hide(), {quickCaptureAllowed:true})
+  handle('desktop:settings', () => desktopState())
+  handle('desktop:set-settings', async (_event,patch) => {
+    await desktopSettings.update(patch)
+    registerCaptureShortcut()
+    updateTrayMenu()
+    return desktopState()
+  })
 
   handle('window:action', (_event, action) => {
     if (!mainWindow) return
@@ -385,7 +477,7 @@ app.whenReady().then(async () => {
 
   handle('backend:url', async () => {
     return `http://127.0.0.1:${BACKEND_PORT}`
-  })
+  }, {quickCaptureAllowed:true})
 
   handle('shell:openExternal', async (_event, url) => {
     const decision = validateExternalUrl(url)
@@ -431,6 +523,8 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+  registerCaptureShortcut()
+  void createTray()
   // Windows process creation and cold Python imports must not compete with the first entry paint.
   // A broken/missing renderer must not leave backend startup waiting indefinitely.
   const paintTimeout=setTimeout(releaseFirstPaint,3000)
@@ -459,7 +553,8 @@ let quitting = false
 app.on('will-quit', event => {
   if (quitting || (!backendAttached&&!draftStore)) return
   event.preventDefault(); quitting = true;updates.dispose()
-  void Promise.allSettled([stopBackend(),draftStore?.flush()]).finally(() => app.quit())
+  globalShortcut.unregisterAll();tray?.destroy();tray=null
+  void Promise.allSettled([stopBackend(),draftStore?.flush(),quickDraftStore?.flush()]).finally(() => app.quit())
 })
 process.once('SIGINT', () => { void stopBackend().finally(() => app.quit()) })
 process.once('SIGTERM', () => { void stopBackend().finally(() => app.quit()) })

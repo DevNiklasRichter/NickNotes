@@ -345,6 +345,25 @@ im geraetelokalen Profil (`capture-draft-store.mjs`). Erst **Senden** schreibt
 ueber den Capture-Service in die NoteBase. Das Theme liegt als Startcache in
 `window-state.json`. Details: [Startverhalten](startup-and-recovery.md).
 
+Schnellerfassung von ueberall: Ein systemweites Kuerzel (Vorgabe Strg+Alt+N,
+waehlbar oder aus) oeffnet `capture.html`, ein kleines rahmenloses Fenster
+(`quick-capture-window.mjs`) immer im Vordergrund. Es wird beim ersten Kuerzel
+erzeugt und danach nur ein- und ausgeblendet. Die Seite (`src/quickCapture/`)
+nutzt denselben Markdown-Editor und speichert ueber `/capture/save` in die
+Tagesnotiz der gerade geoeffneten NoteBase (also auch `@Datum` → Task). Bei jedem
+Einblenden liest sie die NoteBase neu und beginnt eine neue API-Sitzung. Ihr
+Entwurf liegt getrennt von der Schnellerfassung im Hauptfenster als
+`quick-capture-draft.md` im Profil. IPC fuer dieses Fenster ist auf
+Backend-URL/-Token, den eigenen Entwurf und Ausblenden beschraenkt. Ein Symbol
+im Infobereich bietet Schnellerfassung, Fokuszeit (`app:command` an das
+Hauptfenster, nur freigegebene Befehle), Oeffnen und Beenden. Kuerzel und
+„Beim Schliessen im Infobereich weiterlaufen“ stehen geraetelokal in
+`desktop-settings.json` (`desktop-settings.mjs`); mit dem Schalter verbirgt der
+Close-Guard das Fenster statt es zu schliessen, Beenden ueber das Symbol und
+Update-Neustarts schliessen regulaer. Die App setzt unter Windows ihre
+AppUserModelID (`local.nicknotes.desktop`, wie `appId`), damit Benachrichtigungen
+erscheinen.
+
 `update-service.mjs` koordiniert ausschliesslich veroeffentlichte stabile
 Updates im Hauptprozess. Download und Installation sind getrennte
 Benutzeraktionen; vor der Installation wird ueber den Close-Guard gespeichert.

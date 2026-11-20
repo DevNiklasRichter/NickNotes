@@ -13,6 +13,19 @@ Abschnitt der nächsten Version.
 
 ### Neu
 
+- **Schnellerfassung von überall**: Mit **Strg+Alt+N** öffnet sich aus jedem
+  Programm heraus ein kleines Fenster, solange NickNotes läuft. Was du dort
+  schreibst, landet beim Senden (Strg+Enter) in der heutigen Tagesnotiz – mit
+  denselben Regeln wie in der App, eine Zeile mit `@Datum` wird also zur Task.
+  Esc schließt das Fenster, der Entwurf bleibt erhalten. Das Kürzel lässt sich
+  unter Einstellungen → Allgemein ändern oder abschalten.
+- **Symbol im Infobereich** (unten rechts in der Taskleiste): Von dort startest
+  du die Schnellerfassung oder eine Fokuszeit, öffnest NickNotes oder beendest
+  es. Auf Wunsch läuft NickNotes beim Schließen des Fensters dort weiter
+  (Einstellungen → Allgemein), damit Kürzel und Timer erreichbar bleiben.
+- Damit Windows die Benachrichtigungen der Fokuszeit auch in der installierten
+  App anzeigen kann, meldet sich NickNotes jetzt mit einer eigenen App-Kennung an.
+
 - **Fokuszeit**: Ein Timer für konzentriertes Arbeiten nach der Pomodoro-Idee.
   Im Fokus startest du ihn mit dem Uhr-Symbol an einer Task, einem To-do oder
   einem Eintrag unter „Heute wichtig“. Ohne Aufgabe geht das von überall über

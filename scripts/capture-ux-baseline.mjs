@@ -36,9 +36,10 @@ const inline = process.argv.includes('--inline')
 const whatsNew = process.argv.includes('--whats-new')
 const feedback = process.argv.includes('--feedback')
 const focusView = process.argv.includes('--focus')
+const quickCaptureView = process.argv.includes('--quick-capture')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new','--focus'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new] [--focus]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new','--focus','--quick-capture'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new] [--focus] [--quick-capture]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -77,18 +78,18 @@ async function request(endpoint, body) {
 
 async function windowSize(width, height, zoom = 1) {
   const before=await app.evaluate(({BrowserWindow})=>{
-    const win=BrowserWindow.getAllWindows()[0]
+    const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html'))
     const state={maximized:win.isMaximized(),fullscreen:win.isFullScreen(),contentSize:win.getContentSize(),zoom:win.webContents.getZoomFactor()}
     if(state.fullscreen)win.setFullScreen(false)
     if(state.maximized)win.unmaximize()
     return state
   })
   await expect.poll(()=>app.evaluate(({BrowserWindow})=>{
-    const win=BrowserWindow.getAllWindows()[0]
+    const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html'))
     return win.isFullScreen()||win.isMaximized()
   })).toBe(false)
   await app.evaluate(({BrowserWindow}, {width, height, zoom}) => {
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html'))
     win.webContents.setZoomFactor(zoom)
     win.setContentSize(width, height)
   }, {width, height, zoom})
@@ -155,7 +156,7 @@ async function capture(name, description) {
   // zoomed window to CSS viewport dimensions instead of its full pixel surface.
   for (const menu of metrics.menus.filter(m => m.className === 'nn-context-menu')) assert.equal(menu.outsideViewport,false,'Context menu is outside viewport')
   const pixels = await app.evaluate(async ({BrowserWindow}) => {
-    const win = BrowserWindow.getAllWindows()[0]
+    const win = BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html'))
     const capture = await win.webContents.capturePage()
     return {png: capture.toPNG().toString('base64'), size: capture.getSize()}
   })
@@ -320,7 +321,7 @@ async function verifyMenus() {
   report.checks.menuSpaceAndOutsidePointer = true
 
   // Only this disposable test window is allowed below the product's normal minimum.
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(240,240))
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(240,240))
   await windowSize(360,480,1.5)
   await tab.focus(); await page.keyboard.press('Shift+F10')
   await capture('menu-narrow-zoom-dark','Long labels wrap inside a 240-CSS-pixel viewport at 150% zoom')
@@ -334,7 +335,7 @@ async function verifyMenus() {
   await capture('menu-short-scroll-dark','Short zoomed viewport: menu remains inside window and scrolls to its final item')
   await page.keyboard.press('Escape')
   await windowSize(1280,800)
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(1100,740))
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(1100,740))
   report.checks.menuNarrowZoomAndScroll = true
 }
 
@@ -1116,7 +1117,7 @@ async function verifyCreateDialog() {
   // Permit a genuinely narrow surface only in this disposable window. Otherwise
   // Electron silently clamps the requested size to the product's normal minimum.
   const minimum=await app.evaluate(({BrowserWindow})=>{
-    const win=BrowserWindow.getAllWindows()[0], previous=win.getMinimumSize()
+    const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')), previous=win.getMinimumSize()
     win.setMinimumSize(240,240);return previous
   })
   try {
@@ -1131,7 +1132,7 @@ async function verifyCreateDialog() {
       await capture(`create-dialog-${label}-dark`,'Create form stays inside '+label+' viewport; final action remains keyboard reachable')
     }
   } finally {
-    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum)
+    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum)
     await windowSize(1280,800)
   }
   await page.keyboard.press('Escape'); await expect(trigger).toBeFocused()
@@ -1326,7 +1327,7 @@ async function verifyTagMatching() {
     assert.equal((fs.readFileSync(b,'utf8').match(/\{tag:ux-match\/orionprobe\}/g)||[]).length,1)
     await retry().click();await expect(count()).toHaveText('Treffer 1 von 1')
 
-    const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+    const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
     try {
       for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
         await windowSize(width,height,1.5)
@@ -1336,7 +1337,7 @@ async function verifyTagMatching() {
         await retry().focus();await page.keyboard.press('Shift+Tab');await expect(apply()).toBeFocused();await expect(apply()).toBeInViewport()
         await capture(`tag-matching-${label}-dark`,'Comparison scrolls inside actual '+label+' viewport; final action remains reachable')
       }
-    } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+    } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
     await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
     await theme('light');await trigger.click();await expect(count()).toHaveText('Treffer 1 von 1')
     await capture('tag-matching-light','Tag matching comparison and action labels in the light theme')
@@ -1514,7 +1515,7 @@ async function verifySettingsDialog() {
   await scheme.selectOption(originalTheme);await save().click();await expect(save()).toBeDisabled()
   report.checks.settingsDialogThemeDraftShortcutAndReload=true
 
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
   try {
     for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
       await windowSize(width,height,1.5)
@@ -1528,7 +1529,7 @@ async function verifySettingsDialog() {
       await capture(`settings-dialog-${label}-dark`,'Settings remain within actual '+label+' viewport; final enabled action reachable by keyboard')
       await discard().click();await expect(section('Allgemein')).toBeFocused();await expect(section('Allgemein')).toBeInViewport();await section('Darstellung').click()
     }
-  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   await page.keyboard.press('Escape');await theme('light');await open()
   await capture('settings-dialog-light','General settings, live save status and area navigation in the light theme')
   await page.keyboard.press('Escape');await theme('dark')
@@ -1640,7 +1641,7 @@ async function verifyFilters() {
   report.checks.filtersDoNotWriteMarkdownOrLoseEditorDraft=true
 
   await page.locator('.activity-rail').getByRole('button',{name:'Tasks',exact:true}).click();await expect(page.locator('.task-canvas')).toBeVisible();await resetTasks()
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,200);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,200);return old})
   try {
     for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500],['short',640,240]]) {
       await windowSize(width,height,1.5)
@@ -1656,7 +1657,7 @@ async function verifyFilters() {
       await tagsTrigger.click();await expect(tagsPopup.getByRole('searchbox')).toBeFocused();await expect(tagsPopup.getByRole('searchbox')).toBeInViewport()
       await page.keyboard.press('Escape')
     }
-  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   report.checks.filtersViewportAndReopenFocus=true
   await theme('light');await taskTrigger.click();await expect(taskPopup.getByRole('searchbox')).toBeFocused()
   await capture('filter-light','Shared filter surface in the light theme')
@@ -1767,7 +1768,7 @@ async function verifyProperties() {
     dialog.showMessageBoxSync=()=>{globalThis.__propertiesClosePrompts++;return 2}
   })
   try {
-    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close())
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).close())
     await expect.poll(()=>app.evaluate(()=>globalThis.__propertiesClosePrompts)).toBe(1)
     await expect(page.locator('.tab-dirty-dot')).toHaveCount(1)
   } finally {await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=globalThis.__propertiesDialog;delete globalThis.__propertiesDialog})}
@@ -1783,7 +1784,7 @@ async function verifyProperties() {
   await page.keyboard.press('Control+\\');await expect(page.locator('.workspace-pane')).toHaveCount(1)
   await expect(waiting).toHaveValue('Entwurf vor dem Teilen');await waiting.focus();await save();assert.equal(saved().waiting_for,'Entwurf vor dem Teilen')
   report.checks.propertiesSplitPreservesPendingInput=true
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
   try {
     for(const [label,width,height] of [['zoom',1280,800],['narrow',640,500]]) {
       await windowSize(width,height,1.5);await title.focus()
@@ -1795,7 +1796,7 @@ async function verifyProperties() {
       await capture(`properties-${label}-dark`,'Shared property selection remains inside '+label+' viewport with a reachable final option')
       await page.keyboard.press('Escape');await expect(tagsButton).toBeFocused()
     }
-  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   await theme('light');await linksButton.click();await expect(linksPopup.getByRole('searchbox')).toBeFocused()
   await capture('properties-light','Shared property picker and task fields in the light theme');await page.keyboard.press('Escape');await theme('dark')
   await request('/ui-settings',{app:oldSettings.app});await page.reload();await expect(page.locator('.activity-rail')).toBeVisible();await openNote('Arbeitsnotiz')
@@ -2016,6 +2017,89 @@ async function verifyFocus() {
   await openNote('Arbeitsnotiz')
 }
 
+async function captureWindowShot(win, name, description) {
+  await win.evaluate(async () => {
+    await document.fonts.ready
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  const file = path.join(scratch, `${String(report.screenshots.length + 1).padStart(2, '0')}-${name}.png`)
+  await win.screenshot({path: file})
+  const entry = {screenshot: file, description, viewport: win.viewportSize(), theme: await win.locator('html').getAttribute('data-theme'), menus: []}
+  report.screenshots.push(entry)
+  console.log(JSON.stringify(entry))
+}
+
+async function verifyQuickCapture() {
+  // The global shortcut cannot be pressed safely from a test; the dev build exposes the same show().
+  await windowSize(1280, 800)
+  await theme('light')
+  const captureVisible = () => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('capture.html'))?.isVisible() ?? false)
+  const opened = app.waitForEvent('window', {predicate: win => win.url().includes('capture.html'), timeout: 30000})
+  await app.evaluate(() => globalThis.__nicknotesQuickCapture.show())
+  const win = await opened
+  const editor = win.locator('.quick-capture-editor .cm-content')
+  await expect(editor).toBeVisible()
+  await expect(win.locator('.quick-capture-notebase')).toHaveText('UX-NoteBase')
+  await expect(editor).toBeFocused()
+  await expect(win.locator('.quick-capture-status')).toHaveText(/^Strg\+Enter speichert/)
+
+  // Escape hides the window; the draft is still there next time.
+  await win.keyboard.type('Entwurf bleibt erhalten')
+  await win.keyboard.press('Escape')
+  await expect.poll(captureVisible).toBe(false)
+  await app.evaluate(() => globalThis.__nicknotesQuickCapture.show())
+  await expect.poll(captureVisible).toBe(true)
+  await expect(editor).toContainText('Entwurf bleibt erhalten')
+  report.checks.quickCaptureDraftKept = true
+
+  // The same capture rules as in the app: a plain line with a date becomes a task.
+  await win.keyboard.press('Control+a')
+  await win.keyboard.type(`Rückruf beim Lieferanten @${isoDay(1)} `)
+  await captureWindowShot(win, 'quick-capture-light', 'Capture window from the global shortcut: NoteBase name, Markdown editor, send button, light')
+  await win.getByRole('button', {name: 'Senden', exact: true}).click()
+  await expect(win.locator('.quick-capture-status')).toContainText('Task fällig am')
+  await expect.poll(captureVisible).toBe(false)
+  const daily = fs.readdirSync(path.join(vaultPath, 'daily'), {recursive: true}).find(name => String(name).endsWith(`${isoDay(0)}.md`))
+  await expect.poll(() => fs.readFileSync(path.join(vaultPath, 'daily', String(daily)), 'utf8')).toContain('Rückruf beim Lieferanten')
+  const tasks = () => fs.readdirSync(path.join(vaultPath, 'tasks'), {recursive: true}).map(name => path.join(vaultPath, 'tasks', String(name))).filter(file => file.endsWith('.md')).map(file => fs.readFileSync(file, 'utf8'))
+  await expect.poll(() => tasks().some(text => /Rückruf beim Lieferanten/.test(text) && new RegExp(`due_date: ['"]?${isoDay(1)}`).test(text))).toBe(true)
+  report.checks.quickCaptureSavedWithTask = true
+
+  // Dark theme follows the app.
+  await theme('dark')
+  await app.evaluate(() => globalThis.__nicknotesQuickCapture.show())
+  await expect(win.locator('html')).toHaveAttribute('data-theme', 'dark')
+  // Typed right after the shortcut: the very first key must land in the editor.
+  await win.keyboard.type('Gedanke ohne NoteBase-Wechsel')
+  await expect(editor).toHaveText('Gedanke ohne NoteBase-Wechsel')
+  report.checks.quickCaptureFirstKeyKept = true
+  await captureWindowShot(win, 'quick-capture-dark', 'Capture window, dark, with a fresh draft')
+  await win.keyboard.press('Escape')
+  await expect.poll(captureVisible).toBe(false)
+
+  // Hiding hands the foreground back to the previous program; bring the app window back for the next checks.
+  await app.evaluate(({BrowserWindow}) => {
+    const main = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes('capture.html'))
+    main?.show(); main?.focus()
+  })
+
+  // Device-local settings: shortcut and "keep running in the tray".
+  await page.locator('.activity-rail').getByRole('button', {name: 'Einstellungen', exact: true}).click()
+  const dialog = page.getByRole('dialog', {name: 'Einstellungen', exact: true})
+  await dialog.getByRole('button', {name: 'Allgemein', exact: true}).click()
+  await expect(dialog.getByLabel('Schnellerfassung von überall')).toHaveValue('CommandOrControl+Alt+N')
+  const keep = dialog.getByLabel('Beim Schließen im Infobereich weiterlaufen')
+  await keep.check()
+  const settingsFile = path.join(scratch, 'profile', 'desktop-settings.json')
+  await expect.poll(() => fs.existsSync(settingsFile) && JSON.parse(fs.readFileSync(settingsFile, 'utf8')).keepInTray).toBe(true)
+  await capture('settings-desktop-dark', 'General settings: global capture shortcut and keep running in the tray')
+  await keep.uncheck()
+  await expect.poll(() => JSON.parse(fs.readFileSync(settingsFile, 'utf8')).keepInTray).toBe(false)
+  report.checks.desktopSettingsPersisted = true
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+}
+
 async function verifyWhatsNew() {
   // A version change since the last start opens the notes once; the next start stays quiet.
   await windowSize(1280,800); await theme('light')
@@ -2170,7 +2254,7 @@ async function verifyWritingMode() {
   await rail.getByRole('button',{name:'Notizen',exact:true}).click();await openNote('Arbeitsnotiz')
   report.checks.writingSplitCloseGuardAndExplicitNavigation=true
 
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
   try {
     for(const [label,w,h,z]of[['zoom-dark',1280,800,1.5],['small-dark',640,420,1],['light',1280,800,1]]){
       await windowSize(w,h,z);if(label==='light')await theme('light')
@@ -2179,7 +2263,7 @@ async function verifyWritingMode() {
       await capture('writing-'+label,'Writing mode and its explicit exit stay inside the '+label+' viewport')
       await page.getByRole('button',{name:'Schreibmodus beenden',exact:true}).click();await expect(shell).not.toHaveClass(/is-writing/);await expect(rail).toBeVisible()
     }
-  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   await page.keyboard.press('F9');await page.reload();await expect(rail).toBeVisible();await expect(shell).not.toHaveClass(/is-writing/);await expect(captureEditor).toContainText(captureMarker)
   await openNote('Arbeitsnotiz');await expect(editor).toContainText(bodyMarker)
   await capture('writing-restart-light','Reload returns to normal navigation and restores the profile capture draft; writing mode is intentionally temporary')
@@ -2307,7 +2391,7 @@ async function verifySearchCommands() {
   report.checks.searchErrorRetryAndCommandMode=true
 
   await openNote('Arbeitsnotiz')
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
   try {
     for(const [label,w,h,z,mode]of[['zoom-dark',1280,800,1.5,'dark'],['small-dark',640,420,1,'dark'],['light',1280,800,1,'light']]){
       await windowSize(w,h,z);if(mode==='light')await theme('light')
@@ -2318,7 +2402,7 @@ async function verifySearchCommands() {
       await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(commandField).toBeFocused()
       await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
     }
-  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum);await windowSize(1280,800)}
+  } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   report.checks.searchThemesZoomSmallWindowAndFocus=true
 
   // A real UI NoteBase switch follows cancellation of a held response from the old base.
@@ -2416,7 +2500,7 @@ async function verifyTooltips() {
     host.querySelector('#tooltip-probe-edge').dataset.tooltip='C:/Synthetische-NoteBase/'+('Ein-sehr-langer-Ordnername/'.repeat(9))+'Dokument.md'
     document.body.append(host)
   })
-  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0],old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
+  const minimum=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')),old=win.getMinimumSize();win.setMinimumSize(240,240);return old})
   try {
     const field=page.getByRole('textbox',{name:'Tooltip-Prüffeld',exact:true})
     await field.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(field).toBeFocused()
@@ -2447,7 +2531,7 @@ async function verifyTooltips() {
     await page.mouse.wheel(0,150);await noTip();report.checks.tooltipReducedMotionAndScrollDismiss=true
   } finally {
     await page.evaluate(()=>document.getElementById('tooltip-probe')?.remove());await page.emulateMedia({reducedMotion:null})
-    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows()[0].setMinimumSize(...size),minimum)
+    await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum)
   }
   await noTip();assert.equal(fs.readFileSync(notePath,'utf8'),original)
   report.checks.tooltipNoDocumentWrites=true
@@ -2562,6 +2646,7 @@ try {
     if (inline) await verifyInlineSuggestions()
     if (whatsNew) await verifyWhatsNew()
     if (focusView) await verifyFocus()
+    if (quickCaptureView) await verifyQuickCapture()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

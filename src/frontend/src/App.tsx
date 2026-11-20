@@ -2675,6 +2675,9 @@ function App() {
         return {...spec,enabled,disabledReason,checked,run:commandHandlers[spec.id]};
     });
     const executeCommand=useAppCommands(appCommands,setError,settingsDialogOpen);
+    // Commands from outside the window, e.g. "Fokuszeit starten" in the tray menu.
+    const runExternalCommand=useEffectEvent((command:string)=>{if(command==='focusTimer')void executeCommand('focusTimer')});
+    useEffect(()=>window.nicknotes?.onAppCommand?.(command=>runExternalCommand(command)),[]);
     const openedSearchNotes=openTabs.filter(tab=>tab.kind==='note'&&!tab.loading).slice().reverse().sort((a,b)=>Number(b.id===activeTab?.id)-Number(a.id===activeTab?.id)).slice(0,8).map(tab=>({path:tab.path,title:tab.title}));
     const commandDialogs=<>{quickOpen&&quickOpen.vaultPath===vaultPath&&quickOpen.epoch===connectionEpoch()&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultLoaded?vaultPath:''} initialQuery={quickOpen.initialQuery} openedNotes={vaultLoaded?openedSearchNotes:[]} commands={appCommands} onClose={()=>setQuickOpen(null)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}} onExecute={id=>{
         const trigger=quickOpen.trigger;

@@ -1,5 +1,8 @@
-/** Synchronize renderer drafts before native close; never close on a missing/stale reply. */
-export function createWindowCloseGuard(win, dialog) {
+/**
+ * Synchronize renderer drafts before native close; never close on a missing/stale reply.
+ * `hideInstead`: when it answers true, a user close only hides the window (NickNotes keeps running in the tray).
+ */
+export function createWindowCloseGuard(win, dialog, {hideInstead}={}) {
   let ready=false,dirty=false,phase='idle',requestId=0,allowClose=false,timer,approvedAction,resolveRequest
   const clearTimer=()=>{clearTimeout(timer);timer=undefined}
   const reset=()=>{
@@ -63,6 +66,8 @@ export function createWindowCloseGuard(win, dialog) {
   }
   win.on('close',event=>{
     if(allowClose){allowClose=false;return}
+    // An approved action (update restart) or an explicit quit always closes for real.
+    if(phase==='idle'&&!approvedAction&&hideInstead?.()){event.preventDefault();win.hide();return}
     event.preventDefault()
     if(phase!=='idle')return
     requestId++;win.setEnabled(false)

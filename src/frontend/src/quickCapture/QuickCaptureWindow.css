@@ -1,0 +1,98 @@
+/* Small frameless capture window behind the global shortcut. */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.quick-capture-window {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.quick-capture-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0 0.35rem 0 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-layer-1);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.quick-capture-head button {
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.quick-capture-title {
+  font-size: var(--font-label);
+  font-weight: 600;
+}
+
+.quick-capture-notebase {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-capture-hint {
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-label);
+}
+
+.quick-capture-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 0.6rem 0.6rem 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-contrast);
+}
+
+.quick-capture-editor:focus-within {
+  border-color: var(--line-strong);
+}
+
+/* The window is narrow; keep the text close to the edge instead of the wide app margins. */
+.quick-capture-editor.capture-markdown-editor .cm-content {
+  padding: 0.45rem 0.7rem;
+}
+
+.quick-capture-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem 0.55rem 0.75rem;
+}
+
+.quick-capture-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-capture-status.error {
+  color: var(--error-text);
+  white-space: normal;
+}

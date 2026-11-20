@@ -417,3 +417,9 @@
   .settings-section-body {overflow: visible;}
 }
 
+
+.settings-inline-warning {
+  margin: var(--space-1) 0 0;
+  color: var(--error-text);
+  font-size: var(--font-caption);
+}
