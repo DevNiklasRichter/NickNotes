@@ -2054,6 +2054,17 @@ async function verifyFocus() {
   await expect(page.locator('.tab-open')).toHaveCount(0)
   await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
 
+  // The next instance (due in a week) carries the repeat symbol in the focus list and in the task list.
+  const upcoming = canvas.locator('.focus-group', {hasText: 'Nächste 7 Tage'})
+  if (!(await upcoming.getAttribute('open'))) await upcoming.locator('summary').click()
+  await expect(upcoming.locator('.focus-row', {hasText: 'Quartalsbericht'}).locator('.task-repeat-mark')).toHaveAttribute('aria-label', 'Wiederholt sich: Wöchentlich')
+  await capture('focus-repeat-mark-light', 'Upcoming tasks in the focus view: the repeating task shows a small repeat symbol')
+  await page.locator('.activity-rail').getByRole('button', {name: 'Tasks', exact: true}).click()
+  await expect(page.locator('.task-repeat-mark').first()).toBeVisible()
+  await capture('task-list-repeat-mark-light', 'Task list: repeating tasks carry the repeat symbol next to the title')
+  report.checks.repeatMarkInLists = true
+  await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
+
   await theme('dark')
   await expect(canvas).toBeVisible()
   await capture('focus-dark', 'Focus view after the interactions, dark, 1440×900')
@@ -2199,19 +2210,35 @@ async function verifyInlineSuggestions() {
   await expect.poll(doc).toMatch(/#xyz\n/)  // no matching tag: Enter still starts a new line
   report.checks.inlineLinkTagDateSuggestions=true
 
-  // A dated to-do in the quick capture becomes a task due that day.
+  // A dated plain line in the quick capture becomes a task due that day (a dated to-do stays a to-do).
   await page.keyboard.press('Alt+q')
   const captureEditor=page.locator('.capture-markdown-editor .cm-content')
   await expect(captureEditor).toBeFocused()
-  await page.keyboard.type('- [ ] Angebot schicken @mor'); await page.keyboard.press('Enter')
+  await page.keyboard.type('Angebot schicken @mor'); await page.keyboard.press('Enter')
   const save=page.waitForResponse(res=>res.url().endsWith('/capture/save')&&res.request().method()==='POST')
   await page.getByRole('button',{name:'Senden',exact:true}).click()
   const saved=await (await save).json()
   assert.equal(saved.tasks.length,1)
   assert.ok(fs.readFileSync(saved.tasks[0].taskPath,'utf8').includes(`due_date: '${saved.tasks[0].dueDate}'`)||fs.readFileSync(saved.tasks[0].taskPath,'utf8').includes(`due_date: ${saved.tasks[0].dueDate}`))
   await expect(page.getByText(/Task fällig am/)).toBeVisible()
-  await capture('capture-task-light','Quick capture: a to-do with @date became a due task; confirmation names the date')
+  await capture('capture-task-light','Quick capture: a line with @date became a due task; confirmation names the date')
   report.checks.captureDatedTodoBecomesTask=true
+
+  // A repeat word from the @ menu makes a repeating task, due today without a date.
+  if(!(await captureEditor.isVisible())) await page.keyboard.press('Alt+q')
+  await captureEditor.click()
+  await page.keyboard.type('Zählerstand ablesen @monat')
+  await expect(list.getByRole('button').filter({hasText:'Monatlich'})).toBeVisible()
+  await capture('capture-repeat-light','@ in the quick capture also offers repeat words; the line becomes a repeating task')
+  await page.keyboard.press('Enter')
+  await expect.poll(()=>captureEditor.textContent()).toContain('@monatlich')
+  const repeatSave=page.waitForResponse(res=>res.url().endsWith('/capture/save')&&res.request().method()==='POST')
+  await page.getByRole('button',{name:'Senden',exact:true}).click()
+  const repeatSaved=await (await repeatSave).json()
+  assert.deepEqual(repeatSaved.tasks.map(task=>[task.dueDate,task.repeat]),[[isoDay(0),'monthly']])
+  assert.match(fs.readFileSync(repeatSaved.tasks[0].taskPath,'utf8'),/^repeat: monthly$/m)
+  await expect(page.getByText(/Wiederkehrende Task fällig am .* angelegt \(monatlich\)/)).toBeVisible()
+  report.checks.captureRepeatWordMakesRepeatingTask=true
 
   // The graph centres on the open note.
   await openNote('Arbeitsnotiz')

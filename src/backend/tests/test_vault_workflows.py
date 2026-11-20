@@ -330,6 +330,28 @@ class VaultWorkflowTests(unittest.TestCase):
         todos = self.indexer.list_todos()
         self.assertEqual([(todo["raw_text"], bool(todo.get("promoted"))) for todo in todos], [("Rechnung pruefen @2026-11-21", False)])
 
+    def test_save_capture_repeat_word_makes_a_repeating_task(self) -> None:
+        result = self.vault.save_capture(
+            text="Müll rausbringen @2030-01-07 @wöchentlich\nZähler ablesen @monatlich\nBlumen @alle-3-tage @woechentlich\n- [ ] Nur To-do @täglich\nE-Mail an @morgen",
+            selected_tags=[],
+            indexer=self.indexer,
+        )
+
+        today = datetime.now().date().isoformat()
+        self.assertEqual(
+            [(task["dueDate"], task["repeat"]) for task in result["tasks"]],
+            [("2030-01-07", "weekly"), (today, "monthly"), (today, "every 3 days")],
+        )
+        rows = {row["title"]: row for row in self.indexer.list_tasks()}
+        self.assertEqual(sorted(rows), ["Blumen", "Müll rausbringen", "Zähler ablesen"])
+        self.assertEqual(rows["Müll rausbringen"]["repeat"], "weekly")
+        meta, _body = parse_markdown(Path(result["tasks"][0]["taskPath"]))
+        self.assertEqual(meta["repeat"], "weekly")
+        # The capture stays as typed in the daily note; a to-do and unknown words stay text.
+        _meta, body = parse_markdown(Path(result["note_path"]))
+        self.assertIn("Müll rausbringen @2030-01-07 @wöchentlich", body)
+        self.assertIn("- [ ] Nur To-do @täglich", body)
+
     def test_save_capture_handles_typed_and_invalid_dates(self) -> None:
         result = self.vault.save_capture(
             text="Tippfehler @31.02.2027\nGanz falsch @2026-13-40\nManuell @20.11.2030 erledigen",

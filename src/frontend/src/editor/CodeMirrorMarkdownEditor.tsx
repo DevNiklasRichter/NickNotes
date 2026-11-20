@@ -13,7 +13,7 @@ import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, LanguageDescription } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap, openSearchPanel } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { dateSuggestions, detectInlineTrigger, type InlineMatch, type InlineTrigger } from './inlineSuggestions'
+import { dateSuggestions, detectInlineTrigger, repeatSuggestions, type InlineMatch, type InlineTrigger } from './inlineSuggestions'
 import {
   Decoration,
   type DecorationSet,
@@ -139,6 +139,8 @@ type CodeMirrorMarkdownEditorProps = {
   className?: string
   embeddedInScroll?: boolean
   placeholderText?: string
+  /** Capture fields: `@` also offers repeat words (`@wöchentlich`), which turn the line into a repeating task. */
+  offerRepeats?: boolean
   tagSuggestions?: MarkdownEditorTagSuggestion[]
   selectedTagSuggestionKeys?: string[]
   onChange: (nextValue: string) => void
@@ -664,6 +666,7 @@ export function CodeMirrorMarkdownEditor({
   className = '',
   embeddedInScroll = false,
   placeholderText = 'Starte mit einer Notiz ...',
+  offerRepeats = false,
   tagSuggestions = EMPTY_TAG_SUGGESTIONS,
   selectedTagSuggestionKeys = [],
   onChange,
@@ -770,7 +773,10 @@ export function CodeMirrorMarkdownEditor({
     }
 
     if (paletteState.mode === 'slash' && paletteState.trigger === '@') {
-      return dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.hint ? paletteState.query : date.iso}`}))
+      const dates = dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.hint ? paletteState.query : date.iso}`}))
+      if (!offerRepeats) return dates
+      const repeats = repeatSuggestions(paletteState.query).map<PaletteItem>(repeat => ({kind: 'insert', key: `repeat-${repeat.label}`, title: repeat.label, description: repeat.description, text: `@${repeat.hint ? paletteState.query : repeat.token}`}))
+      return [...dates, ...repeats]
     }
 
     if (paletteState.mode === 'slash') {
@@ -854,7 +860,7 @@ export function CodeMirrorMarkdownEditor({
     return tags
       .filter((tag) => `${tag.id} ${tag.displayName}`.toLowerCase().includes(query))
       .map<PaletteItem>((tag) => ({ kind: 'tag', group: paletteState.group, tag }))
-  }, [linkTargets, paletteState, tagGroups])
+  }, [linkTargets, offerRepeats, paletteState, tagGroups])
 
   const paletteItemsRef = useRef<PaletteItem[]>([])
 

@@ -3,7 +3,15 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from src.backend.nicknotes_backend.recurrence import RepeatRule, add_months, format_repeat, next_occurrence, parse_repeat
+from src.backend.nicknotes_backend.recurrence import (
+    RepeatRule,
+    add_months,
+    first_occurrence,
+    format_repeat,
+    next_occurrence,
+    parse_capture_repeat,
+    parse_repeat,
+)
 
 
 class RecurrenceRuleTests(unittest.TestCase):
@@ -43,6 +51,24 @@ class RecurrenceRuleTests(unittest.TestCase):
         # 2026-11-20 is a Friday.
         self.assertEqual(next_occurrence(weekdays, due=date(2026, 11, 20), completed=date(2026, 11, 20)), date(2026, 11, 23))
         self.assertEqual(next_occurrence(weekdays, due=date(2026, 11, 17), completed=date(2026, 11, 17)), date(2026, 11, 18))
+
+
+    def test_capture_words_name_a_rule(self) -> None:
+        self.assertEqual(parse_capture_repeat("wöchentlich"), RepeatRule("week", 1))
+        self.assertEqual(parse_capture_repeat("Woechentlich"), RepeatRule("week", 1))
+        self.assertEqual(parse_capture_repeat("werktags"), RepeatRule("weekday", 1))
+        self.assertEqual(parse_capture_repeat("vierteljährlich"), RepeatRule("month", 3))
+        self.assertEqual(parse_capture_repeat("alle-10-tage"), RepeatRule("day", 10))
+        self.assertEqual(parse_capture_repeat("alle-2-Wochen"), RepeatRule("week", 2))
+        self.assertEqual(parse_capture_repeat("alle-1-monat"), RepeatRule("month", 1))
+        for word in ("morgen", "2026-11-20", "alle-0-tage", "alle-400-tage", "alle-3-stunden", "weekly"):
+            self.assertIsNone(parse_capture_repeat(word), word)
+
+    def test_first_occurrence_of_a_captured_rule(self) -> None:
+        # 2026-11-21 is a Saturday.
+        self.assertEqual(first_occurrence(parse_repeat("weekdays"), date(2026, 11, 21)), date(2026, 11, 23))
+        self.assertEqual(first_occurrence(parse_repeat("weekdays"), date(2026, 11, 20)), date(2026, 11, 20))
+        self.assertEqual(first_occurrence(parse_repeat("weekly"), date(2026, 11, 21)), date(2026, 11, 21))
 
 
 if __name__ == "__main__":

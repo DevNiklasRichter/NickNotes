@@ -1074,6 +1074,7 @@ class BackendApiService:
             follow_up_date=str(meta.get("follow_up_date", "")).strip() or None,
             blocked_reason=str(meta.get("blocked_reason", "")).strip() or None,
             next_action_hint=str(meta.get("next_action_hint", "")).strip() or None,
+            repeat=str(meta.get("repeat", "") or "").strip() or None,
         )
         indexer.add_or_update_task(
             task_id=str(task_id),

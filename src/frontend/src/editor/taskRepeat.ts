@@ -39,3 +39,15 @@ export function customOfRepeat(rule: string): RepeatCustom {
   const unit = Object.entries(ONE_PER_UNIT).find(([, token]) => token === rule)?.[0]
   return { interval: unit ? 1 : 3, unit: unit ?? 'day' }
 }
+
+const UNIT_PLURAL: Record<string, string> = { day: 'Tage', week: 'Wochen', month: 'Monate', year: 'Jahre' }
+
+/** Short German wording of a rule for markers and tooltips ("Wöchentlich", "Alle 10 Tage"); empty when it does not repeat. */
+export function repeatLabel(raw: unknown): string {
+  const rule = canonicalRepeat(raw)
+  if (!rule) return ''
+  const preset = REPEAT_PRESETS.find(([value]) => value === rule)
+  if (preset) return preset[1]
+  const { interval, unit } = customOfRepeat(rule)
+  return `Alle ${interval} ${UNIT_PLURAL[unit] ?? unit}`
+}

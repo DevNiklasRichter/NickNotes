@@ -24,6 +24,13 @@ Abschnitt der nächsten Version.
   stapeln sich nicht. Mit „ab Erledigung zählen“ beginnt der Abstand stattdessen
   am Tag, an dem du sie erledigst – praktisch für Dinge wie „alle 3 Wochen Haare
   schneiden“.
+- Wiederkehrende Tasks erkennst du in der Task-Liste und im Fokus an einem kleinen
+  Wiederholungssymbol; der Tooltip nennt den Rhythmus.
+- In der Schnellerfassung legst du sie direkt an: `@` schlägt neben Terminen auch
+  „Täglich“, „Werktags“, „Wöchentlich“, „Monatlich“ und mehr vor, z. B.
+  „Müll rausbringen @wöchentlich“; ein Datum aus dem `@`-Menü legt den ersten
+  Termin fest, ohne Datum ist die erste Task heute fällig. Einen eigenen Abstand
+  tippst du als `@alle-10-tage`.
 
 - **Fokuszeit auf einen Blick**: Der Fokus zeigt oben „Fokuszeit heute“, der
   Rückblick die Fokuszeit im Zeitraum und als eigene Zeile im Verlauf. Die Werte

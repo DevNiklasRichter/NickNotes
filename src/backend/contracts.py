@@ -231,6 +231,7 @@ class CapturedTask(_ContractModel):
     taskId: str
     taskPath: str
     dueDate: str
+    repeat: str | None = None
 
 
 class SaveCaptureResponse(_ContractModel):
@@ -295,6 +296,7 @@ class TaskRowResponse(_ContractModel):
     follow_up_date: str | None = None
     blocked_reason: str | None = None
     next_action_hint: str | None = None
+    repeat: str | None = None
     tags: list[str] = Field(default_factory=list)
     related: list[str] = Field(default_factory=list)
     updated_at: str = ""

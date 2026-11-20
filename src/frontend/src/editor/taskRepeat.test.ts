@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { canonicalRepeat, customOfRepeat, repeatFromCustom } from './taskRepeat'
+import { canonicalRepeat, customOfRepeat, repeatFromCustom, repeatLabel } from './taskRepeat'
 
 test('rules are written in the same tokens the backend reads', () => {
   expect(canonicalRepeat('Weekly')).toBe('weekly')
@@ -18,4 +18,12 @@ test('a custom distance round-trips and is clamped', () => {
   expect(repeatFromCustom({ interval: Number.NaN, unit: 'month' })).toBe('monthly')
   expect(customOfRepeat('every 6 months')).toEqual({ interval: 6, unit: 'month' })
   expect(customOfRepeat('weekly')).toEqual({ interval: 1, unit: 'week' })
+})
+
+test('rules read as short German labels', () => {
+  expect(repeatLabel('weekly')).toBe('Wöchentlich')
+  expect(repeatLabel('every 10 days')).toBe('Alle 10 Tage')
+  expect(repeatLabel('every 3 months')).toBe('Vierteljährlich')
+  expect(repeatLabel('')).toBe('')
+  expect(repeatLabel('sometimes')).toBe('')
 })

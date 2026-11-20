@@ -1282,6 +1282,11 @@ export interface components {
             taskPath: string;
             /** Duedate */
             dueDate: string;
+            /**
+             * Repeat
+             * @default null
+             */
+            repeat: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2861,6 +2866,11 @@ export interface components {
              * @default null
              */
             next_action_hint: string | null;
+            /**
+             * Repeat
+             * @default null
+             */
+            repeat: string | null;
             /** Tags */
             tags: string[];
             /** Related */

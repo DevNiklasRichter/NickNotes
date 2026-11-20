@@ -104,7 +104,7 @@ MeineNoteBase/
     migrations/                  Konfigurationssicherungen und Nachweise
 
 %LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
-    index.db                     SQLite-Projektion, Schema 4
+    index.db                     SQLite-Projektion, Schema 5
     graph-index.json             Graph-Projektion, Version 2
     task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
@@ -165,7 +165,13 @@ der Tagesnotiz. Ein To-do (`- [ ] ... @2026-11-20`) bleibt ein To-do und erzeugt
 keine Task. Von Hand getippte `@20.11.2026` oder `@20.11.` werden beim Speichern
 zu ISO normalisiert; nicht existierende Tage bleiben Text und erzeugen nichts
 (`_normalize_capture_dates`). Der Editor unterschlaengelt solche Tage rot
-(`invalidDateMarks.ts`). In anderen Notizen ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
+(`invalidDateMarks.ts`). Ein Wiederholungswort macht die Zeile zu einer
+wiederkehrenden Task (`repeat` im Frontmatter): `@taeglich`, `@werktags`,
+`@woechentlich`, `@zweiwoechentlich`, `@monatlich`, `@vierteljaehrlich`,
+`@jaehrlich` (Umlaute oder ae/oe/ue) oder `@alle-N-tage|wochen|monate|jahre`
+(`parse_capture_repeat`). Ohne Datum ist sie heute faellig, `werktags` am
+naechsten Werktag. Das `@`-Menue bietet diese Woerter nur in den
+Schnellerfassungen an (`offerRepeats`). In anderen Notizen ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
 Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
 dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der
 gerade bearbeiteten Notiz (1 oder 2 Ebenen, optional nach einem Tag gefiltert).
@@ -193,7 +199,10 @@ Termine stauen sich nicht); mit `repeat_from: completion` oder ohne Faelligkeit
 ab dem Erledigungstag. Monatsenden werden geklemmt (31. → 28./29.). Die erledigte
 Task bekommt `repeat_next` = neue ID; erneutes Erledigen nach dem Wiederoeffnen
 legt deshalb keine zweite Instanz an. Antworten tragen die neue Task als
-`repeatTask` (Speichern) bzw. `nextTask` (Done).
+`repeatTask` (Speichern) bzw. `nextTask` (Done). Der Index fuehrt die Regel als
+`tasks.repeat_rule` (Schema 5; aeltere Indexe bekommen die Spalte und lesen ihre
+Task-Dateien beim naechsten Abgleich neu), `GET /tasks` liefert sie als `repeat`;
+Task-Liste und Fokus zeigen daran ein Wiederholungssymbol (`TaskRepeatMark`).
 
 To-dos von heute sind die mit heutigem Erstellzeitpunkt (ohne `created=` gilt
 der der Notiz) oder aus der heutigen Tagesnotiz; heute abgehakte bleiben

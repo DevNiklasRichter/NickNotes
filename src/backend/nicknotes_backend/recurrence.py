@@ -98,3 +98,46 @@ def next_occurrence(rule: RepeatRule, *, due: date | None, completed: date, from
         steps += 1
         candidate = _advance(rule, due, steps)
     return candidate
+
+
+# Capture words after `@` ("Müll rausbringen @wöchentlich"); umlauts may be typed as ae/oe/ue.
+CAPTURE_REPEAT_WORDS = {
+    "täglich": "daily",
+    "werktags": "weekdays",
+    "wöchentlich": "weekly",
+    "zweiwöchentlich": "every 2 weeks",
+    "monatlich": "monthly",
+    "vierteljährlich": "every 3 months",
+    "jährlich": "yearly",
+}
+_CAPTURE_UNITS = {"tag": "day", "tage": "day", "woche": "week", "wochen": "week", "monat": "month", "monate": "month", "jahr": "year", "jahre": "year"}
+_CAPTURE_CUSTOM = re.compile(r"^alle-(\d{1,3})-([a-z]+)$")
+
+
+def _fold(value: str) -> str:
+    return value.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+
+
+_CAPTURE_FOLDED = {_fold(word): rule for word, rule in CAPTURE_REPEAT_WORDS.items()}
+
+
+def parse_capture_repeat(word: str) -> RepeatRule | None:
+    """`wöchentlich`, `werktags`, `alle-3-tage`, ... typed after `@` in a capture; None for anything else."""
+    folded = _fold(word.strip())
+    if folded in _CAPTURE_FOLDED:
+        return parse_repeat(_CAPTURE_FOLDED[folded])
+    match = _CAPTURE_CUSTOM.match(folded)
+    unit = _CAPTURE_UNITS.get(match.group(2)) if match else None
+    if not match or unit is None:
+        return None
+    interval = int(match.group(1))
+    if not 1 <= interval <= REPEAT_INTERVAL_MAX:
+        return None
+    return RepeatRule(unit, interval)
+
+
+def first_occurrence(rule: RepeatRule, today: date) -> date:
+    """Due date of a repeating task captured without a date: today, or the next working day for `weekdays`."""
+    if rule.unit == "weekday" and today.weekday() >= 5:
+        return _advance(rule, today, 1)
+    return today

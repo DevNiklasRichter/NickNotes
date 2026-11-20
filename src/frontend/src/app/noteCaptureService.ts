@@ -1,6 +1,7 @@
 import type { SetStateAction } from 'react'
 import { apiRequest, type Suggestion, type VaultCounts } from './AppShared'
 import type { AppMutationEvent } from './mutationEvents'
+import { capturedTasksNote } from '../shared/capturedTasks'
 
 type NoteCaptureContext = {
   getBackendUrl: () => string
@@ -130,10 +131,7 @@ export class NoteCaptureService {
       this.writer.setSuggestions([])
       this.writer.setSelectedTagKeys([])
       this.writer.setIgnoredCaptureTagKeys([])
-      const tasks = response.tasks ?? []
-      const due = tasks.map(task => new Date(`${task.dueDate}T00:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })).join(', ')
-      this.writer.setMessage(`Schnellerfassung in der Tagesnotiz ${response.date} gespeichert.${
-        tasks.length === 1 ? ` Task fällig am ${due} angelegt.` : tasks.length > 1 ? ` ${tasks.length} Tasks angelegt (fällig ${due}).` : ''}`)
+      this.writer.setMessage(`Schnellerfassung in der Tagesnotiz ${response.date} gespeichert.${capturedTasksNote(response.tasks ?? [])}`)
       await this.context.emitMutation?.({
         kind: 'capture-saved',
         refresh: {

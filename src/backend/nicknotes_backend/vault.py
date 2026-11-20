@@ -29,7 +29,7 @@ from .task_domain import (
     task_status_folder_token as _task_status_folder_token,
 )
 from .focus_log import format_focus_line
-from .recurrence import REPEAT_FROM_COMPLETION, format_repeat, next_occurrence, parse_repeat
+from .recurrence import REPEAT_FROM_COMPLETION, first_occurrence, format_repeat, next_occurrence, parse_capture_repeat, parse_repeat
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -488,25 +488,52 @@ def _german_due_tokens_to_iso(line: str, today: datetime) -> str:
     return _GERMAN_DUE_TOKEN.sub(replace, line)
 
 
-def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Normalizes typed `@dates` and finds plain lines (no checkbox) carrying a valid one: `(title, due_date)`.
+_CAPTURE_WORD_TOKEN = re.compile(r"(?:^|(?<=\s))@([\w-]+)(?=\s|$)")
 
-    A dated plain line becomes a task; a dated to-do (`- [ ] ... @date`) stays a to-do. Impossible days stay text.
+
+def _capture_repeat(text: str) -> tuple[str, str | None]:
+    """Removes repeat words (`@wöchentlich`, `@alle-3-tage`) from a capture line: `(rest, rule)`; the first one counts."""
+    rule: str | None = None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal rule
+        parsed = parse_capture_repeat(match.group(1))
+        if parsed is None:
+            return match.group(0)
+        rule = rule or format_repeat(parsed)
+        return " "
+
+    rest = _CAPTURE_WORD_TOKEN.sub(replace, text)
+    return rest, rule
+
+
+def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str, str | None]]]:
+    """Normalizes typed `@dates` and finds plain lines (no checkbox) that become tasks: `(title, due_date, repeat)`.
+
+    A plain line with a valid date or a repeat word (`@wöchentlich`) becomes a task; without a date a repeating
+    task is due today (`werktags`: the next working day). A to-do (`- [ ] ... @date`) stays a to-do. Impossible
+    days stay text.
     """
     out: list[str] = []
-    dated: list[tuple[str, str]] = []
+    dated: list[tuple[str, str, str | None]] = []
     in_fence = False
+    now = datetime.now()
     for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
         elif not in_fence:
-            line = _german_due_tokens_to_iso(line, datetime.now())
+            line = _german_due_tokens_to_iso(line, now)
             match = _CAPTURE_DATED_LINE.match(line)
-            due = DUE_TOKEN_PATTERN.search(match.group(2)) if match else None
-            if match and due and _is_iso_day(due.group(1)):
-                title = " ".join(DUE_TOKEN_PATTERN.sub(" ", match.group(2)).split())
-                if title:
-                    dated.append((title, due.group(1)))
+            if match:
+                rest, repeat = _capture_repeat(match.group(2))
+                due = DUE_TOKEN_PATTERN.search(rest)
+                due_day = due.group(1) if due and _is_iso_day(due.group(1)) else None
+                if due_day is None and repeat:
+                    rule = parse_repeat(repeat)
+                    due_day = first_occurrence(rule, now.date()).isoformat() if rule else None
+                title = " ".join(DUE_TOKEN_PATTERN.sub(" ", rest).split())
+                if due_day and title:
+                    dated.append((title, due_day, repeat))
         out.append(line)
     return "\n".join(out), dated
 
@@ -2442,20 +2469,24 @@ class VaultManager:
 
         # A plain line with a date ("Angebot schicken @2026-11-20") becomes a task due that day and stays
         # ordinary text in the daily note; a to-do with a date stays a to-do and creates no task.
+        # A repeat word ("@wöchentlich") makes it a repeating task.
         tasks = []
         note_anchor = str(meta.get("id", f"daily_{day}"))
-        for title, due_date in dated_lines:
+        for title, due_date, repeat in dated_lines:
             task_id = make_task_id(now)
+            extra: dict[str, Any] = {"origin_note_id": note_anchor, "origin_note_path": str(note_path)}
+            if repeat:
+                extra["repeat"] = repeat
             task_path = self._create_task_file(
                 task_id=task_id,
                 note_id=note_anchor,
-                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[]),
+                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[], repeat=repeat),
                 now=now,
                 indexer=indexer,
-                extra_frontmatter={"origin_note_id": note_anchor, "origin_note_path": str(note_path)},
+                extra_frontmatter=extra,
                 body=title,
             )
-            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date})
+            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date, "repeat": repeat})
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
@@ -2695,6 +2726,7 @@ class VaultManager:
             follow_up_date=follow_up_date or None,
             blocked_reason=blocked_reason or None,
             next_action_hint=next_action_hint or None,
+            repeat=task.repeat or (str((extra_frontmatter or {}).get("repeat") or "") or None),
         )
         indexer.add_or_update_task(
             task_id=task_id,

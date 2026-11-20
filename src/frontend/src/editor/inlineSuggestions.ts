@@ -103,3 +103,36 @@ export function dateSuggestions(query: string, today = new Date()): DateSuggesti
     .map(([label, date]) => ({ label, description: readable(date), iso: isoDate(date) }))
   return wanted ? matches : [...matches, { label: 'Eigenes Datum', description: 'Weiter tippen: 20.11. oder 20.11.2026', iso: '', hint: true }]
 }
+
+/** Repeat words a capture understands after `@`; the backend (`recurrence.py`) reads the same words. */
+const REPEAT_WORDS: Array<[string, string]> = [
+  ['täglich', 'Täglich'],
+  ['werktags', 'Werktags (Mo–Fr)'],
+  ['wöchentlich', 'Wöchentlich'],
+  ['zweiwöchentlich', 'Alle 2 Wochen'],
+  ['monatlich', 'Monatlich'],
+  ['vierteljährlich', 'Vierteljährlich'],
+  ['jährlich', 'Jährlich'],
+]
+const REPEAT_CUSTOM_UNITS: Array<[string, string]> = [['tage', 'Tage'], ['wochen', 'Wochen'], ['monate', 'Monate']]
+const REPEAT_DESCRIPTION = 'Wiederkehrende Task, ohne Datum ab heute fällig'
+
+export type RepeatSuggestion = { label: string; description: string; token: string; hint?: boolean }
+
+/** `@` suggestions for repeating tasks in a capture: fixed words, and `alle-N-…` for an own distance. */
+export function repeatSuggestions(query: string): RepeatSuggestion[] {
+  const wanted = fold(query.trim())
+  const customHint: RepeatSuggestion = { label: 'Eigener Abstand', description: 'Weiter tippen: alle-3-tage, alle-2-wochen', token: '', hint: true }
+  const custom = /^alle-?(\d{0,3})-?([a-z]*)$/.exec(wanted)
+  if (custom) {
+    const interval = Number(custom[1] || 0)
+    if (!interval || interval > 365) return [customHint]
+    return REPEAT_CUSTOM_UNITS
+      .filter(([unit]) => unit.startsWith(custom[2]))
+      .map(([unit, label]) => ({ label: `Alle ${interval} ${label}`, description: REPEAT_DESCRIPTION, token: `alle-${interval}-${unit}` }))
+  }
+  const words = REPEAT_WORDS
+    .filter(([word]) => !wanted || fold(word).startsWith(wanted))
+    .map(([word, label]) => ({ label, description: REPEAT_DESCRIPTION, token: word }))
+  return 'alle'.startsWith(wanted) ? [...words, customHint] : words
+}

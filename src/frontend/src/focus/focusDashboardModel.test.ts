@@ -19,6 +19,7 @@ function task(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     follow_up_date: null,
     blocked_reason: null,
     next_action_hint: null,
+    repeat: null,
     tags: [],
     related: [],
     updated_at: '2026-11-10T08:00:00+01:00',
