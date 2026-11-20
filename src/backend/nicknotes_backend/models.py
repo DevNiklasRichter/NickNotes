@@ -47,3 +47,4 @@ class ParsedTask:
     follow_up_date: Optional[str] = None
     blocked_reason: Optional[str] = None
     next_action_hint: Optional[str] = None
+    repeat: Optional[str] = None

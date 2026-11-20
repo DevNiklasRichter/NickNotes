@@ -20,6 +20,7 @@ import {
   type FocusTodoItem,
 } from './focusDashboardModel'
 import type { FocusTimerTarget } from './focusTimerModel'
+import { TaskRepeatMark } from '../tasks/TaskRepeatMark'
 
 /** One neighbour from `/graph/related`: linked notes and notes sharing weighted tags. */
 export type FocusRelatedNote = {
@@ -319,6 +320,7 @@ export function FocusDashboardCanvas({
             {task.title}
           </button>
           {task.isMit ? <MitMarker /> : null}
+          <TaskRepeatMark repeat={task.repeat} />
           {label ? <span className={`focus-row-meta ${task.overdueDays > 0 ? 'overdue' : ''}`}>{label}</span> : null}
           <span className="focus-row-actions">
             {timerButton({ kind: 'task', id: task.id, title: task.title, path: task.path ?? '', detail: showTaskDetails ? task.nextActionHint ?? '' : '' })}

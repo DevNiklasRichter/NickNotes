@@ -22,3 +22,26 @@
   border-color: var(--line-strong);
   color: var(--text);
 }
+
+/* "Wiederholung": rhythm, optional custom distance and "ab Erledigung". */
+.property-repeat-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: var(--font-label);
+}
+
+.property-repeat-interval {
+  width: 3.6rem;
+}
+
+.property-repeat-from {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  cursor: pointer;
+}

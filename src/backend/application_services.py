@@ -1074,6 +1074,7 @@ class BackendApiService:
             follow_up_date=str(meta.get("follow_up_date", "")).strip() or None,
             blocked_reason=str(meta.get("blocked_reason", "")).strip() or None,
             next_action_hint=str(meta.get("next_action_hint", "")).strip() or None,
+            repeat=str(meta.get("repeat", "") or "").strip() or None,
         )
         indexer.add_or_update_task(
             task_id=str(task_id),
@@ -1090,7 +1091,8 @@ class BackendApiService:
             task_path=str(done_path),
             indexer=indexer,
         )
-        return {"done": True, "taskId": task_id, "taskPath": str(done_path)}
+        next_task = vault.create_repeat_successor(done_path, indexer)
+        return {"done": True, "taskId": task_id, "taskPath": str(done_path), "nextTask": next_task}
 
     @coordinated
     def search_notes(self, query: str = '', offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None) -> dict[str, Any]:

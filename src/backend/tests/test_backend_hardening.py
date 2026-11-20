@@ -72,6 +72,22 @@ class FullTextProjectionTests(unittest.TestCase):
         self.assertEqual(self.indexer.search_notes('altbestand'), [])
         self.assertEqual(len(self._fts()), 1)
 
+    def test_schema_4_index_gets_the_repeat_column_and_reads_task_files_again(self):
+        connection = self.indexer.conn
+        connection.execute("INSERT INTO tasks(id, path, title, status, priority, created_at, updated_at) VALUES ('t', 't.md', 'T', 'open', 'M', '2026-01-01', '2026-01-01')")
+        connection.execute("INSERT INTO indexed_files(path, mtime_ns, size) VALUES ('t.md', 1, 1), ('n.md', 1, 1)")
+        # Rebuild the table the way schema 4 had it: without the repeat column.
+        connection.execute('ALTER TABLE tasks DROP COLUMN repeat_rule')
+        connection.execute('PRAGMA user_version=4')
+        connection.commit()
+        self.indexer.close()
+
+        self.indexer = VaultIndexer(Path(self.temp.name) / 'index.db')
+        columns = {row[1] for row in self.indexer.conn.execute('PRAGMA table_info(tasks)').fetchall()}
+        self.assertIn('repeat_rule', columns)
+        self.assertEqual([row[0] for row in self.indexer.conn.execute('SELECT path FROM indexed_files')], ['n.md'])
+        self.assertIsNone(self.indexer.list_tasks()[0]['repeat'])
+
 
 class JournaledWriteTests(unittest.TestCase):
     def setUp(self):

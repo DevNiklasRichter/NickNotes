@@ -4,6 +4,7 @@ import { apiRequest, getRelativeVaultPath, normalizeLabel, normalizeNoteTypeValu
 import { CodeMirrorMarkdownEditor, type MarkdownEditorApi, type MarkdownLinkTarget } from '../editor/CodeMirrorMarkdownEditor'
 import { LucideNamedIcon } from '../icons/lucideCatalog'
 import type { TagGroupDefinition } from '../tags/tagTypes'
+import { capturedTasksNote } from '../shared/capturedTasks'
 import './QuickCaptureWindow.css'
 
 type Theme = 'light' | 'dark'
@@ -25,10 +26,8 @@ function toLinkTargets(rows: SearchRow[], noteBasePath: string): MarkdownLinkTar
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
 }
 
-function savedMessage(date: string, tasks: Array<{ dueDate: string }>): string {
-  const due = tasks.map((task) => new Date(`${task.dueDate}T00:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })).join(', ')
-  const taskNote = tasks.length === 1 ? ` Task fällig am ${due} angelegt.` : tasks.length > 1 ? ` ${tasks.length} Tasks angelegt (fällig ${due}).` : ''
-  return `In der Tagesnotiz ${date} gespeichert.${taskNote}`
+function savedMessage(date: string, tasks: Array<{ dueDate: string; repeat?: string | null }>): string {
+  return `In der Tagesnotiz ${date} gespeichert.${capturedTasksNote(tasks)}`
 }
 
 /**
@@ -163,7 +162,7 @@ export function QuickCaptureWindow() {
       ) : null}
       {draftReady ? (
         <CodeMirrorMarkdownEditor className="capture-markdown-editor quick-capture-editor" value={text} theme={theme} notePath="" backendUrl={backendUrl}
-          tagGroups={tagGroups} linkTargets={linkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt einen Termin"
+          tagGroups={tagGroups} linkTargets={linkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt Termin oder Wiederholung" offerRepeats
           onChange={setText} onSubmitShortcut={(markdown) => void send(markdown)} editorApiRef={editorRef} />
       ) : <div className="quick-capture-editor" />}
       <footer className="quick-capture-foot">

@@ -7,7 +7,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from .task_domain import (
     task_status_folder_token as _task_status_folder_token,
 )
 from .focus_log import format_focus_line
+from .recurrence import REPEAT_FROM_COMPLETION, first_occurrence, format_repeat, next_occurrence, parse_capture_repeat, parse_repeat
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -406,6 +407,25 @@ def _parse_session_timestamp(raw: str, field: str) -> datetime:
     return value
 
 
+_CHECKED_ITEM_PATTERN = re.compile(r"^(\s*[-*+]\s+)\[[xX]\]", re.MULTILINE)
+
+
+def _reset_checklist(body: str) -> str:
+    """A repeated task starts with its checklist unticked."""
+    return _CHECKED_ITEM_PATTERN.sub(r"\1[ ]", body)
+
+
+def _to_local_day(raw: object) -> date | None:
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    try:
+        value = datetime.fromisoformat(clean)
+    except ValueError:
+        return None
+    return (value.astimezone() if value.tzinfo else value).date()
+
+
 def _inline_label(raw: str) -> str:
     """One line of plain text that cannot open links, tags or headings in the daily note."""
     text = re.sub(r"\{tag:(?:[^}/]*/)?([^}]*)\}", r"\1", str(raw or ""))
@@ -468,25 +488,52 @@ def _german_due_tokens_to_iso(line: str, today: datetime) -> str:
     return _GERMAN_DUE_TOKEN.sub(replace, line)
 
 
-def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Normalizes typed `@dates` and finds plain lines (no checkbox) carrying a valid one: `(title, due_date)`.
+_CAPTURE_WORD_TOKEN = re.compile(r"(?:^|(?<=\s))@([\w-]+)(?=\s|$)")
 
-    A dated plain line becomes a task; a dated to-do (`- [ ] ... @date`) stays a to-do. Impossible days stay text.
+
+def _capture_repeat(text: str) -> tuple[str, str | None]:
+    """Removes repeat words (`@wöchentlich`, `@alle-3-tage`) from a capture line: `(rest, rule)`; the first one counts."""
+    rule: str | None = None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal rule
+        parsed = parse_capture_repeat(match.group(1))
+        if parsed is None:
+            return match.group(0)
+        rule = rule or format_repeat(parsed)
+        return " "
+
+    rest = _CAPTURE_WORD_TOKEN.sub(replace, text)
+    return rest, rule
+
+
+def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str, str | None]]]:
+    """Normalizes typed `@dates` and finds plain lines (no checkbox) that become tasks: `(title, due_date, repeat)`.
+
+    A plain line with a valid date or a repeat word (`@wöchentlich`) becomes a task; without a date a repeating
+    task is due today (`werktags`: the next working day). A to-do (`- [ ] ... @date`) stays a to-do. Impossible
+    days stay text.
     """
     out: list[str] = []
-    dated: list[tuple[str, str]] = []
+    dated: list[tuple[str, str, str | None]] = []
     in_fence = False
+    now = datetime.now()
     for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
         elif not in_fence:
-            line = _german_due_tokens_to_iso(line, datetime.now())
+            line = _german_due_tokens_to_iso(line, now)
             match = _CAPTURE_DATED_LINE.match(line)
-            due = DUE_TOKEN_PATTERN.search(match.group(2)) if match else None
-            if match and due and _is_iso_day(due.group(1)):
-                title = " ".join(DUE_TOKEN_PATTERN.sub(" ", match.group(2)).split())
-                if title:
-                    dated.append((title, due.group(1)))
+            if match:
+                rest, repeat = _capture_repeat(match.group(2))
+                due = DUE_TOKEN_PATTERN.search(rest)
+                due_day = due.group(1) if due and _is_iso_day(due.group(1)) else None
+                if due_day is None and repeat:
+                    rule = parse_repeat(repeat)
+                    due_day = first_occurrence(rule, now.date()).isoformat() if rule else None
+                title = " ".join(DUE_TOKEN_PATTERN.sub(" ", rest).split())
+                if due_day and title:
+                    dated.append((title, due_day, repeat))
         out.append(line)
     return "\n".join(out), dated
 
@@ -1698,11 +1745,16 @@ class VaultManager:
                 indexer=indexer,
             )
 
+        repeat_task = None
+        if next_type == "task" and next_status == "done" and previous_status != "done":
+            repeat_task = self.create_repeat_successor(final_path, indexer)
+
         return {
             "path": final_path,
             "title": str(meta.get("title", final_path.stem)),
             "meta": meta,
-            "tag_rebuild_required": tag_rebuild_required,
+            "tag_rebuild_required": tag_rebuild_required or repeat_task is not None,
+            "repeat_task": repeat_task,
         }
 
     def _task_link_payload_from_meta(self, note_path: Path, meta: dict[str, Any]) -> dict[str, str] | None:
@@ -2417,20 +2469,24 @@ class VaultManager:
 
         # A plain line with a date ("Angebot schicken @2026-11-20") becomes a task due that day and stays
         # ordinary text in the daily note; a to-do with a date stays a to-do and creates no task.
+        # A repeat word ("@wöchentlich") makes it a repeating task.
         tasks = []
         note_anchor = str(meta.get("id", f"daily_{day}"))
-        for title, due_date in dated_lines:
+        for title, due_date, repeat in dated_lines:
             task_id = make_task_id(now)
+            extra: dict[str, Any] = {"origin_note_id": note_anchor, "origin_note_path": str(note_path)}
+            if repeat:
+                extra["repeat"] = repeat
             task_path = self._create_task_file(
                 task_id=task_id,
                 note_id=note_anchor,
-                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[]),
+                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[], repeat=repeat),
                 now=now,
                 indexer=indexer,
-                extra_frontmatter={"origin_note_id": note_anchor, "origin_note_path": str(note_path)},
+                extra_frontmatter=extra,
                 body=title,
             )
-            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date})
+            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date, "repeat": repeat})
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
@@ -2670,6 +2726,7 @@ class VaultManager:
             follow_up_date=follow_up_date or None,
             blocked_reason=blocked_reason or None,
             next_action_hint=next_action_hint or None,
+            repeat=task.repeat or (str((extra_frontmatter or {}).get("repeat") or "") or None),
         )
         indexer.add_or_update_task(
             task_id=task_id,
@@ -2687,6 +2744,58 @@ class VaultManager:
             indexer=indexer,
         )
         return task_path
+
+    def create_repeat_successor(self, task_path: Path, indexer: VaultIndexer) -> dict[str, Any] | None:
+        """After a repeating task was done: its next instance as a new open task file.
+
+        The done task records the new id as `repeat_next`, so completing it again (after
+        reopening) never creates a second successor.
+        """
+        meta, body = parse_markdown(task_path)
+        if _normalize_note_type(str(meta.get("type", "note"))) != "task" or _normalize_task_status(str(meta.get("status", ""))) != "done":
+            return None
+        rule = parse_repeat(meta.get("repeat"))
+        if rule is None or str(meta.get("repeat_next", "") or "").strip():
+            return None
+        now = datetime.now()
+        completed_day = _to_local_day(meta.get("completed_at")) or now.date()
+        due_raw = _normalize_due_date(str(meta.get("due_date", "") or ""))
+        due = date.fromisoformat(due_raw) if due_raw else None
+        from_completion = str(meta.get("repeat_from", "") or "").strip().lower() == REPEAT_FROM_COMPLETION
+        next_day = next_occurrence(rule, due=due, completed=completed_day, from_completion=from_completion)
+
+        title = _normalize_label(str(meta.get("title", ""))) or task_path.stem
+        task_id = make_task_id(now)
+        extra: dict[str, Any] = {"repeat": format_repeat(rule)}
+        if from_completion:
+            extra["repeat_from"] = REPEAT_FROM_COMPLETION
+        extra["repeat_previous"] = str(meta.get("id", "") or task_path.stem)
+        successor = ParsedTask(
+            title=title,
+            due_date=next_day.isoformat(),
+            priority=str(meta.get("priority", "M") or "M"),
+            status="open",
+            project_tag=str(meta.get("project_tag", "") or "").strip() or None,
+            tags=_ensure_string_list(meta.get("tags", [])),
+            estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
+            next_action_hint=_normalize_optional_text(meta.get("next_action_hint")) or None,
+        )
+        successor_path = self._create_task_file(
+            task_id=task_id,
+            note_id=str(meta.get("note_id", "") or task_id),
+            task=successor,
+            now=now,
+            indexer=indexer,
+            manual_related=_ensure_string_list(meta.get("related", [])),
+            extra_frontmatter=extra,
+            body=_reset_checklist(body) if body.strip() else title,
+        )
+        indexer.reindex_markdown_file(self.vault_path, successor_path)
+
+        meta["repeat_next"] = task_id
+        atomic_write_text(task_path, dump_markdown(meta, body), encoding='utf-8')
+        indexer.reindex_markdown_file(self.vault_path, task_path)
+        return {"taskId": task_id, "title": title, "dueDate": next_day.isoformat(), "path": str(successor_path)}
 
     def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
         daily_path = self._daily_note_path(day_iso)

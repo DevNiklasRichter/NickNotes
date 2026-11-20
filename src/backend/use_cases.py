@@ -241,6 +241,7 @@ class SaveNoteContentUseCase:
                 "tagGroupsRebuilt": tag_groups is not None,
                 "graphStatus": graph_status,
                 "linkRewrite": vault.consume_last_link_rewrite_result(),
+                "repeatTask": result.get("repeat_task"),
             }
 
 

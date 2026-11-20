@@ -13,6 +13,25 @@ Abschnitt der nächsten Version.
 
 ### Neu
 
+- **Wiederkehrende Tasks**: In den Eigenschaften einer Task wählst du unter
+  „Wiederholung“ täglich, werktags, wöchentlich, alle 2 Wochen, monatlich,
+  vierteljährlich, jährlich oder einen eigenen Abstand („alle 10 Tage“). Sobald du
+  die Task erledigst, legt NickNotes die nächste als neue Task an – mit gleichem
+  Titel, Text, Tags und Priorität, die Checkliste wieder offen. Die Statuszeile
+  sagt dir, wann sie fällig ist.
+- Der Rhythmus richtet sich nach der Fälligkeit: Eine wöchentliche Freitags-Task
+  kommt wieder am Freitag, auch wenn du sie verspätet erledigst; verpasste Wochen
+  stapeln sich nicht. Mit „ab Erledigung zählen“ beginnt der Abstand stattdessen
+  am Tag, an dem du sie erledigst – praktisch für Dinge wie „alle 3 Wochen Haare
+  schneiden“.
+- Wiederkehrende Tasks erkennst du in der Task-Liste und im Fokus an einem kleinen
+  Wiederholungssymbol; der Tooltip nennt den Rhythmus.
+- In der Schnellerfassung legst du sie direkt an: `@` schlägt neben Terminen auch
+  „Täglich“, „Werktags“, „Wöchentlich“, „Monatlich“ und mehr vor, z. B.
+  „Müll rausbringen @wöchentlich“; ein Datum aus dem `@`-Menü legt den ersten
+  Termin fest, ohne Datum ist die erste Task heute fällig. Einen eigenen Abstand
+  tippst du als `@alle-10-tage`.
+
 - **Fokuszeit auf einen Blick**: Der Fokus zeigt oben „Fokuszeit heute“, der
   Rückblick die Fokuszeit im Zeitraum und als eigene Zeile im Verlauf. Die Werte
   kommen aus den Fokuszeit-Zeilen deiner Tagesnotizen – auch von Hand

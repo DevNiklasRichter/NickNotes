@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dateSuggestions, detectInlineTrigger, isInvalidDateToken } from './inlineSuggestions'
+import { dateSuggestions, detectInlineTrigger, isInvalidDateToken, repeatSuggestions } from './inlineSuggestions'
 
 describe('inline triggers', () => {
   it('recognises links, tags, dates and commands at the cursor', () => {
@@ -44,5 +44,24 @@ describe('date suggestions', () => {
     expect(isInvalidDateToken('20.11.2026', friday)).toBe(false)
     expect(isInvalidDateToken('2026-11-20', friday)).toBe(false)
     expect(isInvalidDateToken('mon', friday)).toBe(false)
+  })
+})
+
+describe('repeat suggestions', () => {
+  const tokens = (query: string) => repeatSuggestions(query).map((item) => item.hint ? `hint:${item.label}` : item.token)
+
+  it('offers repeat words by prefix, also with umlauts typed as ae/oe/ue', () => {
+    expect(tokens('w')).toEqual(['werktags', 'wöchentlich'])
+    expect(tokens('woe')).toEqual(['wöchentlich'])
+    expect(tokens('mon')).toEqual(['monatlich'])
+    expect(tokens('')).toContain('hint:Eigener Abstand')
+    expect(tokens('2026')).toEqual([])
+  })
+
+  it('builds an own distance from alle-N-unit', () => {
+    expect(tokens('alle')).toEqual(['hint:Eigener Abstand'])
+    expect(tokens('alle-3')).toEqual(['alle-3-tage', 'alle-3-wochen', 'alle-3-monate'])
+    expect(tokens('alle-10-w')).toEqual(['alle-10-wochen'])
+    expect(tokens('alle-400')).toEqual(['hint:Eigener Abstand'])
   })
 })
