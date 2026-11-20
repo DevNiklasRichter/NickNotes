@@ -2069,6 +2069,8 @@ export interface components {
             tagGroupsRebuilt: boolean;
             graphStatus: components["schemas"]["GraphIndexStatusResponse"];
             linkRewrite: components["schemas"]["LinkRewriteResponse"];
+            /** @default null */
+            repeatTask: components["schemas"]["RepeatTaskResponse"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -2333,6 +2335,34 @@ export interface components {
             graphStatus: {
                 [key: string]: unknown;
             };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RepeatTaskResponse
+         * @description The next instance of a repeating task, created when the previous one was done.
+         */
+        RepeatTaskResponse: {
+            /**
+             * Taskid
+             * @default
+             */
+            taskId: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Duedate
+             * @default
+             */
+            dueDate: string;
+            /**
+             * Path
+             * @default
+             */
+            path: string;
         } & {
             [key: string]: unknown;
         };
@@ -2723,6 +2753,8 @@ export interface components {
              * @default
              */
             taskPath: string;
+            /** @default null */
+            nextTask: components["schemas"]["RepeatTaskResponse"] | null;
         } & {
             [key: string]: unknown;
         };

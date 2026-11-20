@@ -7,7 +7,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from .task_domain import (
     task_status_folder_token as _task_status_folder_token,
 )
 from .focus_log import format_focus_line
+from .recurrence import REPEAT_FROM_COMPLETION, format_repeat, next_occurrence, parse_repeat
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -404,6 +405,25 @@ def _parse_session_timestamp(raw: str, field: str) -> datetime:
     if value.tzinfo is None:
         raise ValueError(f"{field} needs a timezone offset")
     return value
+
+
+_CHECKED_ITEM_PATTERN = re.compile(r"^(\s*[-*+]\s+)\[[xX]\]", re.MULTILINE)
+
+
+def _reset_checklist(body: str) -> str:
+    """A repeated task starts with its checklist unticked."""
+    return _CHECKED_ITEM_PATTERN.sub(r"\1[ ]", body)
+
+
+def _to_local_day(raw: object) -> date | None:
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    try:
+        value = datetime.fromisoformat(clean)
+    except ValueError:
+        return None
+    return (value.astimezone() if value.tzinfo else value).date()
 
 
 def _inline_label(raw: str) -> str:
@@ -1698,11 +1718,16 @@ class VaultManager:
                 indexer=indexer,
             )
 
+        repeat_task = None
+        if next_type == "task" and next_status == "done" and previous_status != "done":
+            repeat_task = self.create_repeat_successor(final_path, indexer)
+
         return {
             "path": final_path,
             "title": str(meta.get("title", final_path.stem)),
             "meta": meta,
-            "tag_rebuild_required": tag_rebuild_required,
+            "tag_rebuild_required": tag_rebuild_required or repeat_task is not None,
+            "repeat_task": repeat_task,
         }
 
     def _task_link_payload_from_meta(self, note_path: Path, meta: dict[str, Any]) -> dict[str, str] | None:
@@ -2687,6 +2712,58 @@ class VaultManager:
             indexer=indexer,
         )
         return task_path
+
+    def create_repeat_successor(self, task_path: Path, indexer: VaultIndexer) -> dict[str, Any] | None:
+        """After a repeating task was done: its next instance as a new open task file.
+
+        The done task records the new id as `repeat_next`, so completing it again (after
+        reopening) never creates a second successor.
+        """
+        meta, body = parse_markdown(task_path)
+        if _normalize_note_type(str(meta.get("type", "note"))) != "task" or _normalize_task_status(str(meta.get("status", ""))) != "done":
+            return None
+        rule = parse_repeat(meta.get("repeat"))
+        if rule is None or str(meta.get("repeat_next", "") or "").strip():
+            return None
+        now = datetime.now()
+        completed_day = _to_local_day(meta.get("completed_at")) or now.date()
+        due_raw = _normalize_due_date(str(meta.get("due_date", "") or ""))
+        due = date.fromisoformat(due_raw) if due_raw else None
+        from_completion = str(meta.get("repeat_from", "") or "").strip().lower() == REPEAT_FROM_COMPLETION
+        next_day = next_occurrence(rule, due=due, completed=completed_day, from_completion=from_completion)
+
+        title = _normalize_label(str(meta.get("title", ""))) or task_path.stem
+        task_id = make_task_id(now)
+        extra: dict[str, Any] = {"repeat": format_repeat(rule)}
+        if from_completion:
+            extra["repeat_from"] = REPEAT_FROM_COMPLETION
+        extra["repeat_previous"] = str(meta.get("id", "") or task_path.stem)
+        successor = ParsedTask(
+            title=title,
+            due_date=next_day.isoformat(),
+            priority=str(meta.get("priority", "M") or "M"),
+            status="open",
+            project_tag=str(meta.get("project_tag", "") or "").strip() or None,
+            tags=_ensure_string_list(meta.get("tags", [])),
+            estimate_minutes=_normalize_estimate_minutes(meta.get("estimate_minutes")),
+            next_action_hint=_normalize_optional_text(meta.get("next_action_hint")) or None,
+        )
+        successor_path = self._create_task_file(
+            task_id=task_id,
+            note_id=str(meta.get("note_id", "") or task_id),
+            task=successor,
+            now=now,
+            indexer=indexer,
+            manual_related=_ensure_string_list(meta.get("related", [])),
+            extra_frontmatter=extra,
+            body=_reset_checklist(body) if body.strip() else title,
+        )
+        indexer.reindex_markdown_file(self.vault_path, successor_path)
+
+        meta["repeat_next"] = task_id
+        atomic_write_text(task_path, dump_markdown(meta, body), encoding='utf-8')
+        indexer.reindex_markdown_file(self.vault_path, task_path)
+        return {"taskId": task_id, "title": title, "dueDate": next_day.isoformat(), "path": str(successor_path)}
 
     def _ensure_daily_note(self, day_iso: str, updated_at: str) -> Path:
         daily_path = self._daily_note_path(day_iso)

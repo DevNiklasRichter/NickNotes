@@ -340,10 +340,19 @@ class TodoPromoteResponse(_ContractModel):
     created: bool = False
 
 
+class RepeatTaskResponse(_ContractModel):
+    """The next instance of a repeating task, created when the previous one was done."""
+    taskId: str = ""
+    title: str = ""
+    dueDate: str = ""
+    path: str = ""
+
+
 class TaskDoneResponse(_ContractModel):
     done: bool = True
     taskId: str = ""
     taskPath: str = ""
+    nextTask: RepeatTaskResponse | None = None
 
 
 class TaskFollowUpResponse(_ContractModel):
@@ -411,6 +420,7 @@ class NoteSaveResponse(_ContractModel):
     tagGroupsRebuilt: bool = False
     graphStatus: GraphIndexStatusResponse = Field(default_factory=GraphIndexStatusResponse)
     linkRewrite: LinkRewriteResponse = Field(default_factory=LinkRewriteResponse)
+    repeatTask: RepeatTaskResponse | None = None
 
 
 class NoteMediaResponse(_ContractModel):

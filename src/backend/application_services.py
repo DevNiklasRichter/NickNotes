@@ -1090,7 +1090,8 @@ class BackendApiService:
             task_path=str(done_path),
             indexer=indexer,
         )
-        return {"done": True, "taskId": task_id, "taskPath": str(done_path)}
+        next_task = vault.create_repeat_successor(done_path, indexer)
+        return {"done": True, "taskId": task_id, "taskPath": str(done_path), "nextTask": next_task}
 
     @coordinated
     def search_notes(self, query: str = '', offset: int = 0, limit: int = 100, tag: str | None = None, note_type: str | None = None) -> dict[str, Any]:

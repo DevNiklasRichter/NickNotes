@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.backend.nicknotes_backend.focus_log import focus_minutes
@@ -146,6 +146,60 @@ class VaultWorkflowTests(unittest.TestCase):
             {'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:55:00+01:00', 'minutes': 0},
         ):
             self.assertIn(client.post('/focus/sessions', json=payload).status_code, {400, 422}, payload)
+
+    def test_done_repeating_task_creates_its_next_instance_once(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        task_id = client.post('/capture/save', json={'text': 'Miete überweisen @2030-01-31'}).json()['tasks'][0]['taskId']
+        task_path = next(row['path'] for row in client.get('/tasks').json()['items'] if row['id'] == task_id)
+
+        def save(path: str, change) -> dict:
+            current = client.get('/notes/content', params={'path': path}).json()
+            meta, body = parse_markdown_text(current['content'])
+            meta, body = change(meta, body)
+            response = client.post('/notes/save', json={'path': current['path'], 'content': dump_markdown(meta, body), 'expectedRevision': current['revision']})
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+
+        def mark_done(meta, body):
+            meta.update({'status': 'done', 'repeat': 'monthly', 'tags': ['finanzen:miete']})
+            return meta, 'Kontoauszug prüfen.\n\n- [x] Betrag prüfen\n- [X] Überweisung freigeben\n'
+
+        saved = save(task_path, mark_done)
+        successor = saved['repeatTask']
+        self.assertIsNotNone(successor)
+        # Counted from the due date and clamped to the month's last day.
+        self.assertEqual(successor['dueDate'], '2030-02-28')
+        next_meta, next_body = parse_markdown_text(Path(successor['path']).read_text(encoding='utf-8'))
+        self.assertEqual(next_meta['status'], 'open')
+        self.assertEqual(next_meta['repeat'], 'monthly')
+        self.assertEqual(next_meta['repeat_previous'], task_id)
+        self.assertEqual(next_meta['tags'], ['finanzen:miete'])
+        self.assertNotIn('completed_at', next_meta)
+        self.assertIn('- [ ] Betrag prüfen', next_body)
+        self.assertIn('- [ ] Überweisung freigeben', next_body)
+        done_meta, _ = parse_markdown_text(saved['content'])
+        self.assertEqual(done_meta['repeat_next'], successor['taskId'])
+
+        # Reopened and done again: still exactly one successor.
+        count = len(client.get('/tasks?include_done=true').json()['items'])
+        save(saved['path'], lambda meta, body: ({**meta, 'status': 'open'}, body))
+        again = save(saved['path'], lambda meta, body: ({**meta, 'status': 'done'}, body))
+        self.assertIsNone(again['repeatTask'])
+        self.assertEqual(len(client.get('/tasks?include_done=true').json()['items']), count)
+
+        # The done endpoint (focus timer, agents) repeats as well; "from completion" counts from today.
+        daily = client.post('/capture/save', json={'text': 'Pflanzen gießen @2030-06-01'}).json()['tasks'][0]['taskId']
+        daily_path = next(row['path'] for row in client.get('/tasks').json()['items'] if row['id'] == daily)
+        save(daily_path, lambda meta, body: ({**meta, 'repeat': 'every 3 days', 'repeat_from': 'completion'}, body))
+        done = client.post(f'/tasks/{daily}/done')
+        self.assertEqual(done.status_code, 200, done.text)
+        self.assertEqual(done.json()['nextTask']['dueDate'], (datetime.now().date() + timedelta(days=3)).isoformat())
+
+        # A task without a rule just stays done.
+        plain = client.post('/capture/save', json={'text': 'Einmalig @2030-06-02'}).json()['tasks'][0]['taskId']
+        self.assertIsNone(client.post(f'/tasks/{plain}/done').json()['nextTask'])
 
     def test_focus_minutes_are_read_from_focus_lines_only(self) -> None:
         body = (
