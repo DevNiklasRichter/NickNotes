@@ -1350,8 +1350,11 @@ function App() {
         }
         const response = await apiRequest<{
             taskPath: string;
+            nextTask?: { dueDate: string } | null;
         }>(backendUrl, `/tasks/${encodeURIComponent(target.id)}/done`, { method: 'POST' });
-        setMessage(`„${target.title}“ erledigt.`);
+        setMessage(response.nextTask
+            ? `„${target.title}“ erledigt. Nächste Wiederholung am ${toShortDayLabel(response.nextTask.dueDate, toLocalIsoDate())}.`
+            : `„${target.title}“ erledigt.`);
         await emitMutationEvent({
             kind: 'note-saved',
             noteType: 'task',
@@ -1776,6 +1779,20 @@ function App() {
             },
         }));
     };
+    const updateNoteRepeatByPath = (tabPath: string, repeat: string, fromCompletion: boolean) => {
+        updateNoteDocumentByPath(tabPath, (document) => {
+            const extra = { ...document.frontmatter.extra };
+            delete extra.repeat;
+            delete extra.repeat_from;
+            if (repeat) {
+                extra.repeat = repeat;
+                if (fromCompletion) {
+                    extra.repeat_from = 'completion';
+                }
+            }
+            return { ...document, frontmatter: { ...document.frontmatter, extra } };
+        });
+    };
     const updateNoteFollowUpDateByPath = (tabPath: string, rawFollowUpDate: string) => {
         const clean = normalizeLabel(rawFollowUpDate);
         if (!clean) {
@@ -1877,7 +1894,7 @@ function App() {
             .map((task) => normalizeLabel(task.id))
             .filter((taskId) => taskId && taskId.toLowerCase() !== currentTaskId)
             .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }));
-        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} onLoadBacklinks={loadBacklinks} onOpenBacklink={(backlink) => openGraphNodePath(backlink.path, backlink.title, 'note')} backlinksRefreshKey={graphUpdateToken} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
+        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} onLoadBacklinks={loadBacklinks} onRepeatChange={(repeat, fromCompletion) => updateNoteRepeatByPath(tabPath, repeat, fromCompletion)} onOpenBacklink={(backlink) => openGraphNodePath(backlink.path, backlink.title, 'note')} backlinksRefreshKey={graphUpdateToken} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
                 updateNoteTitleByPath(tabPath, nextTitle);
             }} onTypeChange={(nextType) => {
                 updateNoteTypeByPath(tabPath, nextType);

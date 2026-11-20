@@ -12,6 +12,12 @@ import {apiRequest, getFileName, toNoteDisplayName, normalizeFilePathKey, normal
 import type {NoteTab} from '../app/AppShared'
 import {connectionEpoch} from '../app/apiClient'
 
+/** "27.11." for the due date of a new repeat. */
+function formatRepeatDue(dayIso: string): string {
+    const [, month, day] = dayIso.split('-');
+    return month && day ? `${day}.${month}.` : dayIso;
+}
+
 type NoteDocumentContext = {
  onSavingChange:(delta:number)=>void
  flushNoteInputs:(includeEditors?:boolean)=>boolean
@@ -82,7 +88,9 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
                 }
                 return mergeSavedTab(tab, submittedTab, {path: savedPath || tab.path, content: response.content, revision: response.revision, title: response.title});
             }));
-            context.setMessage(`Notiz gespeichert: ${response.title || targetTab.title}`);
+            context.setMessage(response.repeatTask
+                ? `Erledigt. Nächste Wiederholung am ${formatRepeatDue(response.repeatTask.dueDate)} angelegt.`
+                : `Notiz gespeichert: ${response.title || targetTab.title}`);
             await context.emitMutationEvent({
                 kind: 'note-saved',
                 noteType: targetTab.noteType === 'task' ? 'task' : 'note',
@@ -90,7 +98,8 @@ const saveNoteTab = async (path: string): Promise<boolean> => {
                 graphStatus: response.graphStatus,
                 refresh: {
                     search: true,
-                    tasks: targetTab.noteType === 'task',
+                    tasks: targetTab.noteType === 'task' || Boolean(response.repeatTask),
+                    focusAggregate: Boolean(response.repeatTask),
                     todos: true,
                     review: true,
                     noteGroups: true,

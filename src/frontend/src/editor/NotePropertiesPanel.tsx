@@ -1,6 +1,7 @@
 import {useSyncedDraft} from './useSyncedDraft'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { NoteBacklinks, type NoteBacklink } from './NoteBacklinks'
+import { TaskRepeatField } from './TaskRepeatField'
 import {MultiSelectPicker} from '../ui/MultiSelectPicker'
 import type { CSSProperties, KeyboardEvent, RefObject } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
@@ -42,6 +43,8 @@ type NotePropertiesPanelProps = {
   onOpenTagOverview?: (tag: string) => void
   onRemoveTag: (tag: string) => void
   onRemoveRelated: (related: string) => void
+  /** `repeat` and `repeat_from` in the task frontmatter; empty `repeat` removes both. */
+  onRepeatChange?: (repeat: string, fromCompletion: boolean) => void
   /** Incoming links from the knowledge graph; without it the row is hidden. */
   onLoadBacklinks?: (path: string) => Promise<NoteBacklink[]>
   onOpenBacklink?: (backlink: NoteBacklink) => void
@@ -82,6 +85,7 @@ export function NotePropertiesPanel({
   onOpenTagOverview,
   onRemoveTag,
   onRemoveRelated,
+  onRepeatChange,
   onLoadBacklinks,
   onOpenBacklink,
   backlinksRefreshKey,
@@ -306,6 +310,12 @@ export function NotePropertiesPanel({
                 </button>
               ) : null}
             </div>
+
+            {onRepeatChange ? (
+              <TaskRepeatField repeat={document.frontmatter.extra.repeat}
+                fromCompletion={String(document.frontmatter.extra.repeat_from ?? '').trim().toLowerCase() === 'completion'}
+                onChange={onRepeatChange} />
+            ) : null}
 
             <span className="property-key">Wiedervorlage</span>
             <div className="property-value-stack">
