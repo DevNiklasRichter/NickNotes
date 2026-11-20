@@ -189,6 +189,7 @@ class GetFocusDashboardUseCase:
             "notes": notes,
             "mitIds": mit_state.get("mit_ids", []),
             "mitNotePath": str(mit_state.get("note_path", "")),
+            "focusMinutes": indexer.focus_minutes_by_day(day_iso, day_iso).get(day_iso, 0),
         }
 
 

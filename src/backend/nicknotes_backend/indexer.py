@@ -20,6 +20,7 @@ from .projection_registry import INDEXER_SCHEMA_VERSION
 from .models import ParsedTask, TagRef
 from .parser import slugify
 from .todos import ExtractedTodo, extract_todos_from_body
+from .focus_log import focus_minutes
 from ..config import (
     REVIEW_ATTENTION_ITEMS_LIMIT,
     REVIEW_COMPLETED_LIST_MAX,
@@ -31,6 +32,7 @@ from ..config import (
 )
 
 
+_DAILY_DAY_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 INLINE_TITLE_TAG_PATTERN = re.compile(r"\{tag:([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)\}", re.IGNORECASE)
 
 
@@ -732,6 +734,23 @@ class VaultIndexer:
             )
             return [dict(row) for row in cur.fetchall()]
 
+    def focus_minutes_by_day(self, start_iso: str, end_iso: str) -> dict[str, int]:
+        """Logged focus minutes per day, read from the focus lines of the daily notes."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT id, path, body FROM notes WHERE lower(note_type) = 'daily';")
+            rows = [dict(row) for row in cur.fetchall()]
+        minutes: dict[str, int] = {}
+        for row in rows:
+            match = _DAILY_DAY_PATTERN.search(Path(str(row.get("path") or "")).stem) or _DAILY_DAY_PATTERN.search(str(row.get("id") or ""))
+            day = match.group(0) if match else ""
+            if not day or not start_iso <= day <= end_iso:
+                continue
+            total = focus_minutes(row.get("body"))
+            if total:
+                minutes[day] = minutes.get(day, 0) + total
+        return minutes
+
     def review_dashboard(self, end_day: date, window_days: int = REVIEW_DASHBOARD_DEFAULT_DAYS) -> dict[str, Any]:
         """Reconstruct the period from the current Markdown state.
 
@@ -767,6 +786,7 @@ class VaultIndexer:
                 """
             )
             todo_rows = [dict(row) for row in cur.fetchall()]
+        focus_by_day = self.focus_minutes_by_day(start_iso, end_iso)
 
         days = [(start_day + timedelta(days=offset)).isoformat() for offset in range(safe_window)]
         day_index = {day: index for index, day in enumerate(days)}
@@ -810,6 +830,7 @@ class VaultIndexer:
                 "completed_todos": done_todos[index],
                 "open_tasks": open_tasks[index],
                 "open_todos": open_todos[index],
+                "focus_minutes": focus_by_day.get(day, 0),
             }
             for index, day in enumerate(days)
         ]
@@ -906,6 +927,7 @@ class VaultIndexer:
                 "open_todos_start": open_todos[0] - new_todos[0] + done_todos[0],
                 "open_tasks_end": open_tasks[-1] if open_tasks else 0,
                 "open_todos_end": open_todos[-1] if open_todos else 0,
+                "focus_minutes": sum(focus_by_day.values()),
             },
             "series": series,
             "attention": {

@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from src.backend.nicknotes_backend.focus_log import focus_minutes
 from src.backend.nicknotes_backend.indexer import VaultIndexer
 from src.backend.nicknotes_backend.markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from src.backend.nicknotes_backend.models import ParsedTask, TagSuggestion
@@ -131,12 +132,45 @@ class VaultWorkflowTests(unittest.TestCase):
         # Logging must not invent to-dos or tags.
         self.assertEqual(len([item for item in client.get('/todos').json()['items'] if 'Folien' in item['raw_text']]), 1)
 
+        # Totals are read back from the daily note: focus view for the day, review per day and in sum.
+        self.assertEqual(client.get('/focus/dashboard?date=2026-11-19').json()['focusMinutes'], 87)
+        self.assertEqual(client.get('/focus/dashboard?date=2026-11-18').json()['focusMinutes'], 0)
+        review = client.get('/review/dashboard?days=7&day=2026-11-20').json()
+        self.assertEqual(review['summary']['focus_minutes'], 87)
+        self.assertEqual({point['date']: point['focus_minutes'] for point in review['series']}['2026-11-19'], 87)
+        self.assertEqual({point['date']: point['focus_minutes'] for point in review['series']}['2026-11-20'], 0)
+
         for payload in (
             {'startedAt': '2026-11-19T09:30:00', 'endedAt': '2026-11-19T09:55:00+01:00', 'minutes': 25},
             {'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:00:00+01:00', 'minutes': 25},
             {'startedAt': '2026-11-19T09:30:00+01:00', 'endedAt': '2026-11-19T09:55:00+01:00', 'minutes': 0},
         ):
             self.assertIn(client.post('/focus/sessions', json=payload).status_code, {400, 422}, payload)
+
+    def test_focus_minutes_are_read_from_focus_lines_only(self) -> None:
+        body = (
+            "# 2026-11-19\n\n"
+            "- Fokuszeit 09:30–09:55 (25 min): [[tk_1|Angebot]]\n"
+            "  - Fokuszeit 9:00-9:20 (20 min)\n"  # typed by hand with a hyphen, indented
+            "Fokuszeit 10:00–10:30 (30 min) im Fließtext zählt nicht\n"
+            "- [ ] Fokuszeit 11:00–11:30 (30 min) als To-do zählt nicht\n"
+        )
+        self.assertEqual(focus_minutes(body), 45)
+        self.assertEqual(focus_minutes(None), 0)
+
+    def test_graph_context_lists_backlinks_of_a_note(self) -> None:
+        (self.vault_path / "Projekt.md").write_text("---\nid: projekt\ntitle: Projekt\n---\n\nZiele.\n", encoding="utf-8")
+        (self.vault_path / "Besprechung.md").write_text("---\nid: besprechung\ntitle: Besprechung\n---\n\nSiehe [[Projekt]].\n", encoding="utf-8")
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        project = client.get('/graph/context', params={'path': str(self.vault_path / 'Projekt.md')})
+        self.assertEqual(project.status_code, 200, project.text)
+        self.assertEqual([item['title'] for item in project.json()['backlinks']], ['Besprechung'])
+        self.assertEqual(project.json()['links'], [])
+        meeting = client.get('/graph/context', params={'path': str(self.vault_path / 'Besprechung.md')}).json()
+        self.assertEqual([item['title'] for item in meeting['links']], ['Projekt'])
+        self.assertEqual(meeting['backlinks'], [])
 
     def test_focus_thought_goes_to_task_or_daily_note_as_plain_text(self) -> None:
         backend_api.state.dispose_session()
@@ -430,6 +464,7 @@ class VaultWorkflowTests(unittest.TestCase):
                 "open_todos_start": 1,
                 "open_tasks_end": 3,
                 "open_todos_end": 2,
+                "focus_minutes": 0,
             },
         )
         attention = payload["attention"]
