@@ -178,6 +178,23 @@ Eine Wiedervorlage in der Zukunft stellt eine Task bis zu diesem Tag zurueck,
 auch wenn sie ueberfaellig ist; `on_hold` kommt nur ueber eine Wiedervorlage
 zurueck. `POST /tasks/{id}/follow-up` setzt oder loescht das Feld ueber den
 normalen Speicherpfad (`save_note_content`, Revision, Reindex, Graph).
+
+Wiederkehrende Tasks tragen `repeat` im Frontmatter (`daily`, `weekdays`,
+`weekly`, `monthly`, `yearly` oder `every N days|weeks|months|years`, N bis 365;
+Regeln in `recurrence.py`), optional `repeat_from: completion`. Wechselt eine
+solche Task auf `done` – beim Speichern (`save_note_document`, also auch per
+MCP) oder ueber `POST /tasks/{id}/done` –, legt `create_repeat_successor` die
+naechste Instanz als neue offene Task-Datei an: gleicher Titel, Text mit
+zurueckgesetzter Checkliste, Tags, Verknuepfungen, Prioritaet, Schaetzung und
+naechster Schritt, `repeat_previous` = alte ID; Wiedervorlage, Warten und
+Blockierungen werden nicht uebernommen. Faellig ist sie ab der alten
+Faelligkeit im festen Rhythmus, immer nach dem Erledigungstag (verpasste
+Termine stauen sich nicht); mit `repeat_from: completion` oder ohne Faelligkeit
+ab dem Erledigungstag. Monatsenden werden geklemmt (31. → 28./29.). Die erledigte
+Task bekommt `repeat_next` = neue ID; erneutes Erledigen nach dem Wiederoeffnen
+legt deshalb keine zweite Instanz an. Antworten tragen die neue Task als
+`repeatTask` (Speichern) bzw. `nextTask` (Done).
+
 To-dos von heute sind die mit heutigem Erstellzeitpunkt (ohne `created=` gilt
 der der Notiz) oder aus der heutigen Tagesnotiz; heute abgehakte bleiben
 durchgestrichen an ihrem Platz. „Heute

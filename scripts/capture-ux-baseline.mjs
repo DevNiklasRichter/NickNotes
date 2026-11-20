@@ -2033,6 +2033,22 @@ async function verifyFocus() {
   await backlinks.getByRole('button', {name: 'Quartalsbericht prüfen'}).click()
   await expect(page.locator('.note-title-input').first()).toHaveValue('Quartalsbericht prüfen')
   report.checks.noteBacklinks = true
+
+  // A repeating task: weekly, done today, comes back as a new open task due in a week.
+  await expandProperties()
+  const panel = page.getByRole('region', {name: 'Notizeigenschaften', exact: true}).first()
+  await panel.getByLabel('Wiederholung', {exact: true}).selectOption('weekly')
+  await expect(panel.getByText('ab Erledigung zählen')).toBeVisible()
+  await capture('task-repeat-light', 'Task properties with "Wiederholung: Wöchentlich" and the "ab Erledigung zählen" switch')
+  await panel.locator('.property-picker-select-status').selectOption('done')
+  const repeatSave = page.waitForResponse(res => res.url().endsWith('/notes/save') && res.request().method() === 'POST')
+  await page.keyboard.press('Control+s')
+  const repeatResponse = await (await repeatSave).json()
+  assert.equal(repeatResponse.repeatTask?.dueDate, isoDay(7))
+  await expect(page.locator('.status-bar')).toContainText('Nächste Wiederholung am')
+  await expect.poll(() => taskSource(repeatResponse.repeatTask.taskId)).toMatch(new RegExp(`due_date: ['"]?${isoDay(7)}`))
+  expect(taskSource(repeatResponse.repeatTask.taskId)).toMatch(/^repeat: weekly$/m)
+  report.checks.repeatingTaskCreatesNext = true
   // Leave the tab bar as the later checks expect it.
   await page.keyboard.press('Control+Shift+w')
   await expect(page.locator('.tab-open')).toHaveCount(0)
