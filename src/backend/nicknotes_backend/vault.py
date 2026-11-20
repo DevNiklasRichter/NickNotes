@@ -28,6 +28,7 @@ from .task_domain import (
     slugify,
     task_status_folder_token as _task_status_folder_token,
 )
+from .focus_log import format_focus_line
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -2557,10 +2558,7 @@ class VaultManager:
                 target = f"{clean_label} ({note_link})" if clean_label else note_link
         if not target:
             target = clean_label
-        # Times stay in the offset the app sent (the user's local time), not the service's zone.
-        line = f"- Fokuszeit {started:%H:%M}–{ended.astimezone(started.tzinfo):%H:%M} ({int(minutes)} min)"
-        if target:
-            line += f": {target}"
+        line = format_focus_line(started, ended, int(minutes), target)
         now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         daily_path = self._append_daily_line(day, line, now_iso, indexer)
         return {"date": day, "note_path": daily_path, "line": line}

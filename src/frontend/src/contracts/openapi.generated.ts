@@ -1126,6 +1126,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/graph/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Graph Context
+         * @description Links and backlinks of one note (the same neighbourhood agents read over MCP).
+         */
+        get: operations["graph_context_graph_context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recovery": {
         parameters: {
             query?: never;
@@ -1316,6 +1336,11 @@ export interface components {
              * @default
              */
             mitNotePath: string;
+            /**
+             * Focusminutes
+             * @default 0
+             */
+            focusMinutes: number;
             counts: components["schemas"]["VaultCounts"];
         } & {
             [key: string]: unknown;
@@ -5277,6 +5302,38 @@ export interface operations {
         };
     };
     graph_related_graph_related_get: {
+        parameters: {
+            query: {
+                path: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_context_graph_context_get: {
         parameters: {
             query: {
                 path: string;

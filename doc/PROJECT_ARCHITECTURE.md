@@ -200,7 +200,11 @@ Link auf die Notiz, frei ohne Ziel nur der optionale Text. Verlinkt wird ueber d
 Dateinamen, damit der Link den Umzug nach `tasks/done` uebersteht; `{tag:...}` und
 `[[` aus dem Text werden entschaerft, damit die Zeile keine Tags oder Links
 erfindet. Es gibt keinen weiteren Speicher fuer Fokuszeiten; Pausen werden nicht
-protokolliert. Gedanken aus der Vollansicht schickt `POST /focus/thoughts` als
+protokolliert. Format und Auslesen der Zeile stehen zusammen in `focus_log.py`.
+`VaultIndexer.focus_minutes_by_day` summiert die Minuten aus dem indizierten
+Text der Tagesnotizen (auch von Hand getippte Zeilen mit Bindestrich, keine
+To-dos oder Fliesstext); `/focus/dashboard` liefert `focusMinutes` fuer den Tag,
+der Rueckblick `focus_minutes` je Tag und in der Zusammenfassung. Gedanken aus der Vollansicht schickt `POST /focus/thoughts` als
 schlichten Listenpunkt (`- Text`, kein To-do): mit `taskId` ans Ende der Task
 ueber den normalen Speicherpfad (Revision, Reindex, Graph), sonst an die
 Tagesnotiz. Bei Tasks waehlt ein Umschalter das Ziel, bei To-dos und freien
@@ -287,7 +291,7 @@ Umbenennen liest jede Notiz.
 | `app/useExternalChanges.ts` | Abgleich externer und MCP-Aenderungen. |
 | `app/operatorNotifications.ts` | Fehler bleiben bis zur Bestaetigung; keine automatische Schreibwiederholung. |
 | `workspace/useNoteDocuments.ts`, `documentState.ts` | Tabs, Drafts, Revisionen, Dirty-Zustand. |
-| `editor/` | CodeMirror-Editor, Live-Vorschau, Eigenschaften-Panel. |
+| `editor/` | CodeMirror-Editor, Live-Vorschau, Eigenschaften-Panel (mit „Verlinkt von“: eingehende Links ueber `GET /graph/context`, dieselbe Nachbarschaft wie `get_note_context` per MCP; geladen erst beim Aufklappen). |
 | `explorer/`, `sidebar/`, `tags/`, `tasks/`, `todos/`, `focus/`, `review/`, `graph/` | Fachansichten. |
 | `layout/` | Shell-Raster, Navigation, Fenstermenue, Suche/Befehle, Dialoge, Statusleiste. |
 | `settings/` | Einstellungen, Agentenfreigaben, Recovery; verzoegert geladen. |

@@ -360,6 +360,7 @@ class FocusDashboardAggregateResponse(_ContractModel):
     notes: list[SearchRowResponse] = Field(default_factory=list)
     mitIds: list[str] = Field(default_factory=list)
     mitNotePath: str = ""
+    focusMinutes: int = 0
     counts: VaultCounts = Field(default_factory=VaultCounts)
 
 

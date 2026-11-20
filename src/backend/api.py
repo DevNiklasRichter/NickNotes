@@ -104,6 +104,7 @@ from .errors import DomainError, ValidationDomainError
 from .mcp_grants import GrantStore
 from .mcp_server import MCPAuthorization, create_mcp
 from .nicknotes_backend.graph_index import related_files
+from .nicknotes_backend.graph_queries import note_context
 from .nicknotes_backend.graph_storage import read_graph_index
 from .nicknotes_backend.recovery import list_recovery, resolve_recovery
 from .nicknotes_backend.source_journal import pending_recovery
@@ -719,6 +720,17 @@ def graph_related(path: str, limit: int = 50):
         index = read_graph_index(vault.graph_index_path)
         entry = index.files.get(resolved.relative_to(vault.vault_path).as_posix())
         return related_files(index, entry.id, limit) if entry else {'items': [], 'truncated': False}
+
+
+@app.get('/graph/context')
+def graph_context(path: str, limit: int = 50):
+    """Links and backlinks of one note (the same neighbourhood agents read over MCP)."""
+    with state.operation_lock:
+        vault, _ = backend_api_service.require_loaded()
+        resolved = backend_api_service._resolve_note_request_path(vault, path)
+        index = read_graph_index(vault.graph_index_path)
+        context = note_context(index, resolved.relative_to(vault.vault_path).as_posix(), depth=1, limit=limit)
+        return {'links': context['links'], 'backlinks': context['backlinks']}
 
 
 @app.get('/recovery')

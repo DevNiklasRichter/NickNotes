@@ -2007,6 +2007,37 @@ async function verifyFocus() {
   await expect(page.locator('.focus-timer-overlay')).toHaveCount(0)
   await theme('light')
 
+  // The logged round shows as today's focus time in the header and in the review.
+  await expect(canvas.locator('.focus-stats')).toContainText('Fokuszeit heute25 min')
+  report.checks.focusMinutesInHeader = true
+  await page.locator('.activity-rail').getByRole('button', {name: 'Rückblick', exact: true}).click()
+  const review = page.locator('.review-canvas')
+  await expect(review.locator('.review-summary')).toContainText('25 min Fokus')
+  await expect(review.locator('.review-focus-chart')).toBeVisible()
+  await capture('review-focus-light', 'Review with focus time in the summary and its own row in the trend')
+  report.checks.focusMinutesInReview = true
+
+  // Incoming links: the note named in two tasks lists them under "Verlinkt von".
+  await page.locator('.activity-rail').getByRole('button', {name: 'Notizen', exact: true}).click()
+  // The tasks mention "Messeplanung" in their text and rank first in the search; pick the note itself.
+  await page.keyboard.press('Control+o')
+  await page.getByRole('combobox', {name: 'Notiz suchen'}).fill('Messeplanung')
+  await page.getByRole('option', {name: /^Messeplanung/}).click()
+  await expect(page.locator('.note-title-input').first()).toHaveValue('Messeplanung')
+  const properties = page.locator('.note-properties-details').first()
+  await properties.locator('summary').click()
+  const backlinks = properties.locator('.note-backlinks')
+  await expect(backlinks.getByRole('button', {name: 'Angebot für Messestand abschicken'})).toBeVisible()
+  await expect(backlinks.getByRole('button', {name: 'Quartalsbericht prüfen'})).toBeVisible()
+  await capture('note-backlinks-light', 'Properties of a note: "Verlinkt von" lists the tasks that link to it')
+  await backlinks.getByRole('button', {name: 'Quartalsbericht prüfen'}).click()
+  await expect(page.locator('.note-title-input').first()).toHaveValue('Quartalsbericht prüfen')
+  report.checks.noteBacklinks = true
+  // Leave the tab bar as the later checks expect it.
+  await page.keyboard.press('Control+Shift+w')
+  await expect(page.locator('.tab-open')).toHaveCount(0)
+  await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
+
   await theme('dark')
   await expect(canvas).toBeVisible()
   await capture('focus-dark', 'Focus view after the interactions, dark, 1440×900')

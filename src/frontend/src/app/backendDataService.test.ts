@@ -4,7 +4,7 @@ afterEach(()=>{vi.unstubAllGlobals();vi.resetModules()})
 async function fixture(fetch:typeof globalThis.fetch){
   vi.stubGlobal('window',{nicknotes:{getBackendToken:async()=>''}});vi.stubGlobal('fetch',fetch)
   const {BackendDataService}=await import('./backendDataService')
-  const writers={setTasks:vi.fn(),setTodos:vi.fn(),setExplorerFiles:vi.fn(),setSearchResults:vi.fn(),setAllNotes:vi.fn(),setReviewDashboardData:vi.fn(),setCounts:vi.fn(),setFocusMitIds:vi.fn(),setCustomTagGroups:vi.fn(),setNoteGroups:vi.fn(),setError:vi.fn()}
+  const writers={setTasks:vi.fn(),setTodos:vi.fn(),setExplorerFiles:vi.fn(),setSearchResults:vi.fn(),setAllNotes:vi.fn(),setReviewDashboardData:vi.fn(),setCounts:vi.fn(),setFocusMitIds:vi.fn(),setFocusMinutesToday:vi.fn(),setCustomTagGroups:vi.fn(),setNoteGroups:vi.fn(),setError:vi.fn()}
   return {service:new BackendDataService({getBackendUrl:()=>'http://127.0.0.1:8765',isVaultLoaded:()=>true,getReviewWindow:()=>'30d'},writers),writers}
 }
 test('a full workspace refresh reads each projection once, using the aggregate for tasks and todos',async()=>{

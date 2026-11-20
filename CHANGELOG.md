@@ -13,6 +13,13 @@ Abschnitt der nächsten Version.
 
 ### Neu
 
+- **Fokuszeit auf einen Blick**: Der Fokus zeigt oben „Fokuszeit heute“, der
+  Rückblick die Fokuszeit im Zeitraum und als eigene Zeile im Verlauf. Die Werte
+  kommen aus den Fokuszeit-Zeilen deiner Tagesnotizen – auch von Hand
+  nachgetragene Zeilen zählen mit.
+- **Verlinkt von**: In den Eigenschaften einer Notiz siehst du jetzt, welche
+  Notizen und Tasks auf sie verweisen. Ein Klick öffnet sie.
+
 - **Schnellerfassung von überall**: Mit **Strg+Alt+N** öffnet sich aus jedem
   Programm heraus ein kleines Fenster, solange NickNotes läuft. Was du dort
   schreibst, landet beim Senden (Strg+Enter) in der heutigen Tagesnotiz – mit
