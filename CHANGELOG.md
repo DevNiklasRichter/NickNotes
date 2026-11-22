@@ -13,6 +13,18 @@ Abschnitt der nächsten Version.
 
 ### Neu
 
+- **Vorlagen**: Öffne eine Notiz oder Task und wähle „Datei → Als Vorlage
+  speichern“. „Datei → Neu aus Vorlage …“ legt dann eine neue Notiz oder Task
+  mit diesem Text an. Tags, Priorität, Aufwand und Wiederholung übernimmt sie auch.
+  Termine, Status und Erinnerung beginnen dagegen leer. Platzhalter wie
+  `{{datum}}`, `{{wochentag}}`, `{{uhrzeit}}` und `{{titel}}` füllt NickNotes
+  beim Anlegen aus. Die eigene Überschrift der Notiz wird dabei automatisch zu
+  `{{titel}}`.
+- Speicherst du eine Tagesnotiz als Vorlage, beginnt jede neue Tagesnotiz mit
+  diesem Aufbau, etwa mit festen Abschnitten für Plan und Rückblick.
+- Vorlagen liegen in der NoteBase unter `.system/templates`. Sie reisen also mit,
+  tauchen aber nicht in Suche, Task-Liste oder Wissensgraph auf. Gelöscht werden
+  sie in „Neu aus Vorlage“ über den Papierkorb.
 - **Wiederkehrende Tasks**: In den Eigenschaften einer Task wählst du unter
   „Wiederholung“ täglich, werktags, wöchentlich, alle 2 Wochen, monatlich,
   vierteljährlich, jährlich oder einen eigenen Abstand („alle 10 Tage“). Sobald du

@@ -56,6 +56,7 @@ from .contracts import (
     TaskFollowUpResponse,
     TaskListResponse,
     TaskReminderListResponse,
+    TemplateListResponse,
     TodoListResponse,
     TodoPromoteResponse,
     TodoToggleResponse,
@@ -75,6 +76,8 @@ from .commands import (
     NoteBaseDeleteRequest,
     NoteBaseRenameRequest,
     NoteCreateRequest,
+    TemplateDeleteRequest,
+    TemplateSaveRequest,
     NoteFileDeleteRequest,
     NoteFileMoveBatchRequest,
     NoteFileMoveRequest,
@@ -655,6 +658,21 @@ def unfavorite_note_group(req: FavoriteFolderRequest) -> dict[str, Any]:
 @app.post("/note-groups/add-note", response_model=NoteAddResponse)
 def add_note(req: NoteCreateRequest) -> dict[str, Any]:
     return backend_api_service.add_note(req)
+
+
+@app.get("/templates", response_model=TemplateListResponse)
+def list_templates() -> dict[str, Any]:
+    return backend_api_service.list_templates()
+
+
+@app.post("/templates/save", response_model=TemplateListResponse)
+def save_template(req: TemplateSaveRequest) -> dict[str, Any]:
+    return backend_api_service.save_template(req)
+
+
+@app.post("/templates/delete", response_model=TemplateListResponse)
+def delete_template(req: TemplateDeleteRequest) -> dict[str, Any]:
+    return backend_api_service.delete_template(req)
 
 
 @app.post("/notes/rename", response_model=NoteMutationResponse)

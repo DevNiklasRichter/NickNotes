@@ -83,7 +83,12 @@ export class ExplorerMutationService {
     }
   }
 
-  createExplorerFile = async (groupKey: string, title: string): Promise<void> => {
+  createExplorerFile = (groupKey: string, title: string): Promise<void> => this.createExplorerDocument(groupKey, title, 'note')
+
+  createExplorerTask = (groupKey: string, title: string): Promise<void> => this.createExplorerDocument(groupKey, title, 'task')
+
+  /** New note or task; with a template, the template decides the kind and brings body, tags and fields. */
+  createExplorerDocument = async (groupKey: string, title: string, kind: 'note' | 'task', template = ''): Promise<void> => {
     const cleanTitle = normalizeLabel(title)
     if (!cleanTitle) {
       return
@@ -92,26 +97,29 @@ export class ExplorerMutationService {
     const effectiveGroupKey = groupKey && this.context.getNoteGroupsByKey().has(groupKey) ? groupKey : ''
     const targetGroup = this.context.getNoteGroupsByKey().get(effectiveGroupKey)
     if (targetGroup?.canCreateNotes === false) {
-      this.writer.setMessage('In diesem Ordner können keine neuen Notizen angelegt werden.')
+      this.writer.setMessage(`In diesem Ordner können keine neuen ${kind === 'task' ? 'Tasks' : 'Notizen'} angelegt werden.`)
       return
     }
 
     try {
       this.writer.setError('')
-      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
+      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; noteType?: string; groups: NoteGroup[]; counts: VaultCounts }>(
         this.backendUrl,
         '/note-groups/add-note',
         {
           method: 'POST',
-          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'note', status: 'open' }),
+          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: kind, status: 'open', template }),
         }
       )
+      const createdKind = response.noteType === 'task' ? 'task' : 'note'
       this.writer.setCounts(response.counts)
       this.writer.setNoteGroups(response.groups)
-      this.writer.setMessage(`Notiz erstellt (${response.noteId}).`)
+      this.writer.setMessage(template
+        ? `${createdKind === 'task' ? 'Task' : 'Notiz'} aus Vorlage „${template}“ erstellt.`
+        : `${createdKind === 'task' ? 'Task' : 'Notiz'} erstellt (${response.noteId}).`)
       await this.context.emitMutation?.({
         kind: 'note-created',
-        noteType: 'note',
+        noteType: createdKind,
         refresh: {
           search: true,
           tasks: true,
@@ -122,52 +130,7 @@ export class ExplorerMutationService {
         },
         paths: [response.notePath],
       })
-      await this.context.openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'note' })
-    } catch (caught) {
-      this.writer.setError(String(caught))
-    }
-  }
-
-  createExplorerTask = async (groupKey: string, title: string): Promise<void> => {
-    const cleanTitle = normalizeLabel(title)
-    if (!cleanTitle) {
-      return
-    }
-
-    const effectiveGroupKey = groupKey && this.context.getNoteGroupsByKey().has(groupKey) ? groupKey : ''
-    const targetGroup = this.context.getNoteGroupsByKey().get(effectiveGroupKey)
-    if (targetGroup?.canCreateNotes === false) {
-      this.writer.setMessage('In diesem Ordner können keine neuen Tasks angelegt werden.')
-      return
-    }
-
-    try {
-      this.writer.setError('')
-      const response = await apiRequest<{ noteId: string; notePath: string; title?: string; groups: NoteGroup[]; counts: VaultCounts }>(
-        this.backendUrl,
-        '/note-groups/add-note',
-        {
-          method: 'POST',
-          body: JSON.stringify({ groupKey: effectiveGroupKey, title: cleanTitle, noteType: 'task', status: 'open' }),
-        }
-      )
-      this.writer.setCounts(response.counts)
-      this.writer.setNoteGroups(response.groups)
-      this.writer.setMessage(`Task erstellt (${response.noteId}).`)
-      await this.context.emitMutation?.({
-        kind: 'note-created',
-        noteType: 'task',
-        refresh: {
-          search: true,
-          tasks: true,
-          todos: true,
-          review: true,
-          noteGroups: true,
-          explorerSidebar: true,
-        },
-        paths: [response.notePath],
-      })
-      await this.context.openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: 'task' })
+      await this.context.openNoteInTab(response.notePath, response.title || cleanTitle, { initialNoteType: createdKind })
     } catch (caught) {
       this.writer.setError(String(caught))
     }

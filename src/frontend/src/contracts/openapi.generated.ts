@@ -972,6 +972,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Templates */
+        get: operations["list_templates_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Template */
+        post: operations["save_template_templates_save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Template */
+        post: operations["delete_template_templates_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/notes/rename": {
         parameters: {
             query?: never;
@@ -1807,6 +1858,11 @@ export interface components {
              * @default open
              */
             status: string;
+            /**
+             * Template
+             * @default
+             */
+            template: string;
         };
         /** NoteFavoritesResponse */
         NoteFavoritesResponse: {
@@ -2942,6 +2998,47 @@ export interface components {
             path: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** TemplateDeleteRequest */
+        TemplateDeleteRequest: {
+            /** Name */
+            name: string;
+        };
+        /** TemplateListResponse */
+        TemplateListResponse: {
+            /** Items */
+            items?: components["schemas"]["TemplateRow"][];
+            /**
+             * Saved
+             * @default
+             */
+            saved: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TemplateRow */
+        TemplateRow: {
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Daily
+             * @default false
+             */
+            daily: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TemplateSaveRequest */
+        TemplateSaveRequest: {
+            /** Notepath */
+            notePath: string;
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
         };
         /** TodoListResponse */
         TodoListResponse: {
@@ -5116,6 +5213,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NoteAddResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_templates_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateListResponse"];
+                };
+            };
+        };
+    };
+    save_template_templates_save_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_template_templates_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateListResponse"];
                 };
             };
             /** @description Validation Error */

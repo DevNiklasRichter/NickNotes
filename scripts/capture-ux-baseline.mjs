@@ -37,9 +37,10 @@ const whatsNew = process.argv.includes('--whats-new')
 const feedback = process.argv.includes('--feedback')
 const focusView = process.argv.includes('--focus')
 const quickCaptureView = process.argv.includes('--quick-capture')
+const templatesView = process.argv.includes('--templates')
 const reviewFromArg = process.argv.slice(2).find(arg => /^--review-from=\d+$/.test(arg))
 const reviewFrom = reviewFromArg ? Number(reviewFromArg.split('=')[1]) : 1
-if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new','--focus','--quick-capture'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new] [--focus] [--quick-capture]')
+if (process.argv.slice(2).some(arg => !['--review','--edges-only','--foundations','--menus','--tags','--graph','--editor-menus','--sidebar-menus','--suggestions','--create-dialog','--tag-matching','--settings-dialog','--filters','--properties','--tooltips','--search-commands','--writing-mode','--feedback','--inline','--whats-new','--focus','--quick-capture','--templates'].includes(arg) && arg !== reviewFromArg)) throw new Error('Usage: npm run ux:baseline -- [--review] [--review-from=N] [--edges-only] [--foundations] [--menus] [--tags] [--graph] [--editor-menus] [--sidebar-menus] [--suggestions] [--create-dialog] [--tag-matching] [--settings-dialog] [--filters] [--properties] [--tooltips] [--search-commands] [--writing-mode] [--feedback] [--inline] [--whats-new] [--focus] [--quick-capture] [--templates]')
 const input = review ? createInterface({input: process.stdin, output: process.stdout}) : null
 const report = {
   sourceCommit: null, startedAt: new Date().toISOString(),
@@ -2406,6 +2407,78 @@ async function verifyWritingMode() {
   report.checks.writingSessionSwitchAndCapturePreserved=true
 }
 
+async function runPaletteCommand(label) {
+  await page.keyboard.press('Control+p')
+  await page.getByRole('combobox', {name: 'Befehl suchen', exact: true}).fill('>' + label)
+  await searchCommand(label).click()
+}
+
+async function verifyTemplates() {
+  await windowSize(1280, 800)
+  await theme('light')
+  const weekday = new Intl.DateTimeFormat('de-DE', {weekday: 'long'}).format(new Date())
+  await createNote('Besprechung', '# Besprechung\n\nAm {{datum}} ({{wochentag}})\n\n## Beschlüsse\n\n- [ ] Nächster Schritt\n')
+  await page.reload()  // the explorer knows the fixture note, so the new one is numbered
+  await expect(page.locator('.activity-rail')).toBeVisible()
+  await openNote('Besprechung')
+  await runPaletteCommand('Als Vorlage speichern …')
+  await expect(page.locator('.status-bar')).toContainText('Als Vorlage „Besprechung“ gespeichert')
+  const templateFile = path.join(vaultPath, '.system', 'templates', 'Besprechung.md')
+  const templateSource = fs.readFileSync(templateFile, 'utf8')
+  assert.ok(templateSource.includes('Am {{datum}} ({{wochentag}})'), 'Placeholders stay in the template')
+  assert.ok(templateSource.includes('- [ ] Nächster Schritt\n') && !templateSource.includes('nn:todo'), 'To-dos lose their id and history')
+  report.checks.saveNoteAsTemplate = true
+
+  await runPaletteCommand('Neu aus Vorlage …')
+  const picker = page.getByRole('dialog', {name: 'Neu aus Vorlage', exact: true})
+  await expect(picker.getByRole('option', {name: /Besprechung/})).toContainText('Notiz')
+  await capture('template-picker-light', 'Neu aus Vorlage: the saved template with its kind and the placeholder hint')
+  await page.keyboard.press('Enter')
+  await expect(picker).toHaveCount(0)
+  await expect(page.locator('.note-title-input').first()).toHaveValue('Besprechung 2')
+  const editor = page.locator('.note-body-editor .cm-content').first()
+  await expect(editor).toContainText(`Am ${isoDay(0)} (${weekday})`)
+  await expect(editor).toContainText('Nächster Schritt')
+  await capture('template-note-light', 'A new note from the template: own title, today, weekday, the template body')
+  report.checks.newNoteFromTemplate = true
+
+  // Saving under an existing name asks first; Escape keeps the old template.
+  await page.keyboard.press('Control+Shift+Tab')
+  await expect(page.locator('.note-title-input').first()).toHaveValue('Besprechung')
+  await runPaletteCommand('Als Vorlage speichern …')
+  const replace = page.getByRole('dialog', {name: 'Vorlage ersetzen', exact: true})
+  await expect(replace).toBeVisible()
+  await capture('template-replace-light', 'Saving under an existing template name asks before replacing it')
+  await page.keyboard.press('Escape')
+  await expect(replace).toHaveCount(0)
+
+  // A daily note becomes the template for new daily notes.
+  await page.keyboard.press('Control+Alt+d')
+  await expect(page.locator('.note-title-input').first()).toHaveValue(isoDay(0))
+  await editor.click()
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('\n## Plan für heute\n')
+  await runPaletteCommand('Als Vorlage speichern …')
+  await expect(page.locator('.status-bar')).toContainText('Neue Tagesnotizen beginnen damit')
+  assert.ok(fs.readFileSync(path.join(vaultPath, '.system', 'templates', 'Tagesnotiz.md'), 'utf8').includes('## Plan für heute'))
+  report.checks.dailyNoteTemplate = true
+
+  await runPaletteCommand('Neu aus Vorlage …')
+  await expect(picker.getByRole('option', {name: /Tagesnotiz/})).toContainText('gilt für neue Tagesnotizen')
+  const trash = picker.getByRole('button', {name: 'Vorlage „Besprechung“ löschen', exact: true})
+  await trash.click()
+  await expect(picker.getByRole('option', {name: /Besprechung/})).toContainText('noch einmal')
+  await picker.getByRole('button', {name: 'Vorlage „Besprechung“ wirklich löschen', exact: true}).click()
+  await expect(picker.getByRole('option')).toHaveCount(1)
+  assert.ok(!fs.existsSync(templateFile))
+  await capture('template-picker-daily-light', 'After deleting one template: the daily-note template remains and says what it does')
+  await page.keyboard.press('Escape')
+  await expect(picker).toHaveCount(0)
+  report.checks.deleteTemplate = true
+  await theme('dark')  // the shared tail switches from dark to light
+  await openNote('Arbeitsnotiz')
+}
+
 function searchCommand(label) {
   return page.getByRole('option').filter({has:page.getByText(label,{exact:true})})
 }
@@ -2764,6 +2837,7 @@ try {
     if (whatsNew) await verifyWhatsNew()
     if (focusView) await verifyFocus()
     if (quickCaptureView) await verifyQuickCapture()
+    if (templatesView) await verifyTemplates()
 
     await page.locator('.note-body-editor .cm-content').first().click()
     await page.keyboard.press('Control+o')

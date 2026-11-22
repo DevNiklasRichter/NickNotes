@@ -123,6 +123,16 @@ class NoteCreateRequest(BaseModel):
     title: str = ""
     note_type: str = Field(default="note", alias="noteType")
     status: str = "open"
+    template: str = ""
+
+
+class TemplateSaveRequest(BaseModel):
+    note_path: str = Field(alias="notePath")
+    replace: bool = False
+
+
+class TemplateDeleteRequest(BaseModel):
+    name: str
 
 
 class NoteGroupRenameRequest(BaseModel):
