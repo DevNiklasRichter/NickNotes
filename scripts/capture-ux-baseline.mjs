@@ -2057,12 +2057,37 @@ async function verifyFocus() {
   // The next instance (due in a week) carries the repeat symbol in the focus list and in the task list.
   const upcoming = canvas.locator('.focus-group', {hasText: 'Nächste 7 Tage'})
   if (!(await upcoming.getAttribute('open'))) await upcoming.locator('summary').click()
-  await expect(upcoming.locator('.focus-row', {hasText: 'Quartalsbericht'}).locator('.task-repeat-mark')).toHaveAttribute('aria-label', 'Wiederholt sich: Wöchentlich')
+  await expect(upcoming.locator('.focus-row', {hasText: 'Quartalsbericht'}).locator('.task-title-mark')).toHaveAttribute('aria-label', 'Wiederholt sich: Wöchentlich')
   await capture('focus-repeat-mark-light', 'Upcoming tasks in the focus view: the repeating task shows a small repeat symbol')
   await page.locator('.activity-rail').getByRole('button', {name: 'Tasks', exact: true}).click()
-  await expect(page.locator('.task-repeat-mark').first()).toBeVisible()
+  await expect(page.locator('.task-title-mark').first()).toBeVisible()
   await capture('task-list-repeat-mark-light', 'Task list: repeating tasks carry the repeat symbol next to the title')
   report.checks.repeatMarkInLists = true
+  await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
+
+  // Reminders: "Fällig 09:00" in the properties sets one on the due day; a reached one shows a notification and a message.
+  await openNote('Workshop vorbereiten')
+  await expandProperties()
+  const reminderPanel = page.getByRole('region', {name: 'Notizeigenschaften', exact: true}).first()
+  await reminderPanel.getByRole('button', {name: 'Fällig 09:00'}).click()
+  await expect(reminderPanel.getByLabel('Erinnerung', {exact: true})).toHaveValue(`${isoDay(4)}T09:00`)
+  await expect(reminderPanel.getByText(/Meldet sich .*09:00, solange NickNotes läuft/)).toBeVisible()
+  await capture('task-reminder-light', 'Task properties: "Erinnerung" set to the due day at 09:00')
+  const reminderSave = page.waitForResponse(res => res.url().endsWith('/notes/save') && res.request().method() === 'POST')
+  await page.keyboard.press('Control+s')
+  await reminderSave
+  expect(taskSource('ux-focus-workshop')).toMatch(new RegExp(`^remind_at: ['"]?${isoDay(4)} 09:00`, 'm'))
+  await page.keyboard.press('Control+Shift+w')
+  await expect(page.locator('.tab-open')).toHaveCount(0)
+  // A reached reminder (written into the Markdown from outside here) shows within half a minute.
+  const workshopFile = fs.readdirSync(path.join(vaultPath, 'tasks'), {recursive: true}).map(name => path.join(vaultPath, 'tasks', String(name))).find(file => file.endsWith('.md') && /^id: ux-focus-workshop$/m.test(fs.readFileSync(file, 'utf8')))
+  fs.writeFileSync(workshopFile, fs.readFileSync(workshopFile, 'utf8').replace(/^remind_at: .*$/m, `remind_at: ${isoDay(0)} 00:01`))
+  await request('/notebase/reindex', {})
+  await expect(page.locator('.status-bar')).toContainText('Erinnerung: Workshop vorbereiten', {timeout: 45_000})
+  await page.locator('.activity-rail').getByRole('button', {name: 'Tasks', exact: true}).click()
+  await expect(page.locator('.task-title-mark[aria-label^="Erinnerung"]').first()).toBeVisible()
+  await capture('task-list-reminder-light', 'Task list: a task with a reminder carries a small bell next to the title')
+  report.checks.taskReminderFires = true
   await page.locator('.activity-rail').getByRole('button', {name: 'Fokus', exact: true}).click()
 
   await theme('dark')
@@ -2239,6 +2264,24 @@ async function verifyInlineSuggestions() {
   assert.match(fs.readFileSync(repeatSaved.tasks[0].taskPath,'utf8'),/^repeat: monthly$/m)
   await expect(page.getByText(/Wiederkehrende Task fällig am .* angelegt \(monatlich\)/)).toBeVisible()
   report.checks.captureRepeatWordMakesRepeatingTask=true
+
+  // A time from the @ menu sets the reminder of the task the line becomes (today, or tomorrow once passed).
+  if(!(await captureEditor.isVisible())) await page.keyboard.press('Alt+q')
+  await captureEditor.click()
+  await page.keyboard.type('Arzt anrufen @9:3')
+  await expect(list.getByRole('button').filter({hasText:'Erinnern um 09:30'})).toBeVisible()
+  await capture('capture-reminder-light','@ with a time in the quick capture: the task reminds at 09:30 on its due day')
+  await page.keyboard.press('Enter')
+  await expect.poll(()=>captureEditor.textContent()).toContain('@9:30')
+  const timeSave=page.waitForResponse(res=>res.url().endsWith('/capture/save')&&res.request().method()==='POST')
+  await page.getByRole('button',{name:'Senden',exact:true}).click()
+  const timeSaved=await (await timeSave).json()
+  const clock=new Date()
+  const reminderDay=clock.getHours()*60+clock.getMinutes()>=9*60+30?isoDay(1):isoDay(0)
+  assert.deepEqual(timeSaved.tasks.map(task=>[task.dueDate,task.remindAt]),[[reminderDay,`${reminderDay} 09:30`]])
+  assert.match(fs.readFileSync(timeSaved.tasks[0].taskPath,'utf8'),new RegExp(`^remind_at: ['"]?${reminderDay} 09:30`,'m'))
+  await expect(page.getByText(/Task fällig am .* angelegt, Erinnerung um 09:30\./)).toBeVisible()
+  report.checks.captureTimeSetsReminder=true
 
   // The graph centres on the open note.
   await openNote('Arbeitsnotiz')

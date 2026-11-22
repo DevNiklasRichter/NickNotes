@@ -51,6 +51,7 @@ import { NoteCaptureService } from './app/noteCaptureService';
 import { ExplorerMutationService } from './app/explorerMutationService';
 import { TagManagementService } from './app/tagManagementService';
 import { useOperatorNotifications } from './app/operatorNotifications';
+import { useTaskReminders } from './app/useTaskReminders';
 import { useTagMatchWorkflowState, type TagMatchCandidate } from './app/tagMatchWorkflowState';
 import {useMutationRefresh} from './app/useMutationRefresh';
 import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
@@ -1793,6 +1794,16 @@ function App() {
             return { ...document, frontmatter: { ...document.frontmatter, extra } };
         });
     };
+    const updateNoteReminderByPath = (tabPath: string, remindAt: string) => {
+        updateNoteDocumentByPath(tabPath, (document) => {
+            const extra = { ...document.frontmatter.extra };
+            delete extra.remind_at;
+            if (remindAt) {
+                extra.remind_at = remindAt;
+            }
+            return { ...document, frontmatter: { ...document.frontmatter, extra } };
+        });
+    };
     const updateNoteFollowUpDateByPath = (tabPath: string, rawFollowUpDate: string) => {
         const clean = normalizeLabel(rawFollowUpDate);
         if (!clean) {
@@ -1894,7 +1905,7 @@ function App() {
             .map((task) => normalizeLabel(task.id))
             .filter((taskId) => taskId && taskId.toLowerCase() !== currentTaskId)
             .sort((left, right) => left.localeCompare(right, 'de', { sensitivity: 'base' }));
-        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} onLoadBacklinks={loadBacklinks} onRepeatChange={(repeat, fromCompletion) => updateNoteRepeatByPath(tabPath, repeat, fromCompletion)} onOpenBacklink={(backlink) => openGraphNodePath(backlink.path, backlink.title, 'note')} backlinksRefreshKey={graphUpdateToken} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
+        return (<NotePropertiesPanel tabPath={tabPath} document={document} compact={compact} onLoadBacklinks={loadBacklinks} onRepeatChange={(repeat, fromCompletion) => updateNoteRepeatByPath(tabPath, repeat, fromCompletion)} onReminderChange={(remindAt) => updateNoteReminderByPath(tabPath, remindAt)} onOpenBacklink={(backlink) => openGraphNodePath(backlink.path, backlink.title, 'note')} backlinksRefreshKey={graphUpdateToken} taskStatusOptions={TASK_STATUS_OPTIONS} taskPriorityOptions={TASK_PRIORITY_OPTIONS} taskStatusDotClassName={taskStatusDotClassName} taskPriorityDotClassName={taskPriorityDotClassName} taskStatusOptionLabel={taskStatusOptionLabel} taskPriorityOptionLabel={taskPriorityOptionLabel} propertyTagOptions={propertyTagOptions} relatedOptions={relatedOptionsForPath} taskIdOptions={taskIdOptions} tagVisualByKey={tagVisualByKey} draftCommitters={propertyDraftCommitters} taskAdvancedHandlingEnabled={taskFeatureSettings.advancedTaskHandling} taskTimeManagementEnabled={taskFeatureSettings.taskTimeManagement} taskFieldErrors={taskFieldErrors} formatTimestamp={toGermanTimestamp} onTitleChange={(nextTitle) => {
                 updateNoteTitleByPath(tabPath, nextTitle);
             }} onTypeChange={(nextType) => {
                 updateNoteTypeByPath(tabPath, nextType);
@@ -2704,6 +2715,13 @@ function App() {
     const executeCommand=useAppCommands(appCommands,setError,settingsDialogOpen);
     // Commands from outside the window, e.g. "Fokuszeit starten" in the tray menu.
     const runExternalCommand=useEffectEvent((command:string)=>{if(command==='focusTimer')void executeCommand('focusTimer')});
+    useTaskReminders({
+        backendUrl,
+        vaultPath: vaultLoaded ? vaultPath : '',
+        onShown: (notice) => setMessage(notice.item ? `Erinnerung: ${notice.title}` : `${notice.title}: ${notice.body}`),
+        onOpenTask: (item) => { if (item.path) { setEditorPanelOpen(true); void openNoteInTab(item.path, item.title, { initialNoteType: 'task' }); } },
+        onOpenOverview: () => void executeCommand('focus'),
+    });
     useEffect(()=>window.nicknotes?.onAppCommand?.(command=>runExternalCommand(command)),[]);
     const openedSearchNotes=openTabs.filter(tab=>tab.kind==='note'&&!tab.loading).slice().reverse().sort((a,b)=>Number(b.id===activeTab?.id)-Number(a.id===activeTab?.id)).slice(0,8).map(tab=>({path:tab.path,title:tab.title}));
     const commandDialogs=<>{quickOpen&&quickOpen.vaultPath===vaultPath&&quickOpen.epoch===connectionEpoch()&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultLoaded?vaultPath:''} initialQuery={quickOpen.initialQuery} openedNotes={vaultLoaded?openedSearchNotes:[]} commands={appCommands} onClose={()=>setQuickOpen(null)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}} onExecute={id=>{
@@ -2886,7 +2904,7 @@ function App() {
               <div className="capture-panel-body">
                 <div className="capture-input-wrap">
                   <span className="capture-prompt">&gt;</span>
-                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt Termin oder Wiederholung" offerRepeats tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
+                  <CodeMirrorMarkdownEditor className="capture-markdown-editor" value={captureText} theme={theme} notePath="" backendUrl={backendUrl} tagGroups={mergedTagGroups} linkTargets={markdownLinkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt Termin, Wiederholung oder Uhrzeit" offerRepeats tagSuggestions={suggestions} selectedTagSuggestionKeys={selectedTagKeys} onChange={setCaptureText} onToggleTagSuggestion={toggleCaptureTag} onRejectTagSuggestion={rejectCaptureTag} onSubmitShortcut={(markdown) => {
                 void saveCapture(markdown);
             }} onOpenWikiLink={(target) => {
                 openWikiLinkInEditor(target, activePaneId);

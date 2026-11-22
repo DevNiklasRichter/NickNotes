@@ -26,6 +26,7 @@ from .nicknotes_backend.graph_index import GraphIndex, build_graph_index, update
 from .nicknotes_backend.graph_storage import read_graph_index, read_graph_state, write_graph_index, write_graph_state
 from .nicknotes_backend.markdown_io import dump_markdown, parse_markdown, parse_markdown_text
 from .nicknotes_backend.models import ParsedTask, TagSuggestion
+from .nicknotes_backend.reminders import normalize_remind_at
 
 from .use_cases import (
     GetFocusDashboardUseCase,
@@ -938,6 +939,11 @@ class BackendApiService:
         return {"items": indexer.list_tasks(include_done=include_done)}
 
     @coordinated
+    def list_task_reminders(self) -> dict[str, Any]:
+        _vault, indexer = self.require_loaded()
+        return {"items": indexer.list_task_reminders()}
+
+    @coordinated
     def list_todos(self) -> dict[str, Any]:
         _vault, indexer = self.require_loaded()
         return {"items": indexer.list_todos()}
@@ -1075,6 +1081,7 @@ class BackendApiService:
             blocked_reason=str(meta.get("blocked_reason", "")).strip() or None,
             next_action_hint=str(meta.get("next_action_hint", "")).strip() or None,
             repeat=str(meta.get("repeat", "") or "").strip() or None,
+            remind_at=normalize_remind_at(meta.get("remind_at")),
         )
         indexer.add_or_update_task(
             task_id=str(task_id),

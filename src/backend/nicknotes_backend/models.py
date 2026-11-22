@@ -48,3 +48,4 @@ class ParsedTask:
     blocked_reason: Optional[str] = None
     next_action_hint: Optional[str] = None
     repeat: Optional[str] = None
+    remind_at: Optional[str] = None

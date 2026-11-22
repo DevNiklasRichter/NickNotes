@@ -1119,10 +1119,10 @@ button.focus-row-title:hover:not(:disabled) {
   display: inline-flex;
 }
 
-.focus-row:hover :is(.focus-row-meta, .focus-mit-marker, .task-repeat-mark),
-.focus-row:focus-within :is(.focus-row-meta, .focus-mit-marker, .task-repeat-mark),
-.focus-row.expanded :is(.focus-row-meta, .focus-mit-marker, .task-repeat-mark),
-.focus-row:has([aria-expanded="true"]) :is(.focus-row-meta, .focus-mit-marker, .task-repeat-mark) {
+.focus-row:hover :is(.focus-row-meta, .focus-mit-marker, .task-title-mark),
+.focus-row:focus-within :is(.focus-row-meta, .focus-mit-marker, .task-title-mark),
+.focus-row.expanded :is(.focus-row-meta, .focus-mit-marker, .task-title-mark),
+.focus-row:has([aria-expanded="true"]) :is(.focus-row-meta, .focus-mit-marker, .task-title-mark) {
   display: none;
 }
 
@@ -1142,7 +1142,7 @@ button.focus-row-title:hover:not(:disabled) {
   place-items: center;
 }
 
-.task-repeat-mark {
+.task-title-mark {
   flex: none;
   display: inline-grid;
   place-items: center;

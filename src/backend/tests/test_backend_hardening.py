@@ -72,21 +72,33 @@ class FullTextProjectionTests(unittest.TestCase):
         self.assertEqual(self.indexer.search_notes('altbestand'), [])
         self.assertEqual(len(self._fts()), 1)
 
-    def test_schema_4_index_gets_the_repeat_column_and_reads_task_files_again(self):
+    def _older_index(self, version, dropped):
         connection = self.indexer.conn
         connection.execute("INSERT INTO tasks(id, path, title, status, priority, created_at, updated_at) VALUES ('t', 't.md', 'T', 'open', 'M', '2026-01-01', '2026-01-01')")
         connection.execute("INSERT INTO indexed_files(path, mtime_ns, size) VALUES ('t.md', 1, 1), ('n.md', 1, 1)")
-        # Rebuild the table the way schema 4 had it: without the repeat column.
-        connection.execute('ALTER TABLE tasks DROP COLUMN repeat_rule')
-        connection.execute('PRAGMA user_version=4')
+        # Rebuild the table the way the older schema had it: without the newer columns.
+        for column in dropped:
+            connection.execute(f'ALTER TABLE tasks DROP COLUMN {column}')
+        connection.execute(f'PRAGMA user_version={version}')
         connection.commit()
         self.indexer.close()
-
         self.indexer = VaultIndexer(Path(self.temp.name) / 'index.db')
+
+    def test_schema_4_index_gets_the_repeat_and_reminder_columns_and_reads_task_files_again(self):
+        self._older_index(4, ['repeat_rule', 'remind_at'])
         columns = {row[1] for row in self.indexer.conn.execute('PRAGMA table_info(tasks)').fetchall()}
-        self.assertIn('repeat_rule', columns)
+        self.assertTrue({'repeat_rule', 'remind_at'} <= columns)
         self.assertEqual([row[0] for row in self.indexer.conn.execute('SELECT path FROM indexed_files')], ['n.md'])
         self.assertIsNone(self.indexer.list_tasks()[0]['repeat'])
+        self.assertIsNone(self.indexer.list_tasks()[0]['remind_at'])
+
+    def test_schema_5_index_gets_the_reminder_column_and_reads_task_files_again(self):
+        self._older_index(5, ['remind_at'])
+        columns = {row[1] for row in self.indexer.conn.execute('PRAGMA table_info(tasks)').fetchall()}
+        self.assertIn('remind_at', columns)
+        self.assertEqual(self.indexer.conn.execute('PRAGMA user_version').fetchone()[0], INDEXER_SCHEMA_VERSION)
+        self.assertEqual([row[0] for row in self.indexer.conn.execute('SELECT path FROM indexed_files')], ['n.md'])
+        self.assertEqual(self.indexer.list_task_reminders(), [])
 
 
 class JournaledWriteTests(unittest.TestCase):

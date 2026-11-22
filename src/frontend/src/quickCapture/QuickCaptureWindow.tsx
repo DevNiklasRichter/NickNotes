@@ -26,7 +26,7 @@ function toLinkTargets(rows: SearchRow[], noteBasePath: string): MarkdownLinkTar
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath, 'de', { sensitivity: 'base' }))
 }
 
-function savedMessage(date: string, tasks: Array<{ dueDate: string; repeat?: string | null }>): string {
+function savedMessage(date: string, tasks: Array<{ dueDate: string; repeat?: string | null; remindAt?: string | null }>): string {
   return `In der Tagesnotiz ${date} gespeichert.${capturedTasksNote(tasks)}`
 }
 
@@ -162,7 +162,7 @@ export function QuickCaptureWindow() {
       ) : null}
       {draftReady ? (
         <CodeMirrorMarkdownEditor className="capture-markdown-editor quick-capture-editor" value={text} theme={theme} notePath="" backendUrl={backendUrl}
-          tagGroups={tagGroups} linkTargets={linkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt Termin oder Wiederholung" offerRepeats
+          tagGroups={tagGroups} linkTargets={linkTargets} placeholderText="Gedanken festhalten · [[ verlinkt · # taggt · @ setzt Termin, Wiederholung oder Uhrzeit" offerRepeats
           onChange={setText} onSubmitShortcut={(markdown) => void send(markdown)} editorApiRef={editorRef} />
       ) : <div className="quick-capture-editor" />}
       <footer className="quick-capture-foot">

@@ -55,6 +55,7 @@ from .contracts import (
     TaskDoneResponse,
     TaskFollowUpResponse,
     TaskListResponse,
+    TaskReminderListResponse,
     TodoListResponse,
     TodoPromoteResponse,
     TodoToggleResponse,
@@ -463,6 +464,11 @@ def get_focus_dashboard(date: str | None = None) -> dict[str, Any]:
 @app.get("/tasks", response_model=TaskListResponse)
 def list_tasks(include_done: bool = False) -> dict[str, Any]:
     return backend_api_service.list_tasks(include_done)
+
+
+@app.get("/tasks/reminders", response_model=TaskReminderListResponse)
+def list_task_reminders() -> dict[str, Any]:
+    return backend_api_service.list_task_reminders()
 
 
 @app.get("/todos", response_model=TodoListResponse)

@@ -7,7 +7,9 @@ export const CAPTURE_SHORTCUTS = Object.freeze([
   {value:'CommandOrControl+Alt+Space',label:'Strg+Alt+Leertaste'},
   {value:'CommandOrControl+Shift+Alt+N',label:'Strg+Umschalt+Alt+N'},
 ])
-export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({captureShortcut:CAPTURE_SHORTCUTS[0].value,keepInTray:false})
+/** Times offered for the morning overview of due tasks; '' means off. */
+export const OVERVIEW_TIMES = Object.freeze(['06:00','06:30','07:00','07:30','08:00','08:30','09:00','09:30','10:00'])
+export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({captureShortcut:CAPTURE_SHORTCUTS[0].value,keepInTray:false,dailyOverview:''})
 
 export function shortcutLabel(value){
   return CAPTURE_SHORTCUTS.find(item=>item.value===value)?.label??''
@@ -20,6 +22,7 @@ export function normalizeDesktopSettings(value){
   return {
     captureShortcut:known?raw.captureShortcut:DEFAULT_DESKTOP_SETTINGS.captureShortcut,
     keepInTray:raw.keepInTray===true,
+    dailyOverview:OVERVIEW_TIMES.includes(raw.dailyOverview)?raw.dailyOverview:'',
   }
 }
 

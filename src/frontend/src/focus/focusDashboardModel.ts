@@ -34,6 +34,7 @@ export type FocusTaskItem = {
   nextActionHint: string | null
   blockedReason: string | null
   repeat: string | null
+  remindAt: string | null
 }
 
 export type FocusTodoItem = {
@@ -208,6 +209,7 @@ function toTaskItem(task: TaskRow, reason: FocusTaskReason, overdueDays: number,
     nextActionHint: optionalText(task.next_action_hint),
     blockedReason: optionalText(task.blocked_reason),
     repeat: optionalText(task.repeat),
+    remindAt: optionalText(task.remind_at),
   }
 }
 

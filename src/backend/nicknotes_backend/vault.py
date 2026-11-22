@@ -7,7 +7,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time as clock_time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,7 @@ from .task_domain import (
 )
 from .focus_log import format_focus_line
 from .recurrence import REPEAT_FROM_COMPLETION, first_occurrence, format_repeat, next_occurrence, parse_capture_repeat, parse_repeat
+from .reminders import format_remind_at, normalize_remind_at, parse_capture_time, shift_remind_at
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -507,15 +508,35 @@ def _capture_repeat(text: str) -> tuple[str, str | None]:
     return rest, rule
 
 
-def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str, str | None]]]:
-    """Normalizes typed `@dates` and finds plain lines (no checkbox) that become tasks: `(title, due_date, repeat)`.
+_CAPTURE_TIME_TOKEN = re.compile(r"(?:^|(?<=\s))@(\d{1,2}(?::\d{2}|uhr))(?=\s|$)", re.IGNORECASE)
 
-    A plain line with a valid date or a repeat word (`@wöchentlich`) becomes a task; without a date a repeating
-    task is due today (`werktags`: the next working day). A to-do (`- [ ] ... @date`) stays a to-do. Impossible
-    days stay text.
+
+def _capture_time(text: str) -> tuple[str, clock_time | None]:
+    """Removes time words (`@9:00`, `@18uhr`) from a capture line: `(rest, time)`; the first one counts."""
+    found: clock_time | None = None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal found
+        parsed = parse_capture_time(match.group(1))
+        if parsed is None:
+            return match.group(0)
+        found = found or parsed
+        return " "
+
+    rest = _CAPTURE_TIME_TOKEN.sub(replace, text)
+    return rest, found
+
+
+def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str, str | None, str | None]]]:
+    """Normalizes typed `@dates` and finds plain lines (no checkbox) that become tasks: `(title, due_date, repeat, remind_at)`.
+
+    A plain line with a valid date, a repeat word (`@wöchentlich`) or a time (`@9:00`) becomes a task. Without a
+    date a repeating task is due today (`werktags`: the next working day); a time alone means today, or
+    tomorrow once that time has passed. The time is the reminder on the due day. A to-do (`- [ ] ... @date`)
+    stays a to-do. Impossible days stay text.
     """
     out: list[str] = []
-    dated: list[tuple[str, str, str | None]] = []
+    dated: list[tuple[str, str, str | None, str | None]] = []
     in_fence = False
     now = datetime.now()
     for line in text.split("\n"):
@@ -526,14 +547,19 @@ def _normalize_capture_dates(text: str) -> tuple[str, list[tuple[str, str, str |
             match = _CAPTURE_DATED_LINE.match(line)
             if match:
                 rest, repeat = _capture_repeat(match.group(2))
+                rest, at = _capture_time(rest)
                 due = DUE_TOKEN_PATTERN.search(rest)
                 due_day = due.group(1) if due and _is_iso_day(due.group(1)) else None
                 if due_day is None and repeat:
                     rule = parse_repeat(repeat)
                     due_day = first_occurrence(rule, now.date()).isoformat() if rule else None
+                if due_day is None and at is not None:
+                    passed = datetime.combine(now.date(), at) <= now
+                    due_day = (now.date() + timedelta(days=1 if passed else 0)).isoformat()
+                remind_at = format_remind_at(datetime.combine(date.fromisoformat(due_day), at)) if due_day and at else None
                 title = " ".join(DUE_TOKEN_PATTERN.sub(" ", rest).split())
                 if due_day and title:
-                    dated.append((title, due_day, repeat))
+                    dated.append((title, due_day, repeat, remind_at))
         out.append(line)
     return "\n".join(out), dated
 
@@ -2469,24 +2495,26 @@ class VaultManager:
 
         # A plain line with a date ("Angebot schicken @2026-11-20") becomes a task due that day and stays
         # ordinary text in the daily note; a to-do with a date stays a to-do and creates no task.
-        # A repeat word ("@wöchentlich") makes it a repeating task.
+        # A repeat word ("@wöchentlich") makes it a repeating task, a time ("@9:00") sets its reminder.
         tasks = []
         note_anchor = str(meta.get("id", f"daily_{day}"))
-        for title, due_date, repeat in dated_lines:
+        for title, due_date, repeat, remind_at in dated_lines:
             task_id = make_task_id(now)
             extra: dict[str, Any] = {"origin_note_id": note_anchor, "origin_note_path": str(note_path)}
             if repeat:
                 extra["repeat"] = repeat
+            if remind_at:
+                extra["remind_at"] = remind_at
             task_path = self._create_task_file(
                 task_id=task_id,
                 note_id=note_anchor,
-                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[], repeat=repeat),
+                task=ParsedTask(title=title, due_date=due_date, priority="M", status="open", project_tag=None, tags=[], repeat=repeat, remind_at=remind_at),
                 now=now,
                 indexer=indexer,
                 extra_frontmatter=extra,
                 body=title,
             )
-            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date, "repeat": repeat})
+            tasks.append({"taskId": task_id, "taskPath": str(task_path), "dueDate": due_date, "repeat": repeat, "remindAt": remind_at})
 
         groups = self.read_tag_groups()
         self.rebuild_all_tag_pages(groups, indexer)
@@ -2727,6 +2755,7 @@ class VaultManager:
             blocked_reason=blocked_reason or None,
             next_action_hint=next_action_hint or None,
             repeat=task.repeat or (str((extra_frontmatter or {}).get("repeat") or "") or None),
+            remind_at=task.remind_at or normalize_remind_at((extra_frontmatter or {}).get("remind_at")),
         )
         indexer.add_or_update_task(
             task_id=task_id,
@@ -2770,6 +2799,9 @@ class VaultManager:
         if from_completion:
             extra["repeat_from"] = REPEAT_FROM_COMPLETION
         extra["repeat_previous"] = str(meta.get("id", "") or task_path.stem)
+        remind_at = shift_remind_at(meta.get("remind_at"), due, next_day)
+        if remind_at:
+            extra["remind_at"] = remind_at
         successor = ParsedTask(
             title=title,
             due_date=next_day.isoformat(),
