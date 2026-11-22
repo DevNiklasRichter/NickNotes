@@ -9,7 +9,7 @@ import json
 import re
 import threading
 from .session import RuntimeState, SessionRegistry, bound_runtime, coordinated
-from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, FocusSessionLogRequest, FocusThoughtRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TaskFollowUpRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
+from .commands import (CapturePreviewRequest, CaptureSaveRequest, FavoriteFolderRequest, FocusMitUpdateRequest, FocusQuickCaptureRequest, FocusSessionLogRequest, FocusThoughtRequest, NoteBaseDeleteRequest, NoteBaseRenameRequest, NoteCreateRequest, NoteFileDeleteRequest, NoteFileMoveBatchRequest, NoteFileMoveRequest, NoteFileRenameRequest, NoteGroupCreateRequest, NoteGroupDeleteRequest, NoteGroupMoveRequest, NoteGroupRenameRequest, NoteMediaAddRequest, NoteSaveRequest, OneNoteImportPreviewRequest, OneNoteImportRequest, TagCreateRequest, TagDeleteRequest, TagGroupDeleteRequest, TagGroupRenameRequest, TagGroupRequest, TagMatchApplyRequest, TagRenameRequest, TaskFollowUpRequest, TemplateDeleteRequest, TemplateSaveRequest, TodoToggleRequest, UiSettingsUpdateRequest, VaultCreateRequest, VaultOpenRequest)
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1540,6 +1540,26 @@ class BackendApiService:
             ) from exc
         return {"favorites": favorites, "groups": vault.list_note_groups()}
 
+    @coordinated()
+    def list_templates(self) -> dict[str, Any]:
+        vault, _indexer = self.require_loaded()
+        return {"items": vault.templates.list()}
+
+    @coordinated(mutation=True, invalidate=False)
+    def save_template(self, req: TemplateSaveRequest) -> dict[str, Any]:
+        vault, _indexer = self.require_loaded()
+        try:
+            saved = vault.save_note_as_template(req.note_path, replace=req.replace)
+        except ValueError as exc:
+            raise ValidationDomainError(str(exc), operation="save_template", vault_id=str(vault.vault_path), internal_message=str(exc)) from exc
+        return {"items": vault.templates.list(), "saved": saved}
+
+    @coordinated(mutation=True, invalidate=False)
+    def delete_template(self, req: TemplateDeleteRequest) -> dict[str, Any]:
+        vault, _indexer = self.require_loaded()
+        vault.templates.delete(req.name)
+        return {"items": vault.templates.list()}
+
     @coordinated(mutation=True)
     def add_note(self, req: NoteCreateRequest) -> dict[str, Any]:
         vault, indexer = self.require_loaded()
@@ -1550,6 +1570,7 @@ class BackendApiService:
                 indexer=indexer,
                 note_type=req.note_type,
                 status=req.status,
+                template=req.template,
             )
         except ValueError as exc:
             raise ValidationDomainError(

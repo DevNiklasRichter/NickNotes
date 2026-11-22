@@ -590,6 +590,17 @@ class NoteAddResponse(_ContractModel):
     graphStatus: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemplateRow(_ContractModel):
+    name: str
+    kind: str
+    daily: bool = False
+
+
+class TemplateListResponse(_ContractModel):
+    items: list[TemplateRow] = Field(default_factory=list)
+    saved: str = ""
+
+
 class ErrorPayload(_ContractModel):
     code: str = "service.unexpected"
     message: str = "Ein unerwarteter Fehler ist aufgetreten."

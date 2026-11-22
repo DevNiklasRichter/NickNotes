@@ -31,6 +31,7 @@ from .task_domain import (
 from .focus_log import format_focus_line
 from .recurrence import REPEAT_FROM_COMPLETION, first_occurrence, format_repeat, next_occurrence, parse_capture_repeat, parse_repeat
 from .reminders import format_remind_at, normalize_remind_at, parse_capture_time, shift_remind_at
+from .templates import DAILY_TEMPLATE_NAME, TemplateStore, render_placeholders, template_from_note
 from .todos import format_todo_tail, mark_todo_promoted, toggle_todo_checkbox
 from ..config import (
     TAG_GROUP_DEFAULT_COLOR,
@@ -633,6 +634,7 @@ class VaultManager:
         self.favorite_folders_path = self.system_path / "favorite_folders.json"
         self.ui_settings_path = self.system_path / "ui_settings.json"
         self.graph_state_path = self.system_path / "graph-state.json"  # your graph arrangement travels with the NoteBase
+        self.templates = TemplateStore(self.system_path / "templates")  # travel with the NoteBase, never indexed
         # Derived projections and journals are device-local (see local_data).
         self.local_path = notebase_data_path(self.vault_path)
         self.db_path = self.local_path / "index.db"
@@ -757,12 +759,15 @@ class VaultManager:
         indexer: VaultIndexer,
         note_type: str = "note",
         status: str = "open",
+        template: str = "",
     ) -> dict[str, Any]:
         root_dir = self._resolve_group_path(group_key)
         if self._is_creation_locked_path(root_dir):
             raise ValueError("In daily-, tags- und tasks-Ordnern können keine neuen Notizen oder Tasks angelegt werden.")
 
-        kind = _normalize_note_type(note_type)
+        # A template decides the kind and brings its body and repeatable fields along.
+        template_kind, fields, template_body = self.templates.read(template) if template else (note_type, {}, "")
+        kind = _normalize_note_type(template_kind)
         now = datetime.now()
         clean_title = _normalize_label(title) or ("New Task" if kind == "task" else "New Note")
         note_id = make_task_id(now) if kind == "task" else make_note_id(now)
@@ -772,9 +777,11 @@ class VaultManager:
         note_dir.mkdir(parents=True, exist_ok=True)
         note_path = self._next_available_note_path(note_dir, safe_stem)
         normalized_status = _normalize_task_status(status)
-        normalized_priority = _normalize_task_priority("medium")
+        normalized_priority = _normalize_task_priority(str(fields.get("priority") or "medium"))
+        estimate = fields.get("estimate_minutes")
+        tags = fields.get("tags")
         note_content = self._build_note_document(
-            body="",
+            body=render_placeholders(template_body, title=clean_title, moment=now),
             title=clean_title,
             note_type=kind,
             note_id=note_id,
@@ -784,17 +791,18 @@ class VaultManager:
             status=normalized_status,
             priority=normalized_priority,
             due_date="",
-            estimate_minutes=None,
+            estimate_minutes=estimate if isinstance(estimate, int) and not isinstance(estimate, bool) and estimate > 0 else None,
             completed_at="",
             blocked_by_ids=[],
             waiting_for="",
             follow_up_date="",
             blocked_reason="",
             next_action_hint="",
-            manual_tags=[],
+            manual_tags=[str(tag) for tag in tags if str(tag).strip()] if isinstance(tags, list) else [],
             manual_related=[],
             auto_tags=[],
             auto_related=[],
+            extra={key: fields[key] for key in ("repeat", "repeat_from") if kind == "task" and fields.get(key)},
         )
         atomic_write_text(note_path, note_content, encoding='utf-8')
 
@@ -2843,9 +2851,27 @@ class VaultManager:
             "updated_at": updated_at,
             "tags": [],
         }
-        body = f"# {day_iso}\n"
+        template = self.templates.daily()
+        if template is None:
+            body = f"# {day_iso}\n"
+        else:
+            # {{datum}} and {{wochentag}} describe the day of the note, not the moment it was created.
+            moment = datetime.combine(date.fromisoformat(day_iso), datetime.now().time())
+            body = render_placeholders(template, title=day_iso, moment=moment)
         atomic_write_text(daily_path, dump_markdown(fm, body), encoding='utf-8')
         return daily_path
+
+    def save_note_as_template(self, note_path: str, replace: bool = False) -> str:
+        """Store a note as template; daily notes become the template for new daily notes."""
+        path = self._resolve_note_file(note_path)
+        meta, body = parse_markdown_text(path.read_text(encoding="utf-8"))
+        title = str(meta.get("title") or path.stem).strip()
+        # Saving a daily note in the editor keeps it in daily/ but may write `type: note`.
+        daily = self._is_daily_path(path.parent) or str(meta.get("type", "")).strip().lower() == "daily"
+        kind, fields, template_body = template_from_note(meta, body, title)
+        if daily:
+            fields = {key: value for key, value in fields.items() if key == "tags"}
+        return self.templates.write(DAILY_TEMPLATE_NAME if daily else title, kind, fields, template_body, replace=replace)
 
     def _daily_note_path(self, day_iso: str) -> Path:
         return self.daily_root_path / _daily_month_folder(day_iso) / f"{day_iso}.md"
