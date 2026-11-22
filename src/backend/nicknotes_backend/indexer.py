@@ -18,6 +18,7 @@ from typing import Any, Callable
 from .markdown_io import document_snapshots, parse_markdown, snapshot_operation, prefetch_markdown
 from .projection_registry import INDEXER_SCHEMA_VERSION
 from .recurrence import format_repeat, parse_repeat
+from .reminders import normalize_remind_at
 from .models import ParsedTask, TagRef
 from .parser import slugify
 from .todos import ExtractedTodo, extract_todos_from_body
@@ -168,6 +169,7 @@ class VaultIndexer:
                   blocked_reason TEXT,
                   next_action_hint TEXT,
                   repeat_rule TEXT,
+                  remind_at TEXT,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
                 );
@@ -223,10 +225,13 @@ class VaultIndexer:
                     f"Unsupported indexer schema version: {current_version}. Expected version <= {INDEXER_SCHEMA_VERSION}."
                 )
             self._init_schema()
-            # Schema 5 indexes the repeat rule; task files are read again on the next sync to fill it.
+            # Schema 5 indexes the repeat rule, schema 6 the reminder; task files are read again on the
+            # next sync to fill new columns.
             task_columns = {str(row[1]) for row in cur.execute("PRAGMA table_info(tasks);").fetchall()}
-            if "repeat_rule" not in task_columns:
-                cur.execute("ALTER TABLE tasks ADD COLUMN repeat_rule TEXT;")
+            missing = [column for column in ("repeat_rule", "remind_at") if column not in task_columns]
+            for column in missing:
+                cur.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT;")
+            if missing:
                 cur.execute("DELETE FROM indexed_files WHERE path IN (SELECT path FROM tasks WHERE path IS NOT NULL);")
             # Schema 4 keys each full-text row by its note row, so one note is replaced
             # without scanning the whole full-text table. Older rows are re-keyed once.
@@ -351,9 +356,9 @@ class VaultIndexer:
                 INSERT INTO tasks(
                   id, note_id, path, title, status, priority, due_date, project_tag,
                   estimate_minutes, completed_at, blocked_by_ids_json, waiting_for, follow_up_date, blocked_reason, next_action_hint,
-                  repeat_rule, created_at, updated_at
+                  repeat_rule, remind_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   note_id=excluded.note_id,
                   path=excluded.path,
@@ -370,6 +375,7 @@ class VaultIndexer:
                   blocked_reason=excluded.blocked_reason,
                   next_action_hint=excluded.next_action_hint,
                   repeat_rule=excluded.repeat_rule,
+                  remind_at=excluded.remind_at,
                   updated_at=excluded.updated_at;
                 """,
                 (
@@ -389,6 +395,7 @@ class VaultIndexer:
                     _normalize_free_text(parsed.blocked_reason),
                     _normalize_free_text(parsed.next_action_hint),
                     _normalize_repeat_rule(parsed.repeat),
+                    normalize_remind_at(parsed.remind_at),
                     created_at,
                     updated_at,
                 ),
@@ -645,6 +652,7 @@ class VaultIndexer:
                       blocked_reason,
                       next_action_hint,
                       repeat_rule,
+                      remind_at,
                       updated_at,
                       path
                     FROM tasks
@@ -672,6 +680,7 @@ class VaultIndexer:
                       blocked_reason,
                       next_action_hint,
                       repeat_rule,
+                      remind_at,
                       updated_at,
                       path
                     FROM tasks
@@ -695,8 +704,22 @@ class VaultIndexer:
                 row["blocked_reason"] = _normalize_free_text(row.get("blocked_reason"))
                 row["next_action_hint"] = _normalize_free_text(row.get("next_action_hint"))
                 row["repeat"] = row.pop("repeat_rule", None) or None
+                row["remind_at"] = row.get("remind_at") or None
                 row.pop("blocked_by_ids_json", None)
             return rows
+
+    def list_task_reminders(self) -> list[dict[str, Any]]:
+        """Open tasks with a reminder, earliest first. Cheap enough to poll every minute."""
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT id, title, path, due_date, remind_at
+                FROM tasks
+                WHERE status <> 'done' AND remind_at IS NOT NULL AND remind_at <> ''
+                ORDER BY remind_at ASC, title ASC;
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _extract_task_property_tokens(self, path: str) -> tuple[list[str], list[str]]:
         tag_values: set[str] = set()
@@ -1065,6 +1088,7 @@ class VaultIndexer:
                 blocked_reason=_normalize_free_text(meta.get("blocked_reason")),
                 next_action_hint=_normalize_free_text(meta.get("next_action_hint")),
                 repeat=_normalize_repeat_rule(meta.get("repeat")),
+                remind_at=normalize_remind_at(meta.get("remind_at")),
             )
             self.add_or_update_task(
                 task_id=task_id,

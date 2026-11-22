@@ -358,6 +358,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Task Reminders */
+        get: operations["list_task_reminders_tasks_reminders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/todos": {
         parameters: {
             query?: never;
@@ -1287,6 +1304,11 @@ export interface components {
              * @default null
              */
             repeat: string | null;
+            /**
+             * Remindat
+             * @default null
+             */
+            remindAt: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2802,6 +2824,34 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * TaskReminderListResponse
+         * @description Open tasks with a reminder (`remind_at`, local time `YYYY-MM-DD HH:MM`), earliest first.
+         */
+        TaskReminderListResponse: {
+            /** Items */
+            items?: components["schemas"]["TaskReminderRow"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** TaskReminderRow */
+        TaskReminderRow: {
+            /** Id */
+            id: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Path */
+            path?: string | null;
+            /** Due Date */
+            due_date?: string | null;
+            /** Remind At */
+            remind_at: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** TaskRowResponse */
         TaskRowResponse: {
             /**
@@ -2871,6 +2921,11 @@ export interface components {
              * @default null
              */
             repeat: string | null;
+            /**
+             * Remind At
+             * @default null
+             */
+            remind_at: string | null;
             /** Tags */
             tags: string[];
             /** Related */
@@ -3960,6 +4015,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_task_reminders_tasks_reminders_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskReminderListResponse"];
                 };
             };
         };

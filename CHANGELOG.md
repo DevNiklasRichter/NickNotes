@@ -32,6 +32,22 @@ Abschnitt der nächsten Version.
   Termin fest, ohne Datum ist die erste Task heute fällig. Einen eigenen Abstand
   tippst du als `@alle-10-tage`.
 
+- **Erinnerungen**: In den Eigenschaften einer Task stellst du unter „Erinnerung“
+  Tag und Uhrzeit ein – mit „Fällig 09:00“ in einem Klick am Fälligkeitstag. Zur
+  Zeit meldet sich NickNotes mit einer Windows-Benachrichtigung; ein Klick darauf
+  öffnet die Task. Verpasste Erinnerungen (App war zu) kommen beim nächsten Start,
+  mehrere auf einmal als eine Meldung. Tasks mit Erinnerung tragen in Liste und
+  Fokus eine kleine Glocke.
+- In der Schnellerfassung setzt `@9:00` (oder `@18uhr`) die Erinnerung gleich mit:
+  „Arzt anrufen @morgen @9:00“. Ohne Datum gilt heute, nach dieser Uhrzeit morgen.
+  Wiederkehrende Tasks nehmen die Erinnerung zur nächsten Instanz mit.
+- **Tagesüberblick**: Unter Einstellungen → Allgemein → Desktop wählst du eine Uhrzeit, zu der
+  NickNotes einmal am Tag meldet, welche Tasks heute fällig oder überfällig sind
+  (standardmäßig aus).
+- Erinnerungen kommen, solange NickNotes läuft; mit „Beim Schließen im Infobereich
+  weiterlaufen“ auch bei geschlossenem Fenster. Agenten können über MCP beim
+  Anlegen einer Task `remind_at` mitgeben.
+
 - **Fokuszeit auf einen Blick**: Der Fokus zeigt oben „Fokuszeit heute“, der
   Rückblick die Fokuszeit im Zeitraum und als eigene Zeile im Verlauf. Die Werte
   kommen aus den Fokuszeit-Zeilen deiner Tagesnotizen – auch von Hand

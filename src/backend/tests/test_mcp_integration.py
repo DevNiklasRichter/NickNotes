@@ -56,6 +56,20 @@ class MCPIntegrationTests(unittest.TestCase):
         self.assertEqual(api.backend_api_service.sessions.extra,{})
         (self.root/'TestVault'/'.system'/'config.json').write_text('{"vault_id": "fremd"}',encoding='utf-8')
         self.assertTrue(self.call('get_workspace_context',{},self.write)['isError'])
+    def test_agent_sets_and_removes_a_task_reminder(self):
+        created = self.call('create_task',{'title':'Angebot nachfassen','body':'Kurz anrufen.','tags':[],'operation_id':'remind-0001','due_date':'2030-03-04','remind_at':'2030-03-04T09:30'},self.write)
+        self.assertFalse(created.get('isError',False),created)
+        path = created['structuredContent']['path']
+        self.assertIn('remind_at: 2030-03-04 09:30', created['structuredContent']['content'])
+        rejected = self.call('create_task',{'title':'Kaputt','body':'','tags':[],'operation_id':'remind-0002','remind_at':'morgen früh'},self.write)
+        self.assertTrue(rejected['isError'])
+        reminders = self.client.get('/tasks/reminders').json()['items']
+        self.assertEqual([row['remind_at'] for row in reminders], ['2030-03-04 09:30'])
+        document = self.call('read_note',{'path':path},self.write)['structuredContent']
+        cleared = self.call('update_work_item',{'path':path,'expected_revision':document['revision'],'remind_at':''},self.write)
+        self.assertFalse(cleared.get('isError',False),cleared)
+        self.assertNotIn('remind_at', cleared['structuredContent']['content'])
+        self.assertEqual(self.client.get('/tasks/reminders').json()['items'], [])
     def test_write_revision_and_durable_idempotency(self):
         args = {'title':'MCP Note','body':'Knowledge','tags':[],'operation_id':'create-0001'}
         first = self.call('create_note',args,self.write)

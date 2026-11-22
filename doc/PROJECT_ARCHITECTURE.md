@@ -104,7 +104,7 @@ MeineNoteBase/
     migrations/                  Konfigurationssicherungen und Nachweise
 
 %LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
-    index.db                     SQLite-Projektion, Schema 5
+    index.db                     SQLite-Projektion, Schema 6
     graph-index.json             Graph-Projektion, Version 2
     task_status_links.json       abgeleiteter Task-Pfad-Index
     recovery/                    Schreibjournale und Wiederherstellung
@@ -171,7 +171,9 @@ wiederkehrenden Task (`repeat` im Frontmatter): `@taeglich`, `@werktags`,
 `@jaehrlich` (Umlaute oder ae/oe/ue) oder `@alle-N-tage|wochen|monate|jahre`
 (`parse_capture_repeat`). Ohne Datum ist sie heute faellig, `werktags` am
 naechsten Werktag. Das `@`-Menue bietet diese Woerter nur in den
-Schnellerfassungen an (`offerRepeats`). In anderen Notizen ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
+Schnellerfassungen an (`offerRepeats`), ebenso eine Uhrzeit: `@9:00` oder `@18uhr`
+(`parse_capture_time`) macht die Zeile zur Task und setzt `remind_at` auf diese
+Uhrzeit am Faelligkeitstag; ohne Datum heute, nach dieser Uhrzeit morgen. In anderen Notizen ist `@Datum` nur Text. Im Editor (auch in der Schnellerfassung) schlagen `[[`
 Notizen, `#` definierte Tags und `@` Termine vor (`inlineSuggestions.ts`, ueber
 dieselbe Palette wie `/`). Der Graph zeigt standardmaessig die Umgebung der
 gerade bearbeiteten Notiz (1 oder 2 Ebenen, optional nach einem Tag gefiltert).
@@ -202,7 +204,25 @@ legt deshalb keine zweite Instanz an. Antworten tragen die neue Task als
 `repeatTask` (Speichern) bzw. `nextTask` (Done). Der Index fuehrt die Regel als
 `tasks.repeat_rule` (Schema 5; aeltere Indexe bekommen die Spalte und lesen ihre
 Task-Dateien beim naechsten Abgleich neu), `GET /tasks` liefert sie als `repeat`;
-Task-Liste und Fokus zeigen daran ein Wiederholungssymbol (`TaskRepeatMark`).
+Task-Liste und Fokus zeigen daran ein Wiederholungssymbol (`TaskTitleMarks`).
+
+Erinnerungen stehen als `remind_at` im Task-Frontmatter, lokale Zeit
+`YYYY-MM-DD HH:MM` (`reminders.py`, lesend auch mit `T` oder Sekunden). Der Index
+fuehrt sie als `tasks.remind_at` (Schema 6, Nachruesten wie bei `repeat_rule`);
+`GET /tasks/reminders` liefert offene Tasks mit Erinnerung, frueheste zuerst.
+Das Hauptfenster fragt das alle 30 Sekunden ab (`useTaskReminders`) und zeigt
+erreichte Erinnerungen als Windows-Benachrichtigung (Web-`Notification`) plus
+Statusmeldung; ein Klick holt das Fenster (`window:action` `show`) und oeffnet
+die Task. Welche Erinnerung schon gezeigt wurde, merkt sich das Geraet in
+`localStorage` (Schluessel ID + Zeitpunkt, sechs Wochen) - nie im Markdown; eine
+geaenderte Zeit meldet sich neu. Verpasste Erinnerungen kommen beim naechsten
+Start, mehrere zusammen als eine Meldung. Die naechste Instanz einer
+wiederkehrenden Task bekommt die Erinnerung mit gleichem Abstand zur
+Faelligkeit und gleicher Uhrzeit (`shift_remind_at`). Der optionale
+Tagesueberblick (`dailyOverview` in `desktop-settings.json`, Standard aus)
+meldet einmal am Tag nach der gewaehlten Uhrzeit die heute faelligen und
+ueberfaelligen Tasks. Erinnerungen setzen eine laufende App voraus (auch
+verborgen im Infobereich); der Hintergrunddienst allein meldet nichts.
 
 To-dos von heute sind die mit heutigem Erstellzeitpunkt (ohne `created=` gilt
 der der Notiz) oder aus der heutigen Tagesnotiz; heute abgehakte bleiben
@@ -386,8 +406,8 @@ Entwurf liegt getrennt von der Schnellerfassung im Hauptfenster als
 `quick-capture-draft.md` im Profil. IPC fuer dieses Fenster ist auf
 Backend-URL/-Token, den eigenen Entwurf und Ausblenden beschraenkt. Ein Symbol
 im Infobereich bietet Schnellerfassung, Fokuszeit (`app:command` an das
-Hauptfenster, nur freigegebene Befehle), Oeffnen und Beenden. Kuerzel und
-„Beim Schliessen im Infobereich weiterlaufen“ stehen geraetelokal in
+Hauptfenster, nur freigegebene Befehle), Oeffnen und Beenden. Kuerzel,
+„Beim Schliessen im Infobereich weiterlaufen“ und der Tagesueberblick stehen geraetelokal in
 `desktop-settings.json` (`desktop-settings.mjs`); mit dem Schalter verbirgt der
 Close-Guard das Fenster statt es zu schliessen, Beenden ueber das Symbol und
 Update-Neustarts schliessen regulaer. Die App setzt unter Windows ihre

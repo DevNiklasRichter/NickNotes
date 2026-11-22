@@ -232,6 +232,7 @@ class CapturedTask(_ContractModel):
     taskPath: str
     dueDate: str
     repeat: str | None = None
+    remindAt: str | None = None
 
 
 class SaveCaptureResponse(_ContractModel):
@@ -297,6 +298,7 @@ class TaskRowResponse(_ContractModel):
     blocked_reason: str | None = None
     next_action_hint: str | None = None
     repeat: str | None = None
+    remind_at: str | None = None
     tags: list[str] = Field(default_factory=list)
     related: list[str] = Field(default_factory=list)
     updated_at: str = ""
@@ -305,6 +307,20 @@ class TaskRowResponse(_ContractModel):
 
 class TaskListResponse(_ContractModel):
     items: list[TaskRowResponse] = Field(default_factory=list)
+
+
+class TaskReminderRow(_ContractModel):
+    id: str
+    title: str = ""
+    path: str | None = None
+    due_date: str | None = None
+    remind_at: str
+
+
+class TaskReminderListResponse(_ContractModel):
+    """Open tasks with a reminder (`remind_at`, local time `YYYY-MM-DD HH:MM`), earliest first."""
+
+    items: list[TaskReminderRow] = Field(default_factory=list)
 
 
 class TodoRowResponse(_ContractModel):

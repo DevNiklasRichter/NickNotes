@@ -13,7 +13,7 @@ import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, LanguageDescription } from '@codemirror/language'
 import { highlightSelectionMatches, searchKeymap, openSearchPanel } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { dateSuggestions, detectInlineTrigger, repeatSuggestions, type InlineMatch, type InlineTrigger } from './inlineSuggestions'
+import { dateSuggestions, detectInlineTrigger, repeatSuggestions, timeSuggestions, type InlineMatch, type InlineTrigger } from './inlineSuggestions'
 import {
   Decoration,
   type DecorationSet,
@@ -139,7 +139,7 @@ type CodeMirrorMarkdownEditorProps = {
   className?: string
   embeddedInScroll?: boolean
   placeholderText?: string
-  /** Capture fields: `@` also offers repeat words (`@wöchentlich`), which turn the line into a repeating task. */
+  /** Capture fields: `@` also offers repeat words (`@wöchentlich`) and reminder times (`@9:00`) for the task the line becomes. */
   offerRepeats?: boolean
   tagSuggestions?: MarkdownEditorTagSuggestion[]
   selectedTagSuggestionKeys?: string[]
@@ -775,7 +775,7 @@ export function CodeMirrorMarkdownEditor({
     if (paletteState.mode === 'slash' && paletteState.trigger === '@') {
       const dates = dateSuggestions(paletteState.query).map<PaletteItem>(date => ({kind: 'insert', key: `date-${date.label}`, title: date.label, description: date.description, text: `@${date.hint ? paletteState.query : date.iso}`}))
       if (!offerRepeats) return dates
-      const repeats = repeatSuggestions(paletteState.query).map<PaletteItem>(repeat => ({kind: 'insert', key: `repeat-${repeat.label}`, title: repeat.label, description: repeat.description, text: `@${repeat.hint ? paletteState.query : repeat.token}`}))
+      const repeats = [...repeatSuggestions(paletteState.query), ...timeSuggestions(paletteState.query)].map<PaletteItem>(repeat => ({kind: 'insert', key: `repeat-${repeat.label}`, title: repeat.label, description: repeat.description, text: `@${repeat.hint ? paletteState.query : repeat.token}`}))
       return [...dates, ...repeats]
     }
 

@@ -9,7 +9,9 @@ import {COMMANDS} from '../src/frontend/src/app/commands.ts'
 test('unknown or damaged values fall back to the defaults; an empty shortcut stays off', () => {
   assert.deepEqual(normalizeDesktopSettings(null), DEFAULT_DESKTOP_SETTINGS)
   assert.deepEqual(normalizeDesktopSettings({captureShortcut: 'Alt+F4', keepInTray: 'yes'}), DEFAULT_DESKTOP_SETTINGS)
-  assert.deepEqual(normalizeDesktopSettings({captureShortcut: '', keepInTray: true}), {captureShortcut: '', keepInTray: true})
+  assert.deepEqual(normalizeDesktopSettings({captureShortcut: '', keepInTray: true}), {captureShortcut: '', keepInTray: true, dailyOverview: ''})
+  assert.equal(normalizeDesktopSettings({dailyOverview: '07:30'}).dailyOverview, '07:30')
+  assert.equal(normalizeDesktopSettings({dailyOverview: '25:00'}).dailyOverview, '')
   assert.equal(shortcutLabel('CommandOrControl+Alt+Space'), 'Strg+Alt+Leertaste')
 })
 
@@ -23,9 +25,9 @@ test('settings survive a restart and ignore unknown fields', async () => {
   try {
     const store = new DesktopSettingsStore(profile)
     assert.deepEqual(await store.load(), DEFAULT_DESKTOP_SETTINGS)
-    await store.update({captureShortcut: 'CommandOrControl+Alt+Space', keepInTray: true, extra: 1})
+    await store.update({captureShortcut: 'CommandOrControl+Alt+Space', keepInTray: true, dailyOverview: '08:00', extra: 1})
     const again = new DesktopSettingsStore(profile)
-    assert.deepEqual(await again.load(), {captureShortcut: 'CommandOrControl+Alt+Space', keepInTray: true})
+    assert.deepEqual(await again.load(), {captureShortcut: 'CommandOrControl+Alt+Space', keepInTray: true, dailyOverview: '08:00'})
   } finally {
     fs.rmSync(profile, {recursive: true, force: true})
   }

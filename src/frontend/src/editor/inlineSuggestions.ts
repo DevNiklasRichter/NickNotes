@@ -21,7 +21,7 @@ export function detectInlineTrigger(before: string, after: string, lineFrom: num
   if (tag) {
     return { trigger: '#', from: cursor - tag[1].length - 1, to: cursor, query: tag[1] }
   }
-  const date = before.match(/(?:^|\s)@([\p{L}\p{N}.-]*)$/u)
+  const date = before.match(/(?:^|\s)@([\p{L}\p{N}.:-]*)$/u)
   if (date) {
     return { trigger: '@', from: cursor - date[1].length - 1, to: cursor, query: date[1] }
   }
@@ -118,6 +118,22 @@ const REPEAT_CUSTOM_UNITS: Array<[string, string]> = [['tage', 'Tage'], ['wochen
 const REPEAT_DESCRIPTION = 'Wiederkehrende Task, ohne Datum ab heute fällig'
 
 export type RepeatSuggestion = { label: string; description: string; token: string; hint?: boolean }
+
+const TIME_DESCRIPTION = 'Erinnerung am Fälligkeitstag, ohne Datum heute'
+
+/** `@9:00` in a capture: the task reminds at that time on its due day (backend `parse_capture_time`). */
+export function timeSuggestions(query: string): RepeatSuggestion[] {
+  const typed = query.trim()
+  if (!typed) return [{ label: 'Erinnern um …', description: 'Weiter tippen: 9:00 – Erinnerung am Fälligkeitstag', token: '', hint: true }]
+  const match = /^(\d{1,2})(?::(\d{0,2}))?$/.exec(typed)
+  if (!match) return []
+  const hour = Number(match[1])
+  const minutes = match[2] ?? ''
+  const minute = minutes.length === 2 ? Number(minutes) : Number(minutes.padEnd(2, '0') || 0)
+  if (hour > 23 || minute > 59) return []
+  const time = `${hour}:${String(minute).padStart(2, '0')}`
+  return [{ label: `Erinnern um ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`, description: TIME_DESCRIPTION, token: time }]
+}
 
 /** `@` suggestions for repeating tasks in a capture: fixed words, and `alle-N-…` for an own distance. */
 export function repeatSuggestions(query: string): RepeatSuggestion[] {

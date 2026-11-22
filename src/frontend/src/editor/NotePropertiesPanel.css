@@ -36,6 +36,15 @@
   width: 3.6rem;
 }
 
+.property-hint {
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+
+.property-reminder-input {
+  min-width: 11.5rem;
+}
+
 .property-repeat-from {
   display: inline-flex;
   align-items: center;

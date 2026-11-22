@@ -2,6 +2,7 @@ import {useSyncedDraft} from './useSyncedDraft'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { NoteBacklinks, type NoteBacklink } from './NoteBacklinks'
 import { TaskRepeatField } from './TaskRepeatField'
+import { TaskReminderField } from './TaskReminderField'
 import {MultiSelectPicker} from '../ui/MultiSelectPicker'
 import type { CSSProperties, KeyboardEvent, RefObject } from 'react'
 import type { ParsedNoteDocument, TaskPriority, TaskStatus } from './noteDocument'
@@ -45,6 +46,8 @@ type NotePropertiesPanelProps = {
   onRemoveRelated: (related: string) => void
   /** `repeat` and `repeat_from` in the task frontmatter; empty `repeat` removes both. */
   onRepeatChange?: (repeat: string, fromCompletion: boolean) => void
+  /** `remind_at` in the task frontmatter; empty removes it. */
+  onReminderChange?: (remindAt: string) => void
   /** Incoming links from the knowledge graph; without it the row is hidden. */
   onLoadBacklinks?: (path: string) => Promise<NoteBacklink[]>
   onOpenBacklink?: (backlink: NoteBacklink) => void
@@ -86,6 +89,7 @@ export function NotePropertiesPanel({
   onRemoveTag,
   onRemoveRelated,
   onRepeatChange,
+  onReminderChange,
   onLoadBacklinks,
   onOpenBacklink,
   backlinksRefreshKey,
@@ -315,6 +319,10 @@ export function NotePropertiesPanel({
               <TaskRepeatField repeat={document.frontmatter.extra.repeat}
                 fromCompletion={String(document.frontmatter.extra.repeat_from ?? '').trim().toLowerCase() === 'completion'}
                 onChange={onRepeatChange} />
+            ) : null}
+
+            {onReminderChange ? (
+              <TaskReminderField remindAt={document.frontmatter.extra.remind_at} dueDate={document.frontmatter.due_date} onChange={onReminderChange} />
             ) : null}
 
             <span className="property-key">Wiedervorlage</span>

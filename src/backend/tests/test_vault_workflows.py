@@ -352,6 +352,50 @@ class VaultWorkflowTests(unittest.TestCase):
         self.assertIn("Müll rausbringen @2030-01-07 @wöchentlich", body)
         self.assertIn("- [ ] Nur To-do @täglich", body)
 
+    def test_save_capture_time_word_sets_a_reminder(self) -> None:
+        now = datetime.now()
+        result = self.vault.save_capture(
+            text="Arzt anrufen @2030-01-07 @9:00\nMüll raus @2030-01-07 @wöchentlich @18uhr\nGleich erledigen @23:59\n- [ ] Nur To-do @8:00\nUhrzeit kaputt @25:00",
+            selected_tags=[],
+            indexer=self.indexer,
+        )
+
+        # A time alone means today, or tomorrow once it has passed.
+        late = datetime.combine(now.date(), datetime.strptime("23:59", "%H:%M").time())
+        late_day = (now.date() + timedelta(days=1 if late <= now else 0)).isoformat()
+        self.assertEqual(
+            [(task["dueDate"], task["repeat"], task["remindAt"]) for task in result["tasks"]],
+            [("2030-01-07", None, "2030-01-07 09:00"), ("2030-01-07", "weekly", "2030-01-07 18:00"), (late_day, None, f"{late_day} 23:59")],
+        )
+        meta, _body = parse_markdown(Path(result["tasks"][0]["taskPath"]))
+        self.assertEqual(meta["remind_at"], "2030-01-07 09:00")
+        self.assertEqual(meta["title"], "Arzt anrufen")
+        reminders = self.indexer.list_task_reminders()
+        # Earliest first.
+        self.assertEqual([row["remind_at"] for row in reminders], [f"{late_day} 23:59", "2030-01-07 09:00", "2030-01-07 18:00"])
+        _meta, body = parse_markdown(Path(result["note_path"]))
+        self.assertIn("- [ ] Nur To-do @8:00", body)
+        self.assertIn("Uhrzeit kaputt @25:00", body)
+
+    def test_reminders_list_only_open_tasks_and_move_with_the_next_instance(self) -> None:
+        backend_api.state.dispose_session()
+        client = TestClient(backend_api.app)
+        self.assertEqual(client.post('/notebase/open', json={'path': str(self.vault_path)}).status_code, 200)
+        task = client.post('/capture/save', json={'text': 'Wochenbericht @2030-01-07 @wöchentlich @16:00\nOhne Erinnerung @2030-01-08'}).json()['tasks'][0]
+        rows = client.get('/tasks/reminders').json()['items']
+        self.assertEqual([(row['id'], row['remind_at'], row['due_date']) for row in rows], [(task['taskId'], '2030-01-07 16:00', '2030-01-07')])
+        listed = next(row for row in client.get('/tasks').json()['items'] if row['id'] == task['taskId'])
+        self.assertEqual(listed['remind_at'], '2030-01-07 16:00')
+
+        done = client.post(f"/tasks/{task['taskId']}/done")
+        self.assertEqual(done.status_code, 200, done.text)
+        successor = done.json()['nextTask']
+        self.assertEqual(successor['dueDate'], '2030-01-14')
+        rows = client.get('/tasks/reminders').json()['items']
+        self.assertEqual([(row['id'], row['remind_at']) for row in rows], [(successor['taskId'], '2030-01-14 16:00')])
+        next_meta, _ = parse_markdown_text(Path(successor['path']).read_text(encoding='utf-8'))
+        self.assertEqual(next_meta['remind_at'], '2030-01-14 16:00')
+
     def test_save_capture_handles_typed_and_invalid_dates(self) -> None:
         result = self.vault.save_capture(
             text="Tippfehler @31.02.2027\nGanz falsch @2026-13-40\nManuell @20.11.2030 erledigen",

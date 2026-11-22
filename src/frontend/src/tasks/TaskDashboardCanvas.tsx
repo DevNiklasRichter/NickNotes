@@ -4,7 +4,7 @@ import type { TaskDashboardFilters, TaskRow } from '../app/AppShared'
 import type { TagGroupDefinition } from '../tags/tagTypes'
 import { filterTaskRows, groupTaskRows, toTaskDashboardTodayIso, toTaskDueIso } from './taskDashboardModel'
 import { normalizeTaskPriorityValue } from '../app/AppShared'
-import { TaskRepeatMark } from './TaskRepeatMark'
+import { TaskTitleMarks } from './TaskTitleMarks'
 
 type TaskDashboardCanvasProps = {
   tasks: TaskRow[]
@@ -225,7 +225,7 @@ export function TaskDashboardCanvas({
                       return (
                         <li key={task.id} className="task-table-row">
                           <div className="task-table-cell task-table-cell-title">
-                            <span className="task-table-title-main">{task.title}<TaskRepeatMark repeat={task.repeat} /></span>
+                            <span className="task-table-title-main">{task.title}<TaskTitleMarks repeat={task.repeat} remindAt={task.remind_at} /></span>
                           </div>
                           <div className="task-table-cell task-table-cell-status">
                             <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
@@ -283,7 +283,7 @@ export function TaskDashboardCanvas({
                     return (
                       <article key={task.id} className="task-item task-board-card">
                         <header className="task-board-card-header">
-                          <strong className="task-title-with-tags">{task.title}<TaskRepeatMark repeat={task.repeat} /></strong>
+                          <strong className="task-title-with-tags">{task.title}<TaskTitleMarks repeat={task.repeat} remindAt={task.remind_at} /></strong>
                           <div className="task-board-meta-row">
                             <span className={taskStatusClassName(task.status)}>{taskStatusLabel(task.status)}</span>
                             <span className="task-priority-badge">

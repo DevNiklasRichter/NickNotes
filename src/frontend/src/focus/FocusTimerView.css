@@ -252,6 +252,6 @@
   display: inline-flex;
 }
 
-.focus-row:has(.focus-timer-button.active) :is(.focus-row-meta, .focus-mit-marker, .task-repeat-mark) {
+.focus-row:has(.focus-timer-button.active) :is(.focus-row-meta, .focus-mit-marker, .task-title-mark) {
   display: none;
 }

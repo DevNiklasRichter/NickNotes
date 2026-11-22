@@ -5,13 +5,18 @@ import type {UpdateState} from './app/updateTypes'
 /** Login autostart of the local service; only the installed Windows app offers it. */
 type BackgroundService = {available:boolean; enabled:boolean}
 
-/** Device-local desktop integration: global capture shortcut and tray behaviour. */
+/** Device-local desktop integration: global capture shortcut, tray behaviour, morning overview. */
 export type DesktopSettings = {
   captureShortcut:string
   keepInTray:boolean
+  /** "HH:MM" of the morning overview of due tasks; '' is off. */
+  dailyOverview:string
   shortcutRegistered:boolean
   shortcuts:Array<{value:string;label:string}>
+  overviewTimes:string[]
 }
+
+type DesktopSettingsPatch = Partial<Pick<DesktopSettings,'captureShortcut'|'keepInTray'|'dailyOverview'>>
 
 declare global {
   interface Window {
@@ -26,7 +31,7 @@ declare global {
       readCaptureDraft?:()=>Promise<string>
       writeCaptureDraft?:(text:string)=>Promise<void>
       getDesktopSettings?:()=>Promise<DesktopSettings>
-      setDesktopSettings?:(patch:Partial<Pick<DesktopSettings,'captureShortcut'|'keepInTray'>>)=>Promise<DesktopSettings>
+      setDesktopSettings?:(patch:DesktopSettingsPatch)=>Promise<DesktopSettings>
       onAppCommand?:(handler:(command:string)=>void)=>()=>void
       quickCapture?: {
         readDraft:()=>Promise<string>
@@ -43,7 +48,7 @@ declare global {
       selectImportSources?: () => Promise<string[]>
       getBackendUrl?: () => Promise<string>
       getBackendToken?: () => Promise<string>
-      windowAction?: (action:'close'|'fullscreen') => Promise<void>
+      windowAction?: (action:'close'|'fullscreen'|'show') => Promise<void>
       editText?: (action:'undo'|'redo'|'cut'|'copy'|'paste'|'selectAll') => Promise<void>
       openExternalUrl?: (url: string) => Promise<{ ok: boolean; code?: string; message?: string }>
       openPathInFileExplorer?: (path: string) => Promise<{ ok: boolean; code?: string; message?: string }>

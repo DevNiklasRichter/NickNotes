@@ -7,7 +7,7 @@ import {CaptureDraftStore} from './capture-draft-store.mjs'
 import {createWindowCloseGuard} from './window-close-guard.mjs'
 import {createUpdateService} from './update-service.mjs'
 import {createBackendService} from './backend-service.mjs'
-import {CAPTURE_SHORTCUTS, DesktopSettingsStore, shortcutLabel} from './desktop-settings.mjs'
+import {CAPTURE_SHORTCUTS, DesktopSettingsStore, OVERVIEW_TIMES, shortcutLabel} from './desktop-settings.mjs'
 import {createQuickCaptureWindow} from './quick-capture-window.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -233,8 +233,8 @@ function registerCaptureShortcut() {
 }
 
 function desktopState() {
-  const {captureShortcut, keepInTray} = desktopSettings.current
-  return {captureShortcut, keepInTray, shortcutRegistered, shortcuts: CAPTURE_SHORTCUTS}
+  const {captureShortcut, keepInTray, dailyOverview} = desktopSettings.current
+  return {captureShortcut, keepInTray, dailyOverview, shortcutRegistered, shortcuts: CAPTURE_SHORTCUTS, overviewTimes: OVERVIEW_TIMES}
 }
 
 function updateTrayMenu() {
@@ -469,6 +469,7 @@ app.whenReady().then(async () => {
   handle('window:action', (_event, action) => {
     if (!mainWindow) return
     if (action === 'close') mainWindow.close()
+    else if (action === 'show') showMainWindow()  // a clicked reminder brings the hidden window back
     else if (action === 'fullscreen') mainWindow.setFullScreen(!mainWindow.isFullScreen())
   })
   handle('editor:action', (_event, action) => {

@@ -47,11 +47,11 @@ Eine Konfiguration mit dem echten Schluessel nicht ins Repository einchecken. Di
 
 | Schreiben | Zweck |
 | --- | --- |
-| `create_note` / `create_task` | Markdown anlegen; vorhandene Tags und optionalen Termin verwenden |
+| `create_note` / `create_task` | Markdown anlegen; vorhandene Tags, optionalen Termin und bei Tasks optional `remind_at` (lokal `YYYY-MM-DD HH:MM`) verwenden |
 | `add_todo` | Stabile Checkbox in einer Notiz oder Daily Note anlegen |
 | `append_to_note` | Text revisionsgeprueft anhaengen |
 | `update_note` | Vollstaendiges Markdown mit erwarteter Revision ersetzen |
-| `update_work_item` | Task-Eigenschaften aendern oder eine Checkbox umschalten |
+| `update_work_item` | Task-Eigenschaften (auch `remind_at`, leer entfernt sie) aendern oder eine Checkbox umschalten |
 | `create_tag` | Eine zentrale Tagdefinition ergaenzen |
 
 Vor Aenderungen lesen. Bei Schreibkonflikten neu lesen und den Entwurf bewusst zusammenfuehren. Keine automatische Ueberschreibung. Fuer Anlegen und Anhaengen eine eindeutige `operation_id` verwenden und bei einem Retry **dieselbe Kennung mit denselben Argumenten** senden. Erfolgreiche Auftraege werden auch nach einem Neustart erkannt. Ein unterbrochener, nicht eindeutig abgeschlossener Auftrag wird als Konflikt gemeldet; der Agent soll vorhandene Quellen pruefen, bevor er einen neuen Auftrag anlegt.

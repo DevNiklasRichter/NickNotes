@@ -167,8 +167,17 @@ def create_mcp(service, grants):
             raise ValidationDomainError('Unbekannte Tags. Zuerst list_tags oder create_tag verwenden.')
         return sorted(set(tags))
 
+    def checked_remind_at(value, kind='task'):
+        if not value:
+            return ''
+        from .nicknotes_backend.reminders import normalize_remind_at
+        normalized = normalize_remind_at(value)
+        if kind != 'task' or normalized is None:
+            raise ValidationDomainError('Erinnerung nur für Tasks und als lokale Zeit YYYY-MM-DD HH:MM angeben.')
+        return normalized
+
     @mcp.tool(annotations=write)
-    def create_note(title: str, body: str, tags: list[str], operation_id: str, group: str = '', kind: str = 'note', due_date: str = '') -> dict[str, Any]:
+    def create_note(title: str, body: str, tags: list[str], operation_id: str, group: str = '', kind: str = 'note', due_date: str = '', remind_at: str = '') -> dict[str, Any]:
         """Create a Markdown note or standalone task. Retry with the same operation_id to avoid duplicates."""
         with access(True) as (vault, _, grant):
             if kind not in {'note', 'task'} or not title.strip() or len(body.encode()) > 4*1024*1024:
@@ -176,6 +185,7 @@ def create_mcp(service, grants):
             if due_date:
                 from datetime import date
                 date.fromisoformat(due_date)
+            remind_at = checked_remind_at(remind_at, kind)
             from .nicknotes_backend.graph_index import _extract_tags
             checked_tags(vault, _extract_tags({}, body))
             tags = checked_tags(vault, tags)
@@ -184,8 +194,10 @@ def create_mcp(service, grants):
                 original = service.read_note_content(created['notePath'])
                 meta, _ = parse_markdown_text(original['content'])
                 meta.update(tags=tags, due_date=due_date)
+                if remind_at:
+                    meta['remind_at'] = remind_at
                 return service.save_note_content(NoteSaveRequest(path=original['path'], content=dump_markdown(meta, body), expectedRevision=original['revision']))
-            return receipt(vault, grant, operation_id, dict(action='create', title=title, body=body, tags=tags, group=group, kind=kind, due_date=due_date), execute)
+            return receipt(vault, grant, operation_id, dict(action='create', title=title, body=body, tags=tags, group=group, kind=kind, due_date=due_date, remind_at=remind_at), execute)
 
     @mcp.tool(annotations=write)
     def update_note(path: str, content: str, expected_revision: str) -> dict[str, Any]:
@@ -215,9 +227,10 @@ def create_mcp(service, grants):
 
 
     @mcp.tool(annotations=write)
-    def create_task(title: str, body: str, tags: list[str], operation_id: str, due_date: str = '', group: str = '') -> dict[str, Any]:
-        """Create a standalone Markdown task with an optional ISO due date and existing tags."""
-        return create_note(title, body, tags, operation_id, group, 'task', due_date)
+    def create_task(title: str, body: str, tags: list[str], operation_id: str, due_date: str = '', group: str = '', remind_at: str = '') -> dict[str, Any]:
+        """Create a standalone Markdown task with an optional ISO due date, existing tags and an optional
+        reminder (`remind_at`, local time `YYYY-MM-DD HH:MM`; the desktop app shows a Windows notification)."""
+        return create_note(title, body, tags, operation_id, group, 'task', due_date, remind_at)
 
     @mcp.tool(annotations=write)
     def add_todo(path: str, text: str, expected_revision: str, operation_id: str) -> dict[str, Any]:
@@ -240,8 +253,9 @@ def create_mcp(service, grants):
             return receipt(vault, grant, operation_id, dict(action='todo', path=path, text=text, revision=expected_revision), execute)
 
     @mcp.tool(annotations=write)
-    def update_work_item(path: str, expected_revision: str, status: str | None = None, due_date: str | None = None, priority: str | None = None, tags: list[str] | None = None, todo_id: str | None = None, checked: bool | None = None) -> dict[str, Any]:
-        """Update task properties or toggle one checkbox todo. Always read the note revision first."""
+    def update_work_item(path: str, expected_revision: str, status: str | None = None, due_date: str | None = None, priority: str | None = None, tags: list[str] | None = None, todo_id: str | None = None, checked: bool | None = None, remind_at: str | None = None) -> dict[str, Any]:
+        """Update task properties or toggle one checkbox todo. Always read the note revision first.
+        `remind_at` is local time `YYYY-MM-DD HH:MM`; an empty string removes the reminder."""
         with access(True) as (vault, _, __):
             current = service.read_note_content(path)
             meta, body = parse_markdown_text(current['content'])
@@ -269,6 +283,11 @@ def create_mcp(service, grants):
                         from datetime import date
                         date.fromisoformat(due_date)
                     meta['due_date'] = due_date
+                if remind_at is not None:
+                    if remind_at:
+                        meta['remind_at'] = checked_remind_at(remind_at)
+                    else:
+                        meta.pop('remind_at', None)
                 if tags is not None:
                     meta['tags'] = checked_tags(vault, tags)
             return update_note(path, dump_markdown(meta, body), expected_revision)
