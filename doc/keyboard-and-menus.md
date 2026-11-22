@@ -49,7 +49,10 @@ loescht Text und niemals eine ganze Notiz. Auf macOS wird fuer Mod-Kuerzel Cmd
 erkannt; eine eigene macOS-Paketabnahme ist damit nicht vorweggenommen.
 
 Neue Dokumente werden im Ordner der aktiven Notiz angelegt, bei fehlendem
-Dokumentkontext in der NoteBase-Wurzel. Die Explorer-Icons behalten ihren
+Dokumentkontext in der NoteBase-Wurzel. Das gilt auch fuer „Datei → Neu aus
+Vorlage …“. „Datei → Als Vorlage speichern …“ speichert die aktive Notiz zuerst
+und fragt vor dem Ersetzen einer gleichnamigen Vorlage. Beide Befehle haben kein
+eigenes Kuerzel und stehen auch in der App-Befehlssuche (Strg+P). Die Explorer-Icons behalten ihren
 ausgewaehlten Ordner als Kontext. Nach Anlegen und Oeffnen wird der Editor
 fokussiert, damit unmittelbar weitergetippt werden kann.
 

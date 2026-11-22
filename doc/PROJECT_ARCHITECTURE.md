@@ -101,6 +101,7 @@ MeineNoteBase/
     ui_settings.json             Farbschema (hell/dunkel) und portable UI-Einstellungen
     favorite_folders.json
     graph-state.json             Graph-Anordnung und -Filter, Version 2
+    templates/                   Vorlagen als Markdown, nie indexiert
     migrations/                  Konfigurationssicherungen und Nachweise
 
 %LOCALAPPDATA%/NickNotes/notebases/<Name>-<Pfad-Hash>/   geraetelokal
@@ -223,6 +224,19 @@ Tagesueberblick (`dailyOverview` in `desktop-settings.json`, Standard aus)
 meldet einmal am Tag nach der gewaehlten Uhrzeit die heute faelligen und
 ueberfaelligen Tasks. Erinnerungen setzen eine laufende App voraus (auch
 verborgen im Infobereich); der Hintergrunddienst allein meldet nichts.
+
+Vorlagen sind Markdown-Dateien in `.system/templates/` (`templates.py`,
+`TemplateStore`). Sie liegen in `.system`, damit sie mit der NoteBase reisen,
+aber nie Quelle von Index, Graph oder Tag-Seiten werden. Das Frontmatter einer
+Vorlage traegt nur `type` und wiederholbare Felder (`tags`, `priority`,
+`estimate_minutes`, `repeat`, `repeat_from`). `POST /templates/save` macht aus einer
+gespeicherten Notiz eine Vorlage, benannt nach ihrem Titel. Ihre eigene
+Ueberschrift wird dabei zu `{{titel}}`. Aus einer Tagesnotiz wird die Vorlage
+„Tagesnotiz“, die `_ensure_daily_note` fuer jede neue Tagesnotiz nutzt.
+`/note-groups/add-note` nimmt `template` an: Die Vorlage bestimmt dann die Art
+(Notiz/Task) und bringt Text und Felder mit. Platzhalter `{{titel}}`,
+`{{datum}}`, `{{wochentag}}` und `{{uhrzeit}}` (auch englisch) werden beim
+Anlegen gefuellt, bei Tagesnotizen mit deren Tag. Unbekannte bleiben stehen.
 
 To-dos von heute sind die mit heutigem Erstellzeitpunkt (ohne `created=` gilt
 der der Notiz) oder aus der heutigen Tagesnotiz; heute abgehakte bleiben
