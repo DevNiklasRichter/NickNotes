@@ -24,3 +24,7 @@
 @media (max-width: 1000px) {.window-search-button {flex: 0 0 28px; width: 28px; min-width: 28px; justify-content: center; padding: 3px;} .window-search-button > span {display: none;}}
 @media (max-width: 700px) {.window-titlebar-title {display: none;} .app-menu-bar {margin-left: var(--space-2);} .app-menu-root > button {padding-inline: 6px;}}
 @media (max-height: 320px) {.quick-open-dialog {display: block; overflow: auto;} .quick-open-dialog > * + * {margin-top: var(--space-2);} .quick-open-dialog .quick-open-results {overflow: visible;}}
+.template-picker-row {display: flex; align-items: center; gap: var(--space-1);}
+.template-picker-row > button[role="option"] {flex: 1 1 auto; min-width: 0;}
+.quick-open-dialog .quick-open-results .template-picker-row > .icon-button {width: auto; flex: 0 0 auto; color: var(--muted);}
+.quick-open-dialog .quick-open-results .template-picker-row > .icon-button.danger {color: var(--danger); border-color: var(--danger);}

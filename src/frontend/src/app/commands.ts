@@ -2,6 +2,7 @@
 export const COMMANDS = [
   {id:'newNote', label:'Neue Notiz', group:'Datei', shortcut:'Mod+N'},
   {id:'newTask', label:'Neuer Task', group:'Datei', shortcut:'Mod+Shift+N'},
+  {id:'newFromTemplate', label:'Neu aus Vorlage …', group:'Datei'},
   {id:'openNote', label:'Notiz öffnen …', group:'Datei', shortcut:'Mod+O'},
   {id:'commandPalette', label:'App-Befehle suchen …', group:'Bearbeiten', shortcut:'Mod+P'},
   {id:'openVault', label:'NoteBase öffnen …', group:'Datei', shortcut:'Mod+Shift+O'},
@@ -9,6 +10,7 @@ export const COMMANDS = [
   {id:'daily', label:'Heutige Tagesnotiz', group:'Datei', shortcut:'Mod+Alt+D'},
   {id:'save', label:'Speichern', group:'Datei', shortcut:'Mod+S'},
   {id:'saveAll', label:'Alle speichern', group:'Datei', shortcut:'Mod+Shift+S'},
+  {id:'saveAsTemplate', label:'Als Vorlage speichern …', group:'Datei'},
   {id:'deleteNote', label:'Aktuelle Datei löschen …', group:'Datei', shortcut:'Mod+Shift+Delete'},
   {id:'closeTab', label:'Aktive Ansicht schließen', group:'Datei', shortcut:'Mod+W', aliases:['Mod+F4']},
   {id:'settings', label:'Einstellungen …', group:'Datei', shortcut:'Mod+,'},

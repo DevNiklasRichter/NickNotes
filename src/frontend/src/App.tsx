@@ -8,7 +8,7 @@ import {COMMANDS, commandIcon, commandTitle, shortcutLabel, type AppCommand, typ
 import {useAppCommands} from './app/useAppCommands';
 import {connectionEpoch} from './app/apiClient';
 import {AppMenuBar} from './layout/AppMenuBar';
-import {QuickOpenDialog, ShortcutHelpDialog} from './layout/CommandDialogs';
+import {QuickOpenDialog, ShortcutHelpDialog, TemplatePickerDialog, type TemplateRow} from './layout/CommandDialogs';
 import {UpdateDialog} from './layout/UpdateDialog';
 import {WhatsNewDialog} from './layout/WhatsNewDialog';
 import {CreateNoteBaseDialog} from './layout/CreateNoteBaseDialog';
@@ -158,6 +158,7 @@ function App() {
     const [latestGraphStatus, setLatestGraphStatus] = useState<GraphIndexStatus | null>(null);
     const [openTabs, setOpenTabs] = useState<NoteTab[]>([]);
     const [quickOpen, setQuickOpen] = useState<{initialQuery:string;vaultPath:string;epoch:number;trigger:HTMLElement|null}|null>(null);
+    const [templatePicker, setTemplatePicker] = useState<{vaultPath:string;epoch:number;trigger:HTMLElement|null}|null>(null);
     const [shortcutHelp, setShortcutHelp] = useState(false);
     const [updatesOpen,setUpdatesOpen]=useState(false);
     const [whatsNewOpen,setWhatsNewOpen]=useState(false);
@@ -2624,17 +2625,34 @@ function App() {
             await window.nicknotes?.editText?.(action);
         } else await focusedEditor()?.edit(action);
     };
-    const createDocument = async (kind:'note'|'task') => {
+    const createDocument = async (kind:'note'|'task', template?:TemplateRow) => {
         const relative=activeTab?.kind==='note'?getRelativeVaultPath(activeTab.path,vaultPath):'';
         const folder=relative.includes('/')?relative.slice(0,relative.lastIndexOf('/')):'';
         const group=noteGroupsByKey.get(folder)?.canCreateNotes===false?'':folder;
-        const base=kind==='note'?'Neue Notiz':'Neuer Task';
+        const base=template?.name??(kind==='note'?'Neue Notiz':'Neuer Task');
         const titles=new Set(explorerRows.map(row=>row.title.toLocaleLowerCase()));
         let title=base;let number=2;
         while(titles.has(title.toLocaleLowerCase()))title=`${base} ${number++}`;
         setEditorPanelOpen(true);
-        await (kind==='note'?createExplorerFile:createExplorerTask)(group,title);
+        await explorerMutationService.createExplorerDocument(group,title,kind,template?.name??'');
         focusEditorSoon();
+    };
+    const openTemplatePicker = () => setTemplatePicker({vaultPath,epoch:connectionEpoch(),trigger:document.activeElement instanceof HTMLElement?document.activeElement:null});
+    const saveAsTemplate = async () => {
+        const tab=activeTab;
+        if(!tab||tab.kind!=='note'||tab.readOnly||tab.loading)return;
+        if(!flushNoteInputs())return;
+        if(tab.dirty&&!await saveTab(tab.path))return;
+        // Daily notes become the template for new daily notes; everything else is named after its title.
+        const daily=getRelativeVaultPath(tab.path,vaultPath).startsWith('daily/');
+        const name=daily?'Tagesnotiz':tab.title;
+        try {
+            const existing=await apiRequest<{items:TemplateRow[]}>(backendUrl,'/templates');
+            const replace=existing.items.some(item=>item.name.toLocaleLowerCase()===name.toLocaleLowerCase());
+            if(replace&&await askTagChoice('Vorlage ersetzen',`Es gibt schon eine Vorlage „${name}“. Durch diese ${daily?'Tagesnotiz':'Notiz'} ersetzen?`,[{id:'replace',label:'Vorlage ersetzen'}])!=='replace')return;
+            const saved=await apiRequest<{saved:string}>(backendUrl,'/templates/save',{method:'POST',body:JSON.stringify({notePath:tab.path,replace})});
+            setMessage(daily?'Als Vorlage „Tagesnotiz“ gespeichert. Neue Tagesnotizen beginnen damit.':`Als Vorlage „${saved.saved}“ gespeichert. „Neu aus Vorlage“ legt damit neue ${tab.noteType==='task'?'Tasks':'Notizen'} an.`);
+        } catch(caught) {setError(String(caught))}
     };
     const saveAllDocuments = async () => {
         if (!flushNoteInputs()) return;
@@ -2668,7 +2686,7 @@ function App() {
     };
     const openSearch = (initialQuery='') => setQuickOpen({initialQuery,vaultPath,epoch:connectionEpoch(),trigger:document.activeElement instanceof HTMLElement?document.activeElement:null});
     const commandHandlers:Record<CommandId,()=>unknown> = {
-        newNote:()=>createDocument('note'),newTask:()=>createDocument('task'),
+        newNote:()=>createDocument('note'),newTask:()=>createDocument('task'),newFromTemplate:openTemplatePicker,saveAsTemplate,
         openNote:()=>vaultLoaded?openSearch():pickAndOpenVault(),commandPalette:()=>openSearch('>'),openVault:pickAndOpenVault,newVault:createVault,daily:openOrCreateTodayDaily,
         save:()=>settingsDialogOpen?saveSettings():activeTab?saveTab(activeTab.path):undefined,saveAll:saveAllDocuments,deleteNote:deleteCurrentDocument,
         closeTab:()=>activeTab?closeEditorTab(activeTab.id):undefined,settings:openSettingsDialog,
@@ -2695,7 +2713,7 @@ function App() {
         if(spec.id==='writingMode')enabled=vaultLoaded&&editorPanelOpen;
         if(spec.id==='save')enabled=settingsDialogOpen||Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
         if(spec.id==='saveAll')enabled=settingsDirty||openTabs.some(tab=>tab.kind==='note'&&!tab.readOnly);
-        if(spec.id==='deleteNote')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
+        if(spec.id==='deleteNote'||spec.id==='saveAsTemplate')enabled=Boolean(activeTab?.kind==='note'&&!activeTab.readOnly&&!activeTab.loading);
         if(['find','format'].includes(spec.id))enabled=Boolean(activeTab?.kind==='note'&&editorPanelOpen)||capturePanelOpen&&vaultLoaded;
         let disabledReason:string|undefined;
         if(!enabled){
@@ -2724,7 +2742,8 @@ function App() {
     });
     useEffect(()=>window.nicknotes?.onAppCommand?.(command=>runExternalCommand(command)),[]);
     const openedSearchNotes=openTabs.filter(tab=>tab.kind==='note'&&!tab.loading).slice().reverse().sort((a,b)=>Number(b.id===activeTab?.id)-Number(a.id===activeTab?.id)).slice(0,8).map(tab=>({path:tab.path,title:tab.title}));
-    const commandDialogs=<>{quickOpen&&quickOpen.vaultPath===vaultPath&&quickOpen.epoch===connectionEpoch()&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultLoaded?vaultPath:''} initialQuery={quickOpen.initialQuery} openedNotes={vaultLoaded?openedSearchNotes:[]} commands={appCommands} onClose={()=>setQuickOpen(null)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}} onExecute={id=>{
+    const commandDialogs=<>{templatePicker&&templatePicker.vaultPath===vaultPath&&templatePicker.epoch===connectionEpoch()&&vaultLoaded&&<TemplatePickerDialog backendUrl={backendUrl} onClose={()=>{const trigger=templatePicker.trigger;setTemplatePicker(null);trigger?.focus()}} onPick={template=>{setTemplatePicker(null);void createDocument(template.kind==='task'?'task':'note',template)}} onError={setError}/>}
+        {quickOpen&&quickOpen.vaultPath===vaultPath&&quickOpen.epoch===connectionEpoch()&&<QuickOpenDialog backendUrl={backendUrl} vaultPath={vaultLoaded?vaultPath:''} initialQuery={quickOpen.initialQuery} openedNotes={vaultLoaded?openedSearchNotes:[]} commands={appCommands} onClose={()=>setQuickOpen(null)} onOpen={async(path,title)=>{setEditorPanelOpen(true);await openNoteInTab(path,title);focusEditorSoon()}} onExecute={id=>{
         const trigger=quickOpen.trigger;
         flushSync(()=>setQuickOpen(null));
         if(trigger?.isConnected)trigger.focus({preventScroll:true});

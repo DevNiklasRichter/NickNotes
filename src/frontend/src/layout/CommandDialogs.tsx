@@ -99,6 +99,62 @@ export function QuickOpenDialog({backendUrl,vaultPath,initialQuery,openedNotes,c
   </div></div>
 }
 
+export type TemplateRow = {name:string; kind:string; daily:boolean}
+
+/** "Neu aus Vorlage": pick a template from `.system/templates`; deleting asks a second click. */
+export function TemplatePickerDialog({backendUrl,onClose,onPick,onError}:{
+  backendUrl:string;onClose:()=>void;onPick:(template:TemplateRow)=>void;onError:(message:string)=>void
+}) {
+  const root=useDialogFocus()
+  const id=useId()
+  const [items,setItems]=useState<TemplateRow[]|null>(null)
+  const [filter,setFilter]=useState('')
+  const [selected,setSelected]=useState(0)
+  const [confirmDelete,setConfirmDelete]=useState('')
+  const field=useRef<HTMLInputElement>(null)
+  useEffect(()=>{
+    const controller=new AbortController()
+    void apiRequest<{items:TemplateRow[]}>(backendUrl,'/templates',{signal:controller.signal})
+      .then(value=>{if(!controller.signal.aborted)setItems(value.items)})
+      .catch(caught=>{if(!controller.signal.aborted){setItems([]);onError(String(caught))}})
+    return()=>controller.abort()
+  },[backendUrl,onError])
+  const words=filter.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const options=(items??[]).filter(item=>words.every(word=>item.name.toLocaleLowerCase().includes(word)))
+  const index=Math.min(selected,Math.max(0,options.length-1))
+  const activeId=options[index]?`${id}-option-${index}`:undefined
+  const remove=async(template:TemplateRow)=>{
+    if(confirmDelete!==template.name){setConfirmDelete(template.name);return}
+    try{
+      const value=await apiRequest<{items:TemplateRow[]}>(backendUrl,'/templates/delete',{method:'POST',body:JSON.stringify({name:template.name})})
+      setItems(value.items);setConfirmDelete('')
+      field.current?.focus()  // the deleted row took the focused button with it
+    }catch(caught){onError(String(caught))}
+  }
+  const detail=(item:TemplateRow)=>confirmDelete===item.name?'Zum Löschen noch einmal auf den Papierkorb klicken.':`${item.kind==='task'?'Task':'Notiz'}${item.daily?' · gilt für neue Tagesnotizen':''}`
+  return <div className="modal-overlay" onClick={onClose}><div ref={root} className="command-dialog quick-open-dialog template-picker-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-heading`} onClick={event=>event.stopPropagation()} onKeyDown={event=>{
+    if(event.nativeEvent.isComposing)return
+    dialogKeys(event,onClose)
+    if(event.defaultPrevented||!(event.target instanceof HTMLInputElement))return
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();setConfirmDelete('');setSelected((index+(event.key==='ArrowUp'?-1:1)+options.length)%Math.max(1,options.length))}
+    if(event.key==='Enter'){event.preventDefault();if(options[index])onPick(options[index])}
+  }}>
+    <div className="command-dialog-header"><h2 id={`${id}-heading`}>Neu aus Vorlage</h2><button className="icon-button compact" onClick={onClose} aria-label="Vorlagenauswahl schließen"><LucideNamedIcon name="X" size={14}/></button></div>
+    <input ref={field} aria-label="Vorlage suchen" placeholder="Vorlage …" value={filter} onChange={event=>{setFilter(event.target.value);setSelected(0);setConfirmDelete('')}} role="combobox" aria-expanded="true" aria-controls={`${id}-results`} aria-activedescendant={activeId} autoFocus/>
+    {items===null?<p role="status" className="quick-open-status">Vorlagen werden geladen …</p>
+      :items.length===0?<p role="status">Noch keine Vorlagen. Öffne eine Notiz oder Task und wähle „Datei → Als Vorlage speichern“. Aus einer Tagesnotiz wird die Vorlage für neue Tagesnotizen.</p>
+      :options.length===0?<p role="status">Keine passende Vorlage.</p>:null}
+    <div className="quick-open-results" role="listbox" id={`${id}-results`} aria-label="Vorlagen">{options.map((item,rowIndex)=><div key={item.name} className="template-picker-row">
+      <button type="button" id={`${id}-option-${rowIndex}`} role="option" tabIndex={-1} aria-selected={index===rowIndex} onMouseDown={event=>event.preventDefault()} onPointerEnter={()=>setSelected(rowIndex)} onClick={()=>onPick(item)}>
+        <LucideNamedIcon name={item.kind==='task'?'CheckSquare':'FileText'} size={16} className="quick-open-option-icon"/>
+        <span className="quick-open-option-copy"><strong>{item.name}</strong><small>{detail(item)}</small></span>
+      </button>
+      <button type="button" className={`icon-button compact${confirmDelete===item.name?' danger':''}`} aria-label={confirmDelete===item.name?`Vorlage „${item.name}“ wirklich löschen`:`Vorlage „${item.name}“ löschen`} data-tooltip={confirmDelete===item.name?'Wirklich löschen':'Vorlage löschen'} onClick={()=>void remove(item)}><LucideNamedIcon name="Trash2" size={14}/></button>
+    </div>)}</div>
+    <p className="muted-copy">Platzhalter in Vorlagen: {'{{titel}}'}, {'{{datum}}'}, {'{{wochentag}}'}, {'{{uhrzeit}}'}. Vorlagen liegen in der NoteBase unter .system/templates.</p>
+  </div></div>
+}
+
 export function ShortcutHelpDialog({onClose}:{onClose:()=>void}) {
   const root=useDialogFocus()
   const [filter,setFilter]=useState('')
