@@ -1,13 +1,5 @@
 """Zentrale Konfigurationswerte für den NickNotes-Backendbereich."""
 
-DEFAULT_CORS_ORIGINS: list[str] = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "http://localhost:8765",
-  "http://127.0.0.1:8765",
-  "nicknotes://app",
-]
-
 REVIEW_DASHBOARD_DEFAULT_DAYS = 30
 REVIEW_DASHBOARD_DAYS_MIN = 1
 REVIEW_DASHBOARD_DAYS_MAX = 120

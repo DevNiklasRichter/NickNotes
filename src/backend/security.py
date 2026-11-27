@@ -4,12 +4,24 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
+import sys
 from urllib.parse import urlsplit
 
 from starlette.responses import JSONResponse
 
 INTERNAL_TOKEN = os.environ.get("NICKNOTES_API_TOKEN") or secrets.token_urlsafe(32)
-ALLOWED_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173", "nicknotes://app"}
+APP_ORIGIN = "nicknotes://app"
+DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+
+
+def allowed_origins(packaged: bool | None = None) -> frozenset[str]:
+    """Only the packaged app's own scheme; the Vite dev server exists in development only."""
+    if packaged is None:
+        packaged = bool(getattr(sys, "frozen", False))
+    return frozenset({APP_ORIGIN} if packaged else {APP_ORIGIN, *DEV_ORIGINS})
+
+
+ALLOWED_ORIGINS = allowed_origins()
 MAX_REQUEST_BYTES = 30 * 1024 * 1024
 
 
