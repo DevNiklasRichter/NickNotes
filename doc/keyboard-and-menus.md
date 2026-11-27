@@ -1,6 +1,6 @@
 # Menues, Tastatur und Entwicklungsstart
 
-Stand: 13. November 2026, Kandidat 2.1.0-rc.7.
+Stand: 13. November 2026, Kandidat 2.1.0-rc.8.
 
 ## Bedienung
 

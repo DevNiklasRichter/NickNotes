@@ -11,6 +11,8 @@ Abschnitt der nächsten Version.
 
 ## [Unreleased]
 
+## [2.1.0-rc.8] - 2026-11-27
+
 ### Neu
 
 - **Vorlagen**: Öffne eine Notiz oder Task und wähle „Datei → Als Vorlage
