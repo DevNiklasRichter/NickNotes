@@ -243,7 +243,7 @@ def create_mcp(service, grants):
             def execute():
                 current = service.read_note_content(path)
                 if str(parse_markdown_text(current['content'])[0].get('type','')) == 'task':
-                    raise ValidationDomainError('Checkbox-Todos bitte in einer Notiz oder Daily Note anlegen, nicht in einem eigenstaendigen Task.')
+                    raise ValidationDomainError('Checkbox-Todos bitte in einer Notiz oder Daily Note anlegen, nicht in einem eigenständigen Task.')
                 from .nicknotes_backend.graph_index import _extract_tags
                 checked_tags(vault, _extract_tags({}, text))
                 created = datetime.now().astimezone().isoformat(timespec='seconds')
@@ -268,7 +268,7 @@ def create_mcp(service, grants):
                     raise ValidationDomainError('Todo in dieser Notiz nicht gefunden.')
             else:
                 if str(meta.get('type', '')) != 'task':
-                    raise ValidationDomainError('Diese Notiz ist kein eigenstaendiger Task.')
+                    raise ValidationDomainError('Diese Notiz ist kein eigenständiger Task.')
                 if status is not None:
                     from .nicknotes_backend.task_domain import TASK_STATUSES
                     if status not in TASK_STATUSES:

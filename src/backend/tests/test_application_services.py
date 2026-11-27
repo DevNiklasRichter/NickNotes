@@ -107,6 +107,19 @@ class BackendApiServiceTests(unittest.TestCase):
             self.assertTrue(renamed_path.exists())
             self.assertFalse(backend_api.state.vault)
 
+    def test_rename_notebase_rejects_names_windows_cannot_store(self) -> None:
+        from src.backend.errors import ValidationDomainError
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_path = Path(tmpdir) / "RecentBase"
+            (vault_path / ".system").mkdir(parents=True)
+            (vault_path / ".system" / "config.json").write_text("{}", encoding="utf-8")
+            for bad in ("CON", "aux.notes", "Lpt1", "Plan?", 'A"B', "Ende.", "a/b", "..", "Tab\tName"):
+                with self.subTest(name=bad):
+                    request = backend_api.NoteBaseRenameRequest(path=str(vault_path), newName=bad)
+                    with self.assertRaises(ValidationDomainError):
+                        self.service.rename_notebase(request)
+            self.assertTrue(vault_path.exists())
+
     def test_delete_notebase_can_delete_explicit_recent_path_without_opening(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             vault_path = Path(tmpdir) / "RecentBase"

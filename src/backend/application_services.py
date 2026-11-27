@@ -53,6 +53,21 @@ from .nicknotes_backend.trash import move_to_trash
 
 logger = logging.getLogger(__name__)
 
+
+_WINDOWS_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))})
+
+
+def _validated_notebase_name(raw: object, *, operation: str, vault_id: str) -> str:
+    """One folder name that is valid on Windows; create and rename share these rules."""
+    name = str(raw or "").strip()
+    if not name:
+        raise ValidationDomainError("NoteBase name cannot be empty", operation=operation, vault_id=vault_id)
+    if name in {".", ".."} or any(c in name for c in '<>:"/\\|?*') or any(ord(c) < 32 for c in name) or name.rstrip(". ") != name:
+        raise ValidationDomainError("Invalid NoteBase name.", operation=operation, vault_id=vault_id)
+    if name.split(".")[0].strip().upper() in _WINDOWS_RESERVED_NAMES:
+        raise ValidationDomainError("Reserved NoteBase name.", operation=operation, vault_id=vault_id)
+    return name
+
 class BackendApiService:
     """Transport-agnostic delegating layer for API handlers."""
 
@@ -605,18 +620,7 @@ class BackendApiService:
                 vault_id=str(parent),
             )
 
-        name = str(req.name).strip()
-        if not name:
-            raise ValidationDomainError(
-                "NoteBase name cannot be empty",
-                operation="create_vault",
-                vault_id=str(parent),
-            )
-
-        if name in {".", ".."} or any(c in name for c in '<>:"/\\|?*') or name.rstrip('. ') != name:
-            raise ValidationDomainError("Invalid NoteBase name.")
-        if name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *[f'COM{i}' for i in range(1, 10)], *[f'LPT{i}' for i in range(1, 10)]}:
-            raise ValidationDomainError("Reserved NoteBase name.")
+        name = _validated_notebase_name(req.name, operation="create_vault", vault_id=str(parent))
         vault_path = parent / name
         try:
             vault_path.mkdir(parents=True, exist_ok=True)
@@ -673,25 +677,7 @@ class BackendApiService:
         else:
             vault, indexer = self.require_loaded()
             old_path = vault.vault_path.resolve()
-        new_name = str(req.new_name).strip()
-        if not new_name:
-            raise ValidationDomainError(
-                "New NoteBase name cannot be empty",
-                operation="rename_notebase",
-                vault_id=str(old_path),
-            )
-        if any(token in new_name for token in ("/", "\\")):
-            raise ValidationDomainError(
-                "New NoteBase name must not contain path separators",
-                operation="rename_notebase",
-                vault_id=str(old_path),
-            )
-        if new_name in {".", ".."}:
-            raise ValidationDomainError(
-                "Invalid NoteBase name",
-                operation="rename_notebase",
-                vault_id=str(old_path),
-            )
+        new_name = _validated_notebase_name(req.new_name, operation="rename_notebase", vault_id=str(old_path))
 
         new_path = old_path.parent / new_name
         if new_path == old_path:
