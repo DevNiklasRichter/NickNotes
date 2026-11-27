@@ -1,4 +1,5 @@
 import {beginSessionSwitch} from './apiClient';
+import {DEFAULT_NOTEBASE_NAME} from './appConfig';
 import type { NoteTab } from './AppShared';
 import type { ExplorerOptions, ExplorerViewState } from '../explorer/types';
 import type { TagGroupDefinition } from '../tags/tagTypes';
@@ -37,7 +38,6 @@ export type NoteBaseOpenStatus = {
 };
 type UiSettingsSnapshot = {
     getTheme: () => ThemeMode;
-    getDisplayName: () => string;
     getVaultPath: () => string;
     isSidebarOpen: () => boolean;
     getStatusBarPrefs: () => StatusBarPrefs;
@@ -52,9 +52,18 @@ type UiSettingsSnapshot = {
     getWorkspaceSplitRatio: () => number;
     isCreateNoteBasePending: () => boolean;
     getCreateNoteBaseParentPath: () => string;
-    getCreateNoteBaseDisplayName: () => string;
     getCreateNoteBaseName: () => string;
 };
+const WINDOWS_RESERVED_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', ...Array.from({length: 9}, (_, i) => `COM${i + 1}`), ...Array.from({length: 9}, (_, i) => `LPT${i + 1}`)]);
+/** Same folder-name rules as the backend; returns a German hint or '' when the name is usable. */
+export function noteBaseNameProblem(name: string): string {
+    if (name === '.' || name === '..' || /[<>:"/\\|?*]/.test(name) || [...name].some((char) => char.charCodeAt(0) < 32)) {
+        return 'Der NoteBase-Name darf keine Pfadtrenner und keines der Zeichen < > : " | ? * enthalten.';
+    }
+    if (/[. ]$/.test(name)) return 'Der NoteBase-Name darf nicht mit einem Punkt oder Leerzeichen enden.';
+    if (WINDOWS_RESERVED_NAMES.has(name.split('.')[0].trim().toUpperCase())) return `„${name}“ ist unter Windows als Ordnername reserviert.`;
+    return '';
+}
 function encodeFileUrlPath(pathValue: string): string {
     return pathValue
         .split('/')
@@ -75,13 +84,11 @@ function toLocalDirectoryFileUrl(pathValue: string): string {
 }
 type AppLifecycleWriter = {
     setTheme: (theme: ThemeMode) => void;
-    setDisplayName: (value: string) => void;
     setSidebarOpen: (open: boolean) => void;
     setStatusBarPrefs: (prefs: StatusBarPrefs) => void;
     setTaskFeatureSettings: (settings: TaskFeatureSettings) => void;
     setExplorerOptions: (options: ExplorerOptions) => void;
     setSavedTheme: (theme: ThemeMode) => void;
-    setSavedDisplayName: (value: string) => void;
     setSavedSidebarOpen: (open: boolean) => void;
     setSavedStatusBarPrefs: (prefs: StatusBarPrefs) => void;
     setSavedTaskFeatureSettings: (settings: TaskFeatureSettings) => void;
@@ -100,7 +107,6 @@ type AppLifecycleWriter = {
     setNoteBaseOpenStatus: (status: NoteBaseOpenStatus | null) => void;
     setMessage: (message: string) => void;
     setError: (error: string) => void;
-    setWarnMessage?: (message: string) => void;
     setCriticalMessage?: (message: string) => void;
     setCounts: (counts: VaultCounts) => void;
     setCustomTagGroups: (groups: TagGroupDefinition[]) => void;
@@ -110,7 +116,6 @@ type AppLifecycleWriter = {
     setOpenTabs: (tabs: NoteTab[]) => void;
     setCreateNoteBaseDialogOpen: (open: boolean) => void;
     setCreateNoteBaseParentPath: (path: string) => void;
-    setCreateNoteBaseDisplayName: (name: string) => void;
     setCreateNoteBaseName: (name: string) => void;
     setCreateNoteBasePending: (pending: boolean) => void;
     setCreateNoteBaseError: (error: string) => void;
@@ -179,13 +184,6 @@ export class AppLifecycleService {
         }
         return parent;
     };
-    private suggestNoteBaseName = (name: string): string => {
-        const cleanName = normalizeLabel(name);
-        if (!cleanName) {
-            return 'NeueNoteBase';
-        }
-        return `${cleanName}NoteBase`;
-    };
     private getNoteBaseName = () => getPathTail(this.snapshot.getVaultPath());
     saveUiSettingsPatch = async (patch: {
         app?: Record<string, unknown>;
@@ -200,7 +198,6 @@ export class AppLifecycleService {
     };
     buildFullAppUiSettings = (): Record<string, unknown> => ({
         theme: this.snapshot.getTheme(),
-        displayName: this.snapshot.getDisplayName(),
         sidebarOpen: this.snapshot.isSidebarOpen(),
         statusBarPrefs: this.snapshot.getStatusBarPrefs(),
         taskFeatureSettings: this.snapshot.getTaskFeatureSettings(),
@@ -225,7 +222,6 @@ export class AppLifecycleService {
     applyUiSettings = (settings: UiSettingsPayload) => {
         const appSettings = settings.app ?? {};
         const nextTheme = toThemeMode(appSettings.theme, getPreferredTheme());
-        const nextDisplayName = normalizeLabel(typeof appSettings.displayName === 'string' ? appSettings.displayName : '') || 'Mein Wissen';
         const nextSidebarOpen = toBoolean(appSettings.sidebarOpen, true);
         const nextStatusBarPrefs = toStatusBarPrefsFromSettings(appSettings.statusBarPrefs);
         const nextTaskFeatureSettings = toTaskFeatureSettingsFromSettings(appSettings.taskFeatureSettings);
@@ -238,13 +234,11 @@ export class AppLifecycleService {
         const nextWorkspaceLayoutMode = appSettings.workspaceLayoutMode === 'split' ? 'split' : 'single';
         const nextWorkspaceSplitRatio = toBoundedNumber(appSettings.workspaceSplitRatio, 0.5, 0.15, 0.85);
         this.writer.setTheme(nextTheme);
-        this.writer.setDisplayName(nextDisplayName);
         this.writer.setSidebarOpen(nextSidebarOpen);
         this.writer.setStatusBarPrefs(nextStatusBarPrefs);
         this.writer.setTaskFeatureSettings(nextTaskFeatureSettings);
         this.writer.setExplorerOptions(nextExplorerOptions);
         this.writer.setSavedTheme(nextTheme);
-        this.writer.setSavedDisplayName(nextDisplayName);
         this.writer.setSavedSidebarOpen(nextSidebarOpen);
         this.writer.setSavedStatusBarPrefs(nextStatusBarPrefs);
         this.writer.setSavedTaskFeatureSettings(nextTaskFeatureSettings);
@@ -346,10 +340,8 @@ export class AppLifecycleService {
     openCreateNoteBaseDialog = () => {
         if (this.snapshot.isCreateNoteBasePending()) return;
         this.writer.setCreateNoteBaseError('');
-        const displayName = this.snapshot.getDisplayName();
         this.writer.setCreateNoteBaseParentPath(this.deriveParentDirectory(this.snapshot.getVaultPath()));
-        this.writer.setCreateNoteBaseDisplayName(displayName);
-        this.writer.setCreateNoteBaseName(this.suggestNoteBaseName(displayName));
+        this.writer.setCreateNoteBaseName(DEFAULT_NOTEBASE_NAME);
         this.writer.setCreateNoteBaseDialogOpen(true);
     };
     closeCreateNoteBaseDialog = () => {
@@ -382,7 +374,6 @@ export class AppLifecycleService {
         if (this.snapshot.isCreateNoteBasePending()) return;
         const parentPath = normalizeLabel(this.snapshot.getCreateNoteBaseParentPath());
         const name = normalizeLabel(this.snapshot.getCreateNoteBaseName());
-        const nextDisplayName = normalizeLabel(this.snapshot.getCreateNoteBaseDisplayName());
         if (!parentPath) {
             this.writer.setError('Bitte zuerst einen Speicherort für die neue NoteBase auswählen.');
             this.writer.setCreateNoteBaseError('Bitte zuerst einen Speicherort für die neue NoteBase auswählen.');
@@ -393,9 +384,10 @@ export class AppLifecycleService {
             this.writer.setCreateNoteBaseError('Bitte einen Namen für die neue NoteBase eingeben.');
             return;
         }
-        if (/[\\/]/.test(name) || name === '.' || name === '..') {
-            this.writer.setError('Der NoteBase-Name darf keine Pfadtrenner enthalten.');
-            this.writer.setCreateNoteBaseError('Der NoteBase-Name darf weder Pfadtrenner noch "." oder ".." enthalten.');
+        const nameProblem = noteBaseNameProblem(name);
+        if (nameProblem) {
+            this.writer.setError(nameProblem);
+            this.writer.setCreateNoteBaseError(nameProblem);
             return;
         }
         this.writer.setCreateNoteBasePending(true);
@@ -428,14 +420,6 @@ export class AppLifecycleService {
             this.refreshRecentNoteBases();
             if (response.tagGroups) {
                 this.writer.setCustomTagGroups(toStorageTagGroups(response.tagGroups));
-            }
-            if (nextDisplayName) {
-                try {
-                    // Persist before loading the new NoteBase's settings, which replace UI state.
-                    await this.saveUiSettingsPatch({app: {displayName: nextDisplayName}});
-                } catch {
-                    this.writer.setWarnMessage?.('Die NoteBase wurde erstellt, aber die Anrede konnte nicht gespeichert werden. Bitte in den Einstellungen erneut festlegen.');
-                }
             }
             await this.loadUiSettings();
             await this.context.refreshWorkspaceData(true);
@@ -486,6 +470,11 @@ export class AppLifecycleService {
         }
         const newName = normalizeLabel(renameDialog.value);
         if (!newName || newName === currentName) {
+            return;
+        }
+        const nameProblem = noteBaseNameProblem(newName);
+        if (nameProblem) {
+            this.writer.setError(nameProblem);
             return;
         }
         try {
@@ -553,6 +542,11 @@ export class AppLifecycleService {
         }
         const newName = normalizeLabel(renameDialog.value);
         if (!newName || newName === currentName) {
+            return;
+        }
+        const nameProblem = noteBaseNameProblem(newName);
+        if (nameProblem) {
+            this.writer.setError(nameProblem);
             return;
         }
         try {

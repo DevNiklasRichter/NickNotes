@@ -1,17 +1,14 @@
 import {flushSync} from 'react-dom'
 import type { StatusBarPrefs, TaskFeatureSettings, ThemeMode } from './AppShared'
 import type { ExplorerOptions } from '../explorer/types'
-import { normalizeLabel } from './AppShared'
 
 type AppSettingsSnapshot = {
   getTheme: () => ThemeMode
-  getDisplayName: () => string
   isSidebarOpen: () => boolean
   getStatusBarPrefs: () => StatusBarPrefs
   getTaskFeatureSettings: () => TaskFeatureSettings
   getExplorerOptions: () => ExplorerOptions
   getSavedTheme: () => ThemeMode
-  getSavedDisplayName: () => string
   getSavedSidebarOpen: () => boolean
   getSavedStatusBarPrefs: () => StatusBarPrefs
   getSavedTaskFeatureSettings: () => TaskFeatureSettings
@@ -20,13 +17,11 @@ type AppSettingsSnapshot = {
 
 type AppSettingsWriter = {
   setTheme: (theme: ThemeMode) => void
-  setDisplayName: (value: string) => void
   setSidebarOpen: (open: boolean) => void
   setStatusBarPrefs: (prefs: StatusBarPrefs) => void
   setTaskFeatureSettings: (settings: TaskFeatureSettings) => void
   setExplorerOptions: (options: ExplorerOptions) => void
   setSavedTheme: (theme: ThemeMode) => void
-  setSavedDisplayName: (value: string) => void
   setSavedSidebarOpen: (open: boolean) => void
   setSavedStatusBarPrefs: (prefs: StatusBarPrefs) => void
   setSavedTaskFeatureSettings: (settings: TaskFeatureSettings) => void
@@ -109,17 +104,14 @@ export class AppSettingsService {
 
   private persistSettings = async (): Promise<boolean> => {
     try {
-      const displayName = normalizeLabel(this.snapshot.getDisplayName()) || 'Mein Wissen'
       if (this.context.isVaultLoaded()) {
         await this.context.saveUiSettingsPatch({
-          app: {...this.context.buildFullAppUiSettings(), displayName},
+          app: this.context.buildFullAppUiSettings(),
         })
       }
       // Publish the saved baseline before a queued shortcut or close request continues.
       flushSync(() => {
         this.writer.setSavedTheme(this.snapshot.getTheme())
-        this.writer.setDisplayName(displayName)
-        this.writer.setSavedDisplayName(displayName)
         this.writer.setSavedSidebarOpen(this.snapshot.isSidebarOpen())
         this.writer.setSavedStatusBarPrefs({ ...this.snapshot.getStatusBarPrefs() })
         this.writer.setSavedTaskFeatureSettings({ ...this.snapshot.getTaskFeatureSettings() })
@@ -139,16 +131,11 @@ export class AppSettingsService {
     if (this.context.getSavePromise()) return
     this.context.setSaveError('')
     this.writer.setTheme(this.snapshot.getSavedTheme())
-    this.writer.setDisplayName(this.snapshot.getSavedDisplayName())
     this.writer.setSidebarOpen(this.snapshot.getSavedSidebarOpen())
     this.writer.setStatusBarPrefs({ ...this.snapshot.getSavedStatusBarPrefs() })
     this.writer.setTaskFeatureSettings({ ...this.snapshot.getSavedTaskFeatureSettings() })
     this.writer.setExplorerOptions({ ...this.snapshot.getSavedExplorerOptions() })
     this.writer.setMessage('Nicht gespeicherte Einstellungen verworfen.')
-  }
-
-  setDisplayName = (nextRawValue: string) => {
-    this.writer.setDisplayName(nextRawValue)
   }
 
   setThemeMode = (nextMode: ThemeMode) => {

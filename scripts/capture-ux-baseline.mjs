@@ -1033,10 +1033,10 @@ async function verifyCreateDialogLaunch() {
   const dialog=page.getByRole('dialog',{name:'Neue NoteBase erstellen',exact:true})
   const requests=()=>report.requests.filter(req=>req.endpoint==='/notebase/create').length
   const before=requests()
-  await trigger.click(); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await trigger.click(); await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toBeFocused()
   await expect(dialog).toHaveAttribute('aria-modal','true')
   await page.keyboard.press('Shift+Tab'); await expect(dialog.getByRole('button',{name:'NoteBase erstellen',exact:true})).toBeFocused()
-  await page.keyboard.press('Tab'); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toBeFocused()
   await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('Probe mit Leerzeichen')
   await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toHaveValue('Probe mit Leerzeichen')
   await capture('create-dialog-launch-light','Accessible create dialog from the launcher: named fields, native form actions and contained focus')
@@ -1057,10 +1057,9 @@ async function verifyCreateDialog() {
   const confirm=page.getByRole('dialog',{name:'Ungespeicherte Änderungen',exact:true})
   const posts=()=>report.requests.filter(req=>req.endpoint==='/notebase/create'&&req.method==='POST').length
   const before=posts()
-  await trigger.click(); await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await trigger.click(); await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toBeFocused()
   await expect(dialog.getByLabel('Speicherort',{exact:true})).toHaveValue(scratch)
-  await dialog.getByLabel('Anrede',{exact:true}).fill('Dialog Nutzer')
-  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('../Nicht erlaubt')
+    await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('../Nicht erlaubt')
   await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
   await expect(dialog.getByRole('alert')).toContainText('Pfadtrenner'); assert.equal(posts(),before)
   await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Dialog-Neu')
@@ -1073,7 +1072,7 @@ async function verifyCreateDialog() {
   await expect(confirm).toBeVisible()
   await capture('create-dialog-dirty-confirm-dark','Existing save-before-switch confirmation is the only active dialog')
   await page.keyboard.press('Enter'); await expect(confirm).toHaveCount(0)
-  await expect(dialog.getByLabel('Anrede',{exact:true})).toBeFocused()
+  await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toBeFocused()
   await expect(dialog.getByLabel('NoteBase-Name',{exact:true})).toHaveValue('UX-Dialog-Neu')
   await expect(editor).toContainText(marker); assert.equal(posts(),before)
   await dialog.getByRole('button',{name:'Abbrechen',exact:true}).click(); await expect(trigger).toBeFocused()
@@ -1106,14 +1105,13 @@ async function verifyCreateDialog() {
 
   await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('CON')
   await dialog.getByRole('button',{name:'NoteBase erstellen',exact:true}).click()
-  await expect(confirm).toBeVisible()
-  await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
-  await expect(dialog.getByRole('alert')).toContainText(/reserved|reserviert/i)
+  await expect(dialog.getByRole('alert')).toContainText('reserviert')
+  await expect(confirm).toHaveCount(0); assert.equal(posts(),before)
   await expect(dialog).not.toHaveAttribute('aria-busy','true')
-  await expect(editor).toContainText(marker); assert.ok(fs.readFileSync(notePath,'utf8').includes(marker))
+  await expect(editor).toContainText(marker)
   await expect(page.locator('.notebase-row.active strong')).toHaveText('UX-NoteBase')
-  await capture('create-dialog-request-error-dark','Real backend rejects a reserved name; existing NoteBase, note and form remain available')
-  report.checks.createDialogRequestErrorKeepsWorkspace=true
+  await capture('create-dialog-request-error-dark','Reserved Windows name is rejected before any request; existing NoteBase, draft and form remain available')
+  report.checks.createDialogReservedNameKeepsWorkspace=true
 
   // Permit a genuinely narrow surface only in this disposable window. Otherwise
   // Electron silently clamps the requested size to the product's normal minimum.
@@ -1127,7 +1125,7 @@ async function verifyCreateDialog() {
       const rect=await dialog.boundingBox(), viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}))
       assert.ok(Math.abs(viewport.width-width/zoom)<2,'Requested narrow test viewport was not applied')
       assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=viewport.width+1&&rect.y+rect.height<=viewport.height+1)
-      await dialog.getByLabel('Anrede',{exact:true}).focus(); await page.keyboard.press('Shift+Tab')
+      await dialog.getByLabel('NoteBase-Name',{exact:true}).focus(); await page.keyboard.press('Shift+Tab')
       const submit=dialog.getByRole('button',{name:'NoteBase erstellen',exact:true})
       await expect(submit).toBeFocused();await expect(submit).toBeInViewport()
       await capture(`create-dialog-${label}-dark`,'Create form stays inside '+label+' viewport; final action remains keyboard reachable')
@@ -1140,8 +1138,7 @@ async function verifyCreateDialog() {
   await theme('light'); await trigger.click()
   await capture('create-dialog-light','Shared create form in the light theme')
   await page.keyboard.press('Escape'); await theme('dark'); await trigger.click()
-  await dialog.getByLabel('Anrede',{exact:true}).fill('Dialog Nutzer')
-  await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Dialog-Neu')
+    await dialog.getByLabel('NoteBase-Name',{exact:true}).fill('UX-Dialog-Neu')
   await dialog.getByLabel('Speicherort',{exact:true}).fill(scratch)
   // Save any theme preferences through the existing switch confirmation first.
   // Intercept only this request to exercise the in-flight guard, then forward it unchanged.
@@ -1171,8 +1168,7 @@ async function verifyCreateDialog() {
   } finally {release(); await page.unroute('**/notebase/create',intercept)}
   const newRoot=path.join(scratch,'UX-Dialog-Neu')
   assert.ok(fs.existsSync(path.join(newRoot,'.system','config.json')))
-  assert.equal(JSON.parse(fs.readFileSync(path.join(newRoot,'.system','ui_settings.json'),'utf8')).app.displayName,'Dialog Nutzer')
-  await capture('create-dialog-created-dark','Genuine synthetic NoteBase created through the form with persisted display name')
+  await capture('create-dialog-created-dark','Genuine synthetic NoteBase created through the form')
   const recent=page.getByRole('button',{name:'Aktionen für NoteBase UX-NoteBase',exact:true})
   await recent.click()
   await page.getByRole('menu',{name:'Aktionen für NoteBase UX-NoteBase',exact:true}).getByRole('menuitem',{name:'NoteBase öffnen',exact:true}).click()
@@ -1396,17 +1392,19 @@ async function verifySettingsDialog() {
   const confirm=page.getByRole('dialog',{name:'Ungespeicherte Einstellungen',exact:true})
   const nav=()=>dialog.getByRole('navigation',{name:'Einstellungsbereiche',exact:true})
   const section=name=>nav().getByRole('button',{name,exact:true})
-  const name=()=>dialog.getByLabel('Anrede',{exact:true})
+  const toggle=()=>dialog.locator('#settings-sidebar-open')
   const save=()=>dialog.getByRole('button',{name:'Speichern',exact:true})
   const discard=()=>dialog.getByRole('button',{name:'Verwerfen',exact:true})
   const close=()=>dialog.getByRole('button',{name:'Einstellungen schließen',exact:true})
-  const fullSave=route=>route.request().method()==='POST'&&Object.hasOwn(route.request().postDataJSON()?.app??{},'displayName')
+  const fullSave=route=>route.request().method()==='POST'&&Object.hasOwn(route.request().postDataJSON()?.app??{},'sidebarOpen')
   const settingsFile=path.join(vaultPath,'.system','ui_settings.json')
   const saved=()=>JSON.parse(fs.readFileSync(settingsFile,'utf8')).app
-  const open=async()=>{await trigger.click();await expect(name()).toBeFocused()}
+  const savedSidebar=()=>saved().sidebarOpen??true
+  const showLayout=async()=>{await section('Layout').click();await expect(toggle()).toBeVisible()}
+  const open=async()=>{await trigger.click();await expect(dialog).toBeVisible();await showLayout()}
   await open()
   if(await save().isEnabled()){await save().click();await expect(close()).toBeEnabled()}
-  const originalName=await name().inputValue()
+  const originalSidebar=await toggle().isChecked()
   const originalTheme=saved().theme
   await capture('settings-dialog-general-dark','Shared focus lifecycle and accessible setting fields in the existing settings dialog')
   await section('Allgemein').focus();await page.keyboard.press('End')
@@ -1414,29 +1412,29 @@ async function verifySettingsDialog() {
   await page.keyboard.press('Home');await expect(section('Allgemein')).toBeFocused()
   await page.keyboard.press('ArrowDown');await expect(section('Darstellung')).toBeFocused()
   await page.keyboard.press('ArrowUp');await expect(section('Allgemein')).toBeFocused()
-  await name().fill('Ada mit Leerzeichen');await expect(name()).toHaveValue('Ada mit Leerzeichen')
+  await showLayout();await toggle().setChecked(!originalSidebar);await expect(toggle()).toBeChecked({checked:!originalSidebar})
   await section('Allgemein').focus();await page.keyboard.press('Shift+Tab');await expect(save()).toBeFocused()
   await page.keyboard.press('Tab');await expect(section('Allgemein')).toBeFocused()
   await page.keyboard.press('Control+n');await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape');await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
   await expect(page.locator('.settings-modal')).toBeHidden();await expect(dialog).toHaveCount(0)
   await capture('settings-dialog-close-confirm-dark','Only the existing save/discard/cancel confirmation is visible and active')
-  await page.keyboard.press('Control+s');assert.equal(saved().displayName,originalName)
-  await page.keyboard.press('Enter');await expect(name()).toHaveValue('Ada mit Leerzeichen');await expect(name()).toBeFocused()
+  await page.keyboard.press('Control+s');assert.equal(savedSidebar(),originalSidebar)
+  await page.keyboard.press('Enter');await expect(toggle()).toBeChecked({checked:!originalSidebar});await expect(toggle()).toBeFocused()
   await close().click();await expect(confirm).toBeVisible();await confirm.getByRole('button',{name:'Abbrechen',exact:true}).click()
   await page.mouse.click(4,45);await expect(confirm.getByRole('button',{name:'Abbrechen',exact:true})).toBeFocused()
   await confirm.getByRole('button',{name:'Verwerfen',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
-  assert.equal(saved().displayName,originalName)
-  await open();await expect(name()).toHaveValue(originalName)
-  await name().fill('Wird verworfen');await discard().click();await expect(name()).toHaveValue(originalName);await expect(save()).toBeDisabled()
-  await expect(section('Allgemein')).toBeFocused()
+  assert.equal(savedSidebar(),originalSidebar)
+  await open();await expect(toggle()).toBeChecked({checked:originalSidebar})
+  await toggle().setChecked(!originalSidebar);await discard().click();await expect(toggle()).toBeChecked({checked:originalSidebar});await expect(save()).toBeDisabled()
+  await expect(section('Layout')).toBeFocused()
   await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
   await open();await close().focus();await page.keyboard.press('Enter');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
-  await open();await page.keyboard.press('Control+s');await expect(name()).toBeFocused();await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
+  await open();await page.keyboard.press('Control+s');await expect(section('Layout')).toBeFocused();await page.keyboard.press('Escape');await expect(trigger).toBeFocused()
   await open();await page.mouse.click(4,45);await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
   report.checks.settingsDialogKeyboardDirtyCancelDiscardAndFocus=true
 
-  await open();await name().fill('Fehler-Entwurf')
+  await open();await toggle().setChecked(!originalSidebar)
   const failed=async route=>{
     if(!fullSave(route)){await route.continue();return}
     await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'Synthetischer Einstellungsfehler',code:'ux.settings.failed'}})})
@@ -1444,43 +1442,43 @@ async function verifySettingsDialog() {
   await page.route('**/ui-settings',failed)
   try {
     await save().click();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Einstellungsfehler')
-    await expect(name()).toHaveValue('Fehler-Entwurf');await expect(save()).toBeEnabled()
-    assert.equal(saved().displayName,originalName)
+    await expect(toggle()).toBeChecked({checked:!originalSidebar});await expect(save()).toBeEnabled()
+    assert.equal(savedSidebar(),originalSidebar)
     await capture('settings-dialog-save-error-dark','Failed real save path retains draft, shows an inline error and enables retry')
     await close().click();await confirm.getByRole('button',{name:'Speichern',exact:true}).click()
     await expect(dialog).toBeVisible();await expect(dialog.getByRole('alert')).toContainText('Synthetischer Einstellungsfehler')
-    await expect(name()).toHaveValue('Fehler-Entwurf');assert.equal(saved().displayName,originalName)
+    await expect(toggle()).toBeChecked({checked:!originalSidebar});assert.equal(savedSidebar(),originalSidebar)
   } finally {await page.unroute('**/ui-settings',failed)}
   report.checks.settingsDialogFailedSaveKeepsDraftAndDialog=true
 
-  await name().fill('Ada gespeichert')
+  await expect(toggle()).toBeChecked({checked:!originalSidebar})
   let release,saves=0
   const gate=new Promise(resolve=>{release=resolve})
   const slow=async route=>{
     if(!fullSave(route)){await route.continue();return}
-    saves++;assert.equal(route.request().postDataJSON().app.displayName,'Ada gespeichert')
+    saves++;assert.equal(route.request().postDataJSON().app.sidebarOpen,!originalSidebar)
     await gate;await route.continue()
   }
   await page.route('**/ui-settings',slow)
   try {
-    await name().focus();await page.keyboard.press('Control+s');await expect.poll(()=>saves).toBe(1)
-    await expect(dialog).toHaveAttribute('aria-busy','true');await expect(name()).toBeDisabled();await expect(close()).toBeDisabled()
+    await toggle().focus();await page.keyboard.press('Control+s');await expect.poll(()=>saves).toBe(1)
+    await expect(dialog).toHaveAttribute('aria-busy','true');await expect(toggle()).toBeDisabled();await expect(close()).toBeDisabled()
     await page.keyboard.press('Escape');await page.mouse.click(4,45);await expect(dialog).toBeVisible();await expect(confirm).toHaveCount(0)
     await page.keyboard.press('Control+s');await page.keyboard.press('Control+s')
     await dialog.locator('button').evaluateAll(buttons=>buttons.forEach(button=>button.click()))
-    assert.equal(saves,1);assert.equal(saved().displayName,originalName)
+    assert.equal(saves,1);assert.equal(savedSidebar(),originalSidebar)
     await capture('settings-dialog-pending-dark','Deferred genuine save locks settings and dismissal; repeated shortcuts do not write again')
-    release();await expect(name()).toBeEnabled();await expect(save()).toBeDisabled()
-    await expect.poll(()=>saved().displayName).toBe('Ada gespeichert')
+    release();await expect(toggle()).toBeEnabled();await expect(save()).toBeDisabled()
+    await expect.poll(()=>savedSidebar()).toBe(!originalSidebar)
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     assert.equal(saves,1)
   } finally {release();await page.unroute('**/ui-settings',slow)}
   report.checks.settingsDialogSingleSaveAcrossQueuedShortcuts=true
 
-  await name().fill('Über den Abschluss gespeichert');await close().click()
+  await toggle().setChecked(originalSidebar);await close().click()
   await confirm.getByRole('button',{name:'Speichern',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
-  assert.equal(saved().displayName,'Über den Abschluss gespeichert')
-  await open();await name().fill(originalName);await save().click();await expect(close()).toBeEnabled()
+  assert.equal(savedSidebar(),originalSidebar)
+  await open()
   await section('Import').click()
   await app.evaluate(({dialog})=>{
     globalThis.__settingsPickerOriginal=dialog.showOpenDialog
@@ -1525,10 +1523,10 @@ async function verifySettingsDialog() {
       assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=view.width+1&&rect.y+rect.height<=view.height+1)
       await section('Allgemein').focus();await page.keyboard.press('Shift+Tab')
       const focused=page.locator(':focus');await expect(focused).toHaveAttribute('id','settings-theme');await expect(focused).toBeInViewport()
-      await section('Allgemein').click();await name().fill('Viewport-Entwurf')
+      await showLayout();await toggle().setChecked(!originalSidebar)
       await section('Allgemein').focus();await page.keyboard.press('Shift+Tab');await expect(save()).toBeFocused();await expect(save()).toBeInViewport()
       await capture(`settings-dialog-${label}-dark`,'Settings remain within actual '+label+' viewport; final enabled action reachable by keyboard')
-      await discard().click();await expect(section('Allgemein')).toBeFocused();await expect(section('Allgemein')).toBeInViewport();await section('Darstellung').click()
+      await discard().click();await expect(section('Layout')).toBeFocused();await expect(section('Layout')).toBeInViewport();await section('Darstellung').click()
     }
   } finally {await app.evaluate(({BrowserWindow},size)=>BrowserWindow.getAllWindows().find(item=>!item.webContents.getURL().includes('capture.html')).setMinimumSize(...size),minimum);await windowSize(1280,800)}
   await page.keyboard.press('Escape');await theme('light');await open()

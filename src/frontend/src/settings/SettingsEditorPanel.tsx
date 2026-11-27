@@ -60,7 +60,6 @@ type OneNoteImportStatus = {
     result?: OneNoteImportResponse | null;
 };
 type SettingsEditorPanelProps = {
-    displayName: string;
     theme: ThemeMode;
     backendUrl: string;
     vaultLoaded: boolean;
@@ -77,7 +76,6 @@ type SettingsEditorPanelProps = {
     setExplorerOptions: Dispatch<SetStateAction<ExplorerOptions>>;
     setStatusBarPrefs: Dispatch<SetStateAction<StatusBarPrefs>>;
     setTaskFeatureSettings: Dispatch<SetStateAction<TaskFeatureSettings>>;
-    onDisplayNameChange: (nextRawValue: string) => void;
     onThemeChange: (theme: ThemeMode) => void;
     onSave: () => void;
     onDiscard: () => void;
@@ -95,8 +93,8 @@ const SETTINGS_SECTIONS: Array<{
         id: 'general',
         title: 'Allgemein',
         eyebrow: 'Basis',
-        description: 'Persönliche Anzeige, Schnellerfassung von überall und Verhalten beim Schließen.',
-        icon: 'User',
+        description: 'Schnellerfassung von überall, Benachrichtigungen und Verhalten beim Schließen.',
+        icon: 'Settings',
     },
     {
         id: 'appearance',
@@ -122,7 +120,7 @@ const SETTINGS_SECTIONS: Array<{
     },
     {
         id: 'explorer',
-        title: 'Note Explorer',
+        title: 'Explorer',
         eyebrow: 'Navigation',
         description: 'Dateien und Ordner in der NoteBase anzeigen.',
         icon: 'FolderTree',
@@ -142,7 +140,7 @@ const SETTINGS_SECTIONS: Array<{
         icon: 'ListChecks',
     }
 ];
-export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, saving, saveError, suspended, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onDisplayNameChange, onThemeChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
+export function SettingsEditorPanel({ theme, backendUrl, vaultLoaded, sidebarOpen, explorerOptions, statusBarPrefs, taskFeatureSettings, settingsDirty, saving, saveError, suspended, onClose, setSidebarOpen, setExplorerOptions, setStatusBarPrefs, setTaskFeatureSettings, onThemeChange, onSave, onDiscard, onOneNoteImportComplete, }: SettingsEditorPanelProps) {
     const [activeSectionId, setActiveSectionId] = useState<SettingsSectionId>('general');
     const [oneNoteSourcePaths, setOneNoteSourcePaths] = useState<string[]>([]);
     const [oneNoteTargetFolder, setOneNoteTargetFolder] = useState('');
@@ -394,13 +392,6 @@ export function SettingsEditorPanel({ displayName, theme, backendUrl, vaultLoade
             {vaultLoaded && activeSectionId === 'general' && <RecoveryPanel backendUrl={backendUrl} />}
             {activeSectionId === 'agents' && <AgentConnections key={backendUrl + String(vaultLoaded)} backendUrl={backendUrl} vaultLoaded={vaultLoaded} />}
             {activeSectionId === 'general' ? (<section className="settings-block">
-                <div className="settings-row">
-                  <div>
-                    <label htmlFor="settings-display-name">Anrede</label>
-                    <p className="muted-copy">Name, mit dem NickNotes dich in der Oberfläche anspricht.</p>
-                  </div>
-                  <input id="settings-display-name" value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} placeholder="Dein Name"/>
-                </div>
                 <section className="settings-group">
                   <h4>Desktop</h4>
                   <DesktopIntegration/>
