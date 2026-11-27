@@ -4,6 +4,7 @@ import unittest
 
 from src.backend.tests.http_client import TestClient
 from src.backend import api as backend_api
+from src.backend.security import allowed_origins
 
 
 class ApiCorsTests(unittest.TestCase):
@@ -22,8 +23,6 @@ class ApiCorsTests(unittest.TestCase):
         allowed = [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
-            "http://localhost:8765",
-            "http://127.0.0.1:8765",
             "nicknotes://app",
         ]
         for origin in allowed:
@@ -36,3 +35,12 @@ class ApiCorsTests(unittest.TestCase):
         response = client.options("/state", headers=self._preflight_headers("http://malicious.example"))
         self.assertNotEqual(response.headers.get("access-control-allow-origin"), "http://malicious.example")
         self.assertEqual(response.status_code, 400)
+
+    def test_packaged_build_accepts_only_the_app_origin(self) -> None:
+        self.assertEqual(allowed_origins(packaged=True), frozenset({"nicknotes://app"}))
+        self.assertIn("http://localhost:5173", allowed_origins(packaged=False))
+
+    def test_dev_server_origin_is_not_a_cors_origin_of_the_backend_port(self) -> None:
+        client = TestClient(backend_api.app)
+        response = client.options("/state", headers=self._preflight_headers("http://127.0.0.1:8765"))
+        self.assertNotEqual(response.headers.get("access-control-allow-origin"), "http://127.0.0.1:8765")

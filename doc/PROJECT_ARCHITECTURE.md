@@ -1,6 +1,6 @@
 # NickNotes Projektarchitektur
 
-Stand: 13. November 2026, Windows-Kandidat 2.1.0-rc.7. Dieses Dokument beschreibt
+Stand: 13. November 2026, Windows-Kandidat 2.1.0-rc.8. Dieses Dokument beschreibt
 den Ist-Zustand: Grenzen, Zustaendigkeiten und Regeln. Verlauf, Messwerte und
 Abnahmenachweise einzelner Aenderungen stehen in den verlinkten Dokumenten unter
 `doc/` und in der Git-Historie, nicht hier.
@@ -71,7 +71,10 @@ Kein zweiter Fachkern fuer MCP und kein allgemeines Serviceframework.
 zufaelliger App-Schluessel entsteht im Dienst, liegt in `service.json` im
 Benutzerprofil und geht ueber eng begrenzte IPC an den Renderer; Vertrauensgrenze
 ist der angemeldete Windows-Benutzer. Host, Origin, Pfade und Eingabegroessen werden
-geprueft. Electron verwendet Context Isolation, Sandbox, CSP und `nicknotes://app`;
+geprueft. Als Origin gilt im Paket nur `nicknotes://app`, der Vite-Dev-Server
+(`localhost:5173`) nur in der Entwicklung (`security.allowed_origins`, eine Liste fuer
+CORS und Origin-Pruefung, nicht per Umgebungsvariable erweiterbar). NoteBase-Namen
+folgen beim Anlegen und Umbenennen denselben Windows-Ordnerregeln. Electron verwendet Context Isolation, Sandbox, CSP und `nicknotes://app`;
 IPC akzeptiert nur den App-Hauptframe. Fremde Prozesse auf belegten Ports werden
 nicht beendet. Ohne Hintergrundbetrieb beendet der Besitzer-Watchdog den Dienst mit der App.
 

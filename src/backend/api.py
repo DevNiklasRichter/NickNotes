@@ -103,7 +103,7 @@ from .commands import (
     VaultCreateRequest,
     VaultOpenRequest,
 )
-from .config import DEFAULT_CORS_ORIGINS, REVIEW_DASHBOARD_DEFAULT_DAYS
+from .config import REVIEW_DASHBOARD_DEFAULT_DAYS
 from .errors import DomainError, ValidationDomainError
 from .mcp_grants import GrantStore
 from .mcp_server import MCPAuthorization, create_mcp
@@ -113,7 +113,7 @@ from .nicknotes_backend.graph_storage import read_graph_index
 from .nicknotes_backend.recovery import list_recovery, resolve_recovery
 from .nicknotes_backend.source_journal import pending_recovery
 from .operation_context import clear_operation_context, get_operation_context, set_operation_context
-from .security import LocalApiSecurity
+from .security import ALLOWED_ORIGINS, LocalApiSecurity
 from .service_control import control as service_control
 from .session import RuntimeState, expected_session
 
@@ -126,34 +126,6 @@ BACKEND_CAPABILITIES = {
 }
 
 
-def _normalize_allowed_origins(raw_origins: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for origin in raw_origins:
-        normalized_origin = origin.strip()
-        if not normalized_origin:
-            continue
-        if normalized_origin == "*":
-            logger.warning("Ignoring wildcard CORS origin ('*') from env for security reasons.")
-            continue
-        if normalized_origin not in seen:
-            normalized.append(normalized_origin)
-            seen.add(normalized_origin)
-    if not normalized:
-        return DEFAULT_CORS_ORIGINS.copy()
-    return normalized
-
-
-def _build_allowed_cors_origins() -> list[str]:
-    raw_origins = os.getenv("NICKNOTES_ALLOWED_ORIGINS", "").strip()
-    if raw_origins:
-        return _normalize_allowed_origins(raw_origins.split(","))
-    return DEFAULT_CORS_ORIGINS.copy()
-
-
-def _build_cors_origin_regex() -> str | None:
-    raw_regex = os.getenv("NICKNOTES_ALLOWED_ORIGIN_REGEX", "").strip()
-    return raw_regex or None
 
 
 state = RuntimeState()
@@ -185,25 +157,14 @@ async def lifespan(app):
             backend_api_service.sessions.close_idle(float('inf'))
             state.dispose_session()
 
-app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.7", lifespan=lifespan)
+app = FastAPI(title="NickNotes Backend", version="2.1.0-rc.8", lifespan=lifespan)
 app.mount('/mcp', mcp_gateway)
 app.add_middleware(LocalApiSecurity)
-allowed_origins = _build_allowed_cors_origins()
-allowed_origin_regex = _build_cors_origin_regex()
-logger.info(
-    "CORS configured",
-    extra={
-        "allow_origins": allowed_origins,
-        "allow_origin_regex": allowed_origin_regex,
-    },
-)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=sorted(ALLOWED_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_origin_regex=allowed_origin_regex,
     expose_headers=['X-NoteBase-Session', 'X-Operation-Id'],
 )
 

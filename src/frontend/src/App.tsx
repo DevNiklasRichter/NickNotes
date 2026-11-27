@@ -54,7 +54,7 @@ import { useOperatorNotifications } from './app/operatorNotifications';
 import { useTaskReminders } from './app/useTaskReminders';
 import { useTagMatchWorkflowState, type TagMatchCandidate } from './app/tagMatchWorkflowState';
 import {useMutationRefresh} from './app/useMutationRefresh';
-import { DEFAULT_BACKEND_URL, DEFAULT_DISPLAY_NAME, DEFAULT_NOTEBASE_NAME, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
+import { DEFAULT_BACKEND_URL, EXPLORER_DEFAULT_WIDTH, CAPTURE_INLINE_HEIGHT_DEFAULT, CAPTURE_PANEL_MIN_HEIGHT, CAPTURE_PANEL_BOTTOM_OFFSET, EXPLORER_MATCH_DEBOUNCE_MS } from './app/appConfig';
 import './App.css';
 import { TODO_DASHBOARD_TAB_PATH, TASK_DASHBOARD_TAB_PATH, FOCUS_DASHBOARD_TAB_PATH, REVIEW_DASHBOARD_TAB_PATH, GRAPH_DASHBOARD_TAB_PATH, DEFAULT_STATUS_BAR_PREFS, DEFAULT_TASK_FEATURE_SETTINGS, DEFAULT_EXPLORER_OPTIONS, DEFAULT_EXPLORER_VIEW_STATE, DEFAULT_TODO_DASHBOARD_FILTERS, DEFAULT_TASK_DASHBOARD_FILTERS, DEFAULT_FOCUS_DASHBOARD_FILTERS, DEFAULT_REVIEW_DASHBOARD_FILTERS, TAG_COLOR_PRESETS, TASK_STATUS_OPTIONS, TASK_PRIORITY_OPTIONS, normalizeWikiLookup, getPreferredTheme, apiRequest, toGermanTimestamp, getPathTail, toNoteDisplayName, normalizeFilePathKey, normalizeNoteTypeValue, normalizeLabel, normalizeTagCandidate, normalizeRelatedCandidate, deriveImageAltText, readFileAsBase64, normalizeTaskStatusValue, taskStatusLabel, taskStatusClassName, taskStatusDotClassName, taskStatusOptionLabel, normalizeTaskPriorityValue, taskPriorityLabel, taskPriorityDotClassName, taskPriorityOptionLabel, toStorageTagGroups, getStoredLastNoteBasePath, getStoredRecentNoteBases, areStatusBarPrefsEqual, areTaskFeatureSettingsEqual, areExplorerOptionsEqual, areExplorerViewStatesEqual, toLocalIsoDate, getRelativeVaultPath } from './app/AppShared';
 import type { VaultCounts, RecentNoteBase, Suggestion, TaskRow, TodoRow, SearchRow, MediaUploadResponse, ThemeMode, SidebarView, NoteTab, TodoDashboardFilters, TaskDashboardFilters, FocusDashboardFilters, ReviewDashboardFilters, ReviewDashboardResponse, StatusBarPrefs, TaskFeatureSettings, NoteGroup, GraphIndexStatus } from './app/AppShared';
@@ -110,7 +110,6 @@ function App() {
     const [storedExplorerContentMatchPathKeys, setExplorerContentMatchPathKeys] = useState<Set<string>>(new Set());
     const [sidebarView, setSidebarView] = useState<SidebarView>('notes');
     const [sidebarOpen, setSidebarOpen] = useState(true);
-    const [displayName, setDisplayName] = useState(DEFAULT_DISPLAY_NAME);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
     const [settingsSaving, setSettingsSaving] = useState(false);
     const [settingsSaveError, setSettingsSaveError] = useState('');
@@ -120,7 +119,6 @@ function App() {
     const [createNoteBaseDialogOpen, setCreateNoteBaseDialogOpen] = useState(false);
     const [createNoteBaseParentPath, setCreateNoteBaseParentPath] = useState('');
     const [createNoteBaseName, setCreateNoteBaseName] = useState('');
-    const [createNoteBaseDisplayName, setCreateNoteBaseDisplayName] = useState(DEFAULT_NOTEBASE_NAME);
     const [createNoteBasePending, setCreateNoteBasePending] = useState(false);
     const createNoteBasePendingRef = useRef(false);
     const [createNoteBaseError, setCreateNoteBaseError] = useState('');
@@ -128,7 +126,6 @@ function App() {
     const [taskFeatureSettings, setTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS });
     const [explorerOptions, setExplorerOptions] = useState<ExplorerOptions>({ ...DEFAULT_EXPLORER_OPTIONS });
     const [savedTheme, setSavedTheme] = useState<ThemeMode>(getPreferredTheme);
-    const [savedDisplayName, setSavedDisplayName] = useState(DEFAULT_DISPLAY_NAME);
     const [savedSidebarOpen, setSavedSidebarOpen] = useState(true);
     const [savedStatusBarPrefs, setSavedStatusBarPrefs] = useState<StatusBarPrefs>({ ...DEFAULT_STATUS_BAR_PREFS });
     const [savedTaskFeatureSettings, setSavedTaskFeatureSettings] = useState<TaskFeatureSettings>({ ...DEFAULT_TASK_FEATURE_SETTINGS });
@@ -317,14 +314,11 @@ function App() {
         }
     }, [theme]);
     const settingsDirty = useMemo(() => theme !== savedTheme ||
-        displayName !== savedDisplayName ||
         sidebarOpen !== savedSidebarOpen ||
         !areStatusBarPrefsEqual(statusBarPrefs, savedStatusBarPrefs) ||
         !areTaskFeatureSettingsEqual(taskFeatureSettings, savedTaskFeatureSettings) ||
         !areExplorerOptionsEqual(explorerOptions, savedExplorerOptions), [
-        displayName,
         explorerOptions,
-        savedDisplayName,
         savedExplorerOptions,
         savedSidebarOpen,
         savedStatusBarPrefs,
@@ -510,7 +504,6 @@ function App() {
         getBackendUrl: () => backendUrl,
         snapshot: {
             getTheme: () => theme,
-            getDisplayName: () => displayName,
             getVaultPath: () => vaultPath,
             isSidebarOpen: () => sidebarOpen,
             getStatusBarPrefs: () => statusBarPrefs,
@@ -525,18 +518,15 @@ function App() {
             getWorkspaceSplitRatio: () => workspaceState.splitRatio,
             isCreateNoteBasePending: () => createNoteBasePendingRef.current,
             getCreateNoteBaseParentPath: () => createNoteBaseParentPath,
-            getCreateNoteBaseDisplayName: () => createNoteBaseDisplayName,
             getCreateNoteBaseName: () => createNoteBaseName,
         },
         writer: {
             setTheme,
-            setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
             setSavedTaskFeatureSettings,
@@ -559,7 +549,6 @@ function App() {
             setNoteBaseOpenStatus,
             setMessage,
             setError,
-            setWarnMessage,
             setCriticalMessage,
             setCounts,
             setCustomTagGroups,
@@ -569,7 +558,6 @@ function App() {
             setOpenTabs,
             setCreateNoteBaseDialogOpen,
             setCreateNoteBaseParentPath,
-            setCreateNoteBaseDisplayName,
             setCreateNoteBaseName,
             setCreateNoteBasePending: (pending) => {
                 createNoteBasePendingRef.current = pending;
@@ -655,13 +643,11 @@ function App() {
     const appSettingsService = new AppSettingsService({
         snapshot: {
             getTheme: () => theme,
-            getDisplayName: () => displayName,
             isSidebarOpen: () => sidebarOpen,
             getStatusBarPrefs: () => statusBarPrefs,
             getTaskFeatureSettings: () => taskFeatureSettings,
             getExplorerOptions: () => explorerOptions,
             getSavedTheme: () => savedTheme,
-            getSavedDisplayName: () => savedDisplayName,
             getSavedSidebarOpen: () => savedSidebarOpen,
             getSavedStatusBarPrefs: () => savedStatusBarPrefs,
             getSavedTaskFeatureSettings: () => savedTaskFeatureSettings,
@@ -669,13 +655,11 @@ function App() {
         },
         writer: {
             setTheme,
-            setDisplayName,
             setSidebarOpen,
             setStatusBarPrefs,
             setTaskFeatureSettings,
             setExplorerOptions,
             setSavedTheme,
-            setSavedDisplayName,
             setSavedSidebarOpen,
             setSavedStatusBarPrefs,
             setSavedTaskFeatureSettings,
@@ -713,7 +697,6 @@ function App() {
     };
     const discardSettings = appSettingsService.discardSettings;
     const requestSaveSettings = () => {void saveSettings();};
-    const setSettingsDisplayName = appSettingsService.setDisplayName;
     const openSettingsDialog = appSettingsService.openSettingsDialog;
     const closeSettingsDialog = () => {
         commitFocusedSettingsField();
@@ -2549,12 +2532,12 @@ function App() {
         ...(showCaptureInline ? { '--capture-inline-height': `${captureInlineHeight}px` } : {}),
     } as CSSProperties;
     const createNoteBaseDialog = createNoteBaseDialogOpen ? <CreateNoteBaseDialog
-      displayName={createNoteBaseDisplayName} name={createNoteBaseName} parentPath={createNoteBaseParentPath}
+      name={createNoteBaseName} parentPath={createNoteBaseParentPath}
       pending={createNoteBasePending} error={createNoteBaseError} suspended={Boolean(tagActionDialog)}
-      onDisplayNameChange={setCreateNoteBaseDisplayName} onNameChange={setCreateNoteBaseName}
+      onNameChange={setCreateNoteBaseName}
       onParentPathChange={setCreateNoteBaseParentPath} onChooseDirectory={chooseCreateNoteBaseParentDirectory}
       onSubmit={submitCreateNoteBaseDialog} onClose={closeCreateNoteBaseDialog} /> : null;
-    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel displayName={displayName} theme={theme} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onDisplayNameChange={setSettingsDisplayName} onThemeChange={appSettingsService.setThemeMode} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
+    const settingsDialog = settingsDialogOpen ? (<Suspense fallback={<p role="status">Einstellungen werden geladen ...</p>}><SettingsEditorPanel theme={theme} backendUrl={backendUrl} vaultLoaded={vaultLoaded} sidebarOpen={sidebarOpen} explorerOptions={explorerOptions} statusBarPrefs={statusBarPrefs} taskFeatureSettings={taskFeatureSettings} settingsDirty={settingsDirty} saving={settingsSaving} saveError={settingsSaveError} suspended={Boolean(tagActionDialog)} onClose={closeSettingsDialog} setSidebarOpen={setSidebarOpen} setExplorerOptions={setExplorerOptions} setStatusBarPrefs={setStatusBarPrefs} setTaskFeatureSettings={setTaskFeatureSettings} onThemeChange={appSettingsService.setThemeMode} onSave={requestSaveSettings} onDiscard={discardSettings} onOneNoteImportComplete={handleOneNoteImportComplete}/></Suspense>) : null;
     const tagMatchWorkflowModal = tagMatchWorkflow.open ? <TagMatchDialog
       loading={tagMatchWorkflow.loading} applying={tagMatchWorkflow.applying}
       error={tagMatchWorkflow.error} status={tagMatchWorkflow.status} needsRescan={tagMatchWorkflow.needsRescan}

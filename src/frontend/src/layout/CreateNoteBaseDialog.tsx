@@ -3,15 +3,13 @@ import {createPortal} from 'react-dom'
 import {trapDialogTab, useDialogFocus} from '../ui/useDialogFocus'
 import './CreateNoteBaseDialog.css'
 
-export function CreateNoteBaseDialog({displayName, name, parentPath, pending, error, suspended,
-  onDisplayNameChange, onNameChange, onParentPathChange, onChooseDirectory, onSubmit, onClose}: {
-  displayName: string
+export function CreateNoteBaseDialog({name, parentPath, pending, error, suspended,
+  onNameChange, onParentPathChange, onChooseDirectory, onSubmit, onClose}: {
   name: string
   parentPath: string
   pending: boolean
   error: string
   suspended: boolean
-  onDisplayNameChange: (value: string) => void
   onNameChange: (value: string) => void
   onParentPathChange: (value: string) => void
   onChooseDirectory: () => Promise<void>
@@ -31,12 +29,10 @@ export function CreateNoteBaseDialog({displayName, name, parentPath, pending, er
         trapDialogTab(event)
       }}>
       <header className="sidebar-header-row"><h3 id={`${id}-title`}>Neue NoteBase erstellen</h3></header>
-      <p className="muted-copy" id={`${id}-description`}>Lege Name, Speicherort und Anrede für die neue NoteBase fest.</p>
+      <p className="muted-copy" id={`${id}-description`}>Lege Name und Speicherort für die neue NoteBase fest.</p>
       {error ? <p className="create-notebase-error" role="alert">{error}</p> : null}
       <form onSubmit={event => {event.preventDefault(); if (!pending) void onSubmit()}}>
         <fieldset className="create-notebase-form" disabled={pending}>
-          <label className="create-notebase-label" htmlFor={`${id}-display-name`}>Anrede</label>
-          <input id={`${id}-display-name`} value={displayName} onChange={event => onDisplayNameChange(event.target.value)} placeholder="z. B. Nick" />
           <label className="create-notebase-label" htmlFor={`${id}-name`}>NoteBase-Name</label>
           <input id={`${id}-name`} required value={name} onChange={event => onNameChange(event.target.value)} placeholder="z. B. Meine NoteBase" />
           <label className="create-notebase-label" htmlFor={`${id}-path`}>Speicherort</label>

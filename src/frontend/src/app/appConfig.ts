@@ -1,5 +1,4 @@
 export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8765";
-export const DEFAULT_DISPLAY_NAME = "Mein Wissen";
 export const DEFAULT_NOTEBASE_NAME = "MeineNoteBase";
 export const EXPLORER_DEFAULT_WIDTH = 300;
 export const CAPTURE_INLINE_HEIGHT_DEFAULT = 220;
