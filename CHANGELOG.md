@@ -105,6 +105,18 @@ Abschnitt der nächsten Version.
 - Ist der lokale NickNotes-Dienst kurz nicht erreichbar (etwa während er beim
   Start noch hochfährt), steht statt „TypeError: Failed to fetch“ jetzt eine
   verständliche Meldung da.
+- Das Feld „Anrede“ ist aus den Einstellungen und aus „Neue NoteBase erstellen“
+  verschwunden – NickNotes hat es nirgends angezeigt. Der Einstellungsbereich
+  „Note Explorer“ heißt jetzt „Explorer“, wie überall sonst in der App.
+
+### Behoben
+
+- Beim Umbenennen einer NoteBase prüft NickNotes jetzt dieselben Regeln wie beim
+  Anlegen: Namen wie „CON“ oder „aux“, Zeichen wie `? : * |` und ein Punkt am Ende
+  werden mit einem verständlichen Hinweis abgelehnt, statt zu einem Fehler beim
+  Umbenennen des Ordners zu führen.
+- Die installierte App nimmt Anfragen an ihren lokalen Dienst nur noch von sich
+  selbst an; die Adresse des Entwicklungsservers gilt nur noch beim Entwickeln.
 
 ## [2.1.0-rc.7] - 2026-11-19
 
